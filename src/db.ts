@@ -12,6 +12,11 @@ let pool: pg.Pool | undefined;
 
 export async function initDb(cfg: Config): Promise<pg.Pool> {
   if (pool) return pool;
+  if (process.env.DATABASE_URL) {
+    // Local test harness only (never set in deployed task definitions).
+    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
+    return pool;
+  }
   const sec = await secretsManager.send(new GetSecretValueCommand({ SecretId: cfg.dbSecretArn }));
   const s = JSON.parse(sec.SecretString ?? '{}');
   if (!s.host || !s.username || !s.password) {

@@ -160,11 +160,18 @@ d('integration gates against live deployment', () => {
       expect(stage2.isError).toBe(false);
       expect(stage2.result.kind).toBe('match.attributes');
       const all = await mcpCall(token, 'check_matches', {});
+      const forbiddenKeys = new Set(['price', 'band', 'price_band', 'budget', 'reserve']);
+      const deepScan = (o: any, path = ''): string[] =>
+        o && typeof o === 'object'
+          ? Object.entries(o).flatMap(([k, v]) => [
+              ...(forbiddenKeys.has(k) ? [`${path}.${k}`] : []),
+              ...deepScan(v, `${path}.${k}`),
+            ])
+          : [];
       for (const raw of [stage2.raw, all.raw]) {
         expect(raw, `${who} payload must not contain a price band`).not.toContain('"price"');
         expect(raw).not.toContain('"band"');
-        expect(raw).not.toContain('750'); // alice's ceiling
-        expect(raw).not.toMatch(/"min"|"max"/);
+        expect(deepScan(JSON.parse(raw)), `${who} deep scan`).toEqual([]);
       }
     }
     // The deliberate ask IS disclosable — to the counterparty, from stage 2.
