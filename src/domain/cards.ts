@@ -83,7 +83,7 @@ export async function publishIntent(
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, attributes, ask,
                         urgency, visibility, protocol_status, price_enc, ttl_days, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now() + ($12 || ' days')::interval)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::int, now() + make_interval(days => $12::int))
      RETURNING id`,
     [
       accountId,
@@ -213,7 +213,7 @@ export async function amendIntent(
 
   await getPool().query(
     `UPDATE cards SET geo=$2, attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
-        ttl_days=$7, expires_at = created_at + ($7 || ' days')::interval,
+        ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
      WHERE id=$1`,
     [
