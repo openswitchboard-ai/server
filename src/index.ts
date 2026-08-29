@@ -7,8 +7,21 @@ import { startOpsWorker } from './workers/opsWorker.js';
 
 async function main() {
   const cfg = loadConfig();
-  await initDb(cfg);
-  await migrate();
+  // The DB may still be provisioning when the first task starts (initial
+  // stack create) — retry with backoff instead of crash-looping into the
+  // ECS deployment circuit breaker.
+  const deadline = Date.now() + 10 * 60_000;
+  for (;;) {
+    try {
+      await initDb(cfg);
+      await migrate();
+      break;
+    } catch (e: any) {
+      if (Date.now() > deadline) throw e;
+      console.error(`db not ready (${e?.message}); retrying in 15s`);
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+  }
   initEnvelope(cfg);
 
   const app = buildApp(cfg);
