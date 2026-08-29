@@ -17,11 +17,22 @@ export async function initDb(cfg: Config): Promise<pg.Pool> {
     pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
     return pool;
   }
-  const sec = await secretsManager.send(new GetSecretValueCommand({ SecretId: cfg.dbSecretArn }));
-  const s = JSON.parse(sec.SecretString ?? '{}');
-  if (!s.host || !s.username || !s.password) {
-    throw new Error('DB secret is missing host/username/password');
-  }
+  // The secret rotates (single-user rotation); fetch fresh credentials for
+  // every new connection (cached briefly) so rotation never strands the pool.
+  let cached: { s: any; at: number } | undefined;
+  const fetchSecret = async () => {
+    if (cached && Date.now() - cached.at < 30_000) return cached.s;
+    const sec = await secretsManager.send(
+      new GetSecretValueCommand({ SecretId: cfg.dbSecretArn }),
+    );
+    const s = JSON.parse(sec.SecretString ?? '{}');
+    if (!s.host || !s.username || !s.password) {
+      throw new Error('DB secret is missing host/username/password');
+    }
+    cached = { s, at: Date.now() };
+    return s;
+  };
+  const s = await fetchSecret();
   const caPath = process.env.RDS_CA_BUNDLE ?? '/etc/osb/rds-global-bundle.pem';
   let ssl: pg.PoolConfig['ssl'];
   try {
@@ -37,7 +48,7 @@ export async function initDb(cfg: Config): Promise<pg.Pool> {
     host: s.host,
     port: Number(s.port ?? 5432),
     user: s.username,
-    password: s.password,
+    password: async () => (await fetchSecret()).password as string,
     database: s.dbname ?? 'osb',
     max: 10,
     ssl,
