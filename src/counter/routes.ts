@@ -12,6 +12,7 @@
  *  - requests for /counter on the MCP hostname 404 (and vice versa).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail } from '../domain/accounts.js';
 import { amendIntent, withdrawIntent } from '../domain/cards.js';
@@ -193,6 +194,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(
           reply,
           pages.registerEmailPage('Too many codes requested for that address. Wait a few minutes.'),
+          429,
+        );
+      }
+      if (verificationEmailLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'counter-register: per-IP verification-email limit hit');
+        return html(
+          reply,
+          pages.registerEmailPage('Too many codes requested from this connection. Wait an hour.'),
           429,
         );
       }
@@ -392,6 +401,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(
           reply,
           pages.loginEmailPage('Too many codes requested for that address. Wait a few minutes.'),
+          429,
+        );
+      }
+      if (verificationEmailLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'counter-login: per-IP verification-email limit hit');
+        return html(
+          reply,
+          pages.loginEmailPage('Too many codes requested from this connection. Wait an hour.'),
           429,
         );
       }
@@ -999,6 +1016,14 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
         return html(
           reply,
           pages.messagePage('Slow down', '<p>Too many codes requested. Wait a few minutes.</p>'),
+          429,
+        );
+      }
+      if (verificationEmailLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'counter-reverify: per-IP verification-email limit hit');
+        return html(
+          reply,
+          pages.messagePage('Slow down', '<p>Too many codes requested from this connection. Wait an hour.</p>'),
           429,
         );
       }

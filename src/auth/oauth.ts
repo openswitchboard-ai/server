@@ -5,6 +5,7 @@
  * Tokens are opaque and stored as sha256 hashes, bound to one human account.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { clientRegistrationLimiter } from '../abuseLimit.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
 import { registrationClosedPage } from '../counter/pages.js';
@@ -98,6 +99,10 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
   // ---- RFC 7591 dynamic client registration ----------------------------------
   app.post('/oauth/register', async (req, reply) => {
+    if (clientRegistrationLimiter.limited(req.ip)) {
+      req.log.warn({ ip: req.ip }, 'oauth-register: per-IP rate limit hit');
+      return reply.code(429).send({ error: 'rate_limited', error_description: 'too many registrations from this address; try again later' });
+    }
     const body: any = req.body ?? {};
     const uris: unknown = body.redirect_uris;
     if (!Array.isArray(uris) || uris.length === 0 || !uris.every((u) => typeof u === 'string')) {
