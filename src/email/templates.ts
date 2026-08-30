@@ -128,14 +128,14 @@ export function renderVerification(
       ) +
       center(button(v.link, 'Or open this link')) +
       small(
-        `The code and the link each work once and expire in 15 minutes. If you did not ask for this, ignore this email.`,
+        `This code works for the next 15 minutes. If you did not ask for this, ignore this email.`,
       ),
     f,
   );
   const text =
     `Your OpenSwitchboard verification code is: ${v.code}\n\n` +
     `Enter it to ${what}, or open this link:\n${v.link}\n\n` +
-    `The code and the link each work once and expire in 15 minutes. ` +
+    `This code works for the next 15 minutes. ` +
     `If you did not ask for this, ignore this email.\n\n` +
     footerText(f);
   return { subject, html, text };
@@ -158,8 +158,8 @@ export function renderApproval(
       para(esc(line)) +
       center(button(v.link, 'Review and decide')) +
       small(
-        `The link works once and expires in 15 minutes. After that, ` +
-          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">sign in</a> to review it. ` +
+        `The link works once. ` +
+          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">Sign in</a> any time to review it. ` +
           `Nothing is shared or accepted until you approve it.`,
       ),
     f,
@@ -167,8 +167,7 @@ export function renderApproval(
   );
   const text =
     `${line}\n\nReview and decide:\n${v.link}\n\n` +
-    `The link works once and expires in 15 minutes. After that, sign in at ` +
-    `${v.counterUrl} to review it.\n\n` +
+    `The link works once. Sign in at ${v.counterUrl} any time to review it.\n\n` +
     `Nothing is shared or accepted until you approve it.\n\n` +
     footerText(f);
   return { subject, html, text };
@@ -212,15 +211,13 @@ export function renderSummons(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
       `<tr><td style="font-family:${SERIF};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
       para(line) +
-      center(button(v.counterUrl, buttonLabel)) +
-      small('Everything about it lives behind your sign-in.'),
+      center(button(v.counterUrl, buttonLabel)),
     f,
     MATCH,
   );
   const text =
     `Your assistant has news.\n\n${textLine}\n\n` +
     `${buttonLabel}:\n${v.counterUrl}\n\n` +
-    `Everything about it lives behind your sign-in.\n\n` +
     footerText(f);
   return { subject, html, text };
 }
