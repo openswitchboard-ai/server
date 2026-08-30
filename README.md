@@ -39,18 +39,52 @@ The core switchboard service (phase 0.C). One container, three concerns:
   is unavailable, cards simply stay `PENDING_SCREENING` (SQS redelivery →
   DLQ), never published unscreened.
 
-## Interim auth page (0.C only)
+## The counter (phase 0.D)
 
-SES (magic links) arrives in 0.E and the counter (registration, PIN,
-passkeys) in 0.D, so for 0.C the `/oauth/authorize` login page authenticates
-**dev/test accounts created by the operator bootstrap CLI**
-(`npm run bootstrap-account`; the access code is scrypt-hashed client-side
-and only the hash crosses the IAM-gated ops queue).
+`/counter/*` — served on its own hostname (`counter-dev.openswitchboard.ai`
+dev, `counter.openswitchboard.ai` prod; same ALB/service, SNI cert, host
+separation enforced in-app) — is the ONE human-facing surface: registration
+(email code → PIN → optional passkey → 18+ + consent, WORM-logged),
+login (email code or passkey), approval pages for stage-3 disclosure and
+offer acceptance (three facts big; anomalies louder), the ledger
+(edit → re-screen, withdraw immediate), the kill switch (one tap pauses all
+cards and suspends every agent token; un-pause needs login + PIN), and the
+blind-mode toggle (stored now, consumed by 0.E).
 
-**0.D replaces this page** with the counter's registration/PIN/passkey flow.
-**Prod keeps registration CLOSED**: the prod authorize flow renders a clean
-"registration opens at launch" page — there is no bypass and no prod
-bootstrap path (the ops worker refuses `create-account` in prod).
+**Structural isolation** (unit- and live-tested in both directions): every
+`/counter` route sits behind a guard that hard-403s any request carrying an
+`Authorization` header, so an MCP bearer token is useless at the counter;
+counter auth is a host-only `osb_counter` session cookie (HttpOnly, Secure,
+SameSite=Lax) that `/mcp` never reads. The PIN (argon2id at rest, 5 tries
+then lockout with backoff) and passkeys (WebAuthn, RP ID = counter host)
+never transit the agent path.
+
+**Approval links** are single-use, 15-minute-TTL, HMAC-signed and bound to
+`{account, action, amount, counterparty}` (key in Secrets Manager
+`osb/<env>/counter/keys`); the DB stores only the token hash.
+
+The `/oauth/authorize` endpoint on the MCP host now only validates the
+request and 302s the human to `/counter/authorize`; the 0.C access-code
+login page is gone. **Prod keeps registration CLOSED**: `/counter/register`
+and `/oauth/authorize` render "registration opens at launch" — no bypass,
+and the ops worker still refuses `create-account` in prod. The dev operator
+bootstrap CLI (`npm run bootstrap-account`) remains for test accounts; those
+accounts sign in to the counter with email codes like everyone else.
+
+### SES sandbox (until production access lands)
+
+The `openswitchboard.ai` SES identity is verified (DKIM + MAIL FROM), but
+the account is still in the SES **sandbox**, so sends to unverified
+recipients are rejected. Every counter flow still performs the real
+`SendEmail` call — the full email path is exercised the moment production
+access is granted. Consequences, by design:
+
+- **dev only**: a sandbox `MessageRejected` is logged loudly and the flow
+  continues; the dev test harness stamps/reads the verification code on the
+  just-created row via the RDS Data API instead of an inbox. This is test
+  observability, NOT a bypass: codes stay hashed at rest, single-use, and
+  15-minute-TTL, and nothing about validation changes.
+- **prod**: any send failure is a hard failure (NO-FALLBACKS).
 
 ## Development
 

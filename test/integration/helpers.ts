@@ -1,13 +1,126 @@
 import { createHash, randomBytes, scryptSync } from 'node:crypto';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
 
 export const BASE_URL = process.env.OSB_BASE_URL ?? 'https://mcp-dev.openswitchboard.ai';
+export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
 export const ENV_NAME = process.env.OSB_TEST_ENV ?? 'dev';
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
 const ssm = new SSMClient({ region });
 const sqs = new SQSClient({ region });
+const rdsData = new RDSDataClient({ region });
+
+export const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
+
+// ---------------------------------------------------------------------------
+// Dev-DB observability via the RDS Data API (SES is in its sandbox, so the
+// harness manipulates/reads verification state in the TEST database instead
+// of an inbox; token semantics — single-use, 15-min TTL, hashed at rest —
+// are untouched). See counter/email.ts for the full sandbox note.
+// ---------------------------------------------------------------------------
+let dbArns: { resourceArn: string; secretArn: string } | undefined;
+export async function dbExec(
+  sql: string,
+  parameters: { name: string; value: any }[] = [],
+): Promise<any[][]> {
+  if (!dbArns) {
+    const [cluster, secret] = await Promise.all([
+      ssm.send(new GetParameterCommand({ Name: `/osb/${ENV_NAME}/db/cluster-arn` })),
+      ssm.send(new GetParameterCommand({ Name: `/osb/${ENV_NAME}/db/secret-arn` })),
+    ]);
+    dbArns = { resourceArn: cluster.Parameter!.Value!, secretArn: secret.Parameter!.Value! };
+  }
+  const r = await rdsData.send(
+    new ExecuteStatementCommand({
+      ...dbArns,
+      database: 'osb',
+      sql,
+      parameters: parameters.map((p) => ({
+        name: p.name,
+        value:
+          typeof p.value === 'number'
+            ? { doubleValue: p.value }
+            : typeof p.value === 'boolean'
+              ? { booleanValue: p.value }
+              : { stringValue: String(p.value) },
+      })),
+    }),
+  );
+  return (r.records ?? []).map((row) =>
+    row.map((f: any) => f.stringValue ?? f.longValue ?? f.doubleValue ?? f.booleanValue ?? null),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Minimal cookie jar for the counter's session cookie.
+// ---------------------------------------------------------------------------
+export class Jar {
+  cookies = new Map<string, string>();
+  absorb(res: Response) {
+    for (const sc of res.headers.getSetCookie?.() ?? []) {
+      const [pair] = sc.split(';');
+      const [k, ...v] = pair.split('=');
+      this.cookies.set(k.trim(), v.join('='));
+    }
+  }
+  header(): string {
+    return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+  }
+}
+
+export async function counterFetch(
+  jar: Jar,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const res = await fetch(path.startsWith('http') ? path : `${COUNTER_URL}${path}`, {
+    ...init,
+    redirect: 'manual',
+    headers: { ...(init.headers ?? {}), cookie: jar.header() },
+  });
+  jar.absorb(res);
+  return res;
+}
+
+const form = (o: Record<string, string>) => ({
+  method: 'POST' as const,
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams(o).toString(),
+});
+
+/**
+ * Sign in to the counter by email code: POST /counter/login creates the
+ * verification (the server genuinely attempts the SES send), then the
+ * harness stamps a known code onto that row (sandbox-era observability) and
+ * submits it.
+ */
+export async function counterLogin(jar: Jar, email: string): Promise<void> {
+  const res = await counterFetch(jar, '/counter/login', form({ email }));
+  if (res.status !== 200) throw new Error(`login start failed: ${res.status}`);
+  const htmlBody = await res.text();
+  const m = htmlBody.match(/name="verification_id" value="([^"]+)"/);
+  if (!m) throw new Error('no verification_id in code page');
+  const verificationId = m[1];
+  const code = '424242';
+  await dbExec(`UPDATE email_verifications SET code_hash = :h WHERE id = :id::uuid`, [
+    { name: 'h', value: sha256hex(`${code}:${verificationId}`) },
+    { name: 'id', value: verificationId },
+  ]);
+  const v = await counterFetch(jar, '/counter/verify', form({ verification_id: verificationId, code }));
+  if (v.status !== 303) throw new Error(`verify failed: ${v.status} ${await v.text()}`);
+}
+
+/** Ensure the signed-in account has a PIN (sets one if the flow asks for it). */
+export async function ensurePin(jar: Jar, pin = '246810'): Promise<string> {
+  const res = await counterFetch(jar, '/counter');
+  if (res.status === 303 && res.headers.get('location')?.includes('/counter/pin')) {
+    const set = await counterFetch(jar, '/counter/pin/set', form({ pin, pin2: pin }));
+    if (set.status !== 303) throw new Error(`pin set failed: ${set.status}`);
+  }
+  return pin;
+}
 
 let opsQueueUrl: string | undefined;
 export async function sendOp(body: Record<string, unknown>): Promise<void> {
@@ -39,12 +152,14 @@ export async function poll<T>(
 
 export interface TestActor {
   email: string;
-  code: string;
+  accountId: string;
+  pin: string;
   accessToken: string;
+  jar: Jar;
 }
 
 /** Bootstrap a dev account via the internal ops queue, then run the full
- * OAuth 2.1 flow (DCR + authorization-code + PKCE) against the live server. */
+ * OAuth 2.1 flow (DCR + counter login/consent + PKCE) against live dev. */
 export async function bootstrapActor(firstName: string, locality: string): Promise<TestActor> {
   const email = `testsuite+${randomBytes(6).toString('hex')}@openswitchboard.ai`;
   const code = `osb-dev-${randomBytes(18).toString('base64url')}`;
@@ -57,14 +172,25 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
     locality,
     login_code_hash: hash,
   });
-  const accessToken = await poll(
-    () => oauthFlow(email, code).catch(() => undefined),
-    `account ${email} to be usable via OAuth`,
-  );
-  return { email, code, accessToken };
+  const accountId = await poll(async () => {
+    const rows = await dbExec('SELECT id FROM accounts WHERE email_hash = :h', [
+      { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
+    ]);
+    return rows[0]?.[0] as string | undefined;
+  }, `account ${email} to exist`);
+  const jar = new Jar();
+  await counterLogin(jar, email);
+  const pin = await ensurePin(jar);
+  const accessToken = await oauthFlow(jar);
+  return { email, accountId, pin, accessToken, jar };
 }
 
-export async function oauthFlow(email: string, code: string): Promise<string> {
+/**
+ * OAuth 2.1 flow, 0.D shape: DCR + PKCE on the MCP hostname; the human
+ * login/consent half happens on the COUNTER hostname with a signed-in
+ * counter session (the PIN and passkey never transit the agent path).
+ */
+export async function oauthFlow(jar: Jar): Promise<string> {
   const redirectUri = 'http://127.0.0.1:47391/cb';
   // 1. Dynamic client registration.
   const reg = await fetch(`${BASE_URL}/oauth/register`, {
@@ -79,8 +205,8 @@ export async function oauthFlow(email: string, code: string): Promise<string> {
   const verifier = randomBytes(48).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
 
-  // 3. Login+consent form post -> 302 with code.
-  const form = new URLSearchParams({
+  // 3. /oauth/authorize on the MCP host hands the human over to the counter.
+  const q = new URLSearchParams({
     client_id: client.client_id,
     redirect_uri: redirectUri,
     response_type: 'code',
@@ -89,21 +215,26 @@ export async function oauthFlow(email: string, code: string): Promise<string> {
     scope: 'switchboard',
     state: 'st-' + randomBytes(6).toString('hex'),
     resource: `${BASE_URL}/mcp`,
-    email,
-    login_code: code,
   });
-  const authz = await fetch(`${BASE_URL}/oauth/authorize`, {
+  const handoff = await fetch(`${BASE_URL}/oauth/authorize?${q}`, { redirect: 'manual' });
+  if (handoff.status !== 302) throw new Error(`authorize handoff failed: ${handoff.status}`);
+  const counterUrl = handoff.headers.get('location')!;
+  if (!counterUrl.startsWith(COUNTER_URL)) throw new Error(`handoff not to counter: ${counterUrl}`);
+
+  // 4. The counter authorize page (signed-in session) + approval post.
+  const page = await counterFetch(jar, counterUrl);
+  if (page.status !== 200) throw new Error(`counter authorize page: ${page.status} -> ${page.headers.get('location')}`);
+  const approve = await counterFetch(jar, '/counter/authorize', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
-    redirect: 'manual',
+    body: new URLSearchParams({ decision: 'approve' }).toString(),
   });
-  if (authz.status !== 302) throw new Error(`authorize failed: ${authz.status}`);
-  const loc = new URL(authz.headers.get('location')!);
+  if (approve.status !== 303) throw new Error(`counter approve failed: ${approve.status}`);
+  const loc = new URL(approve.headers.get('location')!);
   const authCode = loc.searchParams.get('code');
-  if (!authCode) throw new Error('no code in redirect');
+  if (!authCode) throw new Error(`no code in redirect: ${loc}`);
 
-  // 4. Token exchange.
+  // 5. Token exchange (MCP host).
   const tok = await fetch(`${BASE_URL}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
