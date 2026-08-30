@@ -306,12 +306,22 @@ export async function mcpRpc(token: string, method: string, params: any): Promis
 
 export const SCHEMA_VERSION = '0.1.0';
 
+/**
+ * Run-unique geo bucket for the minimal fixtures. Since 0.F the matcher is
+ * live on dev: cards in a bucket shared with previous runs' leftovers get
+ * auto-matched against them, turning fixture cards into CONTESTED holders
+ * (collection window) and breaking single-pair assertions. A per-run bucket
+ * keeps each suite run an island ('_' keeps it out of the geohash namespace,
+ * so only exact-bucket/prefix geo matching applies).
+ */
+export const RUN_BUCKET = `g_${randomBytes(2).toString('hex')}`;
+
 export function minimalWant(overrides: Record<string, unknown> = {}) {
   return {
     schema_version: SCHEMA_VERSION,
     type: 'WANT',
     category: 'goods.bicycle.mountain',
-    geo: { bucket: 'qd66', radius_km: 25 },
+    geo: { bucket: RUN_BUCKET, radius_km: 25 },
     ...overrides,
   };
 }
@@ -321,7 +331,7 @@ export function minimalHave(overrides: Record<string, unknown> = {}) {
     schema_version: SCHEMA_VERSION,
     type: 'HAVE',
     category: 'goods.bicycle.mountain',
-    geo: { bucket: 'qd66', radius_km: 25 },
+    geo: { bucket: RUN_BUCKET, radius_km: 25 },
     ...overrides,
   };
 }
