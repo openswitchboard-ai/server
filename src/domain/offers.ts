@@ -72,6 +72,7 @@ export async function proposeOffer(
  * acceptOfferByHuman() below, which has NO public route.
  */
 export async function agentOfferAction(
+  cfg: Config,
   accountId: string,
   offerId: string,
   action: 'send_to_human' | 'decline_offer' | 'withdraw_offer',
@@ -118,7 +119,37 @@ export async function agentOfferAction(
     `UPDATE offers SET state='awaiting-human', updated_at=now() WHERE id=$1 RETURNING *`,
     [offerId],
   );
+  // 0.D: parking an offer for a human creates a counter approval link
+  // (single-use, 15-min TTL, HMAC-bound to account/action/amount/counterparty)
+  // and notifies the human by email. Blind mode strips all content.
+  await notifyHumanOfOffer(cfg, r.rows[0]);
   return serializeOffer(r.rows[0]);
+}
+
+async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
+  const { createApprovalLink } = await import('../counter/links.js');
+  const { sendApprovalEmail } = await import('../counter/email.js');
+  const { accountEmail } = await import('./counterOps.js');
+  const m = await getMatch(o.match_id);
+  if (!m) throw new Error('match missing');
+  const humanAccount = o.proposer_account === m.account_want ? m.account_have : m.account_want;
+  const { token } = await createApprovalLink({
+    accountId: humanAccount,
+    action: 'offer-accept',
+    refId: o.id,
+    amount: Number(o.amount),
+    ccy: o.ccy,
+    counterpartyAccount: o.proposer_account,
+  });
+  const acc = await getPool().query('SELECT blind_mode FROM accounts WHERE id = $1', [humanAccount]);
+  const blind = !!acc.rows[0]?.blind_mode;
+  const email = await accountEmail(humanAccount, 'approval-notification');
+  if (email) {
+    const summary = blind
+      ? 'Something at the counter needs you.'
+      : `An offer of ${Number(o.amount)} ${o.ccy} on your ${m.category} match is waiting for your decision.`;
+    await sendApprovalEmail(cfg, email, token, summary);
+  }
 }
 
 /**

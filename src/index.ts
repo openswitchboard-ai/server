@@ -1,6 +1,7 @@
 import { loadConfig } from './config.js';
 import { initDb, migrate } from './db.js';
 import { initEnvelope } from './crypto.js';
+import { initCounterKeys } from './counter/keys.js';
 import { buildApp } from './app.js';
 import { startScreeningWorker } from './workers/screeningWorker.js';
 import { startOpsWorker } from './workers/opsWorker.js';
@@ -23,6 +24,7 @@ async function main() {
     }
   }
   initEnvelope(cfg);
+  await initCounterKeys(cfg);
 
   const app = buildApp(cfg);
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
