@@ -117,8 +117,8 @@ hold. Re-verify your address to switch it back on.
 <form method="POST" action="/counter/reverify"><button type="submit">Re-verify my email</button></form></div>`
     : '';
 
-  return layout('The counter', `
-<h1>${v.firstName ? `G'day${esc(v.firstName ? ', ' + v.firstName : '')}.` : 'Your counter.'}</h1>
+  return layout('Your approval page', `
+<h1>${v.firstName ? `G'day${esc(v.firstName ? ', ' + v.firstName : '')}.` : 'Your approval page.'}</h1>
 ${emailBanner}
 <h2>Waiting for you</h2>
 ${approvals}
@@ -275,7 +275,7 @@ dials below does nothing while the hold is on.
     : '';
   const unreachable = v.emailUnreachable
     ? `<div class="err">Email to your address is bouncing — all email is on
-hold. Re-verify from the <a href="/counter">counter front page</a>.</div>`
+hold. Re-verify from the <a href="/counter">front page</a>.</div>`
     : '';
   return layout('Settings', `
 <h1>Settings.</h1>
@@ -283,8 +283,8 @@ ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
 <h2>Email frequency</h2>
 <p class="small muted">How often the switchboard may email you. Sign-in codes,
-approval requests and security notices always send — they are your account's
-safety rail. Changes apply immediately and land in your consent log.</p>
+approval requests and security notices always send.
+Changes apply immediately and land in your consent log.</p>
 <form method="POST" action="/counter/settings/frequency">
   <label for="freq_matches">Match summons</label>
   ${freqSelect('freq_matches', v.freqMatches)}
@@ -294,7 +294,7 @@ safety rail. Changes apply immediately and land in your consent log.</p>
 </form>
 <h2>Blind mode</h2>
 <p class="small muted">When on, every email we send you becomes a content-free
-pointer — "something at the counter needs you" — with all detail kept here.</p>
+pointer — "something needs your decision" — with all detail kept here.</p>
 <form method="POST" action="/counter/settings/blind-mode">
   <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
@@ -342,8 +342,7 @@ export function unsubPage(token: string): string {
   return layout('Unsubscribe', `
 <h1>Fewer emails.</h1>
 <p>This switches off match summons and activity digests. Sign-in codes,
-approval requests and security notices keep sending — they are your account's
-safety rail.</p>
+approval requests and security notices keep sending.</p>
 <form method="POST" action="/counter/email/unsub">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Unsubscribe me</button>

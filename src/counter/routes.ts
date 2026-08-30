@@ -24,7 +24,7 @@ import {
   recordVerdict,
   sideOf,
 } from '../domain/matches.js';
-import { defaultCollectWindowMinutes } from '../domain/matchRules.js';
+import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
@@ -73,7 +73,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return reply.code(403).send({
           error: 'agent_credentials_rejected',
           error_description:
-            'The counter is human-only. Agent bearer tokens are not accepted on any /counter route.',
+            'These pages are human-only. Agent bearer tokens are not accepted on any /counter route.',
         });
       }
       if ((req.headers.host ?? '').toLowerCase() === mcpHost.toLowerCase()) {
@@ -133,12 +133,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const pendingApprovals = [
         ...offers.map((o) => ({
           href: `/counter/approvals/offer/${o.offer_id}`,
-          label: `Offer on your ${o.category} match`,
+          label: `Offer on your ${categoryLeafLabel(o.category)} match`,
           amount: `${Number(o.amount)} ${o.ccy}`,
         })),
         ...disclosures.map((d) => ({
           href: `/counter/approvals/match/${d.match_id}`,
-          label: `Share your details on your ${d.category} match?`,
+          label: `Share your details on your ${categoryLeafLabel(d.category)} match?`,
         })),
       ];
       return html(
@@ -150,13 +150,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           pendingApprovals,
           matches: verdictable.map((m) => ({
             matchId: m.match_id,
-            category: m.category,
+            category: categoryLeafLabel(m.category),
             score: Number(m.score),
             verdict: m.verdict ?? undefined,
           })),
           collectionWindows: windows.map((w) => ({
             cardId: w.card_id,
-            category: w.category,
+            category: categoryLeafLabel(w.category),
             type: w.type,
             until: new Date(w.until).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
             interestedParties: w.interested_parties,
@@ -490,7 +490,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (o.state !== 'awaiting-human') return { error: `This offer is ${o.state} — nothing to decide.` };
         facts.push(
           { k: 'You are agreeing to', v: `${Number(o.amount)} ${o.ccy}` },
-          { k: 'For', v: o.category },
+          { k: 'For', v: categoryLeafLabel(o.category) },
           { k: 'Offer expires', v: new Date(o.expiry).toUTCString() },
         );
         const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
@@ -508,7 +508,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
         facts.push(
           { k: 'What gets shared', v: 'first name + locality' },
-          { k: 'For', v: m.category },
+          { k: 'For', v: categoryLeafLabel(m.category) },
           { k: 'Shared with', v: 'your matched counterparty' },
         );
         const cp = await newCounterpartyAnomaly(counterparty, 'stage3-disclosure');
@@ -542,7 +542,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           reply,
           pages.messagePage(
             'Sign in to review this',
-            '<p>Sign in to the counter, then open the link from your email again.</p>',
+            '<p>Sign in, then open the link from your email again.</p>',
             '/counter/login',
             'Sign in',
           ),
@@ -624,7 +624,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
               'Not yet',
               `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
               '/counter',
-              'Back to the counter',
+              'Back to your approval page',
             ),
             409,
           );
@@ -669,7 +669,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     const cardToView = (c: ops.LedgerCard): home.LedgerCardView => ({
       id: c.id,
       type: c.type,
-      category: c.category,
+      category: categoryLeafLabel(c.category),
       state: c.lifecycle_state,
       status: c.protocol_status,
       expiresAt: new Date(c.expires_at).toISOString().slice(0, 10),
@@ -702,7 +702,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         home.cardEditPage({
           id: c.id,
           type: c.type,
-          category: c.category,
+          category: categoryLeafLabel(c.category),
           urgency: c.urgency,
           status: c.protocol_status,
           ttlDays: c.ttl_days,
@@ -737,7 +737,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             {
               id,
               type: c.type,
-              category: c.category,
+              category: categoryLeafLabel(c.category),
               urgency: c.urgency,
               status: c.protocol_status,
               ttlDays: c.ttl_days,
@@ -923,7 +923,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         pages.messagePage(
           'Unsubscribed',
           `<p>Match summons and activity digests are off. Sign-in codes, approvals
-and security notices keep sending — they are your account's safety rail.
+and security notices keep sending.
 Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`,
         ),
       );
@@ -947,7 +947,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
       if (!cards.rowCount) {
         return html(
           reply,
-          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/counter', 'To the counter'),
+          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/counter', 'To your approval page'),
         );
       }
       return html(
@@ -955,7 +955,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
         home.renewPage(
           cards.rows.map((c: any) => ({
             type: c.type,
-            category: c.category,
+            category: categoryLeafLabel(c.category),
             expires: new Date(c.expires_at).toISOString().slice(0, 10),
             expiringSoon: !!c.expiring_soon,
           })),
