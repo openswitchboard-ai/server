@@ -56,7 +56,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval), decline (no reason carried, by design), propose_offer, send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers.',
+      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval), decline (no reason carried, by design), propose_offer, send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -72,7 +72,14 @@ export const TOOLS: ToolDef[] = [
             'decline_offer',
             'withdraw_offer',
             'list_offers',
+            'verdict',
+            'close_collection',
           ],
+        },
+        verdict: {
+          type: 'string',
+          enum: ['good-call', 'not-for-me'],
+          description: "Required for the 'verdict' action; your human's one-tap call.",
         },
         offer_id: { type: 'string', format: 'uuid', description: 'Required for offer actions on an existing offer.' },
         offer: {
@@ -194,7 +201,16 @@ export async function dispatchTool(
       case 'withdraw_intent':
         return ok(await cards.withdrawIntent(accountId, args?.intent_id));
       case 'respond': {
-        const { match_id, action, offer_id, offer } = args ?? {};
+        const { match_id, action, offer_id, offer, verdict } = args ?? {};
+        // Server assertion (anti-probing): declines are REASONLESS. Any
+        // attempt to attach one is rejected outright, never stored, never
+        // forwarded.
+        if (
+          (action === 'decline' || action === 'decline_offer') &&
+          Object.keys(args ?? {}).some((k) => /reason/i.test(k))
+        ) {
+          return invalidInput('declines carry no reason, by design');
+        }
         switch (action) {
           case 'express_interest': {
             const m = await matches.expressInterest(match_id, accountId);
@@ -225,6 +241,16 @@ export async function dispatchTool(
           }
           case 'list_offers':
             return ok({ offers: await offers.listOffers(accountId, match_id) });
+          case 'verdict': {
+            if (verdict !== 'good-call' && verdict !== 'not-for-me') {
+              return invalidInput("verdict must be 'good-call' or 'not-for-me'");
+            }
+            return ok(await matches.recordVerdict(match_id, accountId, verdict, 'agent'));
+          }
+          case 'close_collection': {
+            const r = await matches.closeCollection(match_id, accountId, 'agent');
+            return ok({ match_id, collection_closed: r.closed });
+          }
           default:
             return invalidInput(`unknown action '${action}'`);
         }

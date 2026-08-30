@@ -1,8 +1,9 @@
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
-import { getMatch, sideOf } from './matches.js';
-import { checkOfferRate } from './quotas.js';
-import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
+import { getMatch, openCollectionWindow, ownCardId, sideOf } from './matches.js';
+import { isLadderPattern } from './matchRules.js';
+import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
+import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import type { Config } from '../config.js';
 
 export interface OfferRow {
@@ -35,8 +36,9 @@ export function serializeOffer(o: OfferRow) {
   };
   if (o.message) payload.message = o.message;
   // Outbound-validated: the offer schema has additionalProperties:false, so a
-  // decline reason (or anything else) is structurally impossible here.
-  return assertOutbound('offer', payload);
+  // decline reason (or anything else) is structurally impossible here - and
+  // assertReasonless makes it a server invariant on top of the schema.
+  return assertReasonless(assertOutbound('offer', payload));
 }
 
 export async function proposeOffer(
@@ -54,6 +56,8 @@ export async function proposeOffer(
     });
   }
   await checkOfferRate(accountId, cfg.quotas);
+  // Anti-probing: max 3 offers per side per match per rolling 24h.
+  await checkPerMatchOfferRate(accountId, input.match_id);
   const message = input.message
     ? { text: input.message.slice(0, 2000), provenance: 'counterparty-untrusted' }
     : null;
@@ -62,7 +66,32 @@ export async function proposeOffer(
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
     [input.match_id, accountId, input.amount, input.ccy, input.expiry, message ? JSON.stringify(message) : null],
   );
+  await detectLadderProbing(accountId, input.match_id);
   return serializeOffer(r.rows[0]);
+}
+
+/**
+ * Ladder detection: three offers by one side on one match with strictly
+ * monotonically increasing amounts is the classic reserve-probing walk.
+ * Flags the account's reputation stub (internal only - the counterparty
+ * learns nothing, and the offer itself still stands).
+ */
+async function detectLadderProbing(accountId: string, matchId: string): Promise<void> {
+  const r = await getPool().query(
+    `SELECT amount FROM offers
+     WHERE match_id = $1 AND proposer_account = $2 AND state <> 'withdrawn'
+     ORDER BY created_at ASC`,
+    [matchId, accountId],
+  );
+  const amounts = r.rows.map((x: any) => Number(x.amount));
+  // Fire exactly once, on the offer that completes the pattern.
+  if (amounts.length === 3 && isLadderPattern(amounts)) {
+    await getPool().query(
+      `UPDATE reputation SET probing_flags = probing_flags + 1, updated_at = now()
+       WHERE account_id = $1`,
+      [accountId],
+    );
+  }
 }
 
 /**
@@ -173,6 +202,17 @@ export async function acceptOfferByHuman(
   void side;
   if (o.proposer_account === humanAccountId) {
     throw new Error('the proposing side cannot accept its own offer');
+  }
+  // Collection window: while the accepting human's OWN card is contested and
+  // still collecting, acceptance is locked - close the window (or let it
+  // lapse) first, then proceed with the chosen counterpart.
+  const w = await openCollectionWindow(ownCardId(m, humanAccountId));
+  if (w) {
+    throw new OsbError('STAGE_LOCKED', {
+      human_action:
+        'Your collection window on this card is still open. Close it early from your counter (or let it lapse), then accept.',
+      retry_after: Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000)),
+    });
   }
   await writeConsentEvent({
     event: 'offer-accepted-by-human',

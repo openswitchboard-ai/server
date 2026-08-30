@@ -16,7 +16,16 @@ import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail } from '../domain/accounts.js';
 import { amendIntent, withdrawIntent } from '../domain/cards.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
-import { declineMatch, getMatch, recordStage3OptIn, sideOf } from '../domain/matches.js';
+import {
+  closeCollectionByCard,
+  declineMatch,
+  getMatch,
+  recordStage3OptIn,
+  recordVerdict,
+  sideOf,
+} from '../domain/matches.js';
+import { defaultCollectWindowMinutes } from '../domain/matchRules.js';
+import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
@@ -106,9 +115,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [offers, disclosures, counts] = await Promise.all([
+      const [offers, disclosures, verdictable, windows, counts] = await Promise.all([
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
+        ops.verdictableMatches(s.accountId),
+        ops.openCollectionWindows(s.accountId),
         getPool().query(
           `SELECT count(*)::int AS total,
                   count(*) FILTER (WHERE lifecycle_state = 'PUBLISHED')::int AS published,
@@ -134,6 +145,19 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
           pendingApprovals,
+          matches: verdictable.map((m) => ({
+            matchId: m.match_id,
+            category: m.category,
+            score: Number(m.score),
+            verdict: m.verdict ?? undefined,
+          })),
+          collectionWindows: windows.map((w) => ({
+            cardId: w.card_id,
+            category: w.category,
+            type: w.type,
+            until: new Date(w.until).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+            interestedParties: w.interested_parties,
+          })),
         }),
       );
     });
@@ -565,23 +589,70 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // Sensitive action: PIN (or a passkey ceremony that elevated the session).
       const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
-      if (action === 'offer-accept') {
-        await acceptOfferByHuman(refId, s.accountId!, 'counter');
+      try {
+        if (action === 'offer-accept') {
+          await acceptOfferByHuman(refId, s.accountId!, 'counter');
+          return html(
+            reply,
+            pages.messagePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
+          );
+        }
+        const r = await recordStage3OptIn(refId, s.accountId!, 'counter');
         return html(
           reply,
-          pages.messagePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
+          pages.messagePage(
+            'Approved',
+            r.both
+              ? '<p>Both of you have opted in — your first name and locality are now mutually shared on this match.</p>'
+              : '<p>Your opt-in is recorded. Nothing is shared until the other side opts in too.</p>',
+          ),
         );
+      } catch (e) {
+        // Collection window still open on the holder's card: explain, don't 500.
+        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+          return html(
+            reply,
+            pages.messagePage(
+              'Not yet',
+              `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
+              '/counter',
+              'Back to the counter',
+            ),
+            409,
+          );
+        }
+        throw e;
       }
-      const r = await recordStage3OptIn(refId, s.accountId!, 'counter');
-      return html(
-        reply,
-        pages.messagePage(
-          'Approved',
-          r.both
-            ? '<p>Both of you have opted in — your first name and locality are now mutually shared on this match.</p>'
-            : '<p>Your opt-in is recorded. Nothing is shared until the other side opts in too.</p>',
-        ),
-      );
+    });
+
+    // ------------------------------------------------------------------
+    // 0.F: one-tap match-quality verdicts + collection-window early close.
+    // ------------------------------------------------------------------
+    counter.post('/verdict', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const verdict = String(b.verdict ?? '');
+      if (verdict !== 'good-call' && verdict !== 'not-for-me') {
+        return reply.code(400).send({ error: 'bad_request' });
+      }
+      try {
+        await recordVerdict(String(b.match_id ?? ''), s.accountId!, verdict as any, 'counter');
+      } catch {
+        return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
+      }
+      return reply.redirect('/counter', 303);
+    });
+
+    counter.post('/collect/:cardId/close', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      try {
+        await closeCollectionByCard(String((req.params as any).cardId), s.accountId!, 'counter');
+      } catch {
+        return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      }
+      return reply.redirect('/counter', 303);
     });
 
     // ------------------------------------------------------------------
@@ -633,6 +704,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           bandMin: c.price?.band?.min != null ? String(c.price.band.min) : undefined,
           bandMax: c.price?.band?.max != null ? String(c.price.band.max) : undefined,
           bandCcy: c.price?.ccy,
+          collectWindowMinutes:
+            c.collect_window_minutes != null ? String(c.collect_window_minutes) : undefined,
+          collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
         }),
       );
     });
@@ -660,6 +734,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
               status: c.protocol_status,
               ttlDays: c.ttl_days,
               attributesJson: String(b.attributes ?? ''),
+              collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
             },
             'Attributes must be valid JSON.',
           ),
@@ -680,6 +755,25 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           band: { min: Number(b.band_min), max: Number(b.band_max) },
           ccy: String(b.band_ccy || 'AUD').toUpperCase(),
         };
+      }
+      // Collection-window override: only SHORTER than the urgency default.
+      if (b.collect_window !== undefined) {
+        const raw = String(b.collect_window).trim();
+        const dflt = defaultCollectWindowMinutes(patch.urgency);
+        const mins = raw === '' ? null : Math.floor(Number(raw));
+        if (mins !== null && (!Number.isFinite(mins) || mins < 1 || mins > dflt)) {
+          return html(
+            reply,
+            pages.messagePage(
+              'Could not save',
+              `<p>The collection window may only be shortened: 1–${dflt} minutes for this card.</p>`,
+              `/counter/ledger/${id}/edit`,
+              'Back to editing',
+            ),
+            400,
+          );
+        }
+        await ops.setCollectWindowOverride(s.accountId!, id, mins);
       }
       try {
         await amendIntent(cfg, s.accountId!, id, patch);

@@ -38,6 +38,16 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
     [sha256hex(token)],
   );
   if (!r.rows[0]) return undefined;
+  // Urgency-routing input ("agent seen in the last hour"): stamp last_used_at,
+  // throttled to one write per 5 minutes per token, off the request path.
+  void getPool()
+    .query(
+      `UPDATE oauth_tokens SET last_used_at = now()
+       WHERE token_hash = $1
+         AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')`,
+      [sha256hex(token)],
+    )
+    .catch(() => {});
   return {
     accountId: r.rows[0].account_id,
     clientId: r.rows[0].client_id,

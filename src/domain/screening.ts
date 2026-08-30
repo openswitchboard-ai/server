@@ -114,7 +114,13 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
   return { pass: true };
 }
 
-/** Apply a verdict: PUBLISHED (and enqueue for matching) or SCREENING_REJECTED. */
+/**
+ * Apply a verdict: PUBLISHED (and enqueue for matching) or SCREENING_REJECTED.
+ * A passing card is EMBEDDED FIRST (Titan v2 over its canonical projection,
+ * see matchRules.projectionText): if the embedding call fails the whole
+ * message redelivers and the card stays PENDING_SCREENING - a card is never
+ * published without its matching-engine embedding (NO-FALLBACKS).
+ */
 export async function applyVerdict(
   cfg: Config,
   cardId: string,
@@ -122,6 +128,12 @@ export async function applyVerdict(
 ): Promise<void> {
   const screening = { ...verdict, at: new Date().toISOString() };
   if (verdict.pass) {
+    const { embedCard } = await import('./embeddings.js');
+    const card = await getPool().query(
+      'SELECT id, category, attributes FROM cards WHERE id = $1',
+      [cardId],
+    );
+    if (card.rows[0]) await embedCard(cfg, card.rows[0]);
     await getPool().query(
       `UPDATE cards SET lifecycle_state='PUBLISHED', screening=$2, updated_at=now()
        WHERE id=$1 AND lifecycle_state='PENDING_SCREENING'`,

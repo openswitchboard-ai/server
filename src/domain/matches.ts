@@ -3,6 +3,7 @@ import { getPool } from '../db.js';
 import { decryptFields, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { getCard } from './cards.js';
+import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP } from './matchRules.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 
 export interface MatchRow {
@@ -59,6 +60,156 @@ export async function createMatch(
     [cardWantId, cardHaveId, want.account_id, have.account_id, score, want.category],
   );
   return r.rows[0].id as string;
+}
+
+// ---------------------------------------------------------------------------
+// Contested matches - the collection window (0.F).
+//
+// State machine (lives on the CONTESTED CARD, the "holder" side):
+//   uncontested --(2nd concurrently-open match created)--> collecting
+//     [collect_until stamped by the matcher: min(per-card override,
+//      15 min if urgency='today' else 6 h)]
+//   collecting --(timer expiry)---------------------------> closed
+//   collecting --(holder early-close via counter/agent)----> closed
+//   closed is TERMINAL: the window never reopens for that card.
+//
+// While collecting, the HOLDER's side sees every interested party's
+// interest/offers as they arrive but cannot COMMIT (stage-3 opt-in / human
+// offer acceptance) until the window closes. The NON-holder side is told
+// NOTHING: no rival counts, no window, no hint a contest exists at all
+// ("scarcity theatre" ban - asserted in tests).
+// ---------------------------------------------------------------------------
+
+export interface CollectionWindow {
+  cardId: string;
+  until: Date;
+  /** open matches on the contested card - visible to the HOLDER only */
+  interestedParties: number;
+}
+
+/** The caller's OWN card on this match. */
+export function ownCardId(m: MatchRow, accountId: string): string {
+  return sideOf(m, accountId) === 'want' ? m.card_want : m.card_have;
+}
+
+/** Open collection window on a card, if any (undefined = none / closed). */
+export async function openCollectionWindow(cardId: string): Promise<CollectionWindow | undefined> {
+  const r = await getPool().query(
+    `SELECT c.collect_until,
+            (SELECT count(*)::int FROM matches m
+             WHERE (m.card_want = c.id OR m.card_have = c.id) AND m.state = 'open') AS n
+     FROM cards c
+     WHERE c.id = $1 AND c.collect_until > now() AND c.collect_closed_at IS NULL`,
+    [cardId],
+  );
+  if (!r.rows[0]) return undefined;
+  return { cardId, until: r.rows[0].collect_until, interestedParties: r.rows[0].n };
+}
+
+/** Throws STAGE_LOCKED when the caller's own card is still collecting. */
+async function assertNotCollecting(m: MatchRow, accountId: string): Promise<void> {
+  const w = await openCollectionWindow(ownCardId(m, accountId));
+  if (w) {
+    const secs = Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000));
+    throw new OsbError('STAGE_LOCKED', {
+      human_action:
+        'Your collection window is still open on this card: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
+      retry_after: secs,
+    });
+  }
+}
+
+/**
+ * Holder's explicit early-close (agent 'close_collection' action or the
+ * counter button). Idempotent; closing is terminal.
+ */
+export async function closeCollection(
+  matchId: string,
+  accountId: string,
+  recordedVia: string,
+): Promise<{ closed: boolean }> {
+  const m = await loadOpenMatchFor(matchId, accountId);
+  return closeCollectionByCard(ownCardId(m, accountId), accountId, recordedVia);
+}
+
+export async function closeCollectionByCard(
+  cardId: string,
+  accountId: string,
+  recordedVia: string,
+): Promise<{ closed: boolean }> {
+  const card = await getCard(cardId);
+  if (!card || card.account_id !== accountId) {
+    throw Object.assign(new Error('card not found'), { notFound: true });
+  }
+  const r = await getPool().query(
+    `UPDATE cards SET collect_closed_at = now(), updated_at = now()
+     WHERE id = $1 AND collect_until IS NOT NULL AND collect_closed_at IS NULL
+       AND collect_until > now()
+     RETURNING id`,
+    [cardId],
+  );
+  if (r.rowCount) {
+    await writeConsentEvent({
+      event: 'collection-early-close',
+      card_id: cardId,
+      account_id: accountId,
+      recorded_via: recordedVia,
+    });
+  }
+  return { closed: !!r.rowCount };
+}
+
+// ---------------------------------------------------------------------------
+// Match-quality verdicts: one tap, 'good-call' | 'not-for-me', per human per
+// match. Simple documented model (no ML):
+//   - the verdict row is stored (match_verdicts, unique per human+match);
+//   - 'not-for-me' additionally (a) mutes the account pairing so the matcher
+//     never pairs these two accounts again, (b) declines the match if still
+//     open (reasonless, as all declines are), and (c) nudges the verdict-
+//     giver's personal threshold up by +0.01 (cap +0.10 over the 0.75 base);
+//   - 'good-call' relaxes the personal threshold by -0.01 (floor 0).
+// ---------------------------------------------------------------------------
+export async function recordVerdict(
+  matchId: string,
+  accountId: string,
+  verdict: 'good-call' | 'not-for-me',
+  recordedVia: string,
+): Promise<{ match_id: string; verdict: string }> {
+  const m = await getMatch(matchId);
+  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  sideOf(m, accountId); // throws notFound if not a party
+  const pool = getPool();
+  await pool.query(
+    `INSERT INTO match_verdicts (match_id, account_id, verdict, recorded_via)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (match_id, account_id) DO UPDATE SET verdict = $3, created_at = now()`,
+    [matchId, accountId, verdict, recordedVia],
+  );
+  if (verdict === 'not-for-me') {
+    const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
+    await pool.query(
+      `INSERT INTO match_mutes (account_id, muted_account) VALUES ($1,$2)
+       ON CONFLICT DO NOTHING`,
+      [accountId, counterparty],
+    );
+    await pool.query(
+      `UPDATE matches SET state = 'declined', updated_at = now()
+       WHERE id = $1 AND state = 'open'`,
+      [matchId],
+    );
+    await pool.query(
+      `UPDATE reputation SET threshold_bump = LEAST(threshold_bump + $2, $3), updated_at = now()
+       WHERE account_id = $1`,
+      [accountId, THRESHOLD_BUMP_STEP, MAX_THRESHOLD_BUMP],
+    );
+  } else {
+    await pool.query(
+      `UPDATE reputation SET threshold_bump = GREATEST(threshold_bump - $2, 0), updated_at = now()
+       WHERE account_id = $1`,
+      [accountId, THRESHOLD_BUMP_STEP],
+    );
+  }
+  return { match_id: matchId, verdict };
 }
 
 /** Count of recorded stage-3 opt-ins for a match (0, 1, or 2 distinct humans). */
@@ -121,6 +272,10 @@ export async function recordStage3OptIn(
       human_action: 'Both sides must first express interest at stage 1.',
     });
   }
+  // Collection window: while the caller's OWN card is contested and still
+  // collecting, the holder cannot commit to one counterpart. (The other,
+  // non-holder side is unaffected - and never told a contest exists.)
+  await assertNotCollecting(m, accountId);
   await writeConsentEvent({
     event: 'stage3-optin',
     match_id: matchId,
@@ -239,6 +394,7 @@ export async function buildMutual(m: MatchRow, accountId: string) {
 
 export async function openChannel(matchId: string, accountId: string) {
   const m = await loadOpenMatchFor(matchId, accountId);
+  await assertNotCollecting(m, accountId); // holder commits only after the window
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
     throw new OsbError('STAGE_LOCKED', {
@@ -315,6 +471,16 @@ export async function checkMatches(accountId: string, intentId?: string) {
       stage_unlocked: m.stage,
       signal: await buildSignal(m, accountId),
     };
+    // Collection-window info is shown ONLY to the holder (the side whose OWN
+    // card is contested). A rival's view carries no trace of the contest.
+    const w = await openCollectionWindow(ownCardId(m, accountId));
+    if (w) {
+      entry.collection = {
+        collecting: true,
+        until: new Date(w.until).toISOString(),
+        interested_parties: w.interestedParties,
+      };
+    }
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
       try {
