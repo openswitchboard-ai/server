@@ -1,9 +1,11 @@
-import { DeleteMessageCommand, ReceiveMessageCommand } from '@aws-sdk/client-sqs';
+import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
+import { backfillEmbeddings } from '../domain/embeddings.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
+import { refreshPulseAggregates } from '../domain/pulse.js';
 import type { Config } from '../config.js';
 
 /**
@@ -58,6 +60,27 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
               case 'create-match': {
                 const id = await createMatch(body.card_want, body.card_have, body.score ?? 0.9);
                 log('ops: match created', { match_id: id });
+                break;
+              }
+              case 'pulse-refresh': {
+                // EventBridge 15-min tick: rebuild the k-anonymous demand-
+                // pulse aggregates (see domain/pulse.ts for the k-floor).
+                const rows = await refreshPulseAggregates();
+                log('pulse-refresh: aggregates rebuilt', { rows });
+                break;
+              }
+              case 'backfill-embeddings': {
+                // One-shot, idempotent: embed published cards that predate
+                // 0.F and hand each to the matching queue.
+                const n = await backfillEmbeddings(cfg, async (cardId) => {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.matchingQueueUrl,
+                      MessageBody: JSON.stringify({ kind: 'card-published', card_id: cardId }),
+                    }),
+                  );
+                });
+                log('backfill-embeddings: cards embedded', { count: n });
                 break;
               }
               case 'accept-offer-by-human': {

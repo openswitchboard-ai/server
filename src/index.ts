@@ -4,6 +4,7 @@ import { initEnvelope } from './crypto.js';
 import { initCounterKeys } from './counter/keys.js';
 import { buildApp } from './app.js';
 import { startScreeningWorker } from './workers/screeningWorker.js';
+import { startMatchingWorker } from './workers/matchingWorker.js';
 import { startOpsWorker } from './workers/opsWorker.js';
 
 async function main() {
@@ -30,11 +31,13 @@ async function main() {
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
 
   const stopScreening = startScreeningWorker(cfg, log);
+  const stopMatching = startMatchingWorker(cfg, log);
   const stopOps = startOpsWorker(cfg, log);
 
   const shutdown = async (sig: string) => {
     app.log.info({ sig }, 'shutting down');
     stopScreening();
+    stopMatching();
     stopOps();
     await app.close();
     process.exit(0);

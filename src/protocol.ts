@@ -113,6 +113,27 @@ export class OsbError extends Error {
   }
 }
 
+/**
+ * Server-side assertion (belt to the schemas' braces): a decline payload
+ * carries NO reason, at any depth, under any key spelling. The disclosure
+ * schemas already forbid one structurally; this makes the rule an invariant
+ * of the code path too, so a future schema slip cannot open a probing side
+ * channel.
+ */
+export function assertReasonless<T>(payload: T): T {
+  const scan = (o: any, path: string): void => {
+    if (!o || typeof o !== 'object') return;
+    for (const [k, v] of Object.entries(o)) {
+      if (/reason/i.test(k)) {
+        throw new Error(`decline payload must be reasonless; found '${path}.${k}'`);
+      }
+      scan(v, `${path}.${k}`);
+    }
+  };
+  scan(payload, '$');
+  return payload;
+}
+
 /** Reject unknown MAJOR schema versions (SPEC §9). */
 export function checkSchemaVersion(v: unknown): void {
   const ours = Number(SCHEMA_VERSION.split('.')[0]);
