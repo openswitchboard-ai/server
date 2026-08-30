@@ -15,7 +15,7 @@ test('prod /counter/register shows the closed page (GET)', async ({ page }) => {
   await page.goto(`${PROD_COUNTER}/counter/register`);
   await expect(page.getByRole('heading', { name: 'Registration opens at launch.' })).toBeVisible();
   await expect(page.locator('input[type=email]')).toHaveCount(0);
-  await page.screenshot({ path: 'test-results/screenshots/19-prod-register-closed.png', fullPage: true });
+  await page.screenshot({ path: 'e2e-screenshots/19-prod-register-closed.png', fullPage: true });
 });
 
 test('prod /counter/register POST refuses to create anything', async () => {
