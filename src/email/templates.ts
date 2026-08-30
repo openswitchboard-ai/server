@@ -1,0 +1,467 @@
+/**
+ * Email templates (phase 0.E). Every message renders BOTH a responsive HTML
+ * part and a plaintext part, from typed inputs, with the brand tokens the
+ * counter uses (paper/ink palette, Sora/Newsreader/Plex Mono stacks, Patch
+ * small in the header).
+ *
+ * VOICE RULES (enforced by the banned-phrase lint in lint.ts and the render
+ * suite): plain, human, zero marketing, no antithesis constructions.
+ * Content-thin by default — a nudge says something is waiting and links to
+ * the counter; details stay behind auth. When the account has blind mode on,
+ * the email is a fully content-free pointer.
+ *
+ * Emails only ever state true things from real rows: every count rendered
+ * here arrives from a SQL count in the digest engine.
+ */
+
+export interface EmailContent {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/** Footer links. unsubUrl is present whenever the recipient has an account
+ *  (a registration verification for a brand-new address has no subscription
+ *  to leave, so its footer carries the settings link only once the account
+ *  exists). */
+export interface FooterLinks {
+  settingsUrl: string;
+  ledgerUrl: string;
+  unsubUrl?: string;
+}
+
+const esc = (s: string): string =>
+  String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+
+// Brand tokens (light palette; email clients get one designed look).
+const PAPER = '#F6F8F7';
+const INK = '#1C2523';
+const LINE = '#D3DBD8';
+const CARD = '#FFFFFF';
+const MUTED = '#5c6a66';
+const MATCH = '#6D28D9';
+const HAVE = '#0E7268';
+const WANT = '#B45309';
+
+const SANS = "'Sora','Avenir Next','Segoe UI',Helvetica,Arial,sans-serif";
+const SERIF = "'Newsreader',Georgia,'Times New Roman',serif";
+const MONO = "'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace";
+
+function button(href: string, label: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px auto 8px"><tr>
+<td style="border-radius:12px;background:${INK}">
+<a href="${esc(href)}" style="display:inline-block;padding:14px 34px;font-family:${SANS};font-size:16px;font-weight:600;color:${PAPER};text-decoration:none;border-radius:12px">${esc(label)}</a>
+</td></tr></table>`;
+}
+
+function footerHtml(f: FooterLinks): string {
+  const link = (href: string, label: string) =>
+    `<a href="${esc(href)}" style="color:${MUTED};text-decoration:underline">${esc(label)}</a>`;
+  const parts = [link(f.settingsUrl, 'Email settings'), link(f.ledgerUrl, 'Your ledger')];
+  if (f.unsubUrl) parts.push(link(f.unsubUrl, 'Unsubscribe'));
+  return `<tr><td style="padding:26px 8px 10px;text-align:center;font-family:${SANS};font-size:12px;line-height:1.7;color:${MUTED}">
+${parts.join(' &nbsp;·&nbsp; ')}<br>
+OpenSwitchboard &nbsp;·&nbsp; openswitchboard.ai<br>
+You get this email because you hold an OpenSwitchboard account.
+</td></tr>`;
+}
+
+function footerText(f: FooterLinks): string {
+  const lines = [
+    '—',
+    `Email settings: ${f.settingsUrl}`,
+    `Your ledger: ${f.ledgerUrl}`,
+  ];
+  if (f.unsubUrl) lines.push(`Unsubscribe: ${f.unsubUrl}`);
+  lines.push('OpenSwitchboard · openswitchboard.ai');
+  lines.push('You get this email because you hold an OpenSwitchboard account.');
+  return lines.join('\n');
+}
+
+/** Shared responsive shell: paper ground, one 520px column, Patch small. */
+function shell(bodyRows: string, f: FooterLinks, accent = LINE): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>OpenSwitchboard</title></head>
+<body style="margin:0;padding:0;background:${PAPER}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER}">
+<tr><td align="center" style="padding:28px 14px 36px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="520" style="width:100%;max-width:520px">
+<tr><td style="padding:0 8px 18px;font-family:${SANS};font-size:14px;font-weight:700;color:${INK}">
+<span style="font-size:15px">&#128025;</span>&nbsp; OpenSwitchboard
+<span style="font-weight:600;color:${MUTED};font-size:12px">&nbsp;the counter</span>
+</td></tr>
+<tr><td style="background:${CARD};border:1px solid ${LINE};border-top:3px solid ${accent};border-radius:14px;padding:34px 30px 30px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${bodyRows}</table>
+</td></tr>
+${footerHtml(f)}
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
+const h1 = (t: string) =>
+  `<tr><td style="font-family:${SANS};font-size:22px;font-weight:700;line-height:1.25;color:${INK};padding-bottom:10px">${t}</td></tr>`;
+const para = (t: string, extra = '') =>
+  `<tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK};padding:4px 0${extra}">${t}</td></tr>`;
+const small = (t: string) =>
+  `<tr><td style="font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};padding-top:16px">${t}</td></tr>`;
+const center = (inner: string) => `<tr><td align="center">${inner}</td></tr>`;
+
+// ---------------------------------------------------------------------------
+// (a) Verification code.
+// ---------------------------------------------------------------------------
+export function renderVerification(
+  v: { code: string; link: string; purpose: 'register' | 'login' },
+  f: FooterLinks,
+): EmailContent {
+  const what = v.purpose === 'register' ? 'finish opening your account' : 'sign in';
+  const subject = `${v.code} is your OpenSwitchboard code`;
+  const html = shell(
+    h1('Your code.') +
+      para(`Enter this at the counter to ${what}.`) +
+      center(
+        `<div style="font-family:${MONO};font-size:34px;letter-spacing:10px;color:${INK};background:${PAPER};border:1px solid ${LINE};border-radius:12px;padding:16px 10px;margin:18px 0 6px;text-align:center">${esc(v.code)}</div>`,
+      ) +
+      center(button(v.link, 'Or open this link')) +
+      small(
+        `The code and the link each work once and expire in 15 minutes. If you did not ask for this, ignore this email.`,
+      ),
+    f,
+  );
+  const text =
+    `Your OpenSwitchboard verification code is: ${v.code}\n\n` +
+    `Enter it at the counter to ${what}, or open this link:\n${v.link}\n\n` +
+    `The code and the link each work once and expire in 15 minutes. ` +
+    `If you did not ask for this, ignore this email.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (b) Approval request. Non-blind: may carry the caller's category-level
+// summary (never identity, never amounts before approval). Blind: pointer only.
+// ---------------------------------------------------------------------------
+export function renderApproval(
+  v: { link: string; summary?: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'OpenSwitchboard: something is waiting for your approval';
+  const line = v.blind
+    ? 'Something at the counter needs your decision.'
+    : (v.summary ?? 'Your assistant lined something up. It needs your decision.');
+  const html = shell(
+    h1('Your decision is needed.') +
+      para(esc(line)) +
+      center(button(v.link, 'Review and decide')) +
+      small(
+        `The link works once and expires in 15 minutes. After that, sign in at ` +
+          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">the counter</a> to review it. ` +
+          `Nothing is shared or accepted until you approve it.`,
+      ),
+    f,
+    HAVE,
+  );
+  const text =
+    `${line}\n\nReview and decide at the counter:\n${v.link}\n\n` +
+    `The link works once and expires in 15 minutes. After that, sign in at ` +
+    `${v.counterUrl} to review it.\n\n` +
+    `Nothing is shared or accepted until you approve it.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c) Match summons — the screenshot-worthy one. One clear line, one button.
+// count > 1 covers the daily/weekly summons batch. Non-blind may name the
+// category (category-level only). Blind: pointer, nothing else.
+// ---------------------------------------------------------------------------
+export function renderSummons(
+  v: { count: number; category?: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'Your assistant has news';
+  let line: string;
+  if (v.blind) {
+    line = v.count === 1 ? 'Something is waiting at the counter.' : `${v.count} things are waiting at the counter.`;
+  } else if (v.count === 1) {
+    line = v.category
+      ? `A match is waiting on your <span style="font-family:${MONO};font-size:15px">${esc(v.category)}</span> card.`
+      : 'A match is waiting at the counter.';
+  } else {
+    line = `${v.count} matches are waiting at the counter.`;
+  }
+  const textLine = v.blind
+    ? v.count === 1
+      ? 'Something is waiting at the counter.'
+      : `${v.count} things are waiting at the counter.`
+    : v.count === 1
+      ? v.category
+        ? `A match is waiting on your ${v.category} card.`
+        : 'A match is waiting at the counter.'
+      : `${v.count} matches are waiting at the counter.`;
+  const html = shell(
+    `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
+      `<tr><td style="font-family:${SERIF};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
+      para(line) +
+      center(button(v.counterUrl, 'Open the counter')) +
+      small('Everything about it lives behind your sign-in.'),
+    f,
+    MATCH,
+  );
+  const text =
+    `Your assistant has news.\n\n${textLine}\n\n` +
+    `Open the counter:\n${v.counterUrl}\n\n` +
+    `Everything about it lives behind your sign-in.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (d) Activity digest. Items come from the digest engine: per open card cell,
+// counts of new opposite-side cards (cell already clears the k-anonymity
+// floor by construction — see domain/pulse.ts) and the card's own new
+// near-misses. Blind: pointer only.
+// ---------------------------------------------------------------------------
+export interface DigestItem {
+  type: 'WANT' | 'HAVE';
+  category: string;
+  /** New opposite-side cards in this card's (category, geo) cell since the
+   *  last digest. null when the cell is under the k-anonymity floor. */
+  newOpposite: number | null;
+  nearMisses: number;
+}
+
+export function renderDigest(
+  v: { cadence: 'daily' | 'weekly'; items: DigestItem[]; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const period = v.cadence === 'daily' ? 'today' : 'this week';
+  const subject = `Your ${v.cadence} OpenSwitchboard digest`;
+  if (v.blind) {
+    const html = shell(
+      h1('Your digest is ready.') +
+        para(`There is movement around your cards ${period}. The detail waits at the counter.`) +
+        center(button(v.counterUrl, 'Open the counter')),
+      f,
+      MATCH,
+    );
+    const text =
+      `Your digest is ready.\n\nThere is movement around your cards ${period}. ` +
+      `The detail waits at the counter:\n${v.counterUrl}\n\n` +
+      footerText(f);
+    return { subject, html, text };
+  }
+  const rows = v.items
+    .map((it) => {
+      const bits: string[] = [];
+      if (it.newOpposite !== null && it.newOpposite > 0) {
+        const side = it.type === 'WANT' ? 'have' : 'want';
+        bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
+      }
+      if (it.nearMisses > 0) {
+        bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
+      }
+      const badgeColor = it.type === 'WANT' ? WANT : HAVE;
+      return `<tr>
+<td style="padding:10px 0;border-bottom:1px solid ${LINE}">
+<span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${it.type}</span>
+<span style="font-family:${MONO};font-size:14px;color:${INK}">&nbsp;${esc(it.category)}</span><br>
+<span style="font-family:${SERIF};font-size:15px;color:${MUTED}">${esc(bits.join(' · '))}</span>
+</td></tr>`;
+    })
+    .join('');
+  const html = shell(
+    h1(`Around your cards ${period}.`) +
+      `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
+      center(button(v.counterUrl, 'Open the counter')) +
+      small('Counts are real and current. Near misses stay near misses until the switchboard is sure.'),
+    f,
+    MATCH,
+  );
+  const textRows = v.items
+    .map((it) => {
+      const bits: string[] = [];
+      if (it.newOpposite !== null && it.newOpposite > 0) {
+        const side = it.type === 'WANT' ? 'have' : 'want';
+        bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
+      }
+      if (it.nearMisses > 0) bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
+      return `- ${it.type} ${it.category}: ${bits.join(', ')}`;
+    })
+    .join('\n');
+  const text =
+    `Around your cards ${period}:\n\n${textRows}\n\n` +
+    `Open the counter:\n${v.counterUrl}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (e) "Still true?" renewal. Cards expire on their own; this lands 7 days
+// before the next expiry. Lists the account's open cards with one-tap
+// renew-all and a review link. Blind: pointer only.
+// ---------------------------------------------------------------------------
+export interface RenewalCardItem {
+  type: 'WANT' | 'HAVE';
+  category: string;
+  expiresAt: Date;
+  expiringSoon: boolean;
+}
+
+export function renderRenewal(
+  v: { cards: RenewalCardItem[]; renewAllUrl: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'Still true?';
+  const soon = v.cards.filter((c) => c.expiringSoon).length;
+  if (v.blind) {
+    const html = shell(
+      h1('Still true?') +
+        para('Cards on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go at the counter.') +
+        center(button(v.counterUrl, 'Open the counter')),
+      f,
+      WANT,
+    );
+    const text =
+      `Still true?\n\nCards on the switchboard lapse on their own. Some of yours ` +
+      `lapse within a week. Keep them or let them go at the counter:\n${v.counterUrl}\n\n` +
+      footerText(f);
+    return { subject, html, text };
+  }
+  const rows = v.cards
+    .map((c) => {
+      const badgeColor = c.type === 'WANT' ? WANT : HAVE;
+      const when = c.expiresAt.toISOString().slice(0, 10);
+      return `<tr><td style="padding:9px 0;border-bottom:1px solid ${LINE}">
+<span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${c.type}</span>
+<span style="font-family:${MONO};font-size:14px;color:${INK}">&nbsp;${esc(c.category)}</span><br>
+<span style="font-family:${SANS};font-size:12px;color:${c.expiringSoon ? WANT : MUTED}">lapses ${when}${c.expiringSoon ? ' — within a week' : ''}</span>
+</td></tr>`;
+    })
+    .join('');
+  const html = shell(
+    h1('Still true?') +
+      para(
+        `Cards on the switchboard lapse on their own — that is the rule that keeps every want and have honest. ` +
+          `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.`,
+      ) +
+      `<tr><td style="padding-top:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
+      center(button(v.renewAllUrl, 'Still true — keep them all')) +
+      small(
+        `Renewing restarts each card's own clock. To edit or drop single cards, ` +
+          `<a href="${esc(f.ledgerUrl)}" style="color:${MUTED}">review your ledger</a>. ` +
+          `Do nothing and they lapse quietly.`,
+      ),
+    f,
+    WANT,
+  );
+  const textRows = v.cards
+    .map(
+      (c) =>
+        `- ${c.type} ${c.category}: lapses ${c.expiresAt.toISOString().slice(0, 10)}${c.expiringSoon ? ' (within a week)' : ''}`,
+    )
+    .join('\n');
+  const text =
+    `Still true?\n\nCards on the switchboard lapse on their own — that is the rule ` +
+    `that keeps every want and have honest. ` +
+    `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.\n\n` +
+    `${textRows}\n\n` +
+    `Still true — keep them all:\n${v.renewAllUrl}\n\n` +
+    `Review one by one:\n${f.ledgerUrl}\n\n` +
+    `Do nothing and they lapse quietly.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (f) Kill switch on / off.
+// ---------------------------------------------------------------------------
+export function renderKillSwitch(
+  v: { on: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  if (v.on) {
+    const subject = 'OpenSwitchboard: kill switch is ON';
+    const html = shell(
+      h1('Everything is paused.') +
+        para(
+          'The kill switch on your account was just activated. All of your cards are paused and your agents&#39; tokens are suspended. Nothing will match, be disclosed, or be accepted while it is on.',
+        ) +
+        center(button(v.counterUrl, 'Open the counter')) +
+        small(
+          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and review your ledger.',
+        ),
+      f,
+      '#a3271f',
+    );
+    const text =
+      `The kill switch on your OpenSwitchboard account was just activated.\n\n` +
+      `All of your cards are paused and your agents' tokens are suspended. ` +
+      `Nothing will match, be disclosed, or be accepted while it is on.\n\n` +
+      `To turn things back on, sign in at ${v.counterUrl} and confirm with your PIN.\n\n` +
+      `If you did not do this, your account is already safe — everything is paused. ` +
+      `Sign in when you can and review your ledger.\n\n` +
+      footerText(f);
+    return { subject, html, text };
+  }
+  const subject = 'OpenSwitchboard: kill switch is off';
+  const html = shell(
+    h1('Everything is back on.') +
+      para(
+        'The kill switch on your account was just turned off with your PIN. Your cards are back in matching and your agents&#39; tokens work again.',
+      ) +
+      center(button(v.counterUrl, 'Open the counter')) +
+      small('If you did not do this, hit the kill switch again at the counter and change your PIN.'),
+    f,
+    HAVE,
+  );
+  const text =
+    `The kill switch on your OpenSwitchboard account was just turned off with your PIN.\n\n` +
+    `Your cards are back in matching and your agents' tokens work again.\n\n` +
+    `If you did not do this, hit the kill switch again at ${v.counterUrl} and change your PIN.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (g) Security notices.
+// ---------------------------------------------------------------------------
+export function renderSecurityNotice(
+  v: { event: 'agent-authorized' | 'pin-changed'; agentName?: string; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject =
+    v.event === 'agent-authorized'
+      ? 'OpenSwitchboard: a new agent was authorised'
+      : 'OpenSwitchboard: your PIN was changed';
+  const line =
+    v.event === 'agent-authorized'
+      ? `A new agent${v.agentName ? ` (&#8220;${esc(v.agentName)}&#8221;)` : ''} was just authorised to use your account.`
+      : 'The PIN on your account was just changed.';
+  const textLine =
+    v.event === 'agent-authorized'
+      ? `A new agent${v.agentName ? ` ("${v.agentName}")` : ''} was just authorised to use your account.`
+      : 'The PIN on your account was just changed.';
+  const html = shell(
+    h1('A change on your account.') +
+      para(line) +
+      center(button(v.counterUrl, 'Review at the counter')) +
+      small(
+        'If this was you, all good. If it was someone else, hit the kill switch at the counter — one tap pauses everything.',
+      ),
+    f,
+    WANT,
+  );
+  const text =
+    `${textLine}\n\n` +
+    `Review at the counter:\n${v.counterUrl}\n\n` +
+    `If this was you, all good. If it was someone else, hit the kill switch at the ` +
+    `counter — one tap pauses everything.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}

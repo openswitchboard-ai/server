@@ -6,6 +6,12 @@ import { backfillEmbeddings } from '../domain/embeddings.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
+import {
+  notifyMatchCreated,
+  runDigestTick,
+  runRenewalTick,
+  runSummonsBatch,
+} from '../email/digestEngine.js';
 import type { Config } from '../config.js';
 
 /**
@@ -60,6 +66,8 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
               case 'create-match': {
                 const id = await createMatch(body.card_want, body.card_have, body.score ?? 0.9);
                 log('ops: match created', { match_id: id });
+                // 0.E: the dev bootstrap path summons humans too (idempotent).
+                await notifyMatchCreated(cfg, id);
                 break;
               }
               case 'pulse-refresh': {
@@ -81,6 +89,30 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   );
                 });
                 log('backfill-embeddings: cards embedded', { count: n });
+                break;
+              }
+              case 'match-notify': {
+                // 0.E: immediate match summons for both humans (enqueued by
+                // the matcher / the dev create-match op). Idempotent via the
+                // summons:{match}:{account} dedupe key.
+                await notifyMatchCreated(cfg, body.match_id);
+                break;
+              }
+              case 'email-digest-tick': {
+                // EventBridge daily/weekly ticks. Batched summons first, then
+                // the activity digest — each honours per-account frequency
+                // and the quiet default (nothing happened -> no email).
+                const cadence = body.cadence === 'weekly' ? 'weekly' : 'daily';
+                const summons = await runSummonsBatch(cfg, cadence);
+                const digests = await runDigestTick(cfg, cadence);
+                log('email-digest-tick: done', { cadence, summons, digests });
+                break;
+              }
+              case 'email-renewal-tick': {
+                // Daily sweep; a renewal email lands once, 7 days before a
+                // card batch expires (see digestEngine.runRenewalTick).
+                const n = await runRenewalTick(cfg);
+                if (n > 0) log('email-renewal-tick: renewal emails sent', { count: n });
                 break;
               }
               case 'accept-offer-by-human': {

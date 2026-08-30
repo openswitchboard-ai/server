@@ -25,8 +25,15 @@ export interface Config {
    *  when both COUNTER_LINK_HMAC_KEY and COUNTER_COOKIE_KEY are provided
    *  directly (local test harness). */
   counterKeysSecretArn?: string;
-  /** From address for counter emails (SES; domain identity is verified). */
+  /** From address for all emails (SES; domain identity is verified). */
   sesFrom: string;
+  /** Reply-to for all emails (a monitored human mailbox). */
+  sesReplyTo: string;
+  /** SES configuration set — carries every send so bounce/complaint events
+   *  reach the SNS -> SQS pipeline (0.E). */
+  sesConfigurationSet: string;
+  /** SQS queue receiving SES bounce/complaint/delivery events (0.E). */
+  emailEventsQueueUrl: string;
   dbSecretArn: string;
   screeningQueueUrl: string;
   matchingQueueUrl: string;
@@ -54,7 +61,10 @@ export function loadConfig(): Config {
       process.env.COUNTER_LINK_HMAC_KEY && process.env.COUNTER_COOKIE_KEY
         ? process.env.COUNTER_KEYS_SECRET_ARN
         : required('COUNTER_KEYS_SECRET_ARN'),
-    sesFrom: process.env.SES_FROM ?? 'OpenSwitchboard <counter@openswitchboard.ai>',
+    sesFrom: process.env.SES_FROM ?? 'OpenSwitchboard <board@openswitchboard.ai>',
+    sesReplyTo: process.env.SES_REPLY_TO ?? 'info@openswitchboard.ai',
+    sesConfigurationSet: required('SES_CONFIGURATION_SET'),
+    emailEventsQueueUrl: required('EMAIL_EVENTS_QUEUE_URL'),
     dbSecretArn: required('DB_SECRET_ARN'),
     screeningQueueUrl: required('SCREENING_QUEUE_URL'),
     matchingQueueUrl: required('MATCHING_QUEUE_URL'),

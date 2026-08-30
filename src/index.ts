@@ -6,6 +6,7 @@ import { buildApp } from './app.js';
 import { startScreeningWorker } from './workers/screeningWorker.js';
 import { startMatchingWorker } from './workers/matchingWorker.js';
 import { startOpsWorker } from './workers/opsWorker.js';
+import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 
 async function main() {
   const cfg = loadConfig();
@@ -33,12 +34,14 @@ async function main() {
   const stopScreening = startScreeningWorker(cfg, log);
   const stopMatching = startMatchingWorker(cfg, log);
   const stopOps = startOpsWorker(cfg, log);
+  const stopEmailEvents = startEmailEventsWorker(cfg, log);
 
   const shutdown = async (sig: string) => {
     app.log.info({ sig }, 'shutting down');
     stopScreening();
     stopMatching();
     stopOps();
+    stopEmailEvents();
     await app.close();
     process.exit(0);
   };
