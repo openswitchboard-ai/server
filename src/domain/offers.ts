@@ -157,6 +157,7 @@ export async function agentOfferAction(
 
 async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
   const { createApprovalLink } = await import('../counter/links.js');
+  const { categoryLeafLabel } = await import('./matchRules.js');
   const { sendApprovalEmail } = await import('../counter/email.js');
   const { accountEmail } = await import('./counterOps.js');
   const m = await getMatch(o.match_id);
@@ -180,7 +181,7 @@ async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
       humanAccount,
       linkId,
       token,
-      `An offer on your ${m.category} match is waiting for your decision.`,
+      `An offer on your ${categoryLeafLabel(m.category)} match is waiting for your decision.`,
     );
   }
 }
