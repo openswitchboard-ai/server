@@ -17,7 +17,7 @@
  * observability (single-use + 15-min TTL semantics untouched).
  */
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   BASE_URL,
@@ -36,10 +36,25 @@ import {
   type TestActor,
 } from '../integration/helpers.js';
 
-const SHOTS = 'test-results/screenshots';
+const SHOTS = 'e2e-screenshots'; // outside Playwright's managed outputDir (each run clears that)
 const b64url = (b: Buffer) => b.toString('base64url');
 
 test.describe.configure({ mode: 'serial' });
+
+// One browser context for the whole serial journey: the counter session
+// cookie must persist across tests (phone viewport per the gate).
+let ctx: BrowserContext;
+let page: Page;
+test.beforeAll(async ({ browser }: { browser: Browser }) => {
+  ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    baseURL: COUNTER_URL,
+  });
+  page = await ctx.newPage();
+});
+test.afterAll(async () => {
+  await ctx?.close();
+});
 
 const aliceEmail = `e2e+${randomBytes(5).toString('hex')}@openswitchboard.ai`;
 const ALICE_PIN = '731642';
@@ -93,7 +108,7 @@ async function shot(page: Page, name: string): Promise<void> {
 // Gate (a): the full human journey at phone viewport.
 // ---------------------------------------------------------------------------
 
-test('register: email -> code -> PIN -> consent -> account live', async ({ page }) => {
+test('register: email -> code -> PIN -> consent -> account live', async () => {
   await page.goto('/counter');
   await expect(page.getByRole('heading', { name: 'The counter.' })).toBeVisible();
   await shot(page, '01-landing');
@@ -141,7 +156,7 @@ test('register: email -> code -> PIN -> consent -> account live', async ({ page 
   expect(rows[0][1]).toBe('active');
 });
 
-test('agent OAuth: authorize hand-off happens on the counter, in-browser', async ({ page }) => {
+test('agent OAuth: authorize hand-off happens on the counter, in-browser', async () => {
   // DCR + PKCE as alice's agent.
   const redirectUri = 'https://example.com/cb';
   const reg = await fetch(`${BASE_URL}/oauth/register`, {
@@ -187,7 +202,7 @@ test('agent OAuth: authorize hand-off happens on the counter, in-browser', async
   expect(aliceToken).toBeTruthy();
 });
 
-test('agent posts a card; matches are empty; ledger shows it', async ({ page }) => {
+test('agent posts a card; matches are empty; ledger shows it', async () => {
   const w = await mcpCall(aliceToken, 'publish_intent', {
     card: minimalWant({
       price: { band: { min: 0, max: 800 }, ccy: 'AUD' },
@@ -215,7 +230,7 @@ test('agent posts a card; matches are empty; ledger shows it', async ({ page }) 
 // Gate (b) setup: a counterparty, a match, an offer parked for the human.
 // ---------------------------------------------------------------------------
 
-test('offer arrives: approval link is single-use', async ({ page }) => {
+test('offer arrives: approval link is single-use', async () => {
   bob = await bootstrapActor('Bob', 'Subiaco');
   const h = await mcpCall(bob.accessToken, 'publish_intent', {
     card: minimalHave({
@@ -263,7 +278,7 @@ test('offer arrives: approval link is single-use', async ({ page }) => {
   await shot(page, '11-link-already-used');
 });
 
-test('approval link expires (created_at/expires_at manipulated in test DB)', async ({ page }) => {
+test('approval link expires (created_at/expires_at manipulated in test DB)', async () => {
   // A second offer -> a fresh link, then age it out in the DB.
   const offer = await mcpCall(bob.accessToken, 'respond', {
     match_id: matchId,
@@ -287,7 +302,7 @@ test('approval link expires (created_at/expires_at manipulated in test DB)', asy
   await shot(page, '12-link-expired');
 });
 
-test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async ({ page }) => {
+test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async () => {
   // A big third offer: > 3x alice's median (100, 110) and from a < 7-day-old
   // account -> both anomaly banners.
   const offer = await mcpCall(bob.accessToken, 'respond', {
@@ -325,14 +340,14 @@ test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async 
   expect(accepted.state).toBe('accepted-by-human');
 });
 
-test('ledger: withdraw is immediate', async ({ page }) => {
+test('ledger: withdraw is immediate', async () => {
   await page.goto('/counter/ledger');
   await page
     .locator(`[data-card-id="${aliceCardId}"]`)
     .getByRole('button', { name: 'Withdraw' })
     .click();
   await expect(page.getByText('Withdrawn — effective immediately.')).toBeVisible();
-  await expect(page.getByText('WITHDRAWN')).toBeVisible();
+  await expect(page.getByText('WITHDRAWN', { exact: true })).toBeVisible();
   await shot(page, '16-withdrawn');
   const li = await mcpCall(aliceToken, 'list_intents', {});
   const card = li.result.intents.find((i: any) => i.intent_id === aliceCardId);
@@ -343,13 +358,13 @@ test('ledger: withdraw is immediate', async ({ page }) => {
 // Gate (c): route isolation against LIVE dev, full enumeration.
 // ---------------------------------------------------------------------------
 
-test('route isolation live: bearer x every /counter route; cookie x /mcp', async ({ page }) => {
+test('route isolation live: bearer x every /counter route; cookie x /mcp', async () => {
   // Enumerate the whole route class from the app's own route table.
   process.env.COUNTER_LINK_HMAC_KEY ??= 'aa'.repeat(32);
   process.env.COUNTER_COOKIE_KEY ??= 'bb'.repeat(32);
   const { buildApp } = await import('../../src/app.js');
   const { COUNTER_ROUTE_TABLE } = await import('../../src/counter/routes.js');
-  buildApp({
+  const enumApp = buildApp({
     envName: 'dev',
     port: 0,
     publicOrigin: 'https://mcp.test',
@@ -367,6 +382,7 @@ test('route isolation live: bearer x every /counter route; cookie x /mcp', async
     quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
     docsBase: 'x',
   } as any);
+  await enumApp.ready(); // plugin registration is deferred until ready()
   expect(COUNTER_ROUTE_TABLE.length).toBeGreaterThanOrEqual(25);
 
   const matrix: string[] = [];
@@ -405,7 +421,7 @@ test('route isolation live: bearer x every /counter route; cookie x /mcp', async
 // Gate (d): 6 wrong PINs -> lockout with backoff.
 // ---------------------------------------------------------------------------
 
-test('6 wrong PINs lock the PIN with backoff', async ({ page }) => {
+test('6 wrong PINs lock the PIN with backoff', async () => {
   const cookies = await page.context().cookies(COUNTER_URL);
   const session = cookies.find((c) => c.name === 'osb_counter')!;
   const jar = new Jar();
@@ -443,7 +459,7 @@ test('6 wrong PINs lock the PIN with backoff', async ({ page }) => {
 // Kill switch: one tap pauses everything; agent token dies; PIN restores.
 // ---------------------------------------------------------------------------
 
-test('kill switch suspends agent tokens; PIN un-pauses', async ({ page }) => {
+test('kill switch suspends agent tokens; PIN un-pauses', async () => {
   await page.goto('/counter');
   await page.getByRole('button', { name: 'Pause everything now' }).click();
   await expect(page.getByText('Everything is paused.')).toBeVisible();
