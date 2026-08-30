@@ -93,7 +93,6 @@ function shell(bodyRows: string, f: FooterLinks, accent = LINE): string {
 <table role="presentation" cellpadding="0" cellspacing="0" width="520" style="width:100%;max-width:520px">
 <tr><td style="padding:0 8px 18px;font-family:${SANS};font-size:14px;font-weight:700;color:${INK}">
 <span style="font-size:15px">&#128025;</span>&nbsp; OpenSwitchboard
-<span style="font-weight:600;color:${MUTED};font-size:12px">&nbsp;the counter</span>
 </td></tr>
 <tr><td style="background:${CARD};border:1px solid ${LINE};border-top:3px solid ${accent};border-radius:14px;padding:34px 30px 30px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${bodyRows}</table>
@@ -123,7 +122,7 @@ export function renderVerification(
   const subject = `${v.code} is your OpenSwitchboard code`;
   const html = shell(
     h1('Your code.') +
-      para(`Enter this at the counter to ${what}.`) +
+      para(`Enter it to ${what}.`) +
       center(
         `<div style="font-family:${MONO};font-size:34px;letter-spacing:10px;color:${INK};background:${PAPER};border:1px solid ${LINE};border-radius:12px;padding:16px 10px;margin:18px 0 6px;text-align:center">${esc(v.code)}</div>`,
       ) +
@@ -135,7 +134,7 @@ export function renderVerification(
   );
   const text =
     `Your OpenSwitchboard verification code is: ${v.code}\n\n` +
-    `Enter it at the counter to ${what}, or open this link:\n${v.link}\n\n` +
+    `Enter it to ${what}, or open this link:\n${v.link}\n\n` +
     `The code and the link each work once and expire in 15 minutes. ` +
     `If you did not ask for this, ignore this email.\n\n` +
     footerText(f);
@@ -152,22 +151,22 @@ export function renderApproval(
 ): EmailContent {
   const subject = 'OpenSwitchboard: something is waiting for your approval';
   const line = v.blind
-    ? 'Something at the counter needs your decision.'
+    ? 'Something needs your decision.'
     : (v.summary ?? 'Your assistant lined something up. It needs your decision.');
   const html = shell(
     h1('Your decision is needed.') +
       para(esc(line)) +
       center(button(v.link, 'Review and decide')) +
       small(
-        `The link works once and expires in 15 minutes. After that, sign in at ` +
-          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">the counter</a> to review it. ` +
+        `The link works once and expires in 15 minutes. After that, ` +
+          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">sign in</a> to review it. ` +
           `Nothing is shared or accepted until you approve it.`,
       ),
     f,
     HAVE,
   );
   const text =
-    `${line}\n\nReview and decide at the counter:\n${v.link}\n\n` +
+    `${line}\n\nReview and decide:\n${v.link}\n\n` +
     `The link works once and expires in 15 minutes. After that, sign in at ` +
     `${v.counterUrl} to review it.\n\n` +
     `Nothing is shared or accepted until you approve it.\n\n` +
@@ -181,41 +180,46 @@ export function renderApproval(
 // category (category-level only). Blind: pointer, nothing else.
 // ---------------------------------------------------------------------------
 export function renderSummons(
-  v: { count: number; category?: string; blind: boolean; counterUrl: string },
+  v: { count: number; categoryLabel?: string; blind: boolean; counterUrl: string },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'Your assistant has news';
   let line: string;
   if (v.blind) {
-    line = v.count === 1 ? 'Something is waiting at the counter.' : `${v.count} things are waiting at the counter.`;
+    line = v.count === 1 ? 'Something is waiting for you.' : `${v.count} things are waiting for you.`;
   } else if (v.count === 1) {
-    line = v.category
-      ? `A match is waiting on your <span style="font-family:${MONO};font-size:15px">${esc(v.category)}</span> card.`
-      : 'A match is waiting at the counter.';
+    line = v.categoryLabel
+      ? `A match is waiting on your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(v.categoryLabel)}</span> card.`
+      : 'A match is waiting for you.';
   } else {
-    line = `${v.count} matches are waiting at the counter.`;
+    line = `${v.count} matches are waiting for you.`;
   }
   const textLine = v.blind
     ? v.count === 1
-      ? 'Something is waiting at the counter.'
-      : `${v.count} things are waiting at the counter.`
+      ? 'Something is waiting for you.'
+      : `${v.count} things are waiting for you.`
     : v.count === 1
-      ? v.category
-        ? `A match is waiting on your ${v.category} card.`
-        : 'A match is waiting at the counter.'
-      : `${v.count} matches are waiting at the counter.`;
+      ? v.categoryLabel
+        ? `A match is waiting on your ${v.categoryLabel} card.`
+        : 'A match is waiting for you.'
+      : `${v.count} matches are waiting for you.`;
+  const buttonLabel = v.blind
+    ? "See what's waiting"
+    : v.count === 1
+      ? 'See the match'
+      : 'See your matches';
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
       `<tr><td style="font-family:${SERIF};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
       para(line) +
-      center(button(v.counterUrl, 'Open the counter')) +
+      center(button(v.counterUrl, buttonLabel)) +
       small('Everything about it lives behind your sign-in.'),
     f,
     MATCH,
   );
   const text =
     `Your assistant has news.\n\n${textLine}\n\n` +
-    `Open the counter:\n${v.counterUrl}\n\n` +
+    `${buttonLabel}:\n${v.counterUrl}\n\n` +
     `Everything about it lives behind your sign-in.\n\n` +
     footerText(f);
   return { subject, html, text };
@@ -229,7 +233,8 @@ export function renderSummons(
 // ---------------------------------------------------------------------------
 export interface DigestItem {
   type: 'WANT' | 'HAVE';
-  category: string;
+  /** Human taxonomy label ("Mountain bikes") — never the raw slug. */
+  categoryLabel: string;
   /** New opposite-side cards in this card's (category, geo) cell since the
    *  last digest. null when the cell is under the k-anonymity floor. */
   newOpposite: number | null;
@@ -245,14 +250,14 @@ export function renderDigest(
   if (v.blind) {
     const html = shell(
       h1('Your digest is ready.') +
-        para(`There is movement around your cards ${period}. The detail waits at the counter.`) +
-        center(button(v.counterUrl, 'Open the counter')),
+        para(`There is movement around your cards ${period}. The detail waits behind your sign-in.`) +
+        center(button(v.counterUrl, "See what's new")),
       f,
       MATCH,
     );
     const text =
       `Your digest is ready.\n\nThere is movement around your cards ${period}. ` +
-      `The detail waits at the counter:\n${v.counterUrl}\n\n` +
+      `The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
       footerText(f);
     return { subject, html, text };
   }
@@ -270,7 +275,7 @@ export function renderDigest(
       return `<tr>
 <td style="padding:10px 0;border-bottom:1px solid ${LINE}">
 <span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${it.type}</span>
-<span style="font-family:${MONO};font-size:14px;color:${INK}">&nbsp;${esc(it.category)}</span><br>
+<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(it.categoryLabel)}</span><br>
 <span style="font-family:${SERIF};font-size:15px;color:${MUTED}">${esc(bits.join(' · '))}</span>
 </td></tr>`;
     })
@@ -278,7 +283,7 @@ export function renderDigest(
   const html = shell(
     h1(`Around your cards ${period}.`) +
       `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
-      center(button(v.counterUrl, 'Open the counter')) +
+      center(button(v.counterUrl, "See what's new")) +
       small('Counts are real and current. Near misses stay near misses until the switchboard is sure.'),
     f,
     MATCH,
@@ -291,12 +296,12 @@ export function renderDigest(
         bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
       }
       if (it.nearMisses > 0) bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
-      return `- ${it.type} ${it.category}: ${bits.join(', ')}`;
+      return `- ${it.type} ${it.categoryLabel}: ${bits.join(', ')}`;
     })
     .join('\n');
   const text =
     `Around your cards ${period}:\n\n${textRows}\n\n` +
-    `Open the counter:\n${v.counterUrl}\n\n` +
+    `See what's new:\n${v.counterUrl}\n\n` +
     footerText(f);
   return { subject, html, text };
 }
@@ -308,7 +313,8 @@ export function renderDigest(
 // ---------------------------------------------------------------------------
 export interface RenewalCardItem {
   type: 'WANT' | 'HAVE';
-  category: string;
+  /** Human taxonomy label ("Mountain bikes") — never the raw slug. */
+  categoryLabel: string;
   expiresAt: Date;
   expiringSoon: boolean;
 }
@@ -322,14 +328,14 @@ export function renderRenewal(
   if (v.blind) {
     const html = shell(
       h1('Still true?') +
-        para('Cards on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go at the counter.') +
-        center(button(v.counterUrl, 'Open the counter')),
+        para('Cards on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go from your ledger.') +
+        center(button(v.counterUrl, 'Review your cards')),
       f,
       WANT,
     );
     const text =
       `Still true?\n\nCards on the switchboard lapse on their own. Some of yours ` +
-      `lapse within a week. Keep them or let them go at the counter:\n${v.counterUrl}\n\n` +
+      `lapse within a week. Review your cards:\n${v.counterUrl}\n\n` +
       footerText(f);
     return { subject, html, text };
   }
@@ -339,7 +345,7 @@ export function renderRenewal(
       const when = c.expiresAt.toISOString().slice(0, 10);
       return `<tr><td style="padding:9px 0;border-bottom:1px solid ${LINE}">
 <span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${c.type}</span>
-<span style="font-family:${MONO};font-size:14px;color:${INK}">&nbsp;${esc(c.category)}</span><br>
+<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(c.categoryLabel)}</span><br>
 <span style="font-family:${SANS};font-size:12px;color:${c.expiringSoon ? WANT : MUTED}">lapses ${when}${c.expiringSoon ? ' — within a week' : ''}</span>
 </td></tr>`;
     })
@@ -363,7 +369,7 @@ export function renderRenewal(
   const textRows = v.cards
     .map(
       (c) =>
-        `- ${c.type} ${c.category}: lapses ${c.expiresAt.toISOString().slice(0, 10)}${c.expiringSoon ? ' (within a week)' : ''}`,
+        `- ${c.type} ${c.categoryLabel}: lapses ${c.expiresAt.toISOString().slice(0, 10)}${c.expiringSoon ? ' (within a week)' : ''}`,
     )
     .join('\n');
   const text =
@@ -392,7 +398,7 @@ export function renderKillSwitch(
         para(
           'The kill switch on your account was just activated. All of your cards are paused and your agents&#39; tokens are suspended. Nothing will match, be disclosed, or be accepted while it is on.',
         ) +
-        center(button(v.counterUrl, 'Open the counter')) +
+        center(button(v.counterUrl, 'Open your account')) +
         small(
           'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and review your ledger.',
         ),
@@ -415,8 +421,8 @@ export function renderKillSwitch(
       para(
         'The kill switch on your account was just turned off with your PIN. Your cards are back in matching and your agents&#39; tokens work again.',
       ) +
-      center(button(v.counterUrl, 'Open the counter')) +
-      small('If you did not do this, hit the kill switch again at the counter and change your PIN.'),
+      center(button(v.counterUrl, 'Open your account')) +
+      small('If you did not do this, hit the kill switch again from your account and change your PIN.'),
     f,
     HAVE,
   );
@@ -450,18 +456,18 @@ export function renderSecurityNotice(
   const html = shell(
     h1('A change on your account.') +
       para(line) +
-      center(button(v.counterUrl, 'Review at the counter')) +
+      center(button(v.counterUrl, 'Review your account')) +
       small(
-        'If this was you, all good. If it was someone else, hit the kill switch at the counter — one tap pauses everything.',
+        'If this was you, all good. If it was someone else, hit the kill switch — one tap pauses everything.',
       ),
     f,
     WANT,
   );
   const text =
     `${textLine}\n\n` +
-    `Review at the counter:\n${v.counterUrl}\n\n` +
-    `If this was you, all good. If it was someone else, hit the kill switch at the ` +
-    `counter — one tap pauses everything.\n\n` +
+    `Review your account:\n${v.counterUrl}\n\n` +
+    `If this was you, all good. If it was someone else, hit the kill switch — ` +
+    `one tap pauses everything.\n\n` +
     footerText(f);
   return { subject, html, text };
 }

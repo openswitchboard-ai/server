@@ -31,8 +31,11 @@ const links: FooterLinks = {
   unsubUrl: `${COUNTER}/counter/email/unsub?t=osb_em_test`,
 };
 
-const CATEGORY = 'home-services.plumbing.emergency';
-const SUMMARY = `An offer on your ${CATEGORY} match is waiting for your decision.`;
+// Raw slugs must NEVER appear in an email — only the taxonomy's human label.
+const SLUG = 'goods.bicycle.mountain';
+const LABEL = 'Mountain bikes';
+const LABEL2 = 'Garden tools';
+const SUMMARY = `An offer on your ${LABEL} match is waiting for your decision.`;
 
 /** name -> [content, mustNotAppearInBlindVariant] */
 function allTemplates(): { name: string; content: EmailContent; blind: boolean }[] {
@@ -73,7 +76,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'summons',
       blind: false,
       content: renderSummons(
-        { count: 1, category: CATEGORY, blind: false, counterUrl: `${COUNTER}/counter` },
+        { count: 1, categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/counter` },
         links,
       ),
     },
@@ -86,7 +89,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'summons-blind',
       blind: true,
       content: renderSummons(
-        { count: 1, category: CATEGORY, blind: true, counterUrl: `${COUNTER}/counter` },
+        { count: 1, categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/counter` },
         links,
       ),
     },
@@ -99,8 +102,8 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           blind: false,
           counterUrl: `${COUNTER}/counter`,
           items: [
-            { type: 'WANT', category: CATEGORY, newOpposite: 4, nearMisses: 2 },
-            { type: 'HAVE', category: 'goods.bicycles', newOpposite: null, nearMisses: 1 },
+            { type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 },
+            { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 1 },
           ],
         },
         links,
@@ -114,7 +117,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           cadence: 'daily',
           blind: true,
           counterUrl: `${COUNTER}/counter`,
-          items: [{ type: 'WANT', category: CATEGORY, newOpposite: 4, nearMisses: 2 }],
+          items: [{ type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 }],
         },
         links,
       ),
@@ -128,8 +131,8 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           counterUrl: `${COUNTER}/counter`,
           renewAllUrl: `${COUNTER}/counter/renew?t=tok`,
           cards: [
-            { type: 'WANT', category: CATEGORY, expiresAt: new Date('2026-09-03'), expiringSoon: true },
-            { type: 'HAVE', category: 'goods.bicycles', expiresAt: new Date('2026-10-20'), expiringSoon: false },
+            { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
+            { type: 'HAVE', categoryLabel: LABEL2, expiresAt: new Date('2026-10-20'), expiringSoon: false },
           ],
         },
         links,
@@ -144,7 +147,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           counterUrl: `${COUNTER}/counter`,
           renewAllUrl: `${COUNTER}/counter/renew?t=tok`,
           cards: [
-            { type: 'WANT', category: CATEGORY, expiresAt: new Date('2026-09-03'), expiringSoon: true },
+            { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
           ],
         },
         links,
@@ -191,15 +194,20 @@ describe('email templates: render suite', () => {
       for (const part of [t.content.subject, t.content.text, t.content.html]) {
         expect(lintEmailCopy(part)).toEqual([]);
       }
+      // COPY CULL: "the counter" never appears in email copy (URLs are fine
+      // and never contain the phrase), and raw category slugs never render.
+      const all = (t.content.subject + t.content.text + t.content.html).toLowerCase();
+      expect(all).not.toContain('the counter');
+      expect(all).not.toContain(SLUG);
     });
   }
 
   it('blind variants carry zero content beyond the pointer', () => {
     for (const t of allTemplates().filter((x) => x.blind)) {
       const both = t.content.html + '\n' + t.content.text + '\n' + t.content.subject;
-      expect(both).not.toContain(CATEGORY);
-      expect(both).not.toContain('plumbing');
-      expect(both).not.toContain('bicycles');
+      expect(both).not.toContain(LABEL);
+      expect(both).not.toContain(LABEL2);
+      expect(both).not.toContain('Mountain');
       expect(both).not.toContain('offer');
       expect(both).not.toContain('2026-09-03');
       expect(both).not.toContain('WANT');
