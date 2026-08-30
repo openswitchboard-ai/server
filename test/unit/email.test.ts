@@ -199,6 +199,17 @@ describe('email templates: render suite', () => {
       const all = (t.content.subject + t.content.text + t.content.html).toLowerCase();
       expect(all).not.toContain('the counter');
       expect(all).not.toContain(SLUG);
+      // FONTS: one system sans stack everywhere; mono only for codes. Every
+      // font-family in the HTML must be one of the two approved stacks, and
+      // no web fonts are ever linked.
+      const APPROVED = [
+        "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+        'ui-monospace,Menlo,Consolas,monospace',
+      ];
+      const fams = [...t.content.html.matchAll(/font-family:([^;"]+)/g)].map((m) => m[1].trim());
+      expect(fams.length).toBeGreaterThan(0);
+      for (const fam of fams) expect(APPROVED).toContain(fam);
+      expect(t.content.html).not.toMatch(/fonts\.googleapis|@font-face|<link/i);
     });
   }
 
