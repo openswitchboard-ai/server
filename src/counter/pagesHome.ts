@@ -309,6 +309,8 @@ pointer — "something needs your decision" — with all detail kept here.</p>
 export interface RenewCardView {
   type: string;
   category: string;
+  /** The card's own attributes, summarised — what tells two same-category cards apart. */
+  attributes?: string;
   expires: string;
   expiringSoon: boolean;
 }
@@ -320,6 +322,7 @@ export function renewPage(cards: RenewCardView[], token: string): string {
 <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
 <span class="cat">${esc(c.category)}</span>
 ${c.expiringSoon ? '<span class="badge state">lapses within a week</span>' : ''}</div>
+${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
 <div class="kv">lapses ${esc(c.expires)}</div></div>`,
     )
     .join('');
