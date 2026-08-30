@@ -167,7 +167,151 @@ describe('approval link signing', () => {
 describe('consent statement', () => {
   it('is the exact agreed text', () => {
     expect(CONSENT_STATEMENT).toBe(
-      'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything at the counter.',
+      'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COPY CULL render suite (0.H) — mirrors the email suite: render every
+// counter page with representative data and assert the banned phrasing and
+// raw category slugs can never regress. Routes hand pages the taxonomy's
+// human label (categoryLeafLabel); pages must never see or show a raw slug.
+// ---------------------------------------------------------------------------
+import * as cpages from '../../src/counter/pages.js';
+import * as chome from '../../src/counter/pagesHome.js';
+import { lintEmailCopy } from '../../src/email/lint.js';
+import { categoryLeafLabel } from '../../src/domain/matchRules.js';
+
+const SLUG = 'goods.bicycle.mountain';
+const LABEL = categoryLeafLabel(SLUG);
+
+describe('counter pages: copy-cull render suite', () => {
+  const allPages = (): { name: string; html: string }[] => [
+    { name: 'landing', html: cpages.landingPage() },
+    { name: 'register-email', html: cpages.registerEmailPage('Bad email.') },
+    {
+      name: 'code-entry',
+      html: cpages.codeEntryPage({ verificationId: 'v-1', action: '/counter/verify' }),
+    },
+    { name: 'pin-set', html: cpages.pinSetPage() },
+    { name: 'passkey-offer', html: cpages.passkeyOfferPage() },
+    { name: 'consent', html: cpages.consentPage() },
+    { name: 'login', html: cpages.loginEmailPage() },
+    { name: 'message-default-back', html: cpages.messagePage('Renewed', '<p>Done.</p>') },
+    { name: 'link-dead-used', html: cpages.linkDeadPage('used') },
+    { name: 'link-dead-expired', html: cpages.linkDeadPage('expired') },
+    { name: 'link-dead-invalid', html: cpages.linkDeadPage('invalid') },
+    {
+      name: 'approval-offer',
+      html: cpages.approvalPage({
+        action: 'offer-accept',
+        refId: 'ref-1',
+        facts: [
+          { k: 'You are agreeing to', v: '620 AUD' },
+          { k: 'For', v: LABEL },
+          { k: 'Offer expires', v: 'Tue, 01 Sep 2026 00:00:00 GMT' },
+        ],
+        anomalies: ['3× your usual amount'],
+        hasPasskey: true,
+        elevated: false,
+        postPath: '/counter/approve',
+      }),
+    },
+    { name: 'oauth-authorize', html: cpages.authorizePage('Claude for Chores', '/counter/authorize', {}) },
+    { name: 'registration-closed', html: cpages.registrationClosedPage() },
+    {
+      name: 'dashboard',
+      html: chome.dashboardPage({
+        emailUnreachable: true,
+        killSwitchOn: false,
+        cardCounts: { total: 2, published: 1, pending: 1 },
+        pendingApprovals: [
+          { href: '/counter/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
+        ],
+        matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }],
+        collectionWindows: [
+          { cardId: 'c-1', category: LABEL, type: 'WANT', until: '2026-09-01 00:00 UTC', interestedParties: 2 },
+        ],
+      }),
+    },
+    { name: 'dashboard-kill-on', html: chome.dashboardPage({ killSwitchOn: true, cardCounts: { total: 0, published: 0, pending: 0 }, pendingApprovals: [], matches: [], collectionWindows: [] }) },
+    {
+      name: 'ledger',
+      html: chome.ledgerPage([
+        {
+          id: 'c-1',
+          type: 'WANT',
+          category: LABEL,
+          state: 'PUBLISHED',
+          status: 'active',
+          expiresAt: '2026-10-01',
+          priceBand: '0–800 AUD',
+          matchSummary: 'no matches yet',
+          attributes: 'condition: good',
+        },
+      ], 'Withdrawn — effective immediately.'),
+    },
+    {
+      name: 'card-edit',
+      html: chome.cardEditPage({
+        id: 'c-1',
+        type: 'WANT',
+        category: LABEL,
+        urgency: 'none',
+        status: 'active',
+        ttlDays: 60,
+        attributesJson: '{}',
+        collectWindowDefault: 240,
+      }),
+    },
+    {
+      name: 'settings',
+      html: chome.settingsPage({
+        blindMode: false,
+        freqMatches: 'immediate',
+        freqDigests: 'daily',
+        complaintSuppressed: true,
+        emailUnreachable: true,
+      }),
+    },
+    {
+      name: 'renew',
+      html: chome.renewPage(
+        [{ type: 'WANT', category: LABEL, expires: '2026-09-05', expiringSoon: true }],
+        'osb_em_tok',
+      ),
+    },
+    { name: 'unsub', html: chome.unsubPage('osb_em_tok') },
+    { name: 'reverify', html: chome.reverifyCodePage('v-1') },
+  ];
+
+  it('the taxonomy maps the test slug to a human label', () => {
+    expect(LABEL).toBe('Mountain bikes');
+    expect(LABEL).not.toContain('.');
+  });
+
+  for (const p of allPages()) {
+    it(`${p.name}: no "the counter", no raw slugs, passes the banned-phrase lint`, () => {
+      const low = p.html.toLowerCase();
+      // "the counter" and "your counter" are gone from every page. URLs are
+      // fine: route paths are "/counter/...", which never form the phrase.
+      expect(low).not.toContain('the counter');
+      expect(low).not.toContain('your counter');
+      // Raw category slugs never render — the label does.
+      expect(p.html).not.toContain(SLUG);
+      expect(low).not.toMatch(/goods\.[a-z]/);
+      // Banned jargon stays out of page copy.
+      expect(low).not.toContain('safety rail');
+      // VOICE: same antithesis lint the email suite runs.
+      expect(lintEmailCopy(p.html)).toEqual([]);
+    });
+  }
+
+  it('pages given a category label show it', () => {
+    const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
+    for (const name of ['dashboard', 'ledger', 'card-edit', 'renew', 'approval-offer']) {
+      expect(byName[name], name).toContain(LABEL);
+    }
   });
 });

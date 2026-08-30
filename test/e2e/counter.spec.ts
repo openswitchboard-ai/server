@@ -110,7 +110,7 @@ async function shot(page: Page, name: string): Promise<void> {
 
 test('register: email -> code -> PIN -> consent -> account live', async () => {
   await page.goto('/counter');
-  await expect(page.getByRole('heading', { name: 'The counter.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your approval page.' })).toBeVisible();
   await shot(page, '01-landing');
 
   await page.getByRole('link', { name: 'Open an account' }).click();
@@ -141,7 +141,7 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   ).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
   await page
-    .getByLabel('My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything at the counter.')
+    .getByLabel('My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.')
     .check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
@@ -219,7 +219,11 @@ test('agent posts a card; matches are empty; ledger shows it', async () => {
   expect(m.result.matches).toEqual([]);
 
   await page.goto('/counter/ledger');
-  await expect(page.getByText('goods.bicycle.mountain')).toBeVisible();
+  // COPY CULL (0.H): the ledger shows the taxonomy's human label, and the raw
+  // slug appears nowhere on the page.
+  await expect(page.getByText('Mountain bikes')).toBeVisible();
+  expect(await page.content()).not.toContain('goods.bicycle.mountain');
+  expect((await page.content()).toLowerCase()).not.toContain('the counter');
   await expect(page.getByText('PUBLISHED')).toBeVisible();
   await expect(page.getByText('private band 0–800 AUD')).toBeVisible(); // owner-only
   await expect(page.getByText('no matches yet')).toBeVisible();

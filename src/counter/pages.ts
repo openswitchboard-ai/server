@@ -12,7 +12,7 @@ export function esc(s: string): string {
 }
 
 export const CONSENT_STATEMENT =
-  'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything at the counter.';
+  'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.';
 
 const CSS = `
 :root {
@@ -103,7 +103,7 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
 <div class="wrap">
 <header class="site"><span class="octo">🐙</span>
   <a href="/counter"><span class="brand">OpenSwitchboard</span></a>
-  <span class="sub">the counter</span></header>
+  <span class="sub">your approval page</span></header>
 ${body}
 <footer>Everything agents must never do, you do here.<br>openswitchboard.ai</footer>
 </div></body></html>`;
@@ -114,10 +114,10 @@ export const errBox = (msg?: string) => (msg ? `<div class="err">${esc(msg)}</di
 // ---------------------------------------------------------------------------
 
 export function landingPage(): string {
-  return layout('The counter', `
-<h1>The counter.</h1>
+  return layout('Your approval page', `
+<h1>Your approval page.</h1>
 <p>Your agent works the switchboard — posting wants &amp; haves, checking matches,
-negotiating. The counter is the one place where <em>you</em> do everything it
+negotiating. This page is the one place where <em>you</em> do everything it
 never can: open the account, set your PIN, approve what gets shared or paid,
 see the ledger, pull the plug.</p>
 <a class="btn" href="/counter/register">Open an account</a>
@@ -264,7 +264,7 @@ document.getElementById('pk').addEventListener('click', async () => {
 </script>`);
 }
 
-export function messagePage(title: string, html: string, backHref = '/counter', backLabel = 'Back to the counter'): string {
+export function messagePage(title: string, html: string, backHref = '/counter', backLabel = 'Back to your approval page'): string {
   return layout(title, `<h1>${esc(title)}</h1>${html}
 <a class="btn secondary" href="${esc(backHref)}">${esc(backLabel)}</a>`);
 }
@@ -272,14 +272,14 @@ export function messagePage(title: string, html: string, backHref = '/counter', 
 export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
   const text = {
     used: `<p>This approval link has already been used. Each link works exactly once.</p>
-<p class="muted small">If you still have something waiting, it's listed on your counter.</p>`,
+<p class="muted small">If you still have something waiting, it's listed on your approval page.</p>`,
     expired: `<p>This approval link has expired — links live for 15 minutes.</p>
-<p class="muted small">Anything still waiting for you is listed on your counter.</p>`,
+<p class="muted small">Anything still waiting for you is listed on your approval page.</p>`,
     invalid: `<p>This approval link isn't valid.</p>`,
   }[reason];
   const title = { used: 'Already used', expired: 'Link expired', invalid: 'Not a valid link' }[reason];
   return layout(title, `<h1>${esc(title)}.</h1>${text}
-<a class="btn" href="/counter">Go to the counter</a>`);
+<a class="btn" href="/counter">Go to your approval page</a>`);
 }
 
 export interface ApprovalView {
@@ -354,7 +354,7 @@ export function authorizePage(clientName: string, postPath: string, hidden: Reco
 <div class="fact"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
 <p>It can post wants &amp; haves as cards, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
-waits for you, here at the counter.</p>
+waits for you, here on your approval page.</p>
 <form method="POST" action="${esc(postPath)}">
 ${hiddenInputs}
   <button type="submit" name="decision" value="approve">Authorize</button>
