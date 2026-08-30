@@ -74,11 +74,12 @@ async function insertCard(
   accountId: string,
   type: 'WANT' | 'HAVE',
   expiresDays = 60,
+  attributes: Record<string, unknown> = {},
 ): Promise<string> {
   const rows = await dbExec(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, attributes,
                         urgency, lifecycle_state, ttl_days, expires_at)
-     VALUES (:a::uuid, '0.1', :t, :c, :g::jsonb, '{}'::jsonb, 'none', 'PUBLISHED', 60,
+     VALUES (:a::uuid, '0.1', :t, :c, :g::jsonb, :attrs::jsonb, 'none', 'PUBLISHED', 60,
              now() + make_interval(days => :d::int))
      RETURNING id`,
     [
@@ -86,6 +87,7 @@ async function insertCard(
       { name: 't', value: type },
       { name: 'c', value: CATEGORY },
       { name: 'g', value: GEO },
+      { name: 'attrs', value: JSON.stringify(attributes) },
       { name: 'd', value: expiresDays },
     ],
   );
@@ -294,7 +296,7 @@ d('0.E email daemon (live dev)', () => {
   it('(e) renewal: expiring card -> renewal email; renew-all extends with consent', async () => {
     const email = simEmail('g');
     const accountId = await createAccount(email);
-    const cardId = await insertCard(accountId, 'HAVE', 3); // lapses in 3 days
+    const cardId = await insertCard(accountId, 'HAVE', 3, { colour: `teal-${runId}` }); // lapses in 3 days
     await sendOp({ op: 'email-renewal-tick' });
     // Poll until the send-log row reaches a TERMINAL state ('failed' with
     // detail 'send in flight' is the pre-SES marker, not an outcome).
@@ -322,7 +324,14 @@ d('0.E email daemon (live dev)', () => {
 
     const page = await counterFetch(new Jar(), `/counter/renew?t=${encodeURIComponent(token)}`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain(CATEGORY);
+    // 0.H copy cull: the page shows the category's human leaf label (this
+    // synthetic category is not in the taxonomy, so the leaf segment renders)
+    // plus the card's own attributes as the distinguishing detail line —
+    // and the raw slug appears nowhere.
+    const renewHtml = await page.text();
+    expect(renewHtml).toContain(runId); // leaf label of intg-email.<runId>
+    expect(renewHtml).toContain(`colour: teal-${runId}`);
+    expect(renewHtml).not.toContain(CATEGORY);
     const renew = await counterFetch(new Jar(), '/counter/renew', form({ t: token }));
     expect(renew.status).toBe(200);
     expect(await renew.text()).toContain('renewed');

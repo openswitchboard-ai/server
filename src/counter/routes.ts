@@ -666,6 +666,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     // ------------------------------------------------------------------
     // Ledger.
     // ------------------------------------------------------------------
+    // The human-readable detail line for a card row: its own typed attributes.
+    // With slugs culled from every page, this is what tells two same-category
+    // cards apart ("Mountain bikes — condition: good · frame: large").
+    const attrsSummary = (attrs: any): string | undefined =>
+      attrs && Object.keys(attrs).length
+        ? Object.entries(attrs)
+            .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+            .join(' · ')
+        : undefined;
+
     const cardToView = (c: ops.LedgerCard): home.LedgerCardView => ({
       id: c.id,
       type: c.type,
@@ -676,12 +686,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       priceBand: c.price?.band ? `${c.price.band.min}–${c.price.band.max} ${c.price.ccy ?? ''}`.trim() : undefined,
       ask: c.ask ? `${c.ask.amount} ${c.ask.ccy ?? ''}`.trim() : undefined,
       matchSummary: c.matchCount === 0 ? 'no matches yet' : `${c.matchCount} match${c.matchCount === 1 ? '' : 'es'}`,
-      attributes:
-        c.attributes && Object.keys(c.attributes).length
-          ? Object.entries(c.attributes)
-              .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
-              .join(' · ')
-          : undefined,
+      attributes: attrsSummary(c.attributes),
     });
 
     counter.get('/ledger', async (req, reply) => {
@@ -937,7 +942,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
       const v = verifyEmailToken(t, 'renew-all');
       if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
       const cards = await getPool().query(
-        `SELECT type, category, expires_at,
+        `SELECT type, category, attributes, expires_at,
                 (expires_at <= now() + interval '7 days') AS expiring_soon
          FROM cards
          WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
@@ -956,6 +961,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
           cards.rows.map((c: any) => ({
             type: c.type,
             category: categoryLeafLabel(c.category),
+            attributes: attrsSummary(c.attributes),
             expires: new Date(c.expires_at).toISOString().slice(0, 10),
             expiringSoon: !!c.expiring_soon,
           })),
