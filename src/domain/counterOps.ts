@@ -130,6 +130,21 @@ export interface LedgerCard {
   price?: any; // decrypted for the OWNER only, server-side, audit-logged
   matchCount: number;
   latestMatchState?: string;
+  collect_window_minutes?: number | null;
+}
+
+/** Per-card collection-window override; may only SHORTEN the default. */
+export async function setCollectWindowOverride(
+  accountId: string,
+  cardId: string,
+  minutes: number | null,
+): Promise<void> {
+  const r = await getPool().query(
+    `UPDATE cards SET collect_window_minutes = $3, updated_at = now()
+     WHERE id = $1 AND account_id = $2 RETURNING id`,
+    [cardId, accountId, minutes],
+  );
+  if (!r.rowCount) throw new Error('card not found');
 }
 
 export async function ledgerCards(cfg: Config, accountId: string): Promise<LedgerCard[]> {
@@ -164,6 +179,7 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     expires_at: row.expires_at,
     price: bands[row.id] ? JSON.parse(bands[row.id]) : undefined,
     matchCount: row.match_count,
+    collect_window_minutes: row.collect_window_minutes,
   }));
 }
 
@@ -210,6 +226,54 @@ export async function pendingDisclosures(accountId: string): Promise<PendingDisc
        AND NOT EXISTS (SELECT 1 FROM consent_tokens t
                        WHERE t.match_id = m.id AND t.account_id = $1 AND t.kind = 'stage3-optin')
      ORDER BY m.updated_at DESC LIMIT 20`,
+    [accountId],
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------------------
+// 0.F: match-quality verdicts + collection windows on the dashboard.
+// ---------------------------------------------------------------------------
+
+export interface VerdictableMatch {
+  match_id: string;
+  category: string;
+  score: number;
+  stage: number;
+  verdict?: string;
+}
+
+/** Open matches this human can pass a one-tap quality verdict on. */
+export async function verdictableMatches(accountId: string): Promise<VerdictableMatch[]> {
+  const r = await getPool().query(
+    `SELECT m.id AS match_id, m.category, m.score, m.stage, v.verdict
+     FROM matches m
+     LEFT JOIN match_verdicts v ON v.match_id = m.id AND v.account_id = $1
+     WHERE (m.account_want = $1 OR m.account_have = $1) AND m.state = 'open'
+     ORDER BY m.created_at DESC LIMIT 10`,
+    [accountId],
+  );
+  return r.rows;
+}
+
+export interface OpenWindowView {
+  card_id: string;
+  category: string;
+  type: string;
+  until: Date;
+  interested_parties: number;
+}
+
+/** This human's OWN cards with an open collection window (holder view). */
+export async function openCollectionWindows(accountId: string): Promise<OpenWindowView[]> {
+  const r = await getPool().query(
+    `SELECT c.id AS card_id, c.category, c.type, c.collect_until AS until,
+            (SELECT count(*)::int FROM matches m
+             WHERE (m.card_want = c.id OR m.card_have = c.id) AND m.state = 'open')
+              AS interested_parties
+     FROM cards c
+     WHERE c.account_id = $1 AND c.collect_until > now() AND c.collect_closed_at IS NULL
+     ORDER BY c.collect_until ASC`,
     [accountId],
   );
   return r.rows;

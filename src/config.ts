@@ -34,6 +34,8 @@ export interface Config {
   consentLogBucket: string;
   identityKeyArn: string;
   bedrockModelId: string;
+  /** Titan Text Embeddings v2 (1024-dim) - the matching engine's embedder. */
+  bedrockEmbedModelId: string;
   registrationMode: 'dev-bootstrap' | 'closed';
   region: string;
   quotas: Quotas;
@@ -60,6 +62,7 @@ export function loadConfig(): Config {
     consentLogBucket: required('CONSENT_LOG_BUCKET'),
     identityKeyArn: required('IDENTITY_KEY_ARN'),
     bedrockModelId: required('BEDROCK_MODEL_ID'),
+    bedrockEmbedModelId: process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0',
     registrationMode: envName === 'prod' ? 'closed' : 'dev-bootstrap',
     region: process.env.AWS_REGION ?? 'us-east-1',
     quotas: {

@@ -36,3 +36,22 @@ export async function checkOfferRate(accountId: string, q: Quotas): Promise<void
     throw new OsbError('RATE_LIMITED_OFFERS', { retry_after: 3600 });
   }
 }
+
+/** Anti-probing rail: max 3 offers per side per MATCH per rolling 24h. */
+export const MAX_OFFERS_PER_MATCH_PER_DAY = 3;
+
+export async function checkPerMatchOfferRate(accountId: string, matchId: string): Promise<void> {
+  const r = await getPool().query(
+    `SELECT count(*)::int AS n,
+            min(created_at) AS oldest
+     FROM offers
+     WHERE proposer_account = $1 AND match_id = $2
+       AND created_at > now() - interval '24 hours'`,
+    [accountId, matchId],
+  );
+  if (r.rows[0].n >= MAX_OFFERS_PER_MATCH_PER_DAY) {
+    const oldest = new Date(r.rows[0].oldest).getTime();
+    const retry = Math.max(60, Math.ceil((oldest + 86_400_000 - Date.now()) / 1000));
+    throw new OsbError('RATE_LIMITED_OFFERS', { retry_after: retry });
+  }
+}

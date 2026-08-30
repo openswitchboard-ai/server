@@ -7,11 +7,28 @@ export interface PendingApprovalItem {
   amount?: string;
 }
 
+export interface DashboardMatchItem {
+  matchId: string;
+  category: string;
+  score: number;
+  verdict?: string;
+}
+
+export interface DashboardWindowItem {
+  cardId: string;
+  category: string;
+  type: string;
+  until: string;
+  interestedParties: number;
+}
+
 export interface DashboardView {
   firstName?: string;
   killSwitchOn: boolean;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
+  matches: DashboardMatchItem[];
+  collectionWindows: DashboardWindowItem[];
 }
 
 export function dashboardPage(v: DashboardView): string {
@@ -44,10 +61,59 @@ confirmation email sent. Un-pausing needs your PIN.</p>
         .join('')
     : `<p class="muted small">Nothing is waiting for you.</p>`;
 
+  // Collection windows: HOLDER-only view. Rivals' pages never render this.
+  const windows = v.collectionWindows.length
+    ? `<h2>Collecting interest</h2>` +
+      v.collectionWindows
+        .map(
+          (w) => `<div class="card-row"><div class="top">
+<span class="badge ${w.type === 'WANT' ? 'want' : 'have'}">${esc(w.type)}</span>
+<span class="cat">${esc(w.category)}</span></div>
+<div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
+ — window open until ${esc(w.until)}. Offers and interest keep arriving until then.</div>
+<form method="POST" action="/counter/collect/${esc(w.cardId)}/close">
+  <button type="submit" class="secondary">Close early &amp; choose now</button>
+</form></div>`,
+        )
+        .join('')
+    : '';
+
+  const matchRows = v.matches.length
+    ? `<h2>Your matches</h2><p class="small muted">Was the switchboard right to
+introduce this? One tap tunes your matching. "Not for me" also mutes the
+pairing — no reason is ever sent to the other side.</p>` +
+      v.matches
+        .map(
+          (m) => `<div class="card-row"><div class="top">
+<span class="badge match">MATCH</span>
+<span class="cat">${esc(m.category)}</span>
+<span class="badge state">score ${(m.score * 100).toFixed(0)}%</span></div>
+${
+  m.verdict
+    ? `<div class="kv">Your call: <strong>${esc(m.verdict)}</strong></div>`
+    : `<div class="row-actions">
+<form method="POST" action="/counter/verdict" style="display:inline">
+  <input type="hidden" name="match_id" value="${esc(m.matchId)}">
+  <input type="hidden" name="verdict" value="good-call">
+  <button type="submit" class="secondary">Good call</button>
+</form>
+<form method="POST" action="/counter/verdict" style="display:inline">
+  <input type="hidden" name="match_id" value="${esc(m.matchId)}">
+  <input type="hidden" name="verdict" value="not-for-me">
+  <button type="submit" class="secondary">Not for me</button>
+</form></div>`
+}
+</div>`,
+        )
+        .join('')
+    : '';
+
   return layout('The counter', `
 <h1>${v.firstName ? `G'day${esc(v.firstName ? ', ' + v.firstName : '')}.` : 'Your counter.'}</h1>
 <h2>Waiting for you</h2>
 ${approvals}
+${windows}
+${matchRows}
 <h2>Your ledger</h2>
 <p class="small muted">${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'}
  — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.</p>
@@ -118,6 +184,9 @@ export interface CardEditView {
   bandMin?: string;
   bandMax?: string;
   bandCcy?: string;
+  collectWindowMinutes?: string;
+  /** default window (minutes) for this card's urgency; overrides may only shorten */
+  collectWindowDefault: number;
 }
 
 export function cardEditPage(c: CardEditView, error?: string): string {
@@ -149,7 +218,12 @@ ${errBox(error)}
   <label for="band_ccy">Band currency</label>
   <input id="band_ccy" name="band_ccy" type="text" maxlength="3" pattern="[A-Z]{3}" value="${esc(c.bandCcy ?? '')}" placeholder="AUD">
   <label for="urgency">Urgency</label>
-  <select id="urgency" name="urgency">${['none', 'low', 'medium', 'high'].map((u) => opt(u, c.urgency)).join('')}</select>
+  <select id="urgency" name="urgency">${['none', 'days', 'today'].map((u) => opt(u, c.urgency)).join('')}</select>
+  <label for="collect_window">Collection window, minutes (optional — when several parties
+match this card at once, interest is collected this long before you choose;
+may only be SHORTER than the default ${c.collectWindowDefault})</label>
+  <input id="collect_window" name="collect_window" type="number" min="1" max="${c.collectWindowDefault}"
+   value="${esc(c.collectWindowMinutes ?? '')}" placeholder="${c.collectWindowDefault}">
   <label for="status">Visibility</label>
   <select id="status" name="status">${opt('active', c.status)}${opt('latent', c.status)}</select>
   <label for="ttl_days">Days until expiry</label>
