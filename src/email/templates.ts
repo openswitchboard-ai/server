@@ -1,8 +1,9 @@
 /**
  * Email templates (phase 0.E). Every message renders BOTH a responsive HTML
- * part and a plaintext part, from typed inputs, with the brand tokens the
- * counter uses (paper/ink palette, Sora/Newsreader/Plex Mono stacks, Patch
- * small in the header).
+ * part and a plaintext part, from typed inputs, with the brand palette the
+ * counter uses (paper/ink tokens, Patch small in the header). Type is ONE
+ * system sans stack everywhere (mail clients strip web fonts; a mixed
+ * serif/sans role split falls back inconsistently) — mono only for codes.
  *
  * VOICE RULES (enforced by the banned-phrase lint in lint.ts and the render
  * suite): plain, human, zero marketing, no antithesis constructions.
@@ -45,9 +46,10 @@ const MATCH = '#6D28D9';
 const HAVE = '#0E7268';
 const WANT = '#B45309';
 
-const SANS = "'Sora','Avenir Next','Segoe UI',Helvetica,Arial,sans-serif";
-const SERIF = "'Newsreader',Georgia,'Times New Roman',serif";
-const MONO = "'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace";
+// ONE system sans stack for every element (mail clients strip web fonts, so
+// mixed roles fall back inconsistently). Mono is for verification codes ONLY.
+const SANS = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const MONO = "ui-monospace,Menlo,Consolas,monospace";
 
 function button(href: string, label: string): string {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px auto 8px"><tr>
@@ -106,7 +108,7 @@ ${footerHtml(f)}
 const h1 = (t: string) =>
   `<tr><td style="font-family:${SANS};font-size:22px;font-weight:700;line-height:1.25;color:${INK};padding-bottom:10px">${t}</td></tr>`;
 const para = (t: string, extra = '') =>
-  `<tr><td style="font-family:${SERIF};font-size:17px;line-height:1.6;color:${INK};padding:4px 0${extra}">${t}</td></tr>`;
+  `<tr><td style="font-family:${SANS};font-size:17px;line-height:1.6;color:${INK};padding:4px 0${extra}">${t}</td></tr>`;
 const small = (t: string) =>
   `<tr><td style="font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};padding-top:16px">${t}</td></tr>`;
 const center = (inner: string) => `<tr><td align="center">${inner}</td></tr>`;
@@ -209,7 +211,7 @@ export function renderSummons(
       : 'See your matches';
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
-      `<tr><td style="font-family:${SERIF};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
+      `<tr><td style="font-family:${SANS};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
       para(line) +
       center(button(v.counterUrl, buttonLabel)),
     f,
@@ -273,7 +275,7 @@ export function renderDigest(
 <td style="padding:10px 0;border-bottom:1px solid ${LINE}">
 <span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${it.type}</span>
 <span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(it.categoryLabel)}</span><br>
-<span style="font-family:${SERIF};font-size:15px;color:${MUTED}">${esc(bits.join(' · '))}</span>
+<span style="font-family:${SANS};font-size:15px;color:${MUTED}">${esc(bits.join(' · '))}</span>
 </td></tr>`;
     })
     .join('');
