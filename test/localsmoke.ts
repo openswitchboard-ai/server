@@ -1,23 +1,29 @@
 /**
  * Local smoke harness (not a vitest file): boots the app against a local
  * pgvector Postgres (DATABASE_URL) with real dev AWS resources for KMS/S3,
- * then exercises migrations, account creation, the OAuth flow and an MCP
- * tools/list via fastify inject. Run:
+ * then exercises migrations, the FULL counter registration flow (email
+ * verification -> PIN -> consent), the 0.D OAuth flow (authorize hand-off ->
+ * counter approval), route isolation, and MCP via fastify inject/listen. Run:
  *   AWS_PROFILE=openswitchboard DATABASE_URL=postgres://postgres:pw@127.0.0.1:5544/osb \
- *     npx tsx test/localsmoke.ts
+ *     IDENTITY_KEY_ARN=<dev identity key arn> npx tsx test/localsmoke.ts
  */
 import assert from 'node:assert';
-import { createHash, randomBytes, scryptSync } from 'node:crypto';
-import { initDb, migrate } from '../src/db.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { initDb, migrate, getPool } from '../src/db.js';
 import { initEnvelope } from '../src/crypto.js';
+import { initCounterKeys } from '../src/counter/keys.js';
 import { buildApp } from '../src/app.js';
-import { createAccount } from '../src/domain/accounts.js';
 import type { Config } from '../src/config.js';
+
+process.env.COUNTER_LINK_HMAC_KEY ??= randomBytes(32).toString('hex');
+process.env.COUNTER_COOKIE_KEY ??= randomBytes(32).toString('hex');
 
 const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'http://localhost:8080',
+  counterOrigin: 'http://counter.localhost',
+  sesFrom: 'OpenSwitchboard <counter@openswitchboard.ai>',
   dbSecretArn: 'unused',
   screeningQueueUrl: process.env.SCREENING_QUEUE_URL ?? 'http://unused',
   matchingQueueUrl: process.env.MATCHING_QUEUE_URL ?? 'http://unused',
@@ -31,39 +37,98 @@ const cfg: Config = {
   docsBase: 'https://openswitchboard.ai/docs',
 };
 
+const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
+const COUNTER_HOST = 'counter.localhost';
+
 await initDb(cfg);
 await migrate();
 console.log('migrations OK');
 initEnvelope(cfg);
-
-const email = `smoke+${randomBytes(4).toString('hex')}@example.com`;
-const code = 'osb-dev-smoketest';
-const salt = randomBytes(16);
-const accountId = await createAccount({
-  email,
-  first_name: 'Smokey',
-  locality: 'Testville',
-  login_code_hash: `scrypt$${salt.toString('hex')}$${scryptSync(code, salt, 32).toString('hex')}`,
-});
-console.log('account created (envelope-encrypted via real KMS):', accountId);
+await initCounterKeys(cfg);
 
 const app = buildApp(cfg);
 const h = await app.inject({ method: 'GET', url: '/healthz' });
 assert.equal(h.statusCode, 200);
 
-// DCR
-const reg = await app.inject({
+// ---------------------------------------------------------------------------
+// Counter registration: email -> code -> PIN -> consent -> account live.
+// (SES send is attempted for real; in the sandbox an unverified recipient is
+// rejected and — dev only — tolerated. The harness reads/stamps the code in
+// the local test DB: single-use + TTL semantics unchanged.)
+// ---------------------------------------------------------------------------
+const email = `smoke+${randomBytes(4).toString('hex')}@example.com`;
+const jar: Record<string, string> = {};
+const absorb = (res: any) => {
+  const sc = res.headers['set-cookie'];
+  for (const c of Array.isArray(sc) ? sc : sc ? [sc] : []) {
+    const [pair] = c.split(';');
+    const [k, ...v] = pair.split('=');
+    jar[k.trim()] = v.join('=');
+  }
+};
+const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+const counterReq = async (method: 'GET' | 'POST', url: string, body?: Record<string, string>) => {
+  const res = await app.inject({
+    method,
+    url,
+    headers: {
+      host: COUNTER_HOST,
+      cookie: cookieHeader(),
+      ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
+    },
+    ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
+  });
+  absorb(res);
+  return res;
+};
+
+const reg = await counterReq('POST', '/counter/register', { email });
+assert.equal(reg.statusCode, 200, reg.body);
+const vid = reg.body.match(/name="verification_id" value="([^"]+)"/)![1];
+await getPool().query('UPDATE email_verifications SET code_hash = $2 WHERE id = $1', [
+  vid,
+  sha256hex(`424242:${vid}`),
+]);
+const ver = await counterReq('POST', '/counter/verify', { verification_id: vid, code: '424242' });
+assert.equal(ver.statusCode, 303, ver.body);
+assert.equal(ver.headers.location, '/counter/pin');
+// single-use: the same code again must fail
+const again = await counterReq('POST', '/counter/verify', { verification_id: vid, code: '424242' });
+assert.equal(again.statusCode, 401, 'verification must be single-use');
+
+const pinSet = await counterReq('POST', '/counter/pin/set', { pin: '135790', pin2: '135790' });
+assert.equal(pinSet.statusCode, 303, pinSet.body);
+const consent = await counterReq('POST', '/counter/consent', { adult: 'yes', consent: 'yes' });
+assert.equal(consent.statusCode, 303, consent.body);
+console.log('counter registration OK (email code -> PIN -> consent, WORM event written via real S3)');
+
+// PIN lockout: 5 wrong PINs lock; the locked attempt reports 423.
+for (let i = 0; i < 5; i++) {
+  const bad = await counterReq('POST', '/pin/verify'.replace(/^/, '/counter'), { pin: '000000' });
+  assert.ok([401, 423].includes(bad.statusCode), bad.body);
+}
+const locked = await counterReq('POST', '/counter/pin/verify', { pin: '135790' });
+assert.equal(locked.statusCode, 423, 'correct PIN while locked must still 423');
+await getPool().query(
+  `UPDATE accounts SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE email_hash = $1`,
+  [sha256hex(email.toLowerCase())],
+);
+console.log('PIN lockout OK (5 wrong tries -> locked with backoff)');
+
+// ---------------------------------------------------------------------------
+// OAuth 2.1, 0.D shape: DCR -> authorize hand-off -> counter approve -> token.
+// ---------------------------------------------------------------------------
+const regc = await app.inject({
   method: 'POST',
   url: '/oauth/register',
   payload: { client_name: 'smoke', redirect_uris: ['http://127.0.0.1:1/cb'] },
 });
-assert.equal(reg.statusCode, 201, reg.body);
-const client = reg.json();
+assert.equal(regc.statusCode, 201, regc.body);
+const client = regc.json();
 
-// authorize (login form post)
 const verifier = randomBytes(48).toString('base64url');
 const challenge = createHash('sha256').update(verifier).digest('base64url');
-const form = new URLSearchParams({
+const q = new URLSearchParams({
   client_id: client.client_id,
   redirect_uri: 'http://127.0.0.1:1/cb',
   response_type: 'code',
@@ -71,18 +136,16 @@ const form = new URLSearchParams({
   code_challenge_method: 'S256',
   scope: 'switchboard',
   state: 'xyz',
-  resource: '',
-  email,
-  login_code: code,
 });
-const az = await app.inject({
-  method: 'POST',
-  url: '/oauth/authorize',
-  headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  payload: form.toString(),
-});
-assert.equal(az.statusCode, 302, az.body);
-const authCode = new URL(az.headers.location as string).searchParams.get('code')!;
+const handoff = await app.inject({ method: 'GET', url: `/oauth/authorize?${q}` });
+assert.equal(handoff.statusCode, 302, handoff.body);
+assert.ok(String(handoff.headers.location).startsWith(cfg.counterOrigin + '/counter/authorize'));
+const authzPage = await counterReq('GET', `/counter/authorize?${q}`);
+assert.equal(authzPage.statusCode, 200, `${authzPage.statusCode} ${authzPage.headers.location ?? ''}`);
+const approve = await counterReq('POST', '/counter/authorize', { decision: 'approve' });
+assert.equal(approve.statusCode, 303, approve.body);
+const authCode = new URL(approve.headers.location as string).searchParams.get('code')!;
+assert.ok(authCode);
 
 const tok = await app.inject({
   method: 'POST',
@@ -98,7 +161,7 @@ const tok = await app.inject({
 });
 assert.equal(tok.statusCode, 200, tok.body);
 const tokens = tok.json();
-console.log('oauth flow OK (access + refresh issued)');
+console.log('oauth flow OK (counter-approved; access + refresh issued)');
 
 // refresh rotation
 const ref = await app.inject({
@@ -114,24 +177,49 @@ const ref = await app.inject({
 assert.equal(ref.statusCode, 200, ref.body);
 console.log('refresh rotation OK');
 
-// MCP over HTTP: 401 without token, tools/list with token.
+// ---------------------------------------------------------------------------
+// Route isolation, live: bearer on /counter -> 403; cookie on /mcp -> 401.
+// ---------------------------------------------------------------------------
+const cross1 = await app.inject({
+  method: 'GET',
+  url: '/counter/ledger',
+  headers: { host: COUNTER_HOST, authorization: `Bearer ${tokens.access_token}` },
+});
+assert.equal(cross1.statusCode, 403, 'a REAL agent token must be rejected at the counter');
+
+// Kill switch: suspends the agent token; un-pause restores it.
+const kill = await counterReq('POST', '/counter/kill', {});
+assert.equal(kill.statusCode, 303, kill.body);
+
 const listen = await app.listen({ port: 0, host: '127.0.0.1' });
 const base = listen.replace('[::1]', '127.0.0.1');
-const unauth = await fetch(`${base}/mcp`, {
+const mcpHeaders = {
+  'content-type': 'application/json',
+  accept: 'application/json, text/event-stream',
+};
+
+const suspended = await fetch(`${base}/mcp`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+  headers: { ...mcpHeaders, authorization: `Bearer ${tokens.access_token}` },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
 });
-assert.equal(unauth.status, 401);
+assert.equal(suspended.status, 401, 'kill switch must suspend agent tokens');
+const unkill = await counterReq('POST', '/counter/kill/off', { pin: '135790' });
+assert.equal(unkill.statusCode, 303, unkill.body);
+console.log('kill switch OK (tokens suspended + restored)');
+
+const unauth = await fetch(`${base}/mcp`, {
+  method: 'POST',
+  headers: { ...mcpHeaders, cookie: cookieHeader() },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+});
+assert.equal(unauth.status, 401, 'a counter session cookie must be useless on /mcp');
 assert.ok(unauth.headers.get('www-authenticate')?.includes('oauth-protected-resource'));
+console.log('route isolation OK in both directions');
 
 const tl = await fetch(`${base}/mcp`, {
   method: 'POST',
-  headers: {
-    'content-type': 'application/json',
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${tokens.access_token}`,
-  },
+  headers: { ...mcpHeaders, authorization: `Bearer ${tokens.access_token}` },
   body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
 });
 const tlBody = await tl.text();
@@ -141,15 +229,10 @@ const parsed = JSON.parse(dataLine ? dataLine.slice(5) : tlBody);
 assert.equal(parsed.result.tools.length, 7, JSON.stringify(parsed).slice(0, 300));
 console.log('MCP tools/list OK (7 tools)');
 
-// publish_intent to a nonexistent queue should fail cleanly (SQS unreachable),
-// but a CATEGORY_PROHIBITED error must trigger before any SQS call:
+// CATEGORY_PROHIBITED must trigger before any SQS call:
 const proh = await fetch(`${base}/mcp`, {
   method: 'POST',
-  headers: {
-    'content-type': 'application/json',
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${tokens.access_token}`,
-  },
+  headers: { ...mcpHeaders, authorization: `Bearer ${tokens.access_token}` },
   body: JSON.stringify({
     jsonrpc: '2.0',
     id: 3,

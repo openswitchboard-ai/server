@@ -7,8 +7,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
-import { findAccountByEmail, verifyLoginCode } from '../domain/accounts.js';
-import { loginPage, registrationClosedPage } from './pages.js';
+import { registrationClosedPage } from '../counter/pages.js';
 import type { Config } from '../config.js';
 
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -30,9 +29,12 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
   if (!h?.startsWith('Bearer ')) return undefined;
   const token = h.slice(7).trim();
   if (!token.startsWith('osb_at_')) return undefined;
+  // NOT suspended: the counter's kill switch suspends (reversibly) every
+  // agent token on the account.
   const r = await getPool().query(
     `SELECT account_id, client_id, scope FROM oauth_tokens
-     WHERE token_hash = $1 AND kind = 'access' AND NOT revoked AND expires_at > now()`,
+     WHERE token_hash = $1 AND kind = 'access' AND NOT revoked AND NOT suspended
+       AND expires_at > now()`,
     [sha256hex(token)],
   );
   if (!r.rows[0]) return undefined;
@@ -129,30 +131,14 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
   });
 
   // ---- Authorization endpoint -------------------------------------------------
-  const validateAuthzRequest = async (q: any) => {
-    const clientRow = await getPool().query(
-      'SELECT * FROM oauth_clients WHERE client_id = $1',
-      [q.client_id],
-    ).catch(() => ({ rows: [] as any[] }));
-    const client = clientRow.rows[0];
-    if (!client) return { error: 'unknown client_id' };
-    const uris: string[] = client.redirect_uris;
-    if (typeof q.redirect_uri !== 'string' || !uris.includes(q.redirect_uri)) {
-      return { error: 'redirect_uri is not registered for this client' };
-    }
-    if (q.response_type !== 'code') return { error: 'response_type must be code', client };
-    if (typeof q.code_challenge !== 'string' || q.code_challenge.length < 43) {
-      return { error: 'PKCE code_challenge is required', client };
-    }
-    if (q.code_challenge_method !== 'S256') {
-      return { error: 'code_challenge_method must be S256', client };
-    }
-    return { client };
-  };
+  const validateAuthzRequest = async (q: any) => validateAuthorizeRequest(q);
 
+  // 0.D: the human-facing login/consent moved to the counter hostname. The
+  // authorize endpoint here only validates the request and hands the human
+  // over — the PIN and passkey NEVER transit the agent hostname.
   app.get('/oauth/authorize', async (req, reply) => {
     if (cfg.registrationMode === 'closed') {
-      // Prod, phase 0.C: registration is CLOSED. Clean page, no bypass.
+      // Prod: registration is CLOSED until launch. Clean page, no bypass.
       return reply.code(200).type('text/html').send(registrationClosedPage());
     }
     const q: any = req.query ?? {};
@@ -160,73 +146,19 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
     if (v.error) {
       return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
     }
-    const hidden: Record<string, string> = {
-      client_id: q.client_id,
-      redirect_uri: q.redirect_uri,
-      response_type: 'code',
-      code_challenge: q.code_challenge,
-      code_challenge_method: 'S256',
-      scope: typeof q.scope === 'string' ? q.scope : 'switchboard',
-      state: typeof q.state === 'string' ? q.state : '',
-      resource: typeof q.resource === 'string' ? q.resource : '',
-    };
-    return reply
-      .type('text/html')
-      .send(loginPage({ clientName: v.client!.client_name, hidden }));
-  });
-
-  app.post('/oauth/authorize', async (req, reply) => {
-    if (cfg.registrationMode === 'closed') {
-      return reply.code(200).type('text/html').send(registrationClosedPage());
+    const target = new URL('/counter/authorize', cfg.counterOrigin);
+    for (const k of [
+      'client_id',
+      'redirect_uri',
+      'response_type',
+      'code_challenge',
+      'code_challenge_method',
+      'scope',
+      'state',
+      'resource',
+    ]) {
+      if (typeof q[k] === 'string' && q[k]) target.searchParams.set(k, q[k]);
     }
-    const b: any = req.body ?? {};
-    const v = await validateAuthzRequest(b);
-    if (v.error) {
-      return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
-    }
-    const hidden: Record<string, string> = {
-      client_id: b.client_id,
-      redirect_uri: b.redirect_uri,
-      response_type: 'code',
-      code_challenge: b.code_challenge,
-      code_challenge_method: 'S256',
-      scope: b.scope || 'switchboard',
-      state: b.state || '',
-      resource: b.resource || '',
-    };
-    const fail = (msg: string) =>
-      reply
-        .code(401)
-        .type('text/html')
-        .send(loginPage({ clientName: v.client!.client_name, hidden, error: msg }));
-
-    const account =
-      typeof b.email === 'string' ? await findAccountByEmail(b.email) : undefined;
-    if (!account || !account.login_code_hash || typeof b.login_code !== 'string') {
-      return fail('Unknown email or access code.');
-    }
-    if (!verifyLoginCode(b.login_code, account.login_code_hash)) {
-      return fail('Unknown email or access code.');
-    }
-    if (account.status !== 'active') return fail('This account is not active.');
-
-    const code = `osb_ac_${b64url(randomBytes(32))}`;
-    await getPool().query(
-      `INSERT INTO oauth_codes (code_hash, client_id, account_id, redirect_uri, code_challenge, scope, resource, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, now() + interval '${CODE_TTL_S} seconds')`,
-      [
-        sha256hex(code),
-        b.client_id,
-        account.id,
-        b.redirect_uri,
-        b.code_challenge,
-        hidden.scope,
-        hidden.resource || null,
-      ],
-    );
-    const target = new URL(b.redirect_uri);
-    target.searchParams.set('code', code);
-    if (hidden.state) target.searchParams.set('state', hidden.state);
     return reply.redirect(target.toString(), 302);
   });
 
@@ -285,7 +217,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       if (typeof b.refresh_token !== 'string') return reply.code(400).send({ error: 'invalid_request' });
       const hash = sha256hex(b.refresh_token);
       const r = await getPool().query(
-        `SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind='refresh' AND NOT revoked AND expires_at > now()`,
+        `SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind='refresh' AND NOT revoked AND NOT suspended AND expires_at > now()`,
         [hash],
       );
       const row = r.rows[0];
@@ -307,3 +239,53 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 }
 
 export { randomUUID };
+
+/** Validate an authorization request (client, redirect_uri, PKCE). Shared by
+ *  the /oauth/authorize hand-off and the counter's authorize page. */
+export async function validateAuthorizeRequest(
+  q: any,
+): Promise<{ error?: string; client?: any }> {
+  const clientRow = await getPool()
+    .query('SELECT * FROM oauth_clients WHERE client_id = $1', [q.client_id])
+    .catch(() => ({ rows: [] as any[] }));
+  const client = clientRow.rows[0];
+  if (!client) return { error: 'unknown client_id' };
+  const uris: string[] = client.redirect_uris;
+  if (typeof q.redirect_uri !== 'string' || !uris.includes(q.redirect_uri)) {
+    return { error: 'redirect_uri is not registered for this client' };
+  }
+  if (q.response_type !== 'code') return { error: 'response_type must be code', client };
+  if (typeof q.code_challenge !== 'string' || q.code_challenge.length < 43) {
+    return { error: 'PKCE code_challenge is required', client };
+  }
+  if (q.code_challenge_method !== 'S256') {
+    return { error: 'code_challenge_method must be S256', client };
+  }
+  return { client };
+}
+
+/** Mint an authorization code for an approved authorize request (counter). */
+export async function createAuthCode(input: {
+  clientId: string;
+  accountId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  scope: string;
+  resource?: string;
+}): Promise<string> {
+  const code = `osb_ac_${b64url(randomBytes(32))}`;
+  await getPool().query(
+    `INSERT INTO oauth_codes (code_hash, client_id, account_id, redirect_uri, code_challenge, scope, resource, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, now() + interval '${CODE_TTL_S} seconds')`,
+    [
+      sha256hex(code),
+      input.clientId,
+      input.accountId,
+      input.redirectUri,
+      input.codeChallenge,
+      input.scope || 'switchboard',
+      input.resource || null,
+    ],
+  );
+  return code;
+}

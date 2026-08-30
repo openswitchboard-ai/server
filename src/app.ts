@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import { registerOAuthRoutes } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/mcp.js';
+import { registerCounterRoutes } from './counter/routes.js';
 import { SCHEMA_NAMES, SCHEMA_VERSION, validatePayload } from './protocol.js';
 import type { Config } from './config.js';
 
@@ -47,7 +48,21 @@ export function buildApp(cfg: Config): FastifyInstance {
     return validatePayload(b.schema, b.data);
   });
 
+  // Host separation (defence-in-depth on top of the route-class guards):
+  // /mcp is never served on the counter hostname, and /counter is never
+  // served on the MCP hostname (enforced inside the counter plugin).
+  const counterHost = new URL(cfg.counterOrigin).host.toLowerCase();
+  app.addHook('onRequest', async (req, reply) => {
+    if (
+      req.url.startsWith('/mcp') &&
+      (req.headers.host ?? '').toLowerCase() === counterHost
+    ) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+  });
+
   registerOAuthRoutes(app, cfg);
   registerMcpRoutes(app, cfg);
+  registerCounterRoutes(app, cfg);
   return app;
 }

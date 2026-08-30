@@ -221,7 +221,7 @@ export async function dispatchTool(
           case 'decline_offer':
           case 'withdraw_offer': {
             if (!offer_id) return invalidInput(`${action} requires offer_id`);
-            return ok(await offers.agentOfferAction(accountId, offer_id, action));
+            return ok(await offers.agentOfferAction(cfg, accountId, offer_id, action));
           }
           case 'list_offers':
             return ok({ offers: await offers.listOffers(accountId, match_id) });
