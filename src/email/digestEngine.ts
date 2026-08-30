@@ -19,6 +19,7 @@
  * true things from real rows.
  */
 import { getPool } from '../db.js';
+import { categoryLeafLabel } from '../domain/matchRules.js';
 import { accountEmail } from '../domain/counterOps.js';
 import {
   renderDigest,
@@ -73,7 +74,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
       content: renderSummons(
         {
           count: 1,
-          category: ctx.blind ? undefined : m.category,
+          categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
           blind: ctx.blind,
           counterUrl: `${cfg.counterOrigin}/counter`,
         },
@@ -175,7 +176,7 @@ async function assembleDigestItems(
     );
     const nearMisses: number = nm.rows[0].n;
     if ((newOpposite ?? 0) > 0 || nearMisses > 0) {
-      items.push({ type: card.type, category: card.category, newOpposite, nearMisses });
+      items.push({ type: card.type, categoryLabel: categoryLeafLabel(card.category), newOpposite, nearMisses });
     }
   }
   return items;
@@ -245,7 +246,7 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
     if (!to) continue;
     const items: RenewalCardItem[] = cards.rows.map((c: any) => ({
       type: c.type,
-      category: c.category,
+      categoryLabel: categoryLeafLabel(c.category),
       expiresAt: new Date(c.expires_at),
       expiringSoon: !!c.expiring_soon,
     }));

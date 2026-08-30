@@ -78,6 +78,15 @@ function taxonomy(): any {
   return taxonomyCache;
 }
 
+/** Human label for the category's leaf node ("Mountain bikes"). Unknown
+ *  nodes fall back to the raw leaf segment — same honest fallback as
+ *  categoryLabelPath. Emails show ONLY this, never the raw slug. */
+export function categoryLeafLabel(category: string): string {
+  const nodes = taxonomy().nodes ?? {};
+  const parts = category.split('.');
+  return nodes[category]?.label ?? parts[parts.length - 1];
+}
+
 export function categoryLabelPath(category: string): string {
   const nodes = taxonomy().nodes ?? {};
   const parts = category.split('.');

@@ -38,7 +38,7 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
       content: renderApproval(
         {
           link: `${COUNTER}/counter/a/sample`,
-          summary: 'An offer on your home-services.gardening match is waiting for your decision.',
+          summary: 'An offer on your Garden tools match is waiting for your decision.',
           blind: false,
           counterUrl,
         },
@@ -48,7 +48,7 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
     {
       name: 'summons',
       content: renderSummons(
-        { count: 1, category: 'home-services.gardening', blind: false, counterUrl },
+        { count: 1, categoryLabel: 'Garden tools', blind: false, counterUrl },
         links,
       ),
     },
@@ -64,9 +64,9 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
           blind: false,
           counterUrl,
           items: [
-            { type: 'WANT', category: 'home-services.gardening', newOpposite: 4, nearMisses: 2 },
-            { type: 'HAVE', category: 'goods.bicycles.cargo', newOpposite: 11, nearMisses: 0 },
-            { type: 'WANT', category: 'services.tutoring.piano', newOpposite: null, nearMisses: 1 },
+            { type: 'WANT', categoryLabel: 'Garden tools', newOpposite: 4, nearMisses: 2 },
+            { type: 'HAVE', categoryLabel: 'Mountain bikes', newOpposite: 11, nearMisses: 0 },
+            { type: 'WANT', categoryLabel: 'Keyboards & pianos', newOpposite: null, nearMisses: 1 },
           ],
         },
         links,
@@ -80,8 +80,8 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
           counterUrl,
           renewAllUrl: `${COUNTER}/counter/renew?t=sample`,
           cards: [
-            { type: 'WANT', category: 'home-services.gardening', expiresAt: new Date(Date.now() + 4 * 86400e3), expiringSoon: true },
-            { type: 'HAVE', category: 'goods.bicycles.cargo', expiresAt: new Date(Date.now() + 41 * 86400e3), expiringSoon: false },
+            { type: 'WANT', categoryLabel: 'Garden tools', expiresAt: new Date(Date.now() + 4 * 86400e3), expiringSoon: true },
+            { type: 'HAVE', categoryLabel: 'Mountain bikes', expiresAt: new Date(Date.now() + 41 * 86400e3), expiringSoon: false },
           ],
         },
         links,
