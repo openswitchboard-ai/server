@@ -2,6 +2,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { registerOAuthRoutes } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/mcp.js';
 import { registerCounterRoutes } from './counter/routes.js';
+import { registerPublicRoutes } from './publicApi.js';
 import { SCHEMA_NAMES, SCHEMA_VERSION, validatePayload } from './protocol.js';
 import type { Config } from './config.js';
 
@@ -62,6 +63,7 @@ export function buildApp(cfg: Config): FastifyInstance {
   });
 
   registerOAuthRoutes(app, cfg);
+  registerPublicRoutes(app, cfg);
   registerMcpRoutes(app, cfg);
   registerCounterRoutes(app, cfg);
   return app;
