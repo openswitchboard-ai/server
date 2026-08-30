@@ -24,6 +24,8 @@ export interface DashboardWindowItem {
 
 export interface DashboardView {
   firstName?: string;
+  /** Set when a permanent bounce flagged the account's address unreachable. */
+  emailUnreachable?: boolean;
   killSwitchOn: boolean;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
@@ -108,8 +110,16 @@ ${
         .join('')
     : '';
 
+  const emailBanner = v.emailUnreachable
+    ? `<div class="err"><strong>Email to you is bouncing.</strong>
+An email we sent to your address came back undeliverable, so all email is on
+hold. Re-verify your address to switch it back on.
+<form method="POST" action="/counter/reverify"><button type="submit">Re-verify my email</button></form></div>`
+    : '';
+
   return layout('The counter', `
 <h1>${v.firstName ? `G'day${esc(v.firstName ? ', ' + v.firstName : '')}.` : 'Your counter.'}</h1>
+${emailBanner}
 <h2>Waiting for you</h2>
 ${approvals}
 ${windows}
@@ -233,10 +243,55 @@ may only be SHORTER than the default ${c.collectWindowDefault})</label>
 <a class="btn secondary" href="/counter/ledger">Cancel</a>`);
 }
 
-export function settingsPage(v: { blindMode: boolean }, notice?: string): string {
+export interface EmailSettingsView {
+  blindMode: boolean;
+  freqMatches: string;
+  freqDigests: string;
+  complaintSuppressed: boolean;
+  emailUnreachable: boolean;
+}
+
+const FREQ_OPTIONS: { value: string; label: string }[] = [
+  { value: 'immediate', label: 'Straight away' },
+  { value: 'daily', label: 'Once a day' },
+  { value: 'weekly', label: 'Once a week' },
+  { value: 'off', label: 'Never' },
+];
+
+function freqSelect(name: string, current: string): string {
+  return `<select name="${name}">${FREQ_OPTIONS.map(
+    (o) => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`,
+  ).join('')}</select>`;
+}
+
+export function settingsPage(v: EmailSettingsView, notice?: string): string {
+  const complaint = v.complaintSuppressed
+    ? `<div class="err">You marked one of our emails as spam, so everything
+except sign-in codes, approvals and security notices is on hold. Changing the
+dials below does nothing while the hold is on.
+<form method="POST" action="/counter/settings/email-resume">
+  <button type="submit" class="secondary">Start emailing me again</button>
+</form></div>`
+    : '';
+  const unreachable = v.emailUnreachable
+    ? `<div class="err">Email to your address is bouncing — all email is on
+hold. Re-verify from the <a href="/counter">counter front page</a>.</div>`
+    : '';
   return layout('Settings', `
 <h1>Settings.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${unreachable}${complaint}
+<h2>Email frequency</h2>
+<p class="small muted">How often the switchboard may email you. Sign-in codes,
+approval requests and security notices always send — they are your account's
+safety rail. Changes apply immediately and land in your consent log.</p>
+<form method="POST" action="/counter/settings/frequency">
+  <label for="freq_matches">Match summons</label>
+  ${freqSelect('freq_matches', v.freqMatches)}
+  <label for="freq_digests">Activity digest &amp; renewals</label>
+  ${freqSelect('freq_digests', v.freqDigests)}
+  <button type="submit" class="secondary">Save frequency</button>
+</form>
 <h2>Blind mode</h2>
 <p class="small muted">When on, every email we send you becomes a content-free
 pointer — "something at the counter needs you" — with all detail kept here.</p>
@@ -245,9 +300,72 @@ pointer — "something at the counter needs you" — with all detail kept here.<
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
 </form>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}.</p>
-<h2>Match frequency</h2>
-<p class="small muted">How often the switchboard may nudge you. Full controls
-arrive in the next update.</p>
-<select disabled><option>Balanced (default)</option></select>
 <a class="btn secondary" href="/counter">Back</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// "Still true?" renewal review (reached from the renewal email's signed link).
+// ---------------------------------------------------------------------------
+export interface RenewCardView {
+  type: string;
+  category: string;
+  expires: string;
+  expiringSoon: boolean;
+}
+
+export function renewPage(cards: RenewCardView[], token: string): string {
+  const rows = cards
+    .map(
+      (c) => `<div class="card-row"><div class="top">
+<span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
+<span class="cat">${esc(c.category)}</span>
+${c.expiringSoon ? '<span class="badge state">lapses within a week</span>' : ''}</div>
+<div class="kv">lapses ${esc(c.expires)}</div></div>`,
+    )
+    .join('');
+  return layout('Still true?', `
+<h1>Still true?</h1>
+<p>Cards lapse on their own — that rule keeps every want and have honest.
+These are your open cards. One tap restarts each card's own clock.</p>
+${rows}
+<form method="POST" action="/counter/renew">
+  <input type="hidden" name="t" value="${esc(token)}">
+  <button type="submit">Still true — keep them all</button>
+</form>
+<a class="btn secondary" href="/counter/ledger">Review one by one instead</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// Unsubscribe (footer link lands here; the POST is also the RFC 8058 target).
+// ---------------------------------------------------------------------------
+export function unsubPage(token: string): string {
+  return layout('Unsubscribe', `
+<h1>Fewer emails.</h1>
+<p>This switches off match summons and activity digests. Sign-in codes,
+approval requests and security notices keep sending — they are your account's
+safety rail.</p>
+<form method="POST" action="/counter/email/unsub">
+  <input type="hidden" name="t" value="${esc(token)}">
+  <button type="submit">Unsubscribe me</button>
+</form>
+<p class="small muted">You can turn anything back on any time in
+<a href="/counter/settings">settings</a>.</p>`);
+}
+
+// ---------------------------------------------------------------------------
+// Email re-verification after a hard bounce.
+// ---------------------------------------------------------------------------
+export function reverifyCodePage(verificationId: string, error?: string): string {
+  return layout('Re-verify your email', `
+<h1>Check your inbox.</h1>
+${error ? `<div class="err">${esc(error)}</div>` : ''}
+<p>We sent a fresh code to your address. Enter it here and email switches back
+on. If it never arrives, the address itself is the problem — your mailbox is
+full, or the address no longer exists.</p>
+<form method="POST" action="/counter/reverify/verify">
+  <input type="hidden" name="verification_id" value="${esc(verificationId)}">
+  <label for="code">Code</label>
+  <input id="code" name="code" class="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
+  <button type="submit">Verify</button>
+</form>`);
 }

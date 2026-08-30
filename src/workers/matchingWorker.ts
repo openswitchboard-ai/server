@@ -1,4 +1,4 @@
-import { DeleteMessageCommand, ReceiveMessageCommand } from '@aws-sdk/client-sqs';
+import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { runMatchingForCard } from '../domain/matcher.js';
 import type { Config } from '../config.js';
@@ -35,6 +35,18 @@ export function startMatchingWorker(cfg: Config, log: (msg: string, extra?: any)
                   matches: outcome.matchesCreated.length,
                   near_misses: outcome.nearMisses,
                 });
+                // 0.E: hand each fresh match to the ops queue for the human
+                // summons. Queued (rather than sent inline) so a summons
+                // failure retries on its own without re-running the matcher;
+                // the send itself is idempotent (summons:{match}:{account}).
+                for (const matchId of outcome.matchesCreated) {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.opsQueueUrl,
+                      MessageBody: JSON.stringify({ op: 'match-notify', match_id: matchId }),
+                    }),
+                  );
+                }
               }
             } else {
               log('matcher: unknown message kind', { body: msg.Body?.slice(0, 200) });

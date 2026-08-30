@@ -109,7 +109,140 @@ export async function killSwitchOff(accountId: string): Promise<void> {
 }
 
 export async function setBlindMode(accountId: string, on: boolean): Promise<void> {
+  await writeConsentEvent({
+    event: 'blind-mode-changed',
+    account_id: accountId,
+    blind_mode: on,
+    recorded_via: 'counter',
+  });
   await getPool().query('UPDATE accounts SET blind_mode = $2 WHERE id = $1', [accountId, on]);
+}
+
+// ---------------------------------------------------------------------------
+// Email frequency controls + suppression state (0.E). Consent-bearing
+// changes write to the WORM consent log FIRST; every change is effective
+// immediately (the send pipeline reads the row at send time).
+// ---------------------------------------------------------------------------
+
+export type EmailFrequency = 'immediate' | 'daily' | 'weekly' | 'off';
+export const EMAIL_FREQUENCIES: EmailFrequency[] = ['immediate', 'daily', 'weekly', 'off'];
+
+export interface EmailSettings {
+  freqMatches: EmailFrequency;
+  freqDigests: EmailFrequency;
+  blindMode: boolean;
+  unreachable: boolean;
+  complaintSuppressed: boolean;
+}
+
+export async function emailSettings(accountId: string): Promise<EmailSettings> {
+  const r = await getPool().query(
+    `SELECT blind_mode, email_freq_matches, email_freq_digests,
+            email_unreachable_at, email_complaint_suppressed_at
+     FROM accounts WHERE id = $1`,
+    [accountId],
+  );
+  const a = r.rows[0];
+  if (!a) throw new Error('account not found');
+  return {
+    freqMatches: a.email_freq_matches,
+    freqDigests: a.email_freq_digests,
+    blindMode: !!a.blind_mode,
+    unreachable: !!a.email_unreachable_at,
+    complaintSuppressed: !!a.email_complaint_suppressed_at,
+  };
+}
+
+export async function setEmailFrequency(
+  accountId: string,
+  freqMatches: EmailFrequency,
+  freqDigests: EmailFrequency,
+  recordedVia: string,
+): Promise<void> {
+  await writeConsentEvent({
+    event: 'email-frequency-changed',
+    account_id: accountId,
+    email_freq_matches: freqMatches,
+    email_freq_digests: freqDigests,
+    recorded_via: recordedVia,
+  });
+  await getPool().query(
+    `UPDATE accounts SET email_freq_matches = $2, email_freq_digests = $3 WHERE id = $1`,
+    [accountId, freqMatches, freqDigests],
+  );
+}
+
+/** RFC 8058 one-click unsubscribe: both non-transactional categories -> off. */
+export async function unsubscribeAllNonTransactional(
+  accountId: string,
+  recordedVia: string,
+): Promise<void> {
+  await writeConsentEvent({
+    event: 'email-unsubscribe',
+    account_id: accountId,
+    recorded_via: recordedVia,
+  });
+  await getPool().query(
+    `UPDATE accounts SET email_freq_matches = 'off', email_freq_digests = 'off' WHERE id = $1`,
+    [accountId],
+  );
+}
+
+/** Human re-enables non-transactional mail after a complaint suppression. */
+export async function resumeNonTransactionalEmail(accountId: string): Promise<void> {
+  await writeConsentEvent({
+    event: 'email-complaint-suppression-lifted',
+    account_id: accountId,
+    recorded_via: 'counter',
+  });
+  await getPool().query(
+    `UPDATE accounts SET email_complaint_suppressed_at = NULL WHERE id = $1`,
+    [accountId],
+  );
+}
+
+/** Address re-verified at the counter after a hard bounce. */
+export async function clearEmailUnreachable(accountId: string): Promise<void> {
+  await writeConsentEvent({
+    event: 'email-reverified',
+    account_id: accountId,
+    recorded_via: 'counter',
+  });
+  await getPool().query(`UPDATE accounts SET email_unreachable_at = NULL WHERE id = $1`, [
+    accountId,
+  ]);
+}
+
+/**
+ * "Still true?" renew-all: every open PUBLISHED card restarts its own TTL
+ * clock from now. WORM consent event first (nothing-is-forever means renewal
+ * is an explicit human act). Returns the renewed cards.
+ */
+export async function renewAllCards(
+  accountId: string,
+  recordedVia: string,
+): Promise<{ id: string; type: string; category: string; expires_at: Date }[]> {
+  const pool = getPool();
+  const open = await pool.query(
+    `SELECT id FROM cards
+     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
+    [accountId],
+  );
+  if (!open.rowCount) return [];
+  await writeConsentEvent({
+    event: 'cards-renewed',
+    account_id: accountId,
+    card_ids: open.rows.map((r) => r.id),
+    recorded_via: recordedVia,
+  });
+  const r = await pool.query(
+    `UPDATE cards SET expires_at = now() + make_interval(days => ttl_days),
+            renewal_notified_at = NULL, updated_at = now()
+     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
+     RETURNING id, type, category, expires_at`,
+    [accountId],
+  );
+  return r.rows;
 }
 
 // ---------------------------------------------------------------------------

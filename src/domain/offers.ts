@@ -162,7 +162,7 @@ async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('match missing');
   const humanAccount = o.proposer_account === m.account_want ? m.account_have : m.account_want;
-  const { token } = await createApprovalLink({
+  const { token, id: linkId } = await createApprovalLink({
     accountId: humanAccount,
     action: 'offer-accept',
     refId: o.id,
@@ -170,14 +170,18 @@ async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
     ccy: o.ccy,
     counterpartyAccount: o.proposer_account,
   });
-  const acc = await getPool().query('SELECT blind_mode FROM accounts WHERE id = $1', [humanAccount]);
-  const blind = !!acc.rows[0]?.blind_mode;
   const email = await accountEmail(humanAccount, 'approval-notification');
   if (email) {
-    const summary = blind
-      ? 'Something at the counter needs you.'
-      : `An offer of ${Number(o.amount)} ${o.ccy} on your ${m.category} match is waiting for your decision.`;
-    await sendApprovalEmail(cfg, email, token, summary);
+    // Category-level only. The amount stays behind auth until approval
+    // (blind mode strips even the category — handled in sendApprovalEmail).
+    await sendApprovalEmail(
+      cfg,
+      email,
+      humanAccount,
+      linkId,
+      token,
+      `An offer on your ${m.category} match is waiting for your decision.`,
+    );
   }
 }
 
