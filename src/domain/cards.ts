@@ -214,6 +214,7 @@ export async function amendIntent(
   await getPool().query(
     `UPDATE cards SET geo=$2, attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
+        renewal_notified_at = NULL,
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
      WHERE id=$1`,
     [

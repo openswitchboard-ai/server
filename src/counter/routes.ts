@@ -38,7 +38,9 @@ import {
   verifyByCode,
   verifyByLinkToken,
 } from './verification.js';
-import { sendKillSwitchEmail, sendVerificationEmail } from './email.js';
+import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendVerificationEmail } from './email.js';
+import { verifyEmailToken } from '../email/tokens.js';
+import { emailHash } from '../domain/accounts.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
@@ -142,6 +144,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return html(
         reply,
         home.dashboardPage({
+          emailUnreachable: !!a.email_unreachable_at,
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
           pendingApprovals,
@@ -304,6 +307,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
       }
       await ops.setAccountPin(s.accountId!, await hashPin(pin));
+      if (a?.pin_hash) {
+        // 0.E security notice: an EXISTING PIN was just changed.
+        const email = await ops.accountEmail(s.accountId!, 'security-notice');
+        if (email) await sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed');
+      }
       if (a?.status === 'pending') return reply.redirect('/counter/passkey', 303);
       return reply.redirect('/counter', 303);
     });
@@ -812,7 +820,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       await ops.killSwitchOn(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
-      if (email) await sendKillSwitchEmail(cfg, email);
+      if (email) await sendKillSwitchEmail(cfg, email, s.accountId!, true);
       return reply.redirect('/counter', 303);
     });
 
@@ -822,17 +830,31 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       await ops.killSwitchOff(s.accountId!);
+      const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
+      if (email) await sendKillSwitchEmail(cfg, email, s.accountId!, false);
       return reply.redirect('/counter', 303);
     });
 
     // ------------------------------------------------------------------
-    // Settings: blind mode (stored now, consumed by 0.E) + frequency stub.
+    // Settings: email frequency controls + blind mode (0.E). Every change
+    // is effective immediately (the send pipeline reads the account row at
+    // send time) and writes to the WORM consent log first.
     // ------------------------------------------------------------------
+    const settingsView = async (accountId: string): Promise<home.EmailSettingsView> => {
+      const es = await ops.emailSettings(accountId);
+      return {
+        blindMode: es.blindMode,
+        freqMatches: es.freqMatches,
+        freqDigests: es.freqDigests,
+        complaintSuppressed: es.complaintSuppressed,
+        emailUnreachable: es.unreachable,
+      };
+    };
+
     counter.get('/settings', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const a: any = await getAccount(s.accountId!);
-      return html(reply, home.settingsPage({ blindMode: !!a?.blind_mode }));
+      return html(reply, home.settingsPage(await settingsView(s.accountId!)));
     });
 
     counter.post('/settings/blind-mode', async (req, reply) => {
@@ -840,8 +862,163 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       const on = String((req.body as any)?.blind_mode ?? '') === 'on';
       await ops.setBlindMode(s.accountId!, on);
+      return html(
+        reply,
+        home.settingsPage(
+          await settingsView(s.accountId!),
+          on ? 'Blind mode is on: emails become content-free pointers.' : 'Blind mode is off.',
+        ),
+      );
+    });
+
+    counter.post('/settings/frequency', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const fm = String(b.freq_matches ?? '');
+      const fd = String(b.freq_digests ?? '');
+      if (!ops.EMAIL_FREQUENCIES.includes(fm as any) || !ops.EMAIL_FREQUENCIES.includes(fd as any)) {
+        return html(
+          reply,
+          home.settingsPage(await settingsView(s.accountId!), 'That frequency is unknown.'),
+          400,
+        );
+      }
+      await ops.setEmailFrequency(s.accountId!, fm as any, fd as any, 'counter');
+      return html(
+        reply,
+        home.settingsPage(await settingsView(s.accountId!), 'Saved. Effective immediately.'),
+      );
+    });
+
+    counter.post('/settings/email-resume', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      await ops.resumeNonTransactionalEmail(s.accountId!);
+      return html(
+        reply,
+        home.settingsPage(await settingsView(s.accountId!), 'Email is back on.'),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // Unsubscribe: the emailed footer link (GET, human confirm) and the
+    // RFC 8058 one-click POST target share this signed-token endpoint.
+    // Auth-less by design — the token is HMAC-bound to the account.
+    // ------------------------------------------------------------------
+    counter.get('/email/unsub', async (req, reply) => {
+      const t = String((req.query as any)?.t ?? '');
+      const v = verifyEmailToken(t, 'unsubscribe');
+      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      return html(reply, home.unsubPage(t));
+    });
+
+    counter.post('/email/unsub', async (req, reply) => {
+      const t = String((req.query as any)?.t ?? (req.body as any)?.t ?? '');
+      const v = verifyEmailToken(t, 'unsubscribe');
+      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      await ops.unsubscribeAllNonTransactional(v.accountId!, 'email-unsubscribe-link');
+      return html(
+        reply,
+        pages.messagePage(
+          'Unsubscribed',
+          `<p>Match summons and activity digests are off. Sign-in codes, approvals
+and security notices keep sending — they are your account's safety rail.
+Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`,
+        ),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // "Still true?" renewal (signed link from the renewal email).
+    // ------------------------------------------------------------------
+    counter.get('/renew', async (req, reply) => {
+      const t = String((req.query as any)?.t ?? '');
+      const v = verifyEmailToken(t, 'renew-all');
+      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      const cards = await getPool().query(
+        `SELECT type, category, expires_at,
+                (expires_at <= now() + interval '7 days') AS expiring_soon
+         FROM cards
+         WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
+         ORDER BY expires_at`,
+        [v.accountId],
+      );
+      if (!cards.rowCount) {
+        return html(
+          reply,
+          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/counter', 'To the counter'),
+        );
+      }
+      return html(
+        reply,
+        home.renewPage(
+          cards.rows.map((c: any) => ({
+            type: c.type,
+            category: c.category,
+            expires: new Date(c.expires_at).toISOString().slice(0, 10),
+            expiringSoon: !!c.expiring_soon,
+          })),
+          t,
+        ),
+      );
+    });
+
+    counter.post('/renew', async (req, reply) => {
+      const t = String((req.body as any)?.t ?? (req.query as any)?.t ?? '');
+      const v = verifyEmailToken(t, 'renew-all');
+      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      const renewed = await ops.renewAllCards(v.accountId!, 'email-renew-all-link');
+      return html(
+        reply,
+        pages.messagePage(
+          'Renewed',
+          `<p>${renewed.length} card${renewed.length === 1 ? '' : 's'} renewed — each clock
+restarted for its own TTL. The renewal is in your consent log.</p>`,
+          '/counter/ledger',
+          'Open the ledger',
+        ),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // Email re-verification after a hard bounce (dashboard banner).
+    // ------------------------------------------------------------------
+    counter.post('/reverify', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const email = await ops.accountEmail(s.accountId!, 'email-reverification');
+      if (!email) return html(reply, pages.messagePage('No address', '<p>No email on file.</p>'), 404);
+      if (await verificationRateLimited(email)) {
+        return html(
+          reply,
+          pages.messagePage('Slow down', '<p>Too many codes requested. Wait a few minutes.</p>'),
+          429,
+        );
+      }
+      const v = await createVerification(cfg, email, 'login');
+      await sendVerificationEmail(cfg, email, v.code, v.linkToken, 'login');
+      return html(reply, home.reverifyCodePage(v.id));
+    });
+
+    counter.post('/reverify/verify', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const result = await verifyByCode(cfg, String(b.verification_id ?? ''), String(b.code ?? ''));
+      if (!result.ok) {
+        return html(
+          reply,
+          home.reverifyCodePage(String(b.verification_id ?? ''), 'That code did not work. Check the most recent email.'),
+          401,
+        );
+      }
       const a: any = await getAccount(s.accountId!);
-      return html(reply, home.settingsPage({ blindMode: !!a?.blind_mode }, on ? 'Blind mode is on: emails become content-free pointers.' : 'Blind mode is off.'));
+      if (!a || emailHash(result.email!) !== a.email_hash) {
+        return html(reply, pages.messagePage('Wrong account', '<p>That code belongs to a different address.</p>'), 403);
+      }
+      await ops.clearEmailUnreachable(s.accountId!);
+      return reply.redirect('/counter', 303);
     });
 
     // ------------------------------------------------------------------
@@ -913,6 +1090,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         scope: ctx.scope,
         resource: ctx.resource || undefined,
       });
+      // 0.E security notice: a new agent was just authorised.
+      const email = await ops.accountEmail(s.accountId!, 'security-notice');
+      if (email) {
+        await sendSecurityNoticeEmail(
+          cfg,
+          email,
+          s.accountId!,
+          'agent-authorized',
+          v.client!.client_name,
+        );
+      }
       target.searchParams.set('code', code);
       if (ctx.state) target.searchParams.set('state', ctx.state);
       return reply.redirect(target.toString(), 303);
