@@ -278,7 +278,15 @@ describe('counter pages: copy-cull render suite', () => {
     {
       name: 'renew',
       html: chome.renewPage(
-        [{ type: 'WANT', category: LABEL, expires: '2026-09-05', expiringSoon: true }],
+        [
+          {
+            type: 'WANT',
+            category: LABEL,
+            attributes: 'condition: good · frame: large',
+            expires: '2026-09-05',
+            expiringSoon: true,
+          },
+        ],
         'osb_em_tok',
       ),
     },
@@ -313,5 +321,11 @@ describe('counter pages: copy-cull render suite', () => {
     for (const name of ['dashboard', 'ledger', 'card-edit', 'renew', 'approval-offer']) {
       expect(byName[name], name).toContain(LABEL);
     }
+  });
+
+  it('card rows carry the attributes detail line that tells same-category cards apart', () => {
+    const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
+    expect(byName['ledger']).toContain('condition: good');
+    expect(byName['renew']).toContain('condition: good · frame: large');
   });
 });
