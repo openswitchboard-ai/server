@@ -187,16 +187,21 @@ d('0.E email daemon (live dev)', () => {
     const res = await counterFetch(jarA, '/counter/settings/frequency',
       form({ freq_matches: 'off', freq_digests: 'off' }));
     expect(res.status).toBe(200);
-    // Fresh real activity for A and the daily sentinel E.
+    // Fresh real activity for A, plus a FRESH daily sentinel account (E's
+    // daily period key is already spent — one digest per day is by design).
     await insertNearMiss(wantA2, haveB);
-    const wantE2 = await insertCard(accountE, 'WANT');
-    await insertNearMiss(wantE2, haveB);
+    const accountS = await createAccount(simEmail('s'));
+    await dbExec(`UPDATE accounts SET email_freq_digests = 'daily' WHERE id = :a::uuid`, [
+      { name: 'a', value: accountS },
+    ]);
+    const wantS = await insertCard(accountS, 'WANT');
+    await insertNearMiss(wantS, haveB);
     await sendOp({ op: 'email-digest-tick', cadence: 'daily' });
     await sendOp({ op: 'email-digest-tick', cadence: 'weekly' });
     await poll(async () => {
-      const rows = await sendsFor(accountE, 'digest');
-      return rows.length >= 2 ? rows : undefined; // sentinel: daily tick drained
-    }, 'second daily digest for E');
+      const rows = await sendsFor(accountS, 'digest');
+      return rows.length ? rows : undefined; // sentinel: ticks drained
+    }, 'daily digest for sentinel S');
     expect((await sendsFor(accountA, 'digest')).length).toBe(1); // still just the weekly one
 
     // Transactional verification sends regardless of 'off'.
@@ -214,6 +219,11 @@ d('0.E email daemon (live dev)', () => {
   it('(c) hard bounce -> unreachable flag + counter banner, inside 2 minutes', async () => {
     const email = `bounce@simulator.amazonses.com`;
     const accountId = await createAccount(email);
+    // The simulator account persists across runs: clear any stale flag so
+    // this run proves fresh detection.
+    await dbExec(`UPDATE accounts SET email_unreachable_at = NULL WHERE id = :a::uuid`, [
+      { name: 'a', value: accountId },
+    ]);
     // A real transactional send to the bouncing address.
     const res = await counterFetch(new Jar(), '/counter/login', form({ email }));
     expect(res.status).toBe(200);
@@ -248,6 +258,10 @@ d('0.E email daemon (live dev)', () => {
   it('(c) complaint -> all non-transactional mail suppressed until re-enabled', async () => {
     const email = `complaint@simulator.amazonses.com`;
     const accountId = await createAccount(email);
+    await dbExec(
+      `UPDATE accounts SET email_complaint_suppressed_at = NULL WHERE id = :a::uuid`,
+      [{ name: 'a', value: accountId }],
+    );
     const res = await counterFetch(new Jar(), '/counter/login', form({ email }));
     expect(res.status).toBe(200);
     await poll(
@@ -282,10 +296,12 @@ d('0.E email daemon (live dev)', () => {
     const accountId = await createAccount(email);
     const cardId = await insertCard(accountId, 'HAVE', 3); // lapses in 3 days
     await sendOp({ op: 'email-renewal-tick' });
+    // Poll until the send-log row reaches a TERMINAL state ('failed' with
+    // detail 'send in flight' is the pre-SES marker, not an outcome).
     const rows = await poll(async () => {
       const r = await sendsFor(accountId, 'renewal');
-      return r.length ? r : undefined;
-    }, 'renewal email send');
+      return r.length && r[0][1] !== 'failed' ? r : undefined;
+    }, 'renewal email send (terminal status)');
     expect(rows[0][1]).toBe('sent');
     const stamped = await dbExec(
       `SELECT renewal_notified_at FROM cards WHERE id = :c::uuid`,
