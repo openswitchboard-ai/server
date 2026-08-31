@@ -49,6 +49,9 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await browser.newContext({
     viewport: { width: 390, height: 844 },
     baseURL: COUNTER_URL,
+    ...(process.env.OSB_RATELIMIT_BYPASS
+      ? { extraHTTPHeaders: { 'x-osb-ratelimit-bypass': process.env.OSB_RATELIMIT_BYPASS } }
+      : {}),
   });
   page = await ctx.newPage();
 });
