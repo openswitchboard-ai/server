@@ -118,6 +118,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       }
     };
 
+    // Notification emails must never break the action they describe.
+    const notifyBestEffort = async (req: FastifyRequest, what: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (err) {
+        req.log.warn({ err, what }, 'notification email failed; action completed anyway');
+      }
+    };
+
     const requireSession = async (
       req: FastifyRequest,
       reply: FastifyReply,
@@ -371,7 +380,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (a?.pin_hash) {
         // 0.E security notice: an EXISTING PIN was just changed.
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
-        if (email) await sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed');
+        if (email) await notifyBestEffort(req, 'pin-changed', () => sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed'));
       }
       if (a?.status === 'pending') return reply.redirect('/counter/passkey', 303);
       return reply.redirect('/counter', 303);
@@ -921,13 +930,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       ] as const) {
         const email = await ops.accountEmail(accountId, 'settlement-confirm-request-notification');
         if (email) {
-          await sendSettlementEmail(cfg, {
-            to: email,
-            accountId,
-            template: 'confirm-receipt-request',
-            settlementId: found.row.id,
-            role,
-          });
+          await notifyBestEffort(req, 'confirm-receipt-request', () =>
+            sendSettlementEmail(cfg, {
+              to: email,
+              accountId,
+              template: 'confirm-receipt-request',
+              settlementId: found.row.id,
+              role,
+            }),
+          );
         }
       }
       return reply.redirect(`/counter/settlements/${found.row.id}`, 303);
@@ -1186,7 +1197,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       await ops.killSwitchOn(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
-      if (email) await sendKillSwitchEmail(cfg, email, s.accountId!, true);
+      if (email) await notifyBestEffort(req, 'kill-switch-on', () => sendKillSwitchEmail(cfg, email, s.accountId!, true));
       return reply.redirect('/counter', 303);
     });
 
@@ -1197,7 +1208,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!okNow) return;
       await ops.killSwitchOff(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
-      if (email) await sendKillSwitchEmail(cfg, email, s.accountId!, false);
+      if (email) await notifyBestEffort(req, 'kill-switch-off', () => sendKillSwitchEmail(cfg, email, s.accountId!, false));
       return reply.redirect('/counter', 303);
     });
 
@@ -1468,12 +1479,8 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       // 0.E security notice: a new agent was just authorised.
       const email = await ops.accountEmail(s.accountId!, 'security-notice');
       if (email) {
-        await sendSecurityNoticeEmail(
-          cfg,
-          email,
-          s.accountId!,
-          'agent-authorized',
-          v.client!.client_name,
+        await notifyBestEffort(req, 'agent-authorized', () =>
+          sendSecurityNoticeEmail(cfg, email, s.accountId!, 'agent-authorized', v.client!.client_name),
         );
       }
       target.searchParams.set('code', code);
