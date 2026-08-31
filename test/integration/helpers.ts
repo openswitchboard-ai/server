@@ -201,7 +201,12 @@ export async function oauthFlow(jar: Jar): Promise<string> {
   // 1. Dynamic client registration.
   const reg = await fetch(`${BASE_URL}/oauth/register`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(process.env.OSB_RATELIMIT_BYPASS
+        ? { 'x-osb-ratelimit-bypass': process.env.OSB_RATELIMIT_BYPASS }
+        : {}),
+    },
     body: JSON.stringify({ client_name: 'osb-integration-suite', redirect_uris: [redirectUri] }),
   });
   if (reg.status !== 201) throw new Error(`register failed: ${reg.status}`);
