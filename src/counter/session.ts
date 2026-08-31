@@ -104,20 +104,43 @@ export function isElevated(s: CounterSession): boolean {
   return !!s.pinOkUntil && s.pinOkUntil > new Date();
 }
 
+/** WebAuthn ceremony state. The SQL is exported so the tests exercise the
+ *  exact statements production runs (see test/unit/counter.test.ts for the
+ *  structural invariant and test/integration/gates.test.ts for the lifecycle
+ *  against a real PostgreSQL). */
+export const WEBAUTHN_CHALLENGE_TTL = '5 minutes';
+
+export const SET_WEBAUTHN_CHALLENGE_SQL = `UPDATE counter_sessions SET webauthn_challenge = $2,
+       webauthn_challenge_expires = now() + interval '${WEBAUTHN_CHALLENGE_TTL}' WHERE id = $1`;
+
 export async function setWebauthnChallenge(sessionId: string, challenge: string): Promise<void> {
-  await getPool().query(
-    `UPDATE counter_sessions SET webauthn_challenge = $2,
-       webauthn_challenge_expires = now() + interval '5 minutes' WHERE id = $1`,
-    [sessionId, challenge],
-  );
+  await getPool().query(SET_WEBAUTHN_CHALLENGE_SQL, [sessionId, challenge]);
 }
 
+/**
+ * Consume the session's pending challenge: return it and clear it in one
+ * statement, so a challenge is usable exactly once and only inside its TTL.
+ *
+ * The read has to come from a separate CTE rather than the UPDATE's own
+ * RETURNING: on PostgreSQL below 18, RETURNING yields the NEW row, so
+ * `RETURNING webauthn_challenge` after `SET webauthn_challenge = NULL` hands
+ * back the NULL it just wrote and every ceremony fails as no_pending_challenge.
+ * The FOR UPDATE row lock keeps concurrent takes single-use: the loser
+ * re-checks the qual against the cleared row and matches nothing.
+ */
+export const TAKE_WEBAUTHN_CHALLENGE_SQL = `WITH pending AS (
+       SELECT id, webauthn_challenge FROM counter_sessions
+        WHERE id = $1 AND webauthn_challenge IS NOT NULL AND webauthn_challenge_expires > now()
+        FOR UPDATE
+     ), cleared AS (
+       UPDATE counter_sessions c
+          SET webauthn_challenge = NULL, webauthn_challenge_expires = NULL
+         FROM pending WHERE c.id = pending.id
+       RETURNING c.id
+     )
+     SELECT pending.webauthn_challenge FROM pending JOIN cleared ON cleared.id = pending.id`;
+
 export async function takeWebauthnChallenge(sessionId: string): Promise<string | undefined> {
-  const r = await getPool().query(
-    `UPDATE counter_sessions SET webauthn_challenge = NULL, webauthn_challenge_expires = NULL
-     WHERE id = $1 AND webauthn_challenge IS NOT NULL AND webauthn_challenge_expires > now()
-     RETURNING webauthn_challenge`,
-    [sessionId],
-  );
+  const r = await getPool().query(TAKE_WEBAUTHN_CHALLENGE_SQL, [sessionId]);
   return r.rows[0]?.webauthn_challenge ?? undefined;
 }
