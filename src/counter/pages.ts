@@ -458,14 +458,18 @@ const uploaded = [];
 evfile.addEventListener('change', async () => {
   for (const file of evfile.files) {
     try {
+      const bytes = await file.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const sha = btoa(String.fromCharCode(...new Uint8Array(digest)));
       const r = await fetch('/counter/settlements/${esc(v.id)}/evidence/presign', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
+        body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size, sha256_b64: sha }),
       });
       if (!r.ok) throw new Error(await r.text());
       const { url } = await r.json();
-      const put = await fetch(url, { method: 'PUT', body: file, headers: { 'content-type': file.type } });
+      const put = await fetch(url, { method: 'PUT', body: bytes,
+        headers: { 'content-type': file.type, 'x-amz-checksum-sha256': sha } });
       if (!put.ok) throw new Error('upload failed: HTTP ' + put.status);
       uploaded.push(file.name);
       evlist.style.display = 'block';

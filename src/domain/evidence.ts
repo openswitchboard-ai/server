@@ -38,17 +38,25 @@ export interface PresignedUpload {
   key: string;
 }
 
-/** Presign one photo upload for the seller. Registers the pending object. */
+/** Presign one photo upload for the seller. Registers the pending object.
+ *  The client's SHA-256 is signed into the URL, so the bytes that land are
+ *  exactly the bytes the seller's browser hashed (the WORM bucket's Object
+ *  Lock also demands a checksum on every write). */
 export async function presignEvidenceUpload(
   cfg: Config,
   s: SettlementRow,
   uploadedBy: string,
-  input: { filename: string; content_type: string; size: number },
+  input: { filename: string; content_type: string; size: number; sha256_b64: string },
 ): Promise<PresignedUpload> {
   const ext = ALLOWED_TYPES[input.content_type];
   if (!ext) throw Object.assign(new Error('only JPEG, PNG or WebP photos are accepted'), { validation: true });
   if (!Number.isFinite(input.size) || input.size <= 0 || input.size > MAX_EVIDENCE_BYTES) {
     throw Object.assign(new Error('each photo must be 15 MB or smaller'), { validation: true });
+  }
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(input.sha256_b64 ?? '')) {
+    throw Object.assign(new Error('each upload carries its SHA-256, base64-encoded'), {
+      validation: true,
+    });
   }
   const count = await getPool().query(
     'SELECT count(*)::int AS n FROM settlement_evidence WHERE settlement_id = $1',
@@ -67,13 +75,14 @@ export async function presignEvidenceUpload(
       Key: key,
       ContentType: input.content_type,
       ContentLength: input.size, // signed: the browser cannot send a different size
+      ChecksumSHA256: input.sha256_b64, // signed: nor different bytes
     }),
-    { expiresIn: UPLOAD_URL_TTL_S },
+    { expiresIn: UPLOAD_URL_TTL_S, unhoistableHeaders: new Set(['x-amz-checksum-sha256']) },
   );
   await getPool().query(
-    `INSERT INTO settlement_evidence (settlement_id, s3_key, content_type, size_bytes, uploaded_by)
-     VALUES ($1,$2,$3,$4,$5)`,
-    [s.id, key, input.content_type, input.size, uploadedBy],
+    `INSERT INTO settlement_evidence (settlement_id, s3_key, content_type, size_bytes, sha256, uploaded_by)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [s.id, key, input.content_type, input.size, input.sha256_b64, uploadedBy],
   );
   return { url, key };
 }
@@ -82,6 +91,8 @@ export interface EvidenceObject {
   key: string;
   content_type: string;
   size_bytes: number;
+  /** The SHA-256 the uploader's browser committed to (signed into the URL). */
+  sha256_b64?: string;
   etag?: string;
 }
 
@@ -97,7 +108,7 @@ export async function writeEvidenceManifest(
 ): Promise<{ manifestKey: string; objects: EvidenceObject[] }> {
   const bucket = mustBucket(cfg);
   const rows = await getPool().query(
-    'SELECT s3_key, content_type, size_bytes FROM settlement_evidence WHERE settlement_id = $1 ORDER BY created_at',
+    'SELECT s3_key, content_type, size_bytes, sha256 FROM settlement_evidence WHERE settlement_id = $1 ORDER BY created_at',
     [s.id],
   );
   const objects: EvidenceObject[] = [];
@@ -108,6 +119,7 @@ export async function writeEvidenceManifest(
         key: r.s3_key,
         content_type: r.content_type,
         size_bytes: Number(head.ContentLength ?? r.size_bytes),
+        sha256_b64: r.sha256 ?? undefined,
         etag: head.ETag?.replaceAll('"', ''),
       });
     } catch {

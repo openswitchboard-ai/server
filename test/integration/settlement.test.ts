@@ -25,6 +25,7 @@ import {
   sendOp,
   waitForCardState,
 } from './helpers.js';
+import { createHash } from 'node:crypto';
 import {
   attachStripeAccount,
   createPreVerifiedSeller,
@@ -154,17 +155,19 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     if (sessionId) await stripeApi(`/v1/checkout/sessions/${sessionId}/expire`, {}).catch(() => {});
 
     // Seller locks handover evidence into the WORM vault.
+    const png = tinyPng();
+    const sha = createHash('sha256').update(png).digest('base64');
     const presign = await counterFetch(seller.jar, `/counter/settlements/${sid}/evidence/presign`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ filename: 'handover.png', content_type: 'image/png', size: tinyPng().length }),
+      body: JSON.stringify({ filename: 'handover.png', content_type: 'image/png', size: png.length, sha256_b64: sha }),
     });
     expect(presign.status, await presign.clone().text()).toBe(200);
     const { url } = (await presign.json()) as any;
     const put = await fetch(url, {
       method: 'PUT',
-      headers: { 'content-type': 'image/png' },
-      body: tinyPng(),
+      headers: { 'content-type': 'image/png', 'x-amz-checksum-sha256': sha },
+      body: png,
     });
     expect(put.status, await put.text()).toBe(200);
     const lock = await counterFetch(seller.jar, `/counter/settlements/${sid}/evidence/lock`, form({}));
