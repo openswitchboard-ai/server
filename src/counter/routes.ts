@@ -101,6 +101,23 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     const html = (reply: FastifyReply, body: string, code = 200) =>
       reply.code(code).type('text/html').send(body);
 
+    // A failed send (SES congestion, sandbox quota) still shows the code page:
+    // the code is still required, and the honest note says the email may lag.
+    const sendCodeOrNote = async (
+      req: FastifyRequest,
+      email: string,
+      v: { code: string; linkToken: string },
+      purpose: 'register' | 'login',
+    ): Promise<string | undefined> => {
+      try {
+        await sendVerificationEmail(cfg, email, v.code, v.linkToken, purpose);
+        return undefined;
+      } catch (err) {
+        req.log.warn({ err }, 'verification email send failed; showing code page with delay note');
+        return 'Our email sending is congested right now, so the code may take a while to arrive. This page keeps working — enter the code once it lands.';
+      }
+    };
+
     const requireSession = async (
       req: FastifyRequest,
       reply: FastifyReply,
@@ -241,8 +258,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
       }
       const v = await createVerification(cfg, email, 'register');
-      await sendVerificationEmail(cfg, email, v.code, v.linkToken, 'register');
-      return html(reply, pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify' }));
+      const note = await sendCodeOrNote(req, email, v, 'register');
+      return html(reply, pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify', error: note }));
     });
 
     const finishVerification = async (
@@ -450,10 +467,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // Anti-enumeration: the code page renders whether or not an account
       // exists; the emailed code is required to learn anything further.
       const v = await createVerification(cfg, email, 'login');
-      await sendVerificationEmail(cfg, email, v.code, v.linkToken, 'login');
+      const note = await sendCodeOrNote(req, email, v, 'login');
       return html(
         reply,
-        pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify', heading: 'Check your email.' }),
+        pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify', heading: 'Check your email.', error: note }),
       );
     });
 
@@ -1355,7 +1372,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
         );
       }
       const v = await createVerification(cfg, email, 'login');
-      await sendVerificationEmail(cfg, email, v.code, v.linkToken, 'login');
+      await sendCodeOrNote(req, email, v, 'login');
       return html(reply, home.reverifyCodePage(v.id));
     });
 
