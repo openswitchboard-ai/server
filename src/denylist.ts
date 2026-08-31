@@ -59,8 +59,34 @@ export function screeningReasonCodes(category: string): string[] {
     .map((e) => e.reason_code);
 }
 
-/** True when the category exists in the v1 taxonomy under an open top level. */
-export function categoryKnownAndOpen(category: string): { ok: boolean; reason?: string } {
+/**
+ * Category families that stay closed even under the open-experiment policy.
+ * Content screening (deny list + LLM) still runs on every card regardless.
+ */
+const EXPERIMENT_PROHIBITED =
+  /(weapon|firearm|ammunit|explosiv|drug|narcot|opioid|steroid|tobacco|vape|escort|sexual|erotic|adult|gambl|counterfeit|stolen|human[-_.]?traffick|organ[-_.]?sale)/i;
+
+/**
+ * True when the category may be posted.
+ * - 'taxonomy' policy (prod): the category must exist in the v1 taxonomy under
+ *   an open top level.
+ * - 'open-experiment' policy (dev): any well-formed dotted category is allowed
+ *   except the prohibited families above; unknown categories match by
+ *   embedding rather than taxonomy rules.
+ */
+export function categoryKnownAndOpen(
+  category: string,
+  policy: 'taxonomy' | 'open-experiment' = 'taxonomy',
+): { ok: boolean; reason?: string } {
+  if (policy === 'open-experiment') {
+    if (EXPERIMENT_PROHIBITED.test(category)) {
+      return { ok: false, reason: `category family is prohibited` };
+    }
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+){1,4}$/.test(category)) {
+      return { ok: false, reason: `category must be a dotted path like goods.bicycle.mountain` };
+    }
+    return { ok: true };
+  }
   const top = category.split('.')[0];
   const topStatus = taxonomy.top_levels?.[top]?.status;
   if (topStatus !== 'open') return { ok: false, reason: `top level '${top}' is not open` };

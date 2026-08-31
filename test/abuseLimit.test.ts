@@ -32,3 +32,15 @@ describe('rate-limit bypass', () => {
     delete process.env.RATELIMIT_BYPASS_TOKEN;
   });
 });
+
+describe('open-experiment category policy', () => {
+  it('allows unknown friendly categories, blocks prohibited families', async () => {
+    const { categoryKnownAndOpen } = await import('../src/denylist.js');
+    expect(categoryKnownAndOpen('social.conversation.language-exchange', 'open-experiment').ok).toBe(true);
+    expect(categoryKnownAndOpen('services.tutoring.maths', 'open-experiment').ok).toBe(true);
+    expect(categoryKnownAndOpen('goods.weapons.firearms', 'open-experiment').ok).toBe(false);
+    expect(categoryKnownAndOpen('services.drugs.delivery', 'open-experiment').ok).toBe(false);
+    expect(categoryKnownAndOpen('not a path', 'open-experiment').ok).toBe(false);
+    expect(categoryKnownAndOpen('social.conversation.language-exchange', 'taxonomy').ok).toBe(false);
+  });
+});
