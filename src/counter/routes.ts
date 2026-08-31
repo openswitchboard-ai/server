@@ -867,6 +867,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           filename: String(b.filename ?? ''),
           content_type: String(b.content_type ?? ''),
           size: Number(b.size),
+          sha256_b64: String(b.sha256_b64 ?? ''),
         });
         return reply.send(presigned);
       } catch (e: any) {
