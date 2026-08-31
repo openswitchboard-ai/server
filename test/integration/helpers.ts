@@ -78,7 +78,13 @@ export async function counterFetch(
   const res = await fetch(path.startsWith('http') ? path : `${COUNTER_URL}${path}`, {
     ...init,
     redirect: 'manual',
-    headers: { ...(init.headers ?? {}), cookie: jar.header() },
+    headers: {
+      ...(init.headers ?? {}),
+      cookie: jar.header(),
+      ...(process.env.OSB_RATELIMIT_BYPASS
+        ? { 'x-osb-ratelimit-bypass': process.env.OSB_RATELIMIT_BYPASS }
+        : {}),
+    },
   });
   jar.absorb(res);
   return res;

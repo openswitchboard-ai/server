@@ -19,3 +19,16 @@ describe('per-IP abuse limiter', () => {
     expect(lim.limited('1.1.1.1')).toBe(false);
   });
 });
+
+describe('rate-limit bypass', () => {
+  it('refuses without a configured token; accepts only the exact token', async () => {
+    const { rateLimitBypassed } = await import('../src/abuseLimit.js');
+    delete process.env.RATELIMIT_BYPASS_TOKEN;
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) })).toBe(false);
+    process.env.RATELIMIT_BYPASS_TOKEN = 'a'.repeat(40);
+    expect(rateLimitBypassed({})).toBe(false);
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'b'.repeat(40) })).toBe(false);
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) })).toBe(true);
+    delete process.env.RATELIMIT_BYPASS_TOKEN;
+  });
+});
