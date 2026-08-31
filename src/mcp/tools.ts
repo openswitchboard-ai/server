@@ -7,7 +7,8 @@ import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../proto
 import * as cards from '../domain/cards.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
-import type { Config } from '../config.js';
+import * as settlements from '../domain/settlements.js';
+import { settlementsConfigured, type Config } from '../config.js';
 
 export interface ToolDef {
   name: string;
@@ -146,6 +147,26 @@ export const TOOLS: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'settle',
+    description:
+      "Propose an escrowed settlement on a stage-3 match, or read settlement state. Proposing (match_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. No agent action moves a settlement past 'proposed'. Pass settlement_id (or match_id alone) to read state.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        match_id: { type: 'string', format: 'uuid' },
+        settlement_id: { type: 'string', format: 'uuid' },
+        amount: { type: 'number', exclusiveMinimum: 0 },
+        ccy: { type: 'string', pattern: '^[A-Z]{3}$' },
+        description: {
+          type: 'string',
+          maxLength: 2000,
+          description: 'What the settlement is for, shown to both humans.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 export interface ToolResult {
@@ -200,6 +221,32 @@ export async function dispatchTool(
         return ok(await cards.amendIntent(cfg, accountId, args?.intent_id, args?.patch));
       case 'withdraw_intent':
         return ok(await cards.withdrawIntent(accountId, args?.intent_id));
+      case 'settle': {
+        if (!settlementsConfigured(cfg)) {
+          throw new OsbError('SETTLEMENT_UNAVAILABLE', {
+            human_action:
+              'This switchboard has settlement handling switched off. Settle directly with your counterpart for now.',
+          });
+        }
+        const { match_id, settlement_id, amount, ccy, description } = args ?? {};
+        if (settlement_id) {
+          return ok(await settlements.getSettlementForAgent(accountId, settlement_id));
+        }
+        if (!match_id) return invalidInput('settle requires match_id or settlement_id');
+        if (amount === undefined && ccy === undefined) {
+          return ok({ settlements: await settlements.listSettlementsForAgent(accountId, match_id) });
+        }
+        if (amount === undefined || ccy === undefined) {
+          return invalidInput('proposing a settlement requires both amount and ccy');
+        }
+        const r = await settlements.proposeSettlement(cfg, accountId, {
+          match_id,
+          amount,
+          ccy,
+          description,
+        });
+        return ok(r.settlement);
+      }
       case 'respond': {
         const { match_id, action, offer_id, offer, verdict } = args ?? {};
         // Server assertion (anti-probing): declines are REASONLESS. Any

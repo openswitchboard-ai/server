@@ -470,3 +470,120 @@ export function renderSecurityNotice(
     footerText(f);
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// (h) Settlement lifecycle (phase 1.A safe hands). settlement-proposed is an
+// approval-style nudge with the single-use link; the update templates track
+// the held payment. Non-blind copy stays category/amount-free below the
+// approval gate: the amount is on the approval page, behind auth. Blind:
+// pointer only.
+// ---------------------------------------------------------------------------
+export function renderSettlementProposed(
+  v: { link: string; summary?: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  // Blind mode: subject and body reveal nothing beyond the pointer (that a
+  // settlement exists is itself content).
+  const subject = v.blind
+    ? 'OpenSwitchboard: something is waiting for your approval'
+    : 'OpenSwitchboard: a settlement is waiting for your approval';
+  const line = v.blind
+    ? 'Something needs your decision.'
+    : (v.summary ?? 'Your assistant lined up a settlement. It needs your decision.');
+  const tail = v.blind
+    ? 'Nothing happens until you approve it.'
+    : 'Nothing is paid until you approve it, and the money is held until the buyer confirms receipt.';
+  const html = shell(
+    h1('Your decision is needed.') +
+      para(esc(line)) +
+      center(button(v.link, 'Review and decide')) +
+      small(
+        `The link works once. ` +
+          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">Sign in</a> any time to review it. ` +
+          esc(tail),
+      ),
+    f,
+    HAVE,
+  );
+  const text =
+    `${line}\n\nReview and decide:\n${v.link}\n\n` +
+    `The link works once. Sign in at ${v.counterUrl} any time to review it.\n\n` +
+    `${tail}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+export type SettlementUpdateEvent =
+  | 'payment-held'
+  | 'confirm-receipt-request'
+  | 'released'
+  | 'refund';
+
+export function renderSettlementUpdate(
+  v: {
+    event: SettlementUpdateEvent;
+    role: 'buyer' | 'seller';
+    blind: boolean;
+    settlementUrl: string;
+    counterUrl: string;
+  },
+  f: FooterLinks,
+): EmailContent {
+  const copy: Record<SettlementUpdateEvent, { subject: string; heading: string; buyer: string; seller: string; buttonLabel: string }> = {
+    'payment-held': {
+      subject: 'OpenSwitchboard: the payment is held',
+      heading: 'The payment is in safe hands.',
+      buyer:
+        'Your payment went through and is held. It moves to the seller only after you confirm receipt.',
+      seller:
+        'The buyer paid and the money is held. Hand over the goods, then lock your handover evidence from the settlement page.',
+      buttonLabel: 'Open the settlement',
+    },
+    'confirm-receipt-request': {
+      subject: 'OpenSwitchboard: confirm receipt',
+      heading: 'Ready for your confirmation.',
+      buyer:
+        'The seller locked the handover evidence. Once the goods are in your hands, confirm receipt and the held payment is released.',
+      seller:
+        'Your evidence is locked and the buyer has been asked to confirm receipt.',
+      buttonLabel: 'Open the settlement',
+    },
+    released: {
+      subject: 'OpenSwitchboard: payment released',
+      heading: 'The payment is released.',
+      buyer: 'You confirmed receipt and the held payment was released to the seller. This settlement is complete.',
+      seller: 'The buyer confirmed receipt and the held payment was released to you. This settlement is complete.',
+      buttonLabel: 'See the settlement',
+    },
+    refund: {
+      subject: 'OpenSwitchboard: payment returned',
+      heading: 'The payment went back.',
+      buyer: 'The held payment was returned to you in full. This settlement is closed.',
+      seller: 'The held payment was returned to the buyer. This settlement is closed.',
+      buttonLabel: 'See the settlement',
+    },
+  };
+  const c = copy[v.event];
+  if (v.blind) {
+    const subject = 'OpenSwitchboard: something moved on your account';
+    const html = shell(
+      h1('Something moved.') +
+        para('Something on your account changed. The detail waits behind your sign-in.') +
+        center(button(v.counterUrl, "See what's waiting")),
+      f,
+      HAVE,
+    );
+    const text =
+      `Something on your account changed. The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
+      footerText(f);
+    return { subject, html, text };
+  }
+  const line = v.role === 'buyer' ? c.buyer : c.seller;
+  const html = shell(
+    h1(c.heading) + para(esc(line)) + center(button(v.settlementUrl, c.buttonLabel)),
+    f,
+    v.event === 'refund' ? WANT : HAVE,
+  );
+  const text = `${line}\n\n${c.buttonLabel}:\n${v.settlementUrl}\n\n` + footerText(f);
+  return { subject: c.subject, html, text };
+}

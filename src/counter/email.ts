@@ -10,7 +10,10 @@ import {
   renderApproval,
   renderKillSwitch,
   renderSecurityNotice,
+  renderSettlementProposed,
+  renderSettlementUpdate,
   renderVerification,
+  type SettlementUpdateEvent,
 } from '../email/templates.js';
 import { baseFooterLinks, emailAccountContext, sendEmail } from '../email/send.js';
 import type { SendOutcome } from '../email/send.js';
@@ -104,6 +107,68 @@ export async function sendSecurityNoticeEmail(
         event,
         agentName: ctx.blind ? undefined : agentName,
         counterUrl: `${cfg.counterOrigin}/counter`,
+      },
+      ctx.links,
+    ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Settlement lifecycle emails (phase 1.A safe hands). settlement-proposed
+// carries the single-use approval link; the update set follows the held
+// payment. Blind mode strips everything beyond the pointer.
+// ---------------------------------------------------------------------------
+export interface SettlementEmailInput {
+  to: string;
+  accountId: string;
+  template: 'settlement-proposed' | SettlementUpdateEvent;
+  settlementId: string;
+  /** settlement-proposed only: single-use approval link token + row id. */
+  linkToken?: string;
+  linkId?: string;
+  /** settlement-proposed only: category-level summary (blind mode strips it). */
+  summary?: string;
+  /** update templates only: which side this recipient is on. */
+  role?: 'buyer' | 'seller';
+}
+
+export async function sendSettlementEmail(
+  cfg: Config,
+  input: SettlementEmailInput,
+): Promise<SendOutcome> {
+  const ctx = await emailAccountContext(cfg, input.accountId);
+  const counterUrl = `${cfg.counterOrigin}/counter`;
+  if (input.template === 'settlement-proposed') {
+    if (!input.linkToken || !input.linkId) {
+      throw new Error('settlement-proposed email requires the approval link');
+    }
+    const link = `${cfg.counterOrigin}/counter/a/${encodeURIComponent(input.linkToken)}`;
+    return sendEmail(cfg, {
+      to: input.to,
+      accountId: input.accountId,
+      template: 'settlement-proposed',
+      kind: 'transactional',
+      dedupeKey: `settlement-proposed:${input.linkId}`,
+      content: renderSettlementProposed(
+        { link, summary: ctx.blind ? undefined : input.summary, blind: ctx.blind, counterUrl },
+        ctx.links,
+      ),
+    });
+  }
+  if (!input.role) throw new Error('settlement update email requires the recipient role');
+  return sendEmail(cfg, {
+    to: input.to,
+    accountId: input.accountId,
+    template: `settlement-${input.template}`,
+    kind: 'transactional',
+    dedupeKey: `settlement:${input.template}:${input.settlementId}:${input.accountId}`,
+    content: renderSettlementUpdate(
+      {
+        event: input.template,
+        role: input.role,
+        blind: ctx.blind,
+        settlementUrl: `${cfg.counterOrigin}/counter/settlements/${input.settlementId}`,
+        counterUrl,
       },
       ctx.links,
     ),
