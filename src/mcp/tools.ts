@@ -45,6 +45,33 @@ function selfContained(schema: any): any {
   return inlineRefs(structuredClone(schema), schema.$defs ?? {});
 }
 
+/**
+ * Strip JSON-Schema constructs that constrained-decoding grammar compilers
+ * (llama.cpp / LM Studio and kin) cannot express: propertyNames, not,
+ * if/then/else, allOf, boolean-false property schemas, and format. These are
+ * client-side hints only — the server validates every input against the full
+ * protocol schema regardless, so enforcement is unchanged.
+ */
+function grammarFriendly(node: any): any {
+  if (Array.isArray(node)) return node.map(grammarFriendly);
+  if (node === null || typeof node !== 'object') return node;
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (['propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'format'].includes(k)) continue;
+    if (k === 'properties' && v && typeof v === 'object') {
+      const props: any = {};
+      for (const [pk, pv] of Object.entries(v as Record<string, unknown>)) {
+        if (pv === false) continue;
+        props[pk] = grammarFriendly(pv);
+      }
+      out[k] = props;
+      continue;
+    }
+    out[k] = grammarFriendly(v);
+  }
+  return out;
+}
+
 const intentCardSchema = selfContained(bundledSchema('intent-card'));
 
 export const TOOLS: ToolDef[] = [
@@ -197,6 +224,8 @@ export const TOOLS: ToolDef[] = [
     },
   },
 ];
+
+for (const t of TOOLS) t.inputSchema = grammarFriendly(t.inputSchema);
 
 export interface ToolResult {
   [key: string]: unknown;
