@@ -44,3 +44,21 @@ describe('open-experiment category policy', () => {
     expect(categoryKnownAndOpen('social.conversation.language-exchange', 'taxonomy').ok).toBe(false);
   });
 });
+
+describe('tool schemas are self-contained', () => {
+  it('no $ref or $defs survives anywhere in any tool inputSchema', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.js');
+    const walk = (n: any, path: string): string[] => {
+      if (Array.isArray(n)) return n.flatMap((v, i) => walk(v, `${path}[${i}]`));
+      if (n === null || typeof n !== 'object') return [];
+      const bad: string[] = [];
+      if ('$ref' in n) bad.push(`${path}.$ref`);
+      if ('$defs' in n) bad.push(`${path}.$defs`);
+      for (const [k, v] of Object.entries(n)) bad.push(...walk(v, `${path}.${k}`));
+      return bad;
+    };
+    for (const t of TOOLS) {
+      expect(walk(t.inputSchema, t.name)).toEqual([]);
+    }
+  });
+});

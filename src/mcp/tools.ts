@@ -16,7 +16,36 @@ export interface ToolDef {
   inputSchema: any;
 }
 
-const intentCardSchema = bundledSchema('intent-card');
+/**
+ * Inline every internal '#/$defs/...' reference and strip $defs. Tool input
+ * schemas embed protocol schemas under nested properties, which breaks the
+ * refs' root-relative anchors; strict clients (LM Studio's constrained
+ * decoder, some local harnesses) resolve refs and reject the dangling ones.
+ * Our schemas are acyclic, so plain recursive inlining terminates.
+ */
+function inlineRefs(node: any, defs: Record<string, any>): any {
+  if (Array.isArray(node)) return node.map((n) => inlineRefs(n, defs));
+  if (node === null || typeof node !== 'object') return node;
+  if (typeof node.$ref === 'string') {
+    const m = node.$ref.match(/^#\/\$defs\/(.+)$/);
+    if (m && defs[m[1]]) {
+      const { $ref, ...rest } = node;
+      return { ...inlineRefs(structuredClone(defs[m[1]]), defs), ...inlineRefs(rest, defs) };
+    }
+  }
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === '$defs') continue;
+    out[k] = inlineRefs(v, defs);
+  }
+  return out;
+}
+
+function selfContained(schema: any): any {
+  return inlineRefs(structuredClone(schema), schema.$defs ?? {});
+}
+
+const intentCardSchema = selfContained(bundledSchema('intent-card'));
 
 export const TOOLS: ToolDef[] = [
   {
