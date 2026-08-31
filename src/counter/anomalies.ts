@@ -34,7 +34,7 @@ export async function offerAmountAnomaly(
 
 export async function newCounterpartyAnomaly(
   counterpartyAccountId: string,
-  action: 'offer-accept' | 'stage3-disclosure',
+  action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve',
 ): Promise<Anomaly | undefined> {
   const r = await getPool().query(
     `SELECT (created_at > now() - interval '7 days') AS young FROM accounts WHERE id = $1`,
@@ -46,6 +46,8 @@ export async function newCounterpartyAnomaly(
     text:
       action === 'stage3-disclosure'
         ? 'first disclosure to a brand-new account'
-        : 'this offer comes from a brand-new account',
+        : action === 'settlement-approve'
+          ? 'the other side of this settlement is a brand-new account'
+          : 'this offer comes from a brand-new account',
   };
 }

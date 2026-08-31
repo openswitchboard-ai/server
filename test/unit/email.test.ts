@@ -15,6 +15,8 @@ import {
   renderKillSwitch,
   renderRenewal,
   renderSecurityNotice,
+  renderSettlementProposed,
+  renderSettlementUpdate,
   renderSummons,
   renderVerification,
   type EmailContent,
@@ -175,6 +177,75 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'security-pin-changed',
       blind: false,
       content: renderSecurityNotice({ event: 'pin-changed', counterUrl: `${COUNTER}/counter` }, links),
+    },
+    {
+      name: 'settlement-proposed',
+      blind: false,
+      content: renderSettlementProposed(
+        {
+          link: `${COUNTER}/counter/a/tok`,
+          summary: `A settlement of 600 AUD on your ${LABEL} match is waiting for your approval.`,
+          blind: false,
+          counterUrl: `${COUNTER}/counter`,
+        },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-proposed-blind',
+      blind: true,
+      content: renderSettlementProposed(
+        { link: `${COUNTER}/counter/a/tok`, blind: true, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-payment-held-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'payment-held', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-payment-held-seller',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'payment-held', role: 'seller', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-confirm-receipt-request',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'confirm-receipt-request', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-released-seller',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-refund-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'refund', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-update-blind',
+      blind: true,
+      content: renderSettlementUpdate(
+        { event: 'released', role: 'seller', blind: true, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
     },
   ];
 }

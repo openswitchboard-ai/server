@@ -33,6 +33,7 @@ const cfg: Config = {
   region: 'us-east-1',
   quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
+  settlementFeePercent: 0,
 };
 
 let app: FastifyInstance;
@@ -61,6 +62,12 @@ describe('route isolation: agent credentials x counter routes', () => {
       'POST /counter/kill',
       'POST /counter/authorize',
       'GET /counter/a/:token',
+      'GET /counter/approvals/settlement/:id',
+      'GET /counter/settlements/:id',
+      'POST /counter/settlements/:id/pay',
+      'POST /counter/settlements/:id/confirm',
+      'POST /counter/settlements/:id/dispute',
+      'POST /counter/settlements/:id/evidence/lock',
     ]) {
       expect(urls, `missing route ${must}`).toContain(must);
     }

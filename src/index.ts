@@ -1,6 +1,7 @@
-import { loadConfig } from './config.js';
+import { loadConfig, settlementsConfigured } from './config.js';
 import { initDb, migrate } from './db.js';
 import { initEnvelope } from './crypto.js';
+import { ensureWebhookEndpoint, initStripe } from './stripe.js';
 import { initCounterKeys } from './counter/keys.js';
 import { buildApp } from './app.js';
 import { startScreeningWorker } from './workers/screeningWorker.js';
@@ -27,9 +28,30 @@ async function main() {
   }
   initEnvelope(cfg);
   await initCounterKeys(cfg);
+  initStripe(cfg);
 
   const app = buildApp(cfg);
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
+
+  if (settlementsConfigured(cfg)) {
+    // Provision the Stripe webhook endpoint (idempotent). Settlements stay
+    // unavailable (fail closed) until the signing secret is in hand; the
+    // rest of the switchboard is unaffected by a Stripe outage at boot.
+    const provision = async (attempt = 1): Promise<void> => {
+      try {
+        await ensureWebhookEndpoint(cfg);
+        app.log.info('stripe webhook endpoint ready; settlements enabled');
+      } catch (e: any) {
+        app.log.error({ err: e?.message, attempt }, 'stripe webhook provisioning failed; retrying');
+        setTimeout(() => void provision(attempt + 1), Math.min(60_000, 5_000 * attempt));
+      }
+    };
+    void provision();
+  } else {
+    // Logged once at startup, by design: prod runs without a Stripe secret
+    // until a prod Stripe account exists.
+    app.log.info('settlements disabled: no Stripe secret configured for this deployment');
+  }
 
   const stopScreening = startScreeningWorker(cfg, log);
   const stopMatching = startMatchingWorker(cfg, log);

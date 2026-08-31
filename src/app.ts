@@ -3,8 +3,9 @@ import { registerOAuthRoutes } from './auth/oauth.js';
 import { registerMcpRoutes } from './mcp/mcp.js';
 import { registerCounterRoutes } from './counter/routes.js';
 import { registerPublicRoutes } from './publicApi.js';
+import { registerStripeWebhook } from './stripeWebhook.js';
 import { SCHEMA_NAMES, SCHEMA_VERSION, validatePayload } from './protocol.js';
-import type { Config } from './config.js';
+import { settlementsConfigured, type Config } from './config.js';
 
 export function buildApp(cfg: Config): FastifyInstance {
   const app = Fastify({
@@ -55,7 +56,7 @@ export function buildApp(cfg: Config): FastifyInstance {
   const counterHost = new URL(cfg.counterOrigin).host.toLowerCase();
   app.addHook('onRequest', async (req, reply) => {
     if (
-      req.url.startsWith('/mcp') &&
+      (req.url.startsWith('/mcp') || req.url.startsWith('/stripe')) &&
       (req.headers.host ?? '').toLowerCase() === counterHost
     ) {
       return reply.code(404).send({ error: 'not_found' });
@@ -66,5 +67,8 @@ export function buildApp(cfg: Config): FastifyInstance {
   registerPublicRoutes(app, cfg);
   registerMcpRoutes(app, cfg);
   registerCounterRoutes(app, cfg);
+  // Settlement webhook exists ONLY on deployments with Stripe configured;
+  // everywhere else the route is absent and answers 404.
+  if (settlementsConfigured(cfg)) registerStripeWebhook(app, cfg);
   return app;
 }

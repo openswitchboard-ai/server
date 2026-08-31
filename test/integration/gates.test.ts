@@ -92,6 +92,7 @@ d('integration gates against live deployment', () => {
       'open_channel',
       'publish_intent',
       'respond',
+      'settle',
       'withdraw_intent',
     ]);
     const publish = tools.result.tools.find((t: any) => t.name === 'publish_intent');
