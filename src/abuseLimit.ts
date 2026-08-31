@@ -5,6 +5,8 @@
  * quota and poison the bounce rate, not precise global accounting.
  */
 
+import { timingSafeEqual } from 'node:crypto';
+
 interface Window {
   windowStart: number;
   n: number;
@@ -32,6 +34,21 @@ export function makeIpLimiter(maxPerWindow: number, windowMs: number): IpLimiter
       return h.n > maxPerWindow;
     },
   };
+}
+
+/**
+ * CI exemption: when RATELIMIT_BYPASS_TOKEN is set in the environment (dev
+ * only — infra injects it from an SSM SecureString), a request carrying the
+ * matching x-osb-ratelimit-bypass header skips the per-IP limiters so the
+ * e2e suite can bootstrap several actors from one runner IP. It exempts
+ * nothing else: screening, consent gates and quotas still apply.
+ */
+export function rateLimitBypassed(headers: Record<string, unknown>): boolean {
+  const token = process.env.RATELIMIT_BYPASS_TOKEN;
+  if (!token || token.length < 32) return false;
+  const given = headers['x-osb-ratelimit-bypass'];
+  if (typeof given !== 'string' || given.length !== token.length) return false;
+  return timingSafeEqual(Buffer.from(given), Buffer.from(token));
 }
 
 /** DCR: 5 client registrations per IP per hour. */
