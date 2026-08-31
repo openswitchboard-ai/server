@@ -16,7 +16,7 @@
     "test:integration": "RUN_INTEGRATION=1 vitest run --no-file-parallelism test/integration",
     "bootstrap-account": "tsx scripts/bootstrap-account.ts",
     "ops": "tsx scripts/ops.ts",
-    "test:e2e": "playwright test test/e2e/counter.spec.ts",
+    "test:e2e": "playwright test test/e2e/counter.spec.ts test/e2e/passkey.spec.ts",
     "test:e2e:prod": "OSB_CHECK_PROD=1 playwright test test/e2e/prod.spec.ts"
   },
   "dependencies": {

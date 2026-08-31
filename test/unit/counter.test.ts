@@ -4,12 +4,14 @@
  *    route, enumerated from the live route table — before any DB access;
  *  - a counter session cookie is worthless on /mcp (401).
  */
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeAll, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { COUNTER_ROUTE_TABLE } from '../../src/counter/routes.js';
 import { CONSENT_STATEMENT } from '../../src/counter/pages.js';
 import { lockoutMinutes, pinFormatOk, PIN_MAX_ATTEMPTS } from '../../src/counter/pin.js';
 import { bindingString, signLink } from '../../src/counter/links.js';
+import * as sess from '../../src/counter/session.js';
+import * as db from '../../src/db.js';
 import type { Config } from '../../src/config.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -334,5 +336,83 @@ describe('counter pages: copy-cull render suite', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
     expect(byName['ledger']).toContain('condition: good');
     expect(byName['renew']).toContain('condition: good · frame: large');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Passkey ceremony state: the challenge lifecycle.
+//
+// The enrolment bug that this covers: takeWebauthnChallenge cleared the
+// challenge and read it back through the same UPDATE's RETURNING. PostgreSQL
+// (below 18, and dev/prod run 17) evaluates RETURNING against the NEW tuple,
+// so the statement handed back the NULL it had just written and every
+// /counter/passkey/verify answered 400 no_pending_challenge.
+//
+// The lifecycle itself is a property of the database, so it is proven for real
+// twice over: test/integration/gates.test.ts runs these exact statements
+// against live PostgreSQL, and test/e2e/passkey.spec.ts enrols a virtual
+// authenticator end to end. What is checkable without a database — the
+// statement's structure, and the mapping the module puts on top of it — is
+// checked here so the defect cannot come back unnoticed.
+// ---------------------------------------------------------------------------
+describe('webauthn challenge: single-use, short-TTL, read before clear', () => {
+  const take = sess.TAKE_WEBAUTHN_CHALLENGE_SQL;
+
+  it('never projects the challenge out of the RETURNING of the update that nulls it', () => {
+    // Everything after the clearing SET, up to the end of that UPDATE's own
+    // RETURNING list, must not mention the challenge column: on PostgreSQL a
+    // RETURNING list sees the new (cleared) row.
+    const clearing = take.slice(take.indexOf('SET webauthn_challenge = NULL'));
+    const returning = clearing.slice(clearing.indexOf('RETURNING'));
+    const returningList = returning.split(/\)|\n\s*\)/)[0];
+    expect(returningList).not.toContain('webauthn_challenge');
+    // The value that is handed back is read before the clear instead.
+    expect(take).toMatch(/SELECT[\s\S]*webauthn_challenge[\s\S]*FROM counter_sessions/);
+  });
+
+  it('reads and clears in one statement, holding the row while it does', () => {
+    expect(take).not.toContain(';'); // one statement: no read-then-write window
+    expect(take).toContain('FOR UPDATE');
+    expect(take).toContain('webauthn_challenge = NULL');
+    expect(take).toContain('webauthn_challenge_expires = NULL');
+  });
+
+  it('refuses a spent or stale challenge in the statement itself', () => {
+    expect(take).toContain('webauthn_challenge IS NOT NULL'); // single-use
+    expect(take).toContain('webauthn_challenge_expires > now()'); // TTL
+  });
+
+  it('issues a challenge with a short TTL', () => {
+    expect(sess.WEBAUTHN_CHALLENGE_TTL).toBe('5 minutes');
+    expect(sess.SET_WEBAUTHN_CHALLENGE_SQL).toContain("interval '5 minutes'");
+  });
+
+  it('takes the challenge for the given session and reports nothing when there is none', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const fake = (rows: any[]) => ({
+      query: async (sql: string, params: unknown[]) => {
+        calls.push({ sql, params });
+        return { rows, rowCount: rows.length };
+      },
+    });
+
+    const spy = vi.spyOn(db, 'getPool');
+    try {
+      spy.mockReturnValue(fake([{ webauthn_challenge: 'chal-abc' }]) as any);
+      expect(await sess.takeWebauthnChallenge('sess-1')).toBe('chal-abc');
+      expect(calls[0].sql).toBe(take);
+      expect(calls[0].params).toEqual(['sess-1']);
+
+      // No live challenge -> no rows -> undefined, which is what the route
+      // turns into 400 no_pending_challenge.
+      spy.mockReturnValue(fake([]) as any);
+      expect(await sess.takeWebauthnChallenge('sess-1')).toBeUndefined();
+
+      // A row that somehow carries NULL is not a challenge either.
+      spy.mockReturnValue(fake([{ webauthn_challenge: null }]) as any);
+      expect(await sess.takeWebauthnChallenge('sess-1')).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
