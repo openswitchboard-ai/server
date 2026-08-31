@@ -52,7 +52,7 @@ export async function publishIntent(
   }
   checkSchemaVersion(card.schema_version);
 
-  const known = categoryKnownAndOpen(card.category);
+  const known = categoryKnownAndOpen(card.category, cfg.categoryPolicy);
   if (!known.ok) {
     throw new OsbError('CATEGORY_PROHIBITED', {
       human_action: `Category not available: ${known.reason}.`,
