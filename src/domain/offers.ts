@@ -175,14 +175,20 @@ async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
   if (email) {
     // Category-level only. The amount stays behind auth until approval
     // (blind mode strips even the category — handled in sendApprovalEmail).
-    await sendApprovalEmail(
-      cfg,
-      email,
-      humanAccount,
-      linkId,
-      token,
-      `An offer on your ${categoryLeafLabel(m.category)} match is waiting for your decision.`,
-    );
+    // Best-effort: the offer is already parked and shows on the person's
+    // approval page; a failed send delays discovery without undoing it.
+    try {
+      await sendApprovalEmail(
+        cfg,
+        email,
+        humanAccount,
+        linkId,
+        token,
+        `An offer on your ${categoryLeafLabel(m.category)} match is waiting for your decision.`,
+      );
+    } catch (err) {
+      console.warn('approval email failed; offer stays awaiting-human', err);
+    }
   }
 }
 
