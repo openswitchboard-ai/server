@@ -12,7 +12,7 @@
  *  - requests for /counter on the MCP hostname 404 (and vice versa).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { verificationEmailLimiter } from '../abuseLimit.js';
+import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail } from '../domain/accounts.js';
 import { amendIntent, withdrawIntent } from '../domain/cards.js';
@@ -197,7 +197,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           429,
         );
       }
-      if (verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-register: per-IP verification-email limit hit');
         return html(
           reply,
@@ -404,7 +404,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           429,
         );
       }
-      if (verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-login: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1019,7 +1019,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
           429,
         );
       }
-      if (verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-reverify: per-IP verification-email limit hit');
         return html(
           reply,
