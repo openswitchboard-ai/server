@@ -299,6 +299,9 @@ async function notifyHumansOfProposal(
     });
     const email = await accountEmail(accountId, 'settlement-approval-notification');
     if (email) {
+      // Best-effort: the approval also appears on the person's approval page;
+      // a failed email must not roll back the proposed settlement.
+      try {
       await sendSettlementEmail(cfg, {
         to: email,
         accountId,
@@ -308,6 +311,9 @@ async function notifyHumansOfProposal(
         linkId,
         summary: `A settlement of ${Number(s.amount)} ${s.ccy} on your ${categoryLeafLabel(m.category)} match is waiting for your approval.`,
       });
+      } catch (err) {
+        console.warn('settlement-proposed email failed; settlement stands', err);
+      }
     }
   }
 }
