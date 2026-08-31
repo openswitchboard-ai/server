@@ -11,12 +11,17 @@
  *  (e) quota exceeded -> QUOTA_EXCEEDED
  * plus: OAuth 2.1 flow, screening accept path, TTL/queue plumbing via ops.
  */
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import {
+  SET_WEBAUTHN_CHALLENGE_SQL,
+  TAKE_WEBAUTHN_CHALLENGE_SQL,
+} from '../../src/counter/session.js';
 import {
   BASE_URL,
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
+  dbExec,
   mcpCall,
   mcpRpc,
   minimalHave,
@@ -317,5 +322,78 @@ d('integration gates against live deployment', () => {
     await waitForCardState(alice.accessToken, id, ['PUBLISHED']);
     const w = await mcpCall(alice.accessToken, 'withdraw_intent', { intent_id: id });
     expect(w.result.state).toBe('WITHDRAWN');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Passkey ceremony state against the real database.
+//
+// The challenge lifecycle is a property of PostgreSQL, not of TypeScript: the
+// enrolment outage came from `UPDATE ... SET webauthn_challenge = NULL ...
+// RETURNING webauthn_challenge`, which returns the NEW (cleared) row on
+// PostgreSQL 17, so verify never saw the challenge options had just stored.
+// These run the EXACT statements production issues, against live dev.
+// ---------------------------------------------------------------------------
+d('webauthn challenge lifecycle (real PostgreSQL)', () => {
+  const dataApi = (sql: string) =>
+    sql.replace(/\$1/g, ':id::uuid').replace(/\$2/g, ':challenge');
+  let sessionId: string;
+
+  const setChallenge = (expiresExpr?: string) =>
+    dbExec(
+      expiresExpr
+        ? `UPDATE counter_sessions SET webauthn_challenge = :challenge,
+             webauthn_challenge_expires = ${expiresExpr} WHERE id = :id::uuid`
+        : dataApi(SET_WEBAUTHN_CHALLENGE_SQL),
+      [
+        { name: 'id', value: sessionId },
+        { name: 'challenge', value: 'chal-integration' },
+      ],
+    );
+  const take = () =>
+    dbExec(dataApi(TAKE_WEBAUTHN_CHALLENGE_SQL), [{ name: 'id', value: sessionId }]);
+
+  beforeAll(async () => {
+    const r = await dbExec(
+      `INSERT INTO counter_sessions (sid_hash, account_id, expires_at)
+       VALUES (:h, NULL, now() + interval '1 hour') RETURNING id`,
+      [{ name: 'h', value: `webauthn-lifecycle-${Date.now()}` }],
+    );
+    sessionId = r[0][0] as string;
+  });
+  afterAll(async () => {
+    if (sessionId) {
+      await dbExec('DELETE FROM counter_sessions WHERE id = :id::uuid', [
+        { name: 'id', value: sessionId },
+      ]);
+    }
+  });
+
+  it('hands back the challenge that was stored, then refuses the replay', async () => {
+    await setChallenge();
+    expect((await take())[0]?.[0]).toBe('chal-integration'); // the regression
+    expect(await take()).toEqual([]); // single-use
+  });
+
+  it('refuses a challenge past its TTL, and leaves it for the sweeper', async () => {
+    await setChallenge(`now() - interval '1 second'`);
+    expect(await take()).toEqual([]);
+    const row = await dbExec(
+      'SELECT webauthn_challenge FROM counter_sessions WHERE id = :id::uuid',
+      [{ name: 'id', value: sessionId }],
+    );
+    expect(row[0][0]).toBe('chal-integration'); // an expired take clears nothing
+  });
+
+  it('stores challenges with a five-minute TTL', async () => {
+    await setChallenge();
+    const row = await dbExec(
+      `SELECT webauthn_challenge_expires - now() < interval '5 minutes' + interval '5 seconds',
+              webauthn_challenge_expires > now() + interval '4 minutes'
+         FROM counter_sessions WHERE id = :id::uuid`,
+      [{ name: 'id', value: sessionId }],
+    );
+    expect(row[0]).toEqual([true, true]);
+    await take();
   });
 });
