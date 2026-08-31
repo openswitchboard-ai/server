@@ -28,6 +28,22 @@ import {
 import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
+import * as settlements from '../domain/settlements.js';
+import {
+  cancelPaymentForSettlement,
+  capturePaymentForSettlement,
+  checkoutUrlForSettlement,
+  ensureSellerStripeAccount,
+  sellerAccountReady,
+  sellerOnboardingLink,
+  sellerStripeAccountId,
+} from '../domain/settlementStripe.js';
+import {
+  evidenceViewLinks,
+  presignEvidenceUpload,
+  writeEvidenceManifest,
+} from '../domain/evidence.js';
+import { settlementsConfigured } from '../config.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
@@ -39,7 +55,7 @@ import {
   verifyByCode,
   verifyByLinkToken,
 } from './verification.js';
-import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendVerificationEmail } from './email.js';
+import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
 import { verifyEmailToken } from '../email/tokens.js';
 import { emailHash } from '../domain/accounts.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
@@ -118,7 +134,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [offers, disclosures, verdictable, windows, counts] = await Promise.all([
+      const [offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
         ops.verdictableMatches(s.accountId),
@@ -128,6 +144,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
                   count(*) FILTER (WHERE lifecycle_state = 'PUBLISHED')::int AS published,
                   count(*) FILTER (WHERE lifecycle_state = 'PENDING_SCREENING')::int AS pending
            FROM cards WHERE account_id = $1`,
+          [s.accountId],
+        ),
+        getPool().query(
+          `SELECT st.*, m.category FROM settlements st JOIN matches m ON m.id = st.match_id
+           WHERE (st.buyer_account = $1 OR st.seller_account = $1)
+             AND st.state <> ALL('{released,refunded,declined}'::text[])
+           ORDER BY st.created_at DESC LIMIT 20`,
           [s.accountId],
         ),
       ]);
@@ -141,6 +164,18 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           href: `/counter/approvals/match/${d.match_id}`,
           label: `Share your details on your ${categoryLeafLabel(d.category)} match?`,
         })),
+        ...liveSettlements.rows.map((st: any) => {
+          const mine = st.buyer_account === s.accountId ? st.buyer_approved_at : st.seller_approved_at;
+          const needsApproval =
+            !mine && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(st.state);
+          return {
+            href: needsApproval
+              ? `/counter/approvals/settlement/${st.id}`
+              : `/counter/settlements/${st.id}`,
+            label: `Settlement on your ${categoryLeafLabel(st.category)} match (${st.state})`,
+            amount: `${Number(st.amount)} ${st.ccy}`,
+          };
+        }),
       ];
       return html(
         reply,
@@ -487,12 +522,41 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     // ------------------------------------------------------------------
     const approvalView = async (
       accountId: string,
-      action: 'offer-accept' | 'stage3-disclosure',
+      action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve',
       refId: string,
     ): Promise<pages.ApprovalView | { error: string }> => {
       const anomalies: string[] = [];
       const facts: { k: string; v: string }[] = [];
-      if (action === 'offer-accept') {
+      if (action === 'settlement-approve') {
+        const s = await settlements.getSettlement(refId);
+        if (!s) return { error: 'This settlement no longer exists.' };
+        let party: 'buyer' | 'seller';
+        try {
+          party = settlements.partyOf(s, accountId);
+        } catch {
+          return { error: 'This settlement is not yours to decide.' };
+        }
+        const myApproval = party === 'buyer' ? s.buyer_approved_at : s.seller_approved_at;
+        if (myApproval) return { error: 'You have already approved this settlement.' };
+        if (!['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(s.state)) {
+          return { error: `This settlement is ${s.state} — nothing to decide.` };
+        }
+        const m = await getMatch(s.match_id);
+        facts.push(
+          {
+            k: party === 'buyer' ? 'You would pay' : 'You would be paid',
+            v: `${Number(s.amount)} ${s.ccy}`,
+          },
+          { k: 'For', v: m ? categoryLeafLabel(m.category) : 'your match' },
+          {
+            k: 'How it works',
+            v: party === 'buyer' ? 'held until you confirm receipt' : 'held until the buyer confirms receipt',
+          },
+        );
+        const counterparty = party === 'buyer' ? s.seller_account : s.buyer_account;
+        const cp = await newCounterpartyAnomaly(counterparty, 'settlement-approve');
+        if (cp) anomalies.push(cp.text);
+      } else if (action === 'offer-accept') {
         const r = await getPool().query(
           `SELECT o.*, m.category, m.account_want, m.account_have FROM offers o
            JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
@@ -591,6 +655,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return html(reply, pages.approvalPage(v));
     });
 
+    counter.get('/approvals/settlement/:id', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const v = await approvalView(s.accountId!, 'settlement-approve', String((req.params as any).id));
+      if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      v.elevated = sess.isElevated(s);
+      return html(reply, pages.approvalPage(v));
+    });
+
     counter.post('/approve', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
@@ -598,12 +671,24 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const action = String(b.action ?? '');
       const refId = String(b.ref_id ?? '');
       const decision = String(b.decision ?? '');
-      if (!['offer-accept', 'stage3-disclosure'].includes(action) || !refId) {
+      if (!['offer-accept', 'stage3-disclosure', 'settlement-approve'].includes(action) || !refId) {
         return reply.code(400).send({ error: 'bad_request' });
       }
       if (decision === 'decline') {
         // Declining shares nothing and needs no ceremony. No reason is carried.
         if (action === 'offer-accept') await ops.declineOfferByHuman(refId, s.accountId!);
+        else if (action === 'settlement-approve') {
+          try {
+            await settlements.declineSettlement(settlements.counterAction(s.accountId!), refId);
+          } catch (e: any) {
+            if (!e?.notFound && !(e instanceof OsbError)) throw e;
+            return html(reply, pages.messagePage('Nothing to decide', '<p>This settlement has moved on.</p>'));
+          }
+          return html(
+            reply,
+            pages.messagePage('Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
+          );
+        }
         else await declineMatch(refId, s.accountId!);
         return html(
           reply,
@@ -615,6 +700,18 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       try {
+        if (action === 'settlement-approve') {
+          const r = await settlements.approveSettlement(
+            settlements.counterAction(s.accountId!),
+            refId,
+          );
+          // Seller onboarding starts at first settlement approval: make sure
+          // the connected account exists the moment the seller says yes.
+          if (r.row.seller_account === s.accountId && settlementsConfigured(cfg)) {
+            await ensureSellerStripeAccount(cfg, s.accountId!, refId);
+          }
+          return reply.redirect(`/counter/settlements/${refId}`, 303);
+        }
         if (action === 'offer-accept') {
           await acceptOfferByHuman(refId, s.accountId!, 'counter');
           return html(
@@ -648,6 +745,235 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
         throw e;
       }
+    });
+
+    // ------------------------------------------------------------------
+    // 1.A safe hands: the settlement page and its actions. Humans drive
+    // every step here; money-state (funded/released/refunded) still lands
+    // only via the verified Stripe webhook.
+    // ------------------------------------------------------------------
+    const loadSettlementFor = async (
+      accountId: string,
+      id: string,
+    ): Promise<{ row: settlements.SettlementRow; role: 'buyer' | 'seller' } | undefined> => {
+      const row = await settlements.getSettlement(id);
+      if (!row) return undefined;
+      try {
+        return { row, role: settlements.partyOf(row, accountId) };
+      } catch {
+        return undefined;
+      }
+    };
+
+    const settlementView = async (
+      accountId: string,
+      row: settlements.SettlementRow,
+      role: 'buyer' | 'seller',
+      elevated: boolean,
+    ): Promise<pages.SettlementView> => {
+      const m = await getMatch(row.match_id);
+      let canPay = false;
+      let needsPaymentSetup = false;
+      if (row.state === 'approved' && settlementsConfigured(cfg)) {
+        const acctId = await sellerStripeAccountId(row.seller_account, row.id);
+        const ready = acctId ? await sellerAccountReady(acctId) : false;
+        canPay = role === 'buyer' && ready;
+        needsPaymentSetup = role === 'seller' && !ready;
+      }
+      const showEvidence = ['evidence-locked', 'confirmed', 'disputed', 'released', 'refunded'].includes(row.state);
+      const myApproval = role === 'buyer' ? row.buyer_approved_at : row.seller_approved_at;
+      return {
+        id: row.id,
+        role,
+        state: row.state,
+        amount: `${Number(row.amount)} ${row.ccy}`,
+        category: m ? categoryLeafLabel(m.category) : 'your match',
+        descriptionText: row.description?.text,
+        myApprovalPending:
+          !myApproval && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(row.state),
+        canPay,
+        needsPaymentSetup,
+        canLockEvidence: role === 'seller' && row.state === 'funded',
+        canConfirm: role === 'buyer' && row.state === 'evidence-locked',
+        canDispute: ['funded', 'evidence-locked'].includes(row.state),
+        evidence: showEvidence ? await evidenceViewLinks(cfg, row.id) : [],
+        hasPasskey: await wa.accountHasPasskey(accountId),
+        elevated,
+      };
+    };
+
+    const settlementNotFound = (reply: FastifyReply) =>
+      html(reply, pages.messagePage('Not found', '<p>No such settlement on your ledger.</p>'), 404);
+
+    counter.get('/settlements/:id', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      return html(
+        reply,
+        pages.settlementPage(await settlementView(s.accountId!, found.row, found.role, sess.isElevated(s))),
+      );
+    });
+
+    // Buyer starts the hosted payment. The card page is Stripe's; the money
+    // is authorised and HELD (manual capture) with the seller as destination.
+    counter.post('/settlements/:id/pay', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      if (found.role !== 'buyer' || found.row.state !== 'approved' || !settlementsConfigured(cfg)) {
+        return html(reply, pages.messagePage('Not yet', '<p>This settlement is not ready for payment.</p>'), 409);
+      }
+      const sellerId = await sellerStripeAccountId(found.row.seller_account, found.row.id);
+      if (!sellerId || !(await sellerAccountReady(sellerId))) {
+        return html(
+          reply,
+          pages.messagePage('Not yet', '<p>The seller has not finished payment setup. You will get an email when the payment can go ahead.</p>'),
+          409,
+        );
+      }
+      const url = await checkoutUrlForSettlement(cfg, found.row, sellerId);
+      return reply.redirect(url, 303);
+    });
+
+    // Seller finishes payment setup on Stripe's hosted onboarding.
+    counter.post('/settlements/:id/payment-setup', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      if (found.role !== 'seller' || !settlementsConfigured(cfg)) {
+        return html(reply, pages.messagePage('Not yet', '<p>Payment setup is the seller&#39;s step.</p>'), 409);
+      }
+      const acctId = await ensureSellerStripeAccount(cfg, s.accountId!, found.row.id);
+      const url = await sellerOnboardingLink(cfg, acctId, found.row.id);
+      return reply.redirect(url, 303);
+    });
+
+    // Seller's evidence uploads: presigned, straight into the WORM bucket.
+    counter.post('/settlements/:id/evidence/presign', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return reply.code(404).send({ error: 'not_found' });
+      if (found.role !== 'seller' || found.row.state !== 'funded') {
+        return reply.code(409).send({ error: 'not_applicable' });
+      }
+      const b: any = req.body ?? {};
+      try {
+        const presigned = await presignEvidenceUpload(cfg, found.row, s.accountId!, {
+          filename: String(b.filename ?? ''),
+          content_type: String(b.content_type ?? ''),
+          size: Number(b.size),
+        });
+        return reply.send(presigned);
+      } catch (e: any) {
+        if (e?.validation) return reply.code(400).send({ error: String(e.message) });
+        throw e;
+      }
+    });
+
+    // Seller locks the evidence: manifest snapshot into the WORM bucket,
+    // then funded -> evidence-locked, then the buyer is asked to confirm.
+    counter.post('/settlements/:id/evidence/lock', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      if (found.role !== 'seller' || found.row.state !== 'funded') {
+        return html(reply, pages.messagePage('Not yet', '<p>Evidence locks while the payment is held.</p>'), 409);
+      }
+      let manifestKey: string;
+      try {
+        const r = await writeEvidenceManifest(cfg, found.row, s.accountId!);
+        manifestKey = r.manifestKey;
+      } catch (e: any) {
+        if (e?.validation) {
+          const v = await settlementView(s.accountId!, found.row, found.role, sess.isElevated(s));
+          return html(reply, pages.settlementPage(v, String(e.message)), 400);
+        }
+        throw e;
+      }
+      await settlements.lockEvidence(settlements.counterAction(s.accountId!), found.row.id, manifestKey);
+      for (const [accountId, role] of [
+        [found.row.buyer_account, 'buyer'],
+        [found.row.seller_account, 'seller'],
+      ] as const) {
+        const email = await ops.accountEmail(accountId, 'settlement-confirm-request-notification');
+        if (email) {
+          await sendSettlementEmail(cfg, {
+            to: email,
+            accountId,
+            template: 'confirm-receipt-request',
+            settlementId: found.row.id,
+            role,
+          });
+        }
+      }
+      return reply.redirect(`/counter/settlements/${found.row.id}`, 303);
+    });
+
+    // Buyer confirms receipt (PIN/passkey ceremony) — this is what releases
+    // the held payment: the same signed request starts the capture, and the
+    // 'released' state lands when Stripe's webhook reports it.
+    counter.post('/settlements/:id/confirm', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
+      try {
+        const row = await settlements.confirmReceipt(settlements.counterAction(s.accountId!), found.row.id);
+        await capturePaymentForSettlement(row);
+      } catch (e) {
+        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+          return html(
+            reply,
+            pages.messagePage('Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
+            409,
+          );
+        }
+        throw e;
+      }
+      return html(
+        reply,
+        pages.messagePage(
+          'Receipt confirmed',
+          '<p>The held payment is on its way to the seller. Both of you get an email when it lands.</p>',
+        ),
+      );
+    });
+
+    // Either human disputes: the held payment goes BACK to the buyer (the
+    // safe direction). Like a decline, no reason is carried.
+    counter.post('/settlements/:id/dispute', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      try {
+        const row = await settlements.openDispute(settlements.counterAction(s.accountId!), found.row.id);
+        await cancelPaymentForSettlement(row);
+      } catch (e) {
+        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+          return html(
+            reply,
+            pages.messagePage('Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
+            409,
+          );
+        }
+        throw e;
+      }
+      return html(
+        reply,
+        pages.messagePage(
+          'Disputed',
+          '<p>The held payment goes back to the buyer in full. No reason was sent.</p>',
+        ),
+      );
     });
 
     // ------------------------------------------------------------------

@@ -47,6 +47,18 @@ export interface Config {
   region: string;
   quotas: Quotas;
   docsBase: string;
+  /** Secrets Manager secret holding {secret_key, webhook_secret?} for the
+   *  env's Stripe account. Unset = settlement handling is OFF for this
+   *  deployment (the service runs normally; `settle` answers
+   *  SETTLEMENT_UNAVAILABLE). Prod stays unset until a prod Stripe account
+   *  exists. */
+  stripeSecretArn?: string;
+  /** WORM evidence bucket (Object Lock; 90-day retention) for settlement
+   *  evidence snapshots. Required whenever stripeSecretArn is set. */
+  evidenceBucket?: string;
+  /** Platform fee, percent of the settlement amount. Present in config by
+   *  design and SET TO 0 — no fee is charged in phase 1. */
+  settlementFeePercent: number;
 }
 
 export function loadConfig(): Config {
@@ -82,5 +94,21 @@ export function loadConfig(): Config {
       maxOffersPerHour: Number(process.env.QUOTA_MAX_OFFERS_PER_HOUR ?? 6),
     },
     docsBase: 'https://openswitchboard.ai/docs',
+    stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
+    evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
+    settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
   };
+}
+
+/**
+ * Settlement handling is on only when the deployment has a Stripe secret AND
+ * an evidence bucket. Half-configured is a hard boot failure (NO-FALLBACKS):
+ * a deployment that could take payments while unable to lock evidence must
+ * not start.
+ */
+export function settlementsConfigured(cfg: Config): boolean {
+  if (cfg.stripeSecretArn && !cfg.evidenceBucket) {
+    throw new Error('STRIPE_SECRET_ARN is set but EVIDENCE_BUCKET is missing');
+  }
+  return !!cfg.stripeSecretArn;
 }

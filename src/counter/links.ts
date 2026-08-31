@@ -14,7 +14,7 @@ import { counterKeys } from './keys.js';
 
 export const APPROVAL_LINK_TTL_MINUTES = 15;
 
-export type ApprovalAction = 'offer-accept' | 'stage3-disclosure';
+export type ApprovalAction = 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
 
 export interface ApprovalLinkRow {
   id: string;

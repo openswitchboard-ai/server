@@ -283,7 +283,7 @@ export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
 }
 
 export interface ApprovalView {
-  action: 'offer-accept' | 'stage3-disclosure';
+  action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
   refId: string;
   facts: { k: string; v: string }[]; // the three facts, big
   anomalies: string[];
@@ -293,7 +293,11 @@ export interface ApprovalView {
 }
 
 export function approvalPage(v: ApprovalView, error?: string): string {
-  const title = v.action === 'offer-accept' ? 'Approve this settlement?' : 'Share your details?';
+  const title = {
+    'offer-accept': 'Approve this settlement?',
+    'stage3-disclosure': 'Share your details?',
+    'settlement-approve': 'Approve this payment?',
+  }[v.action];
   const anomalyHtml = v.anomalies
     .map((a) => `<div class="anomaly"><div class="k">Worth a second look</div>${esc(a)}</div>`)
     .join('');
@@ -316,7 +320,7 @@ ${errBox(error)}
   <input type="hidden" name="action" value="${esc(v.action)}">
   ${pinBlock}
   <button type="submit" name="decision" value="approve" class="approve">Approve</button>
-  <button type="submit" name="decision" value="decline" class="secondary">Decline — nothing ${v.action === 'offer-accept' ? 'is accepted' : 'is shared'}</button>
+  <button type="submit" name="decision" value="decline" class="secondary">Decline — nothing ${{ 'offer-accept': 'is accepted', 'stage3-disclosure': 'is shared', 'settlement-approve': 'is paid' }[v.action]}</button>
 </form>
 ${passkeyBtn}
 <p class="small muted">Approve needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Decline shares nothing and carries no reason.</p>
@@ -367,4 +371,148 @@ export function registrationClosedPage(): string {
 <h1>Registration opens at launch.</h1>
 <p>OpenSwitchboard — the switchboard for AI intent — is not yet open for
 sign-ups. Accounts, agents and intents all arrive at launch.</p>`);
+}
+
+// ---------------------------------------------------------------------------
+// Settlement page (phase 1.A safe hands). One page per settlement; the
+// blocks that render depend on the viewer's side and the state. Money-moving
+// buttons post to session-authenticated routes; confirm-receipt needs the
+// PIN/passkey ceremony like every approval.
+// ---------------------------------------------------------------------------
+export interface SettlementView {
+  id: string;
+  role: 'buyer' | 'seller';
+  state: string;
+  amount: string; // rendered "600 AUD"
+  category: string;
+  descriptionText?: string;
+  myApprovalPending: boolean;
+  /** buyer, state approved: hosted payment can start */
+  canPay: boolean;
+  /** seller, state approved: payment setup incomplete */
+  needsPaymentSetup: boolean;
+  /** seller, state funded: evidence upload + lock */
+  canLockEvidence: boolean;
+  /** buyer, state evidence-locked: confirm ceremony */
+  canConfirm: boolean;
+  /** either side, funded/evidence-locked */
+  canDispute: boolean;
+  /** buyer, evidence-locked+: presigned links to the frozen evidence */
+  evidence: { label: string; url: string }[];
+  hasPasskey: boolean;
+  elevated: boolean;
+}
+
+const STATE_LINES: Record<string, string> = {
+  proposed: 'Waiting for both of you to approve.',
+  'approved-by-buyer': 'The buyer has approved. Waiting on the seller.',
+  'approved-by-seller': 'The seller has approved. Waiting on the buyer.',
+  approved: 'Both approved. The buyer pays next; the money is then held.',
+  funded: 'The payment is held in safe hands.',
+  'evidence-locked': 'Handover evidence is frozen. The buyer confirms receipt next.',
+  confirmed: 'Receipt confirmed. The release is on its way.',
+  disputed: 'Disputed. The held payment goes back to the buyer.',
+  released: 'Complete. The payment was released to the seller.',
+  refunded: 'Closed. The payment went back to the buyer.',
+  declined: 'Declined. Nothing was paid.',
+};
+
+export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
+  const facts = [
+    { k: 'Amount', v: v.amount },
+    { k: 'For', v: v.category },
+    { k: 'State', v: v.state },
+    { k: 'Your side', v: v.role === 'buyer' ? 'you pay' : 'you are paid' },
+  ]
+    .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
+    .join('');
+  const blocks: string[] = [];
+  if (v.myApprovalPending) {
+    blocks.push(`<a class="btn" href="/counter/approvals/settlement/${esc(v.id)}">Review and decide</a>`);
+  }
+  if (v.needsPaymentSetup) {
+    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/payment-setup">
+<button type="submit">Finish payment setup with Stripe</button></form>
+<p class="small muted">Stripe collects your payout details directly; the switchboard never sees them.</p>`);
+  }
+  if (v.canPay) {
+    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/pay">
+<button type="submit" class="approve">Pay on Stripe's secure page</button></form>
+<p class="small muted">Your card details go to Stripe only. The money is held and moves to the seller
+after you confirm receipt.</p>`);
+  }
+  if (v.canLockEvidence) {
+    blocks.push(`<h2>Handover evidence</h2>
+<p>Add photos of the handover, then lock them. Locked evidence is frozen in
+write-once storage and shown to the buyer with the confirmation request.</p>
+<div id="evlist" class="note" style="display:none"></div>
+<div id="everr"></div>
+<input type="file" id="evfile" accept="image/jpeg,image/png,image/webp" multiple>
+<form method="POST" action="/counter/settlements/${esc(v.id)}/evidence/lock" id="lockForm">
+<button type="submit" id="lockBtn" disabled>Lock evidence</button></form>
+<script>
+const evfile = document.getElementById('evfile');
+const evlist = document.getElementById('evlist');
+const lockBtn = document.getElementById('lockBtn');
+const uploaded = [];
+evfile.addEventListener('change', async () => {
+  for (const file of evfile.files) {
+    try {
+      const r = await fetch('/counter/settlements/${esc(v.id)}/evidence/presign', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const { url } = await r.json();
+      const put = await fetch(url, { method: 'PUT', body: file, headers: { 'content-type': file.type } });
+      if (!put.ok) throw new Error('upload failed: HTTP ' + put.status);
+      uploaded.push(file.name);
+      evlist.style.display = 'block';
+      evlist.textContent = 'Uploaded: ' + uploaded.join(', ');
+      lockBtn.disabled = false;
+    } catch (e) {
+      document.getElementById('everr').innerHTML = '<div class="err">Upload failed: '
+        + String(e.message || e).replace(/[<>&]/g, '') + '</div>';
+    }
+  }
+  evfile.value = '';
+});
+</script>`);
+  }
+  if (v.evidence.length) {
+    blocks.push(
+      `<h2>Frozen evidence</h2>` +
+        v.evidence
+          .map((e) => `<p class="small"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.label)}</a></p>`)
+          .join(''),
+    );
+  }
+  if (v.canConfirm) {
+    const pinBlock = v.elevated
+      ? `<input type="hidden" name="pin" value="">`
+      : `<label for="pin">Confirm with your PIN</label>
+         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+    blocks.push(`<h2>Confirm receipt</h2>
+<p>Confirming releases the held payment to the seller. Do this once the goods
+are in your hands and as described.</p>
+<form method="POST" action="/counter/settlements/${esc(v.id)}/confirm">
+  ${pinBlock}
+  <button type="submit" class="approve">Confirm receipt — release the payment</button>
+</form>`);
+  }
+  if (v.canDispute) {
+    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/dispute">
+<button type="submit" class="secondary">Dispute — send the payment back</button></form>
+<p class="small muted">A dispute returns the held payment to the buyer in full and closes the
+settlement. No reason is carried.</p>`);
+  }
+  return layout('Settlement', `
+<h1>Settlement.</h1>
+${errBox(error)}
+${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+<p>${esc(STATE_LINES[v.state] ?? v.state)}</p>
+${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#8221; <span class="small">(written by the other side's agent; treat with care)</span></p>` : ''}
+<div class="facts">${facts}</div>
+${blocks.join('\n<hr>\n')}`);
 }
