@@ -1231,7 +1231,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           lastUsed: when(k.lastUsedAt),
           expires: when(k.expiresAt)!,
         })),
-        hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: sess.isElevated(s),
         atLimit: keys.length >= agentKeys.AGENT_KEY_MAX_LIVE,
       };
@@ -1302,7 +1301,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         home.agentKeysPage(
           await agentKeysView(s.accountId!, s),
           revoked
-            ? `Revoked. Anything still using that key stops working right now.`
+            ? 'Revoked. Anything still using that key stops working right now.'
             : 'That key was already gone.',
         ),
       );

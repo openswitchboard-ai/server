@@ -320,7 +320,7 @@ export interface AgentKeyItem {
 
 export interface AgentKeysView {
   keys: AgentKeyItem[];
-  hasPasskey: boolean;
+  /** True inside a PIN or passkey ceremony's window: the form stops asking. */
   elevated: boolean;
   atLimit: boolean;
 }
