@@ -60,36 +60,59 @@ export function screeningReasonCodes(category: string): string[] {
 }
 
 /**
- * Category families that stay closed even under the open-experiment policy.
- * Content screening (deny list + LLM) still runs on every card regardless.
+ * Category status against the taxonomy (SPEC §2). A category may be posted
+ * when its top level is open, the node exists, and no node on its path —
+ * itself included — is reserved. A reserved node says why: 'licensed-trade'
+ * for work that needs a licence, 'regulated-vertical' for a family held back
+ * deliberately at launch.
+ *
+ * Every deployment applies this rule identically. Dev and prod accept and
+ * refuse exactly the same categories.
  */
-const EXPERIMENT_PROHIBITED =
-  /(weapon|firearm|ammunit|explosiv|drug|narcot|opioid|steroid|tobacco|vape|escort|sexual|erotic|adult|gambl|counterfeit|stolen|human[-_.]?traffick|organ[-_.]?sale)/i;
+export interface CategoryStatus {
+  status: 'open' | 'reserved' | 'unknown';
+  /** Plain reason, present whenever the status is not 'open'. */
+  reason?: string;
+}
 
-/**
- * True when the category may be posted.
- * - 'taxonomy' policy (prod): the category must exist in the v1 taxonomy under
- *   an open top level.
- * - 'open-experiment' policy (dev): any well-formed dotted category is allowed
- *   except the prohibited families above; unknown categories match by
- *   embedding rather than taxonomy rules.
- */
-export function categoryKnownAndOpen(
-  category: string,
-  policy: 'taxonomy' | 'open-experiment' = 'taxonomy',
-): { ok: boolean; reason?: string } {
-  if (policy === 'open-experiment') {
-    if (EXPERIMENT_PROHIBITED.test(category)) {
-      return { ok: false, reason: `category family is prohibited` };
-    }
-    if (!/^[a-z0-9-]+(\.[a-z0-9-]+){1,4}$/.test(category)) {
-      return { ok: false, reason: `category must be a dotted path like goods.bicycle.mountain` };
-    }
-    return { ok: true };
+export function categoryStatus(category: string): CategoryStatus {
+  const parts = category.split('.');
+  const top = parts[0];
+  const topLevel = taxonomy.top_levels?.[top];
+  if (!topLevel) {
+    return { status: 'unknown', reason: `top level '${top}' is not in the taxonomy` };
   }
-  const top = category.split('.')[0];
-  const topStatus = taxonomy.top_levels?.[top]?.status;
-  if (topStatus !== 'open') return { ok: false, reason: `top level '${top}' is not open` };
-  if (!taxonomy.nodes?.[category]) return { ok: false, reason: `unknown category '${category}'` };
-  return { ok: true };
+  if (topLevel.status !== 'open') {
+    return { status: 'reserved', reason: `top level '${top}' is reserved` };
+  }
+  if (!taxonomy.nodes?.[category]) {
+    return { status: 'unknown', reason: `category '${category}' is not in the taxonomy` };
+  }
+  for (let i = 1; i <= parts.length; i++) {
+    const path = parts.slice(0, i).join('.');
+    const node = taxonomy.nodes[path];
+    if (node?.status === 'reserved') {
+      return {
+        status: 'reserved',
+        reason: `'${path}' is reserved (${node.reserved_reason ?? 'reserved'})`,
+      };
+    }
+  }
+  return { status: 'open' };
+}
+
+/** True when the category may be posted. */
+export function categoryKnownAndOpen(category: string): { ok: boolean; reason?: string } {
+  const r = categoryStatus(category);
+  return r.status === 'open' ? { ok: true } : { ok: false, reason: r.reason };
+}
+
+/** Every category a card may be posted under, in taxonomy order. */
+export function openCategories(): string[] {
+  return Object.keys(taxonomy.nodes ?? {}).filter((c) => categoryStatus(c).status === 'open');
+}
+
+/** The taxonomy node behind a category, if the taxonomy has one. */
+export function taxonomyNode(category: string): { label: string } | undefined {
+  return taxonomy.nodes?.[category];
 }

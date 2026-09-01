@@ -46,7 +46,6 @@ export interface Config {
   registrationMode: 'dev-bootstrap' | 'closed';
   region: string;
   quotas: Quotas;
-  categoryPolicy: 'taxonomy' | 'open-experiment';
   docsBase: string;
   /** Secrets Manager secret holding {secret_key, webhook_secret?} for the
    *  env's Stripe account. Unset = settlement handling is OFF for this
@@ -88,7 +87,6 @@ export function loadConfig(): Config {
     bedrockEmbedModelId: process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0',
     registrationMode: envName === 'prod' ? 'closed' : 'dev-bootstrap',
     region: process.env.AWS_REGION ?? 'us-east-1',
-    categoryPolicy: process.env.CATEGORY_POLICY === 'open-experiment' ? 'open-experiment' : 'taxonomy',
     quotas: {
       // Newcomer defaults; config-driven via env overrides.
       maxOpenCards: Number(process.env.QUOTA_MAX_OPEN_CARDS ?? 5),
