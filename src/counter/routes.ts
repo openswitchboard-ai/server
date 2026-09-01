@@ -15,6 +15,13 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail } from '../domain/accounts.js';
+import {
+  arrangementInPlainWords,
+  readArrangement,
+  readArrangementUpdatedAt,
+  saveArrangement,
+  validateArrangement,
+} from '../domain/arrangement.js';
 import { amendIntent, withdrawIntent } from '../domain/cards.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
 import {
@@ -167,8 +174,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [profile, offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
+      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
+        readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
         ops.verdictableMatches(s.accountId),
@@ -219,6 +227,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             ? `${profile.firstName}, ${profile.locality}`
             : undefined,
           emailUnreachable: !!a.email_unreachable_at,
+          // One line on the dashboard; the whole of it is a tap away.
+          arrangementSummary: (() => {
+            const lines = arrangementInPlainWords(arrangement);
+            if (!lines.length) return undefined;
+            const head = lines[0];
+            const rest = lines.length - 1;
+            return `${head.k.toLowerCase()} — ${head.v}${rest ? ` (and ${rest} more)` : ''}`;
+          })(),
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
           pendingApprovals,
@@ -1403,6 +1419,73 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         home.sharedProfilePage(checked.value, {
           notice: 'Saved. This is what a match sees once you both say yes.',
         }),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // How your agents behave (1.D): the standing arrangement. A signed-in
+    // session is enough to read and change it — it holds cadence and
+    // etiquette rather than identity — and every write goes through the same
+    // validator the agent surface uses, then the WORM consent log.
+    // ------------------------------------------------------------------
+    const arrangementView = async (accountId: string) => ({
+      arrangement: await readArrangement(accountId),
+      updated: await readArrangementUpdatedAt(accountId).then((d) =>
+        d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : undefined,
+      ),
+    });
+
+    counter.get('/arrangement', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const v = await arrangementView(s.accountId!);
+      return html(reply, home.arrangementPage(v.arrangement, { updated: v.updated }));
+    });
+
+    counter.post('/arrangement', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      // The textarea is one instruction per line; blank lines drop out.
+      const interruptFor = String(b.interrupt_for ?? '')
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const submitted = {
+        ...(b.check_cadence ? { check_cadence: String(b.check_cadence) } : {}),
+        ...(interruptFor.length ? { interrupt_for: interruptFor } : {}),
+        ...(b.summarize ? { summarize: String(b.summarize) } : {}),
+        ...(b.suggestion_appetite ? { suggestion_appetite: String(b.suggestion_appetite) } : {}),
+        ...(b.quiet_hours ? { quiet_hours: String(b.quiet_hours) } : {}),
+        ...(b.notes ? { notes: String(b.notes) } : {}),
+      };
+      const checked = validateArrangement(submitted);
+      if (!checked.ok) {
+        return html(
+          reply,
+          home.arrangementPage(submitted as any, { error: checked.error }),
+          400,
+        );
+      }
+      await saveArrangement(s.accountId!, checked.value, 'counter');
+      return html(
+        reply,
+        home.arrangementPage(checked.value, {
+          notice: 'Saved. Every agent you have connected picks this up on its next check.',
+        }),
+      );
+    });
+
+    counter.post('/arrangement/clear', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      await saveArrangement(s.accountId!, {}, 'counter');
+      return html(
+        reply,
+        home.arrangementPage(
+          {},
+          { notice: 'Cleared. Your agents will ask you afresh how you want this to go.' },
+        ),
       );
     });
 
