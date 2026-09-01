@@ -11,6 +11,7 @@ import {
   validatePayload,
 } from '../protocol.js';
 import { categoryDenied, categoryKnownAndOpen } from '../denylist.js';
+import { normaliseGeo } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
 export interface CardRow {
@@ -20,6 +21,9 @@ export interface CardRow {
   type: 'WANT' | 'HAVE';
   category: string;
   geo: any;
+  geo_lat: number | null;
+  geo_lon: number | null;
+  geo_radius_km: number | null;
   attributes: any;
   ask: any;
   urgency: string;
@@ -68,6 +72,10 @@ export async function publishIntent(
     });
   }
 
+  // Location resolution: a named place becomes a centre point and a
+  // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
+  const geo = normaliseGeo(card.geo);
+
   await checkPublishQuota(accountId, cfg.quotas);
 
   const account = await getAccount(accountId);
@@ -81,16 +89,18 @@ export async function publishIntent(
     : null;
 
   const r = await getPool().query(
-    `INSERT INTO cards (account_id, schema_version, type, category, geo, attributes, ask,
-                        urgency, visibility, protocol_status, price_enc, ttl_days, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::int, now() + make_interval(days => $12::int))
+    `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
+                        geo_radius_km, attributes, ask, urgency, visibility, protocol_status,
+                        price_enc, ttl_days, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$6,$7,$8,$9,$10,$11,$12::int,
+             now() + make_interval(days => $12::int))
      RETURNING id`,
     [
       accountId,
       card.schema_version,
       card.type,
       card.category,
-      JSON.stringify(card.geo),
+      JSON.stringify(geo.geo),
       JSON.stringify(card.attributes ?? {}),
       card.ask ? JSON.stringify(card.ask) : null,
       card.urgency ?? 'none',
@@ -98,6 +108,9 @@ export async function publishIntent(
       card.status ?? 'active',
       priceEnc,
       ttl,
+      geo.lat,
+      geo.lon,
+      geo.radius_km,
     ],
   );
   const id = r.rows[0].id as string;
@@ -202,6 +215,8 @@ export async function amendIntent(
       validation: v.reasons,
     });
   }
+  const geo = normaliseGeo(next.geo);
+
   await checkPublishQuota(accountId, cfg.quotas);
 
   const priceEnc =
@@ -212,20 +227,24 @@ export async function amendIntent(
       : card.price_enc;
 
   await getPool().query(
-    `UPDATE cards SET geo=$2, attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
+    `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11,
+        attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
         renewal_notified_at = NULL,
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
      WHERE id=$1`,
     [
       intentId,
-      JSON.stringify(next.geo),
+      JSON.stringify(geo.geo),
       JSON.stringify(next.attributes ?? {}),
       next.ask ? JSON.stringify(next.ask) : null,
       next.urgency ?? 'none',
       next.status ?? 'active',
       next.ttl_days ?? 60,
       priceEnc,
+      geo.lat,
+      geo.lon,
+      geo.radius_km,
     ],
   );
   await getPool().query('INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)', [

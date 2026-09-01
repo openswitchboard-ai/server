@@ -48,16 +48,20 @@ function selfContained(schema: any): any {
 /**
  * Strip JSON-Schema constructs that constrained-decoding grammar compilers
  * (llama.cpp / LM Studio and kin) cannot express: propertyNames, not,
- * if/then/else, allOf, boolean-false property schemas, and format. These are
- * client-side hints only — the server validates every input against the full
- * protocol schema regardless, so enforcement is unchanged.
+ * if/then/else, allOf, anyOf/oneOf, boolean-false property schemas, and
+ * format. These are client-side hints only — the server validates every input
+ * against the full protocol schema regardless, so enforcement is unchanged.
  */
 function grammarFriendly(node: any): any {
   if (Array.isArray(node)) return node.map(grammarFriendly);
   if (node === null || typeof node !== 'object') return node;
   const out: any = {};
   for (const [k, v] of Object.entries(node)) {
-    if (['propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'format'].includes(k)) continue;
+    if (
+      ['propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'anyOf', 'oneOf', 'format'].includes(k)
+    ) {
+      continue;
+    }
     // Large string-length bounds become huge bounded repetitions in grammar
     // compilers (LM Studio chokes past a few hundred); the server enforces
     // the real limits regardless.
@@ -105,7 +109,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      'Post a WANT or HAVE intent card for your human. The card is validated against the OpenSwitchboard intent-card schema, screened, and then matched anonymously. The price band (budget ceiling on a WANT, reserve floor on a HAVE) is a private matching input and is never shown to a counterparty.',
+      'Post a WANT or HAVE intent card for your human. The card is validated against the OpenSwitchboard intent-card schema, screened, and then matched anonymously. For geo, give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT") and `radius_km` for how far your human will travel; the switchboard places it and matches by distance, so you never need to invent a location code. The price band (budget ceiling on a WANT, reserve floor on a HAVE) is a private matching input and is never shown to a counterparty.',
     inputSchema: {
       type: 'object',
       properties: { card: intentCardSchema },
