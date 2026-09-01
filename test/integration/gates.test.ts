@@ -6,7 +6,9 @@
  * Proves, against the real service, DB, KMS, SQS and Bedrock:
  *  (a) stage-3 fetch without both opt-ins -> STAGE_LOCKED
  *  (b) counterparty payloads never contain the price band (raw JSON assert)
- *  (c) seeded injection fixture -> SCREENING_REJECTED
+ *  (c) seeded injection fixture -> SCREENING_REJECTED, and the human is told:
+ *      dashboard item + edit-page reason + transactional email row, with the
+ *      reason on the OWNER's card only and nowhere near the counterparty
  *  (d) no agent-reachable accept state other than awaiting-human
  *  (e) quota exceeded -> QUOTA_EXCEEDED
  * plus: OAuth 2.1 flow, screening accept path, TTL/queue plumbing via ops.
@@ -22,6 +24,7 @@ import {
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
+  counterFetch,
   createAgentKey,
   dbExec,
   mcpCall,
@@ -212,6 +215,48 @@ d('integration gates against live deployment', () => {
     ]);
     expect(state).toBe('SCREENING_REJECTED');
     // The rejected card never becomes matchable and the error is code-only.
+
+    // ---- and the human is TOLD, three ways -----------------------------
+    // 1. Bob's own agent gets the reason on its own card.
+    const mine = await mcpCall(bob.accessToken, 'list_intents', {});
+    const item = mine.result.intents.find((i: any) => i.intent_id === injId);
+    expect(item.screening.reason_code).toBe('prompt-injection');
+    expect(item.screening.reason).toContain('instruction aimed at an AI');
+    // The model's internal note is NOT what the agent is handed.
+    expect(Object.keys(item.screening).sort()).toEqual(['at', 'reason', 'reason_code']);
+
+    // 2. Alice, the counterparty, sees no trace of any of it on her matches.
+    const hers = await mcpCall(alice.accessToken, 'check_matches', {});
+    const raw = JSON.stringify(hers.result);
+    expect(raw).not.toContain('prompt-injection');
+    expect(raw).not.toContain('reason_code');
+
+    // 3. His approval page carries the attention item, linking to the edit
+    //    page, and that page says why in plain words.
+    const dash = await counterFetch(bob.jar, '/counter');
+    const dashBody = await dash.text();
+    expect(dashBody).toContain(`/counter/ledger/${injId}/edit`);
+    expect(dashBody).toContain('pass screening');
+    const edit = await counterFetch(bob.jar, `/counter/ledger/${injId}/edit`);
+    const editBody = await edit.text();
+    expect(editBody).toContain('instruction aimed at an AI');
+    expect(editBody).toContain('screening code: prompt-injection');
+
+    // 4. The transactional email is on the send log, keyed to this one
+    //    rejection event. SES quota can make the STATUS 'failed' in dev; the
+    //    row with the right template and dedupe key is the assertion.
+    const sends = await poll(async () => {
+      const rows = await dbExec(
+        `SELECT dedupe_key, kind, status FROM email_sends
+         WHERE account_id = :a::uuid AND template = 'card-screening-rejected'`,
+        [{ name: 'a', value: bob.accountId }],
+      );
+      return rows.length ? rows : undefined;
+    }, `a card-screening-rejected send row for card ${injId}`);
+    const forThisCard = sends.filter((r: any[]) => String(r[0]).includes(injId));
+    expect(forThisCard).toHaveLength(1); // one per rejection event, never per retry
+    expect(forThisCard[0][0]).toMatch(new RegExp(`^card-screening-rejected:${injId}:`));
+    expect(forThisCard[0][1]).toBe('transactional');
   });
 
   it('GATE (d): no agent-reachable accept state other than awaiting-human', async () => {

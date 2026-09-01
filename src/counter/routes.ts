@@ -39,6 +39,7 @@ import {
   saveSharedProfile,
   validateSharedProfile,
 } from '../domain/profile.js';
+import { rejectionInPlainWords } from '../domain/screening.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import * as agentKeys from '../domain/agentKeys.js';
@@ -174,7 +175,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
+      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
@@ -195,8 +196,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
            ORDER BY st.created_at DESC LIMIT 20`,
           [s.accountId],
         ),
+        ops.screeningRejectedCards(s.accountId),
       ]);
       const pendingApprovals = [
+        // A card screening turned away is off the board until this person
+        // changes it, so it sits at the top of what is waiting for them.
+        ...rejected.map((c) => ({
+          href: `/counter/ledger/${c.id}/edit`,
+          label: `Your ${categoryLeafLabel(c.category)} card didn't pass screening — see why and fix it`,
+          cta: 'See why and fix it',
+        })),
         ...offers.map((o) => ({
           href: `/counter/approvals/offer/${o.offer_id}`,
           label: `Offer on your ${categoryLeafLabel(o.category)} match`,
@@ -1117,6 +1126,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             .join(' · ')
         : undefined;
 
+    // Screening's verdict for the card's OWN human, in plain words. Only a
+    // card actually sitting in SCREENING_REJECTED says anything.
+    const screeningRejectionView = (
+      c: ops.LedgerCard,
+    ): { plain: string; code?: string } | undefined => {
+      if (c.lifecycle_state !== 'SCREENING_REJECTED') return undefined;
+      const rej = rejectionInPlainWords(c.screening);
+      return rej ? { plain: rej.plain, code: rej.reasonCode } : undefined;
+    };
+
     const cardToView = (c: ops.LedgerCard): home.LedgerCardView => ({
       id: c.id,
       type: c.type,
@@ -1161,6 +1180,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           collectWindowMinutes:
             c.collect_window_minutes != null ? String(c.collect_window_minutes) : undefined,
           collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
+          screeningRejection: screeningRejectionView(c),
         }),
       );
     });
@@ -1189,6 +1209,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
               ttlDays: c.ttl_days,
               attributesJson: String(b.attributes ?? ''),
               collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
+              screeningRejection: screeningRejectionView(c),
             },
             'Attributes must be valid JSON.',
           ),
