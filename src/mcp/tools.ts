@@ -76,7 +76,30 @@ function grammarFriendly(node: any): any {
   return out;
 }
 
-const intentCardSchema = selfContained(bundledSchema('intent-card'));
+/**
+ * The protocol schema's category description states the v1 taxonomy default
+ * (goods.* only). When this deployment runs the open-experiment policy, the
+ * served description must say so, or agents refuse categories the server
+ * would accept.
+ */
+function policyAwareDescriptions(node: any): any {
+  if (process.env.CATEGORY_POLICY !== 'open-experiment') return node;
+  const walk = (n: any): any => {
+    if (Array.isArray(n)) return n.map(walk);
+    if (n === null || typeof n !== 'object') return n;
+    const out: any = {};
+    for (const [k, v] of Object.entries(n)) {
+      out[k] =
+        k === 'description' && typeof v === 'string' && v.includes("Only goods.* is open")
+          ? "Dotted category path, e.g. 'goods.bicycle.mountain' or 'social.conversation.language-exchange'. On this network any sensible category is open — post what fits. Prohibited families (weapons, drugs and kin) are refused with CATEGORY_PROHIBITED."
+          : walk(v);
+    }
+    return out;
+  };
+  return walk(node);
+}
+
+const intentCardSchema = policyAwareDescriptions(selfContained(bundledSchema('intent-card')));
 
 export const TOOLS: ToolDef[] = [
   {
