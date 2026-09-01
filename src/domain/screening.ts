@@ -58,8 +58,10 @@ const REASON_SENTENCES: Record<string, string> = {
     'Event tickets are held back until the rules around reselling them are settled. This one cannot go back on the board for now.',
 };
 
+// True wherever it renders: the approval page shows the raw code beneath it,
+// an email does not, so this sentence never promises one.
 const REASON_FALLBACK =
-  'Screening held this card back. The code below says which check it was. If it looks wrong, edit the card and save it to send it through again.';
+  'Screening held this card back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit the card and save it to send it through again.';
 
 /** One human sentence for a reason code. Unknown codes get the honest fallback. */
 export function screeningReasonInPlainWords(reasonCode?: string): string {
