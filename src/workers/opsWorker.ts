@@ -1,5 +1,6 @@
 import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
+import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
@@ -101,11 +102,9 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 const r = await backfillCardGeo(log);
                 log('backfill-geo: done', r);
                 if (body.rematch !== false) {
-                  const placed = await import('../db.js').then(({ getPool }) =>
-                    getPool().query(
-                      `SELECT id FROM cards WHERE geo_lat IS NOT NULL
-                         AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
-                    ),
+                  const placed = await getPool().query(
+                    `SELECT id FROM cards WHERE geo_lat IS NOT NULL
+                       AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
                   );
                   for (const row of placed.rows) {
                     await sqs.send(
