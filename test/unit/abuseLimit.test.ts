@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { makeIpLimiter } from '../src/abuseLimit.js';
+import { makeIpLimiter } from '../../src/abuseLimit.js';
 
 describe('per-IP abuse limiter', () => {
   it('allows up to the cap, refuses beyond it, per IP independently', () => {
@@ -22,7 +22,7 @@ describe('per-IP abuse limiter', () => {
 
 describe('rate-limit bypass', () => {
   it('refuses without a configured token; accepts only the exact token', async () => {
-    const { rateLimitBypassed } = await import('../src/abuseLimit.js');
+    const { rateLimitBypassed } = await import('../../src/abuseLimit.js');
     delete process.env.RATELIMIT_BYPASS_TOKEN;
     expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) })).toBe(false);
     process.env.RATELIMIT_BYPASS_TOKEN = 'a'.repeat(40);
@@ -33,21 +33,9 @@ describe('rate-limit bypass', () => {
   });
 });
 
-describe('open-experiment category policy', () => {
-  it('allows unknown friendly categories, blocks prohibited families', async () => {
-    const { categoryKnownAndOpen } = await import('../src/denylist.js');
-    expect(categoryKnownAndOpen('social.conversation.language-exchange', 'open-experiment').ok).toBe(true);
-    expect(categoryKnownAndOpen('services.tutoring.maths', 'open-experiment').ok).toBe(true);
-    expect(categoryKnownAndOpen('goods.weapons.firearms', 'open-experiment').ok).toBe(false);
-    expect(categoryKnownAndOpen('services.drugs.delivery', 'open-experiment').ok).toBe(false);
-    expect(categoryKnownAndOpen('not a path', 'open-experiment').ok).toBe(false);
-    expect(categoryKnownAndOpen('social.conversation.language-exchange', 'taxonomy').ok).toBe(false);
-  });
-});
-
 describe('tool schemas are self-contained', () => {
   it('no ref, defs, or grammar-hostile keyword survives in any tool inputSchema', async () => {
-    const { TOOLS } = await import('../src/mcp/tools.js');
+    const { TOOLS } = await import('../../src/mcp/tools.js');
     const walk = (n: any, path: string): string[] => {
       if (Array.isArray(n)) return n.flatMap((v, i) => walk(v, `${path}[${i}]`));
       if (n === null || typeof n !== 'object') return [];

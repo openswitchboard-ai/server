@@ -6,6 +6,10 @@
  *   ttl-expiry                           : trigger an expiry sweep now
  *   backfill-geo  (0.3.0 locations)      : place cards written before 0.3.0
  *                                          [--rematch false to skip requeue]
+ *   snap-categories (0.4.0 taxonomy)     : move cards off categories the
+ *                                          taxonomy does not have, onto their
+ *                                          nearest open node [--dry-run true]
+ *                                          [--rematch false to skip requeue]
  */
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
@@ -43,13 +47,23 @@ switch (cmd) {
   case 'ttl-expiry':
     body = { op: 'ttl-expiry' };
     break;
+  case 'snap-categories':
+    // Move pre-taxonomy-v2 cards onto their nearest open node and hand them
+    // back to the matcher. --dry-run true logs what would move and changes
+    // nothing.
+    body = {
+      op: 'snap-categories',
+      dry_run: arg('dry-run', 'false') === 'true',
+      rematch: arg('rematch', 'true') !== 'false',
+    };
+    break;
   case 'backfill-geo':
     // Place cards written before 0.3.0 and hand them back to the matcher.
     body = { op: 'backfill-geo', rematch: arg('rematch', 'true') !== 'false' };
     break;
   default:
     console.error(
-      'usage: ops.ts <create-match|accept-offer|ttl-expiry|backfill-geo> [--env dev] ...',
+      'usage: ops.ts <create-match|accept-offer|ttl-expiry|backfill-geo|snap-categories> [--env dev] ...',
     );
     process.exit(1);
 }

@@ -5,6 +5,7 @@ import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
 import { backfillCardGeo } from '../geo/backfill.js';
+import { requeueSnapped, snapCardCategories } from '../domain/categoryBackfill.js';
 import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
@@ -126,6 +127,37 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     );
                   }
                   log('backfill-geo: cards requeued for matching', { count: live.rowCount });
+                }
+                if (r.next) {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.opsQueueUrl,
+                      MessageBody: JSON.stringify({ ...body, after: r.next }),
+                    }),
+                  );
+                }
+                break;
+              }
+              case 'snap-categories': {
+                // One-shot, idempotent: move cards sitting under categories
+                // the taxonomy has never heard of onto their nearest open
+                // node, re-embed them, and hand them back to the matcher.
+                // Every remap is logged here with its old and new path.
+                const r = await snapCardCategories(cfg, log, {
+                  after: body.after,
+                  dryRun: body.dry_run === true,
+                });
+                log('snap-categories: pass done', {
+                  scanned: r.scanned,
+                  remapped: r.remapped.length,
+                  already_open: r.already_open,
+                  unmatched: r.unmatched,
+                  embed_failed: r.embed_failed,
+                  dry_run: body.dry_run === true,
+                  more: !!r.next,
+                });
+                if (!body.dry_run && body.rematch !== false) {
+                  await requeueSnapped(cfg, r.remapped.map((x) => x.card_id), log);
                 }
                 if (r.next) {
                   await sqs.send(

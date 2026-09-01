@@ -44,7 +44,7 @@ export function loadDenyListSeed(): any {
 }
 
 export function loadTaxonomy(): any {
-  return JSON.parse(readFileSync(join(schemaPkgRoot, 'data', 'taxonomy.v1.json'), 'utf8'));
+  return JSON.parse(readFileSync(join(schemaPkgRoot, 'data', 'taxonomy.v2.json'), 'utf8'));
 }
 
 export interface ValidationResult {
@@ -99,18 +99,24 @@ export interface ProtocolError {
   code: ErrorCode;
   human_action?: string;
   retry_after?: number;
+  /** Up to three open taxonomy categories nearest a refused one. */
+  suggestions?: string[];
   docs_url: string;
 }
 
 export class OsbError extends Error {
   readonly payload: ProtocolError;
-  constructor(code: ErrorCode, opts: { human_action?: string; retry_after?: number } = {}) {
+  constructor(
+    code: ErrorCode,
+    opts: { human_action?: string; retry_after?: number; suggestions?: string[] } = {},
+  ) {
     super(code);
     this.payload = assertOutbound('error', {
       schema_version: SCHEMA_VERSION,
       code,
       ...(opts.human_action ? { human_action: opts.human_action } : {}),
       ...(opts.retry_after !== undefined ? { retry_after: opts.retry_after } : {}),
+      ...(opts.suggestions?.length ? { suggestions: opts.suggestions.slice(0, 3) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     });
   }
