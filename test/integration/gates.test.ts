@@ -234,10 +234,12 @@ d('integration gates against live deployment', () => {
     // 3. His approval page carries the attention item, linking to the edit
     //    page, and that page says why in plain words.
     const dash = await counterFetch(bob.jar, '/counter');
+    expect(dash.status).toBe(200);
     const dashBody = await dash.text();
     expect(dashBody).toContain(`/counter/ledger/${injId}/edit`);
     expect(dashBody).toContain('pass screening');
     const edit = await counterFetch(bob.jar, `/counter/ledger/${injId}/edit`);
+    expect(edit.status).toBe(200);
     const editBody = await edit.text();
     expect(editBody).toContain('instruction aimed at an AI');
     expect(editBody).toContain('screening code: prompt-injection');
