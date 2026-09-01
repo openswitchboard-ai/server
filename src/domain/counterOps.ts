@@ -264,6 +264,8 @@ export interface LedgerCard {
   matchCount: number;
   latestMatchState?: string;
   collect_window_minutes?: number | null;
+  /** The stored screening verdict (cards.screening). Owner-only, by row. */
+  screening?: any;
 }
 
 /** Per-card collection-window override; may only SHORTEN the default. */
@@ -313,7 +315,29 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     price: bands[row.id] ? JSON.parse(bands[row.id]) : undefined,
     matchCount: row.match_count,
     collect_window_minutes: row.collect_window_minutes,
+    screening: row.screening,
   }));
+}
+
+/**
+ * Cards of this account's that screening turned away and that are still
+ * sitting rejected. These are attention items on the approval page: a card in
+ * this state is off the board until the person edits it.
+ */
+export interface RejectedCard {
+  id: string;
+  category: string;
+  screening: any;
+}
+
+export async function screeningRejectedCards(accountId: string): Promise<RejectedCard[]> {
+  const r = await getPool().query(
+    `SELECT id, category, screening FROM cards
+     WHERE account_id = $1 AND lifecycle_state = 'SCREENING_REJECTED'
+     ORDER BY updated_at DESC LIMIT 20`,
+    [accountId],
+  );
+  return r.rows as RejectedCard[];
 }
 
 // ---------------------------------------------------------------------------

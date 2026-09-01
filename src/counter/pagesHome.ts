@@ -127,6 +127,8 @@ export interface PendingApprovalItem {
   href: string;
   label: string;
   amount?: string;
+  /** Button wording. Defaults to the decide-on-something wording. */
+  cta?: string;
 }
 
 export interface DashboardMatchItem {
@@ -184,7 +186,7 @@ confirmation email sent. Un-pausing needs your PIN.</p>
           (a) => `<div class="card-row"><div class="top">
 <span class="badge match">WAITING FOR YOU</span></div>
 <div class="kv">${esc(a.label)}${a.amount ? ` — <strong>${esc(a.amount)}</strong>` : ''}</div>
-<div class="row-actions"><a class="btn" href="${esc(a.href)}">Review &amp; decide</a></div></div>`,
+<div class="row-actions"><a class="btn" href="${esc(a.href)}">${esc(a.cta ?? 'Review & decide')}</a></div></div>`,
         )
         .join('')
     : `<p class="muted small">Nothing is waiting for you.</p>`;
@@ -338,17 +340,29 @@ export interface CardEditView {
   collectWindowMinutes?: string;
   /** default window (minutes) for this card's urgency; overrides may only shorten */
   collectWindowDefault: number;
+  /** Present when screening turned this card away: why, in plain words. */
+  screeningRejection?: { plain: string; code?: string };
 }
 
 export function cardEditPage(c: CardEditView, error?: string): string {
   const opt = (v: string, cur: string) =>
     `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)}</option>`;
+  // Screening's verdict, in words the person can act on. The raw code sits
+  // small underneath so a support conversation has something exact to quote.
+  const rejection = c.screeningRejection
+    ? `<div class="err">
+<strong>This card didn&#39;t pass screening.</strong>
+<p style="margin:.5rem 0 0">${esc(c.screeningRejection.plain)}</p>
+${c.screeningRejection.code ? `<p class="small muted" style="margin:.5rem 0 0">screening code: ${esc(c.screeningRejection.code)}</p>` : ''}
+</div>`
+    : '';
   return layout('Edit card', `
 <h1>Edit this card.</h1>
 <div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
   <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
   <span class="cat">${esc(c.category)}</span>
 </div>
+${rejection}
 <p class="small muted">Saving sends the card back through screening before it
 returns to the network.</p>
 ${errBox(error)}

@@ -9,6 +9,7 @@ import { findAccountByEmail } from '../domain/accounts.js';
 import {
   renderApproval,
   renderKillSwitch,
+  renderScreeningRejected,
   renderSecurityNotice,
   renderSettlementProposed,
   renderSettlementUpdate,
@@ -106,6 +107,46 @@ export async function sendSecurityNoticeEmail(
       {
         event,
         agentName: ctx.blind ? undefined : agentName,
+        counterUrl: `${cfg.counterOrigin}/counter`,
+      },
+      ctx.links,
+    ),
+  });
+}
+
+/**
+ * A card came back from screening rejected. The person's own card, their own
+ * reason — so the non-blind copy carries the category label and the plain
+ * words, and blind mode strips both to a pointer.
+ *
+ * TRANSACTIONAL by class: the card is off the board until they change it, so
+ * it goes out whether or not they have digests turned down. The one pipeline
+ * still honours the suppression flags (a hard-bounced address gets nothing;
+ * complaint suppression only withholds bulk).
+ *
+ * DE-DUPE: keyed on the card plus the moment the rejection was recorded, so
+ * one rejection event sends once however many times its queue message is
+ * redelivered, while a later re-screen that rejects again does send again.
+ */
+export async function sendScreeningRejectedEmail(
+  cfg: Config,
+  to: string,
+  accountId: string,
+  input: { cardId: string; rejectedAt: string; categoryLabel?: string; reason: string },
+): Promise<SendOutcome> {
+  const ctx = await emailAccountContext(cfg, accountId);
+  return sendEmail(cfg, {
+    to,
+    accountId,
+    template: 'card-screening-rejected',
+    kind: 'transactional',
+    dedupeKey: `card-screening-rejected:${input.cardId}:${input.rejectedAt}`,
+    content: renderScreeningRejected(
+      {
+        categoryLabel: ctx.blind ? undefined : input.categoryLabel,
+        reason: input.reason,
+        editUrl: `${cfg.counterOrigin}/counter/ledger/${encodeURIComponent(input.cardId)}/edit`,
+        blind: ctx.blind,
         counterUrl: `${cfg.counterOrigin}/counter`,
       },
       ctx.links,

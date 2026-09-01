@@ -13,6 +13,7 @@ import {
 import { categoryDenied, categoryStatus } from '../denylist.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { normaliseGeo } from '../geo/normalise.js';
+import { rejectionInPlainWords } from './screening.js';
 import type { Config } from '../config.js';
 
 export interface CardRow {
@@ -148,15 +149,36 @@ export async function getCard(id: string): Promise<CardRow | undefined> {
 export async function listIntents(accountId: string): Promise<any[]> {
   const r = await getPool().query(
     `SELECT id, schema_version, type, category, geo, attributes, ask, urgency, visibility,
-            protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at
+            protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at,
+            screening
      FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
     [accountId],
   );
   // Own-card view for the owning agent. The private price band is not stored
   // in plaintext and is not echoed back; agents keep their own record of it.
+  //
+  // A SCREENING_REJECTED card carries WHY, in the same plain words the
+  // approval page shows, so the agent can tell its human without a second
+  // call. This is an own-card field ONLY: it is read here from the caller's
+  // own rows, and no counterparty path ever reads cards.screening (the
+  // disclosure payloads are schema-closed — see domain/matches.ts).
   return r.rows.map((row) => ({
     intent_id: row.id,
     state: row.lifecycle_state,
+    ...(row.lifecycle_state === 'SCREENING_REJECTED'
+      ? (() => {
+          const rej = rejectionInPlainWords(row.screening);
+          return rej
+            ? {
+                screening: {
+                  ...(rej.reasonCode ? { reason_code: rej.reasonCode } : {}),
+                  reason: rej.plain,
+                  ...(rej.at ? { at: rej.at } : {}),
+                },
+              }
+            : {};
+        })()
+      : {}),
     card: {
       schema_version: row.schema_version,
       type: row.type,
