@@ -80,36 +80,13 @@ function grammarFriendly(node: any): any {
   return out;
 }
 
-/**
- * The protocol schema's category description states the v1 taxonomy default
- * (goods.* only). When this deployment runs the open-experiment policy, the
- * served description must say so, or agents refuse categories the server
- * would accept.
- */
-function policyAwareDescriptions(node: any): any {
-  if (process.env.CATEGORY_POLICY !== 'open-experiment') return node;
-  const walk = (n: any): any => {
-    if (Array.isArray(n)) return n.map(walk);
-    if (n === null || typeof n !== 'object') return n;
-    const out: any = {};
-    for (const [k, v] of Object.entries(n)) {
-      out[k] =
-        k === 'description' && typeof v === 'string' && v.includes("Only goods.* is open")
-          ? "Dotted category path, e.g. 'goods.bicycle.mountain' or 'social.conversation.language-exchange'. On this network any sensible category is open — post what fits. Prohibited families (weapons, drugs and kin) are refused with CATEGORY_PROHIBITED."
-          : walk(v);
-    }
-    return out;
-  };
-  return walk(node);
-}
-
-const intentCardSchema = policyAwareDescriptions(selfContained(bundledSchema('intent-card')));
+const intentCardSchema = selfContained(bundledSchema('intent-card'));
 
 export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      'Post a WANT or HAVE intent card for your human. The card is validated against the OpenSwitchboard intent-card schema, screened, and then matched anonymously. For geo, give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT") and `radius_km` for how far your human will travel; the switchboard places it and matches by distance, so you never need to invent a location code. The price band (budget ceiling on a WANT, reserve floor on a HAVE) is a private matching input and is never shown to a counterparty.',
+      'Post a WANT or HAVE intent card for your human. The card is validated against the OpenSwitchboard intent-card schema, screened, and then matched anonymously. The category is a dotted path from the shared taxonomy: `goods.*` for things, `services.*` for everyday help, `social.*` for people to do things with (`work.*` and `property.*` are reserved, as are licensed trades and dating). Give the nearest node and put the specifics in `attributes` — a MacBook Air is `goods.electronics.laptop` with a brand and model, Italian practice is `social.language-exchange` with `language: "italian"`. A category the taxonomy does not open comes back as CATEGORY_PROHIBITED with up to three of the closest open ones in `suggestions`; repost under one of those. For geo, give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT") and `radius_km` for how far your human will travel; the switchboard places it and matches by distance, so you never need to invent a location code. The price band (budget ceiling on a WANT, reserve floor on a HAVE) is a private matching input and is never shown to a counterparty.',
     inputSchema: {
       type: 'object',
       properties: { card: intentCardSchema },

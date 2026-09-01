@@ -70,6 +70,29 @@ describe('protocol errors', () => {
     expect(validatePayload('error', e.payload).valid).toBe(true);
     expect(e.payload.docs_url).toContain('QUOTA_EXCEEDED');
   });
+  it('carries category suggestions, capped at three', () => {
+    const e = new OsbError('CATEGORY_PROHIBITED', {
+      human_action:
+        "That category isn't in the taxonomy. Closest open ones: goods.electronics.laptop, goods.electronics.tablet, goods.electronics.desktop.",
+      suggestions: [
+        'goods.electronics.laptop',
+        'goods.electronics.tablet',
+        'goods.electronics.desktop',
+        'goods.electronics.monitor',
+      ],
+    });
+    expect(validatePayload('error', e.payload).valid).toBe(true);
+    expect(e.payload.suggestions).toEqual([
+      'goods.electronics.laptop',
+      'goods.electronics.tablet',
+      'goods.electronics.desktop',
+    ]);
+  });
+  it('leaves suggestions off when there are none', () => {
+    const e = new OsbError('CATEGORY_PROHIBITED', { suggestions: [] });
+    expect(validatePayload('error', e.payload).valid).toBe(true);
+    expect(e.payload.suggestions).toBeUndefined();
+  });
   it('rejects unknown major schema versions', () => {
     expect(() => checkSchemaVersion('99.0.0')).toThrow('SCHEMA_VERSION_UNSUPPORTED');
     expect(() => checkSchemaVersion(SCHEMA_VERSION)).not.toThrow();

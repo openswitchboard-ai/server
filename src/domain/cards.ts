@@ -10,7 +10,8 @@ import {
   checkSchemaVersion,
   validatePayload,
 } from '../protocol.js';
-import { categoryDenied, categoryKnownAndOpen } from '../denylist.js';
+import { categoryDenied, categoryStatus } from '../denylist.js';
+import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { normaliseGeo } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
@@ -37,6 +38,23 @@ export interface CardRow {
 }
 
 /**
+ * The category gate, identical on every deployment: the taxonomy decides, and
+ * nothing else does. When it refuses, the switchboard adds up to three of the
+ * closest open categories so the agent can correct itself on the next call.
+ * Working those out is a courtesy — it never changes the decision, and a
+ * refusal stands whether or not the suggestions arrive.
+ */
+export async function assertCategoryOpen(cfg: Config, category: string): Promise<void> {
+  const status = categoryStatus(category);
+  if (status.status === 'open') return;
+  const { categories } = await suggestCategories(cfg, category, 3);
+  throw new OsbError('CATEGORY_PROHIBITED', {
+    human_action: suggestionSentence(status.status, categories),
+    ...(categories.length ? { suggestions: categories } : {}),
+  });
+}
+
+/**
  * Publish an intent card.
  * Order of gates: schema validation -> schema_version -> taxonomy/deny-list
  * (CATEGORY_PROHIBITED) -> quota (QUOTA_EXCEEDED) -> stored PENDING_SCREENING
@@ -56,12 +74,7 @@ export async function publishIntent(
   }
   checkSchemaVersion(card.schema_version);
 
-  const known = categoryKnownAndOpen(card.category, cfg.categoryPolicy);
-  if (!known.ok) {
-    throw new OsbError('CATEGORY_PROHIBITED', {
-      human_action: `Category not available: ${known.reason}.`,
-    });
-  }
+  await assertCategoryOpen(cfg, card.category);
   const denied = categoryDenied(card.category);
   if (denied) {
     throw new OsbError('CATEGORY_PROHIBITED', {
@@ -215,6 +228,10 @@ export async function amendIntent(
       validation: v.reasons,
     });
   }
+  // An amend is a re-publish, so the category faces the same gate. A card
+  // whose category left the taxonomy since it was posted cannot be renewed
+  // under it; the error names where to go instead.
+  await assertCategoryOpen(cfg, next.category);
   const geo = normaliseGeo(next.geo);
 
   await checkPublishQuota(accountId, cfg.quotas);
