@@ -16,6 +16,14 @@
  * makes the sweep idempotent and leaves the goods fixtures the end-to-end
  * suite depends on untouched.
  *
+ * Two kinds of card are left alone on purpose:
+ *   - the integration suite's run-scoped islands ('intg-*'), which exist to
+ *     be isolated from everything and would only pollute the real tree;
+ *   - any card whose nearest node is not actually near. A suggestion below
+ *     the confidence floor means the sweep has no idea where the card
+ *     belongs, and inventing an answer is worse than leaving it where it is
+ *     for an operator to look at.
+ *
  * A remapped card is re-embedded, because the projection text a card is
  * embedded from starts with its category and its label path. Skipping that
  * would leave the vector describing a category the card no longer carries.
@@ -31,6 +39,15 @@ import type { Config } from '../config.js';
 /** Cards per pass. One pass is a few hundred small updates plus embeddings. */
 export const SNAP_BATCH = 200;
 
+/**
+ * Run-scoped categories the integration suite creates for its own islands.
+ * They are never meant to join the tree.
+ */
+export const ISLAND_PREFIX = /^intg[-.]/;
+
+/** Below this closeness the sweep leaves the card where it is. */
+export const DEFAULT_MIN_SCORE = { embedding: 0.55, lexical: 0.2 };
+
 export interface SnapCursor {
   created_at: string;
   id: string;
@@ -43,6 +60,8 @@ export interface SnapOutcome {
   remapped: { card_id: string; from: string; to: string; source: string }[];
   /** Cards whose category is already open. */
   already_open: number;
+  /** Integration-suite islands, deliberately untouched. */
+  islands: number;
   /** Cards no suggestion could be found for; they keep what they have. */
   unmatched: number;
   /** Cards moved but not re-embedded, so still carrying the old vector. */
@@ -54,9 +73,15 @@ export interface SnapOutcome {
 export async function snapCardCategories(
   cfg: Config,
   log: (msg: string, extra?: any) => void = () => {},
-  opts: { after?: SnapCursor; batch?: number; dryRun?: boolean } = {},
+  opts: {
+    after?: SnapCursor;
+    batch?: number;
+    dryRun?: boolean;
+    minScore?: Partial<typeof DEFAULT_MIN_SCORE>;
+  } = {},
 ): Promise<SnapOutcome> {
   const batch = opts.batch ?? SNAP_BATCH;
+  const floor = { ...DEFAULT_MIN_SCORE, ...(opts.minScore ?? {}) };
   const rows = await getPool().query(
     `SELECT id, account_id, category, attributes, lifecycle_state, created_at
        FROM cards
@@ -71,6 +96,7 @@ export async function snapCardCategories(
     scanned: rows.rowCount ?? 0,
     remapped: [],
     already_open: 0,
+    islands: 0,
     unmatched: 0,
     embed_failed: 0,
     next:
@@ -84,13 +110,22 @@ export async function snapCardCategories(
       outcome.already_open++;
       continue;
     }
-    const { categories, source } = await suggestCategories(cfg, row.category, 3, log);
-    const target = categories[0];
+    if (ISLAND_PREFIX.test(row.category)) {
+      outcome.islands++;
+      continue;
+    }
+    const { categories, scored, source } = await suggestCategories(cfg, row.category, 3, log);
+    const best = scored[0];
+    const target = best && best.score >= floor[source] ? best.category : undefined;
     if (!target) {
       outcome.unmatched++;
       log('snap-categories: no taxonomy node close enough', {
         card_id: row.id,
         category: row.category,
+        source,
+        best: best?.category ?? null,
+        score: best?.score ?? null,
+        floor: floor[source],
       });
       continue;
     }
@@ -101,6 +136,7 @@ export async function snapCardCategories(
         from: row.category,
         to: target,
         source,
+        score: best.score,
         runners_up: categories.slice(1),
       });
       continue;
@@ -115,6 +151,7 @@ export async function snapCardCategories(
       from: row.category,
       to: target,
       source,
+      score: best.score,
       runners_up: categories.slice(1),
     });
     // The vector describes the category, so it has to be rebuilt.

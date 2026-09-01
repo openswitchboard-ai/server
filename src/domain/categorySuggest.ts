@@ -35,6 +35,8 @@ export interface Suggestion {
 
 export interface SuggestionResult {
   categories: string[];
+  /** The same answers with their closeness scores, nearest first. */
+  scored: Suggestion[];
   source: SuggestionSource;
 }
 
@@ -202,10 +204,14 @@ export async function suggestCategories(
   limit = 3,
   log: (msg: string, extra?: any) => void = () => {},
 ): Promise<SuggestionResult> {
-  const lexical = () => ({
-    categories: lexicalSuggestions(category, limit).map((s) => s.category),
-    source: 'lexical' as const,
-  });
+  const lexical = () => {
+    const scored = lexicalSuggestions(category, limit);
+    return {
+      categories: scored.map((s) => s.category),
+      scored,
+      source: 'lexical' as const,
+    };
+  };
   try {
     // Kick the warm-up off, but do not wait for it.
     void warmCategoryCorpus(cfg, log);
@@ -216,7 +222,8 @@ export async function suggestCategories(
       score: cosine(q, corpus!.vectors[i]),
     }));
     scored.sort((a, b) => b.score - a.score || a.category.localeCompare(b.category));
-    return { categories: scored.slice(0, limit).map((s) => s.category), source: 'embedding' };
+    const top = scored.slice(0, limit);
+    return { categories: top.map((s) => s.category), scored: top, source: 'embedding' };
   } catch (e: any) {
     log('category-suggest: falling back to lexical', { error: e?.message });
     return lexical();

@@ -55,6 +55,9 @@ switch (cmd) {
       op: 'snap-categories',
       dry_run: arg('dry-run', 'false') === 'true',
       rematch: arg('rematch', 'true') !== 'false',
+      ...(process.argv.includes('--min-embedding-score')
+        ? { min_score: { embedding: Number(arg('min-embedding-score')) } }
+        : {}),
     };
     break;
   case 'backfill-geo':

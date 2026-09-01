@@ -120,6 +120,15 @@ describe('embedding closeness', () => {
     expect(cosine([0, 0], [1, 1])).toBe(0);
   });
 
+  it('reports how close each answer is, so a caller can set a floor', async () => {
+    vi.spyOn(embeddings, 'embedText').mockRejectedValue(new Error('bedrock unavailable'));
+    const r = await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(r.scored[0].category).toBe(r.categories[0]);
+    expect(r.scored[0].score).toBeGreaterThan(0);
+    const far = await suggestCategories(cfg, 'intg-email.a3f2b1c9');
+    expect(far.scored[0]?.score ?? 0).toBeLessThan(r.scored[0].score);
+  });
+
   it('embeds the path together with its human label path', () => {
     expect(nodeText('goods.electronics.laptop')).toContain('goods.electronics.laptop');
     expect(nodeText('goods.electronics.laptop')).toContain('Laptops');
