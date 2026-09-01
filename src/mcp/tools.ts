@@ -5,6 +5,7 @@
  */
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import * as cards from '../domain/cards.js';
+import { categoryLeafLabel } from '../domain/matchRules.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
@@ -280,7 +281,24 @@ export async function dispatchTool(
         if (args?.match_id && args?.stage) {
           return ok(await matches.getStagePayload(accountId, args.match_id, args.stage));
         }
-        return ok({ matches: await matches.checkMatches(accountId, args?.intent_id) });
+        {
+          const found = await matches.checkMatches(accountId, args?.intent_id);
+          // A ready-made sentence per stage-1 signal, so agents can relay the
+          // match in everyday words. Switchboard-authored; sits beside the
+          // protocol object rather than inside it.
+          const withNotes = found.map((m: any) =>
+            m?.kind === 'match.signal'
+              ? {
+                  ...m,
+                  note: {
+                    text: `Someone in the area is on the other side of your ${categoryLeafLabel(m.category)} card. Say the word to show interest; if they are keen too, you will each see a little more.`,
+                    provenance: 'switchboard-system',
+                  },
+                }
+              : m,
+          );
+          return ok({ matches: withNotes });
+        }
       case 'open_channel':
         return ok(await matches.openChannel(args?.match_id, accountId));
       case 'amend_intent':
