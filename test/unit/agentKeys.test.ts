@@ -392,7 +392,7 @@ describe('agent key pages: copy', () => {
   const rendered = [
     {
       name: 'agent-keys-empty',
-      html: chome.agentKeysPage({ keys: [], hasPasskey: false, elevated: false, atLimit: false }),
+      html: chome.agentKeysPage({ keys: [], elevated: false, atLimit: false }),
     },
     {
       name: 'agent-keys-list',
@@ -408,7 +408,6 @@ describe('agent key pages: copy', () => {
             },
             { keyId: 'k-2', name: 'the phone agent', created: '2026-09-01', expires: '2026-11-30' },
           ],
-          hasPasskey: true,
           elevated: true,
           atLimit: false,
         },
@@ -418,7 +417,7 @@ describe('agent key pages: copy', () => {
     {
       name: 'agent-keys-at-limit',
       html: chome.agentKeysPage(
-        { keys: [], hasPasskey: false, elevated: false, atLimit: true },
+        { keys: [], elevated: false, atLimit: true },
         undefined,
         'That key is unknown.',
       ),
