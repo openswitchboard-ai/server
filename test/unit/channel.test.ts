@@ -293,6 +293,27 @@ describe('delete on delivery', () => {
     expect(again.messages).toEqual([]);
   });
 
+  it('mints the channel key on first use for a channel opened before the transport existed', async () => {
+    // The live dev channel from before this shipped has no key on its row.
+    world.channel_key_enc = null;
+    const crypto = await import('../../src/crypto.js');
+    await channel.sendMessage(ANA, MATCH, 'first words on an older channel');
+    expect(crypto.generateChannelKey).toHaveBeenCalledWith(CHANNEL);
+    expect(world.channel_key_enc?.toString('utf8')).toBe(`ckey:${CHANNEL}`);
+
+    // And the second send reuses it rather than minting again.
+    vi.mocked(crypto.generateChannelKey).mockClear();
+    await channel.sendMessage(ANA, MATCH, 'and the next');
+    expect(crypto.generateChannelKey).not.toHaveBeenCalled();
+
+    const got = await channel.receiveMessages(BEPPE, MATCH);
+    expect(got.messages.map((m: any) => m.body.text)).toEqual([
+      'first words on an older channel',
+      'and the next',
+    ]);
+    expect(world.messages).toHaveLength(0);
+  });
+
   it('carries both ways and lets neither side read back its own words', async () => {
     await channel.sendMessage(ANA, MATCH, 'is it still available?');
     await channel.sendMessage(BEPPE, MATCH, 'it is, come and look at it');
