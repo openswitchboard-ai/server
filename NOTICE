@@ -1,0 +1,16 @@
+OpenSwitchboard core switchboard service
+Copyright OpenSwitchboard contributors.
+
+This product includes place data from GeoNames (https://www.geonames.org/),
+licensed under the Creative Commons Attribution 4.0 licence
+(https://creativecommons.org/licenses/by/4.0/).
+
+`data/gazetteer.json.gz` is a reduction of the GeoNames cities1000,
+admin1CodesASCII, countryInfo and alternateNamesV2 exports, holding only the
+name, alternate spellings, country, first-level division, centre point and
+population of each place. `scripts/build-gazetteer.ts` regenerates it:
+
+    npm run build:gazetteer
+
+The switchboard resolves locations from this file in-process. No geocoding
+service is called at run time.

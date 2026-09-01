@@ -52,7 +52,10 @@ describe('tool schemas are self-contained', () => {
       if (Array.isArray(n)) return n.flatMap((v, i) => walk(v, `${path}[${i}]`));
       if (n === null || typeof n !== 'object') return [];
       const bad: string[] = [];
-      for (const k of ['$ref', '$defs', 'propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'format']) {
+      for (const k of [
+        '$ref', '$defs', 'propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'anyOf',
+        'oneOf', 'format',
+      ]) {
         if (k in n) bad.push(`${path}.${k}`);
       }
       for (const [k, v] of Object.entries(n)) bad.push(...walk(v, `${path}.${k}`));

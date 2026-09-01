@@ -91,7 +91,8 @@ export type ErrorCode =
   | 'INTENT_EXPIRED'
   | 'SCREENING_REJECTED'
   | 'RATE_LIMITED_OFFERS'
-  | 'SETTLEMENT_UNAVAILABLE';
+  | 'SETTLEMENT_UNAVAILABLE'
+  | 'LOCATION_UNRESOLVED';
 
 export interface ProtocolError {
   schema_version: string;

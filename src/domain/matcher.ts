@@ -18,6 +18,7 @@ import {
   type PriceBand,
 } from './matchRules.js';
 import type { CardRow } from './cards.js';
+import { geoOf } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
 const CANDIDATE_LIMIT = 50;
@@ -178,8 +179,8 @@ export async function runMatchingForCard(
       semantic: Number(cand.similarity),
       categoryA: source.category,
       categoryB: cand.category,
-      geoA: source.geo,
-      geoB: cand.geo,
+      geoA: geoOf(source),
+      geoB: geoOf(cand),
       // bands withheld: category/geo hard rules run without any decrypt
     });
     if (!pre.hardRulesPass) continue;
@@ -195,8 +196,8 @@ export async function runMatchingForCard(
       semantic: Number(cand.similarity),
       categoryA: source.category,
       categoryB: cand.category,
-      geoA: source.geo,
-      geoB: cand.geo,
+      geoA: geoOf(source),
+      geoB: geoOf(cand),
       wantBand,
       haveBand,
     });

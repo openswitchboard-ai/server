@@ -18,6 +18,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 COPY migrations ./migrations
+# Offline place data (GeoNames, CC BY 4.0 — see NOTICE). Location resolution
+# runs in-process; the switchboard never calls a geocoding service.
+COPY data ./data
 USER node
 EXPOSE 8080
 CMD ["node", "dist/src/index.js"]
