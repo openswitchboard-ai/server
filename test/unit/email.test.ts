@@ -14,6 +14,7 @@ import {
   renderDigest,
   renderKillSwitch,
   renderRenewal,
+  renderScreeningRejected,
   renderSecurityNotice,
   renderSettlementProposed,
   renderSettlementUpdate,
@@ -23,6 +24,7 @@ import {
   type FooterLinks,
 } from '../../src/email/templates.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
+import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { signEmailToken, verifyEmailToken } from '../../src/email/tokens.js';
 
@@ -38,6 +40,8 @@ const SLUG = 'goods.bicycle.mountain';
 const LABEL = 'Mountain bikes';
 const LABEL2 = 'Garden tools';
 const SUMMARY = `An offer on your ${LABEL} match is waiting for your decision.`;
+// The plain-words rejection sentence the screening domain hands the template.
+const REJECTION_REASON = screeningReasonInPlainWords('pii-in-card');
 
 /** name -> [content, mustNotAppearInBlindVariant] */
 function allTemplates(): { name: string; content: EmailContent; blind: boolean }[] {
@@ -197,6 +201,35 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       ),
     },
     {
+      name: 'card-screening-rejected',
+      blind: false,
+      content: renderScreeningRejected(
+        {
+          categoryLabel: LABEL,
+          reason: REJECTION_REASON,
+          editUrl: `${COUNTER}/counter/ledger/card-1/edit`,
+          blind: false,
+          counterUrl: `${COUNTER}/counter`,
+        },
+        links,
+      ),
+    },
+    {
+      // Blind mode strips the label before render (see counter/email.ts) and
+      // the template drops the reason with it: a pure pointer remains.
+      name: 'card-screening-rejected-blind',
+      blind: true,
+      content: renderScreeningRejected(
+        {
+          reason: REJECTION_REASON,
+          editUrl: `${COUNTER}/counter/ledger/card-1/edit`,
+          blind: true,
+          counterUrl: `${COUNTER}/counter`,
+        },
+        links,
+      ),
+    },
+    {
       name: 'settlement-proposed',
       blind: false,
       content: renderSettlementProposed(
@@ -314,6 +347,22 @@ describe('email templates: render suite', () => {
       expect(both).not.toContain('HAVE');
       expect(both).not.toContain('near miss');
     }
+  });
+
+  it('the screening-rejection email carries the label, the reason and the edit link', () => {
+    const byName = Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
+    const c = byName['card-screening-rejected'];
+    for (const part of [c.html, c.text]) {
+      expect(part).toContain(LABEL);
+      expect(part).toContain(REJECTION_REASON);
+      expect(part).toContain(`${COUNTER}/counter/ledger/card-1/edit`);
+    }
+    // Blind mode: the pointer, and nothing of why.
+    const blind = byName['card-screening-rejected-blind'];
+    const both = blind.html + blind.text + blind.subject;
+    expect(both).not.toContain(REJECTION_REASON);
+    expect(both).not.toContain('personal details');
+    expect(both).not.toContain('/ledger/card-1/edit');
   });
 
   it('the lint catches each banned antithesis construction', () => {

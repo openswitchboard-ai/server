@@ -434,6 +434,66 @@ export function renderKillSwitch(
 }
 
 // ---------------------------------------------------------------------------
+// (f2) A card did not pass screening. Transactional: the card is off the board
+// until the person changes it, so this goes out whatever their digest settings
+// say. Non-blind carries the category label and the plain-words reason (both
+// are the person's OWN card — nothing about anybody else is in here). Blind:
+// pointer only.
+// ---------------------------------------------------------------------------
+export function renderScreeningRejected(
+  v: {
+    /** Human taxonomy label ("Mountain bikes") — never the raw slug. */
+    categoryLabel?: string;
+    /** The reason in plain words (domain/screening.ts owns the wording). */
+    reason: string;
+    /** Deep link to the card's edit form on the approval page. */
+    editUrl: string;
+    blind: boolean;
+    counterUrl: string;
+  },
+  f: FooterLinks,
+): EmailContent {
+  if (v.blind) {
+    const subject = 'OpenSwitchboard: something needs a change from you';
+    const html = shell(
+      h1('Something needs a change.') +
+        para('Something on your account needs a change from you before it can go back out. The detail waits behind your sign-in.') +
+        center(button(v.counterUrl, "See what's waiting")),
+      f,
+      WANT,
+    );
+    const text =
+      `Something on your account needs a change from you before it can go back out. ` +
+      `The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
+      footerText(f);
+    return { subject, html, text };
+  }
+  const subject = 'OpenSwitchboard: one of your cards needs a change';
+  const which = v.categoryLabel ? `Your ${v.categoryLabel} card` : 'One of your cards';
+  const html = shell(
+    h1('One of your cards needs a change.') +
+      para(
+        `${esc(which)} did not pass screening, so it is off the board until you change it. Here is what screening picked up:`,
+      ) +
+      para(esc(v.reason)) +
+      center(button(v.editUrl, 'Open the card')) +
+      small(
+        'Every card goes through screening before it reaches anyone. Edit this one and save it, and it goes straight back through.',
+      ),
+    f,
+    WANT,
+  );
+  const text =
+    `${which} did not pass screening, so it is off the board until you change it.\n\n` +
+    `Here is what screening picked up:\n${v.reason}\n\n` +
+    `Open the card:\n${v.editUrl}\n\n` +
+    `Every card goes through screening before it reaches anyone. Edit this one ` +
+    `and save it, and it goes straight back through.\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // (g) Security notices.
 // ---------------------------------------------------------------------------
 export type SecurityNoticeEvent = 'agent-authorized' | 'pin-changed' | 'agent-key-created';

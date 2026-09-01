@@ -1,8 +1,50 @@
 import { DeleteMessageCommand, ReceiveMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
-import { getCard } from '../domain/cards.js';
-import { applyVerdict, screenCard } from '../domain/screening.js';
+import { getCard, type CardRow } from '../domain/cards.js';
+import { categoryLeafLabel } from '../domain/matchRules.js';
+import {
+  applyVerdict,
+  screeningReasonInPlainWords,
+  screenCard,
+  type StoredScreening,
+} from '../domain/screening.js';
 import type { Config } from '../config.js';
+
+/**
+ * Tell the human their card came back rejected. BEST EFFORT, in both
+ * directions: the verdict is already written when this runs, and a send that
+ * throws is logged and swallowed so it can never undo or re-run the screening
+ * decision. An account with no reachable address is simply not mailed — the
+ * rejection is on their approval page either way.
+ */
+export async function notifyScreeningRejection(
+  cfg: Config,
+  card: CardRow,
+  screening: StoredScreening,
+  log: (msg: string, extra?: any) => void,
+): Promise<void> {
+  try {
+    const { accountEmail } = await import('../domain/counterOps.js');
+    const { sendScreeningRejectedEmail } = await import('../counter/email.js');
+    const to = await accountEmail(card.account_id, 'card-screening-rejected-notification');
+    if (!to) {
+      log('screening: rejection notice skipped (no reachable address)', { card_id: card.id });
+      return;
+    }
+    const outcome = await sendScreeningRejectedEmail(cfg, to, card.account_id, {
+      cardId: card.id,
+      rejectedAt: screening.at,
+      categoryLabel: categoryLeafLabel(card.category),
+      reason: screeningReasonInPlainWords(screening.reason_code),
+    });
+    log('screening: rejection notice', { card_id: card.id, status: outcome.status });
+  } catch (e: any) {
+    log('screening: rejection notice failed; the verdict stands', {
+      card_id: card.id,
+      error: e?.message,
+    });
+  }
+}
 
 /**
  * Long-poll consumer of the screening queue. On any failure (e.g. Bedrock
@@ -37,12 +79,17 @@ export function startScreeningWorker(cfg: Config, log: (msg: string, extra?: any
                 });
               } else {
                 const verdict = await screenCard(cfg, card);
-                await applyVerdict(cfg, card.id, verdict);
+                const { applied, screening } = await applyVerdict(cfg, card.id, verdict);
                 log('screening verdict', {
                   card_id: card.id,
                   pass: verdict.pass,
                   reason_code: verdict.reason_code,
                 });
+                // The state change IS the rejection event: only the call that
+                // actually flipped the row tells the human about it.
+                if (applied && !verdict.pass) {
+                  await notifyScreeningRejection(cfg, card, screening, log);
+                }
               }
             } else {
               log('screening: unknown message kind', { body: msg.Body?.slice(0, 200) });

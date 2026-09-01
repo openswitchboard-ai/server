@@ -196,6 +196,7 @@ import * as cpages from '../../src/counter/pages.js';
 import * as chome from '../../src/counter/pagesHome.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
 import { categoryLeafLabel } from '../../src/domain/matchRules.js';
+import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 
 const SLUG = 'goods.bicycle.mountain';
 const LABEL = categoryLeafLabel(SLUG);
@@ -265,6 +266,11 @@ describe('counter pages: copy-cull render suite', () => {
         killSwitchOn: false,
         cardCounts: { total: 2, published: 1, pending: 1 },
         pendingApprovals: [
+          {
+            href: '/counter/ledger/c-9/edit',
+            label: `Your ${LABEL} card didn't pass screening — see why and fix it`,
+            cta: 'See why and fix it',
+          },
           { href: '/counter/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
         ],
         matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }],
@@ -301,6 +307,23 @@ describe('counter pages: copy-cull render suite', () => {
         ttlDays: 60,
         attributesJson: '{}',
         collectWindowDefault: 240,
+      }),
+    },
+    {
+      name: 'card-edit-screening-rejected',
+      html: chome.cardEditPage({
+        id: 'c-1',
+        type: 'WANT',
+        category: LABEL,
+        urgency: 'none',
+        status: 'active',
+        ttlDays: 60,
+        attributesJson: '{}',
+        collectWindowDefault: 240,
+        screeningRejection: {
+          plain: screeningReasonInPlainWords('pii-in-card'),
+          code: 'pii-in-card',
+        },
       }),
     },
     {
@@ -386,6 +409,22 @@ describe('counter pages: copy-cull render suite', () => {
     for (const name of ['dashboard', 'ledger', 'card-edit', 'renew', 'approval-offer']) {
       expect(byName[name], name).toContain(LABEL);
     }
+  });
+
+  it('a rejected card gets its own attention item and its own reason', () => {
+    const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
+    // Dashboard: the attention item, its own button wording, the edit link.
+    expect(byName['dashboard']).toContain(`Your ${LABEL} card didn&#39;t pass screening`);
+    expect(byName['dashboard']).toContain('/counter/ledger/c-9/edit');
+    expect(byName['dashboard']).toContain('See why and fix it');
+    // Everything else on the dashboard keeps the decide-on-it wording.
+    expect(byName['dashboard']).toContain('Review &amp; decide');
+    // Edit page: plain words up top, raw code small underneath.
+    expect(byName['card-edit-screening-rejected']).toContain(
+      screeningReasonInPlainWords('pii-in-card'),
+    );
+    expect(byName['card-edit-screening-rejected']).toContain('screening code: pii-in-card');
+    expect(byName['card-edit']).not.toContain('screening code:');
   });
 
   it('card rows carry the attributes detail line that tells same-category cards apart', () => {
