@@ -219,6 +219,93 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
 }
 
 /**
+ * An actor that arrives the way a real person does: through the registration
+ * pages. Nothing is injected through the ops queue, so the account lands with
+ * NO first name and NO area on file — the state that broke stage-3 disclosure.
+ * Use this (rather than bootstrapActor) for anything that exercises the
+ * collection path.
+ */
+export async function registerActor(): Promise<TestActor> {
+  const email = `testsuite+${randomBytes(6).toString('hex')}@openswitchboard.ai`;
+  const jar = new Jar();
+  const start = await counterFetch(jar, '/counter/register', form({ email }));
+  if (start.status !== 200) throw new Error(`register start failed: ${start.status}`);
+  const verificationId = (await start.text()).match(/name="verification_id" value="([^"]+)"/)?.[1];
+  if (!verificationId) throw new Error('no verification_id on the code page');
+  const code = '424242';
+  await dbExec(`UPDATE email_verifications SET code_hash = :h WHERE id = :id::uuid`, [
+    { name: 'h', value: sha256hex(`${code}:${verificationId}`) },
+    { name: 'id', value: verificationId },
+  ]);
+  const v = await counterFetch(jar, '/counter/verify', form({ verification_id: verificationId, code }));
+  if (v.status !== 303) throw new Error(`verify failed: ${v.status}`);
+
+  const pin = '246810';
+  const setPin = await counterFetch(jar, '/counter/pin/set', form({ pin, pin2: pin }));
+  if (setPin.status !== 303) throw new Error(`pin set failed: ${setPin.status}`);
+  const consent = await counterFetch(jar, '/counter/consent', form({ adult: 'yes', consent: 'yes' }));
+  if (consent.status !== 303) throw new Error(`consent failed: ${consent.status}`);
+
+  const accountId = (
+    await dbExec('SELECT id FROM accounts WHERE email_hash = :h', [
+      { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
+    ])
+  )[0]?.[0] as string;
+  if (!accountId) throw new Error(`no account row for ${email}`);
+  const accessToken = await oauthFlow(jar);
+  return { email, accountId, pin, accessToken, jar };
+}
+
+/** What a signed-in human would see on their "what you share on a match" page. */
+export async function readSharedProfilePage(
+  jar: Jar,
+): Promise<{ firstName: string; locality: string }> {
+  const res = await counterFetch(jar, '/counter/profile');
+  if (res.status !== 200) throw new Error(`profile page: ${res.status}`);
+  const body = await res.text();
+  return {
+    firstName: body.match(/id="first_name"[^>]*value="([^"]*)"/)?.[1] ?? '',
+    locality: body.match(/id="locality"[^>]*value="([^"]*)"/)?.[1] ?? '',
+  };
+}
+
+/** Fill the shared profile from the human's own page. */
+export async function setSharedProfile(
+  jar: Jar,
+  firstName: string,
+  locality: string,
+): Promise<Response> {
+  return counterFetch(jar, '/counter/profile', form({ first_name: firstName, locality }));
+}
+
+/**
+ * Approve a stage-3 disclosure at the approval page, supplying the first name
+ * and area in the same submission when the page is asking for them.
+ */
+export async function approveDisclosure(
+  jar: Jar,
+  matchId: string,
+  pin: string,
+  shared?: { firstName: string; locality: string },
+): Promise<{ status: number; body: string; asked: boolean }> {
+  const page = await counterFetch(jar, `/counter/approvals/match/${matchId}`);
+  const pageBody = await page.text();
+  const asked = pageBody.includes('name="first_name"');
+  const res = await counterFetch(
+    jar,
+    '/counter/approve',
+    form({
+      action: 'stage3-disclosure',
+      ref_id: matchId,
+      decision: 'approve',
+      pin,
+      ...(shared ? { first_name: shared.firstName, locality: shared.locality } : {}),
+    }),
+  );
+  return { status: res.status, body: await res.text(), asked };
+}
+
+/**
  * OAuth 2.1 flow, 0.D shape: DCR + PKCE on the MCP hostname; the human
  * login/consent half happens on the COUNTER hostname with a signed-in
  * counter session (the PIN and passkey never transit the agent path).
