@@ -1,5 +1,38 @@
 /** Counter pages: dashboard, ledger, card edit, settings. */
-import { esc, errBox, layout } from './pages.js';
+import { esc, errBox, layout, sharedFieldsFieldset } from './pages.js';
+
+/**
+ * What you share on a match. Two boxes, viewable and changeable whenever the
+ * person likes — a signed-in session is enough, because typing a suburb into
+ * a form tells nobody anything. The disclosure it feeds still waits for a
+ * match, both opt-ins, and a PIN.
+ */
+export function sharedProfilePage(
+  v: { firstName: string; locality: string },
+  opts: { error?: string; notice?: string } = {},
+): string {
+  const filled = v.firstName && v.locality;
+  return layout('What you share on a match', `
+<h1>What you share on a match.</h1>
+<p>When you and someone else have both said yes, you each see a first name and
+a rough area. That is the whole of what crosses — your email, your cards and
+your prices stay on your side.</p>
+${errBox(opts.error)}
+${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
+${
+  filled
+    ? ''
+    : `<div class="note">Nothing is filled in yet. Until it is, a match can get to
+the point of swapping details and then stall there.</div>`
+}
+<form method="POST" action="/counter/profile">
+  ${sharedFieldsFieldset(v)}
+  <button type="submit">Save</button>
+</form>
+<p class="small muted">A first name and a suburb is all this page wants. Keep phone numbers,
+addresses and links out of it — you can swap those in the channel once you have both agreed.</p>
+<a class="btn secondary" href="/counter">Back to your approval page</a>`);
+}
 
 export interface PendingApprovalItem {
   href: string;
@@ -24,6 +57,8 @@ export interface DashboardWindowItem {
 
 export interface DashboardView {
   firstName?: string;
+  /** "Ana, Fremantle" — what a stage-3 match would see. Absent = not set yet. */
+  sharedProfile?: string;
   /** Set when a permanent bounce flagged the account's address unreachable. */
   emailUnreachable?: boolean;
   killSwitchOn: boolean;
@@ -128,6 +163,13 @@ ${matchRows}
 <p class="small muted">${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'}
  — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.</p>
 <a class="btn secondary" href="/counter/ledger">Open the ledger</a>
+<h2>What you share on a match</h2>
+<p class="small muted">${
+    v.sharedProfile
+      ? `A match that gets that far sees ${esc(v.sharedProfile)}.`
+      : 'A match that gets that far sees a first name and a rough area. Yours are empty.'
+  }</p>
+<a class="btn secondary" href="/counter/profile">What you share on a match</a>
 <a class="btn secondary" href="/counter/agent-keys">Agent keys</a>
 <a class="btn secondary" href="/counter/settings">Settings</a>
 ${kill}

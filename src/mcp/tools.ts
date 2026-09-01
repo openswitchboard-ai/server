@@ -122,7 +122,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval), decline (no reason carried, by design), propose_offer, send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
+      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer, send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -279,10 +279,10 @@ export async function dispatchTool(
         return ok({ intents: await cards.listIntents(accountId) });
       case 'check_matches':
         if (args?.match_id && args?.stage) {
-          return ok(await matches.getStagePayload(accountId, args.match_id, args.stage));
+          return ok(await matches.getStagePayload(cfg, accountId, args.match_id, args.stage));
         }
         {
-          const found = await matches.checkMatches(accountId, args?.intent_id);
+          const found = await matches.checkMatches(cfg, accountId, args?.intent_id);
           // A ready-made sentence per stage-1 signal, so agents can relay the
           // match in everyday words. Switchboard-authored; sits beside the
           // protocol object rather than inside it.
@@ -348,7 +348,7 @@ export async function dispatchTool(
             return ok({ match_id, stage_unlocked: m.stage });
           }
           case 'opt_in': {
-            const r = await matches.recordStage3OptIn(match_id, accountId, 'agent-attested');
+            const r = await matches.recordStage3OptIn(cfg, match_id, accountId, 'agent-attested');
             return ok({
               match_id,
               optin_recorded: true,

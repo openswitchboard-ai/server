@@ -225,7 +225,9 @@ ${errBox(error)}
   </div>
   <button type="submit">Open my account</button>
 </form>
-<p class="small muted">Both statements are recorded in a tamper-evident consent log.</p>`);
+<p class="small muted">Both statements are recorded in a tamper-evident consent log.</p>
+<p class="small muted">If a match ever gets as far as swapping details, we ask you then for a
+first name and a rough area, and those are the only things that cross.</p>`);
 }
 
 export function loginEmailPage(error?: string): string {
@@ -287,9 +289,22 @@ export interface ApprovalView {
   refId: string;
   facts: { k: string; v: string }[]; // the three facts, big
   anomalies: string[];
+  /** Set on a stage-3 approval when this account has no first name / area on
+   *  file yet: the page asks for them right here, and approving stores them. */
+  collectProfile?: { firstName: string; locality: string };
   hasPasskey: boolean;
   elevated: boolean;
   postPath: string; // decision endpoint
+}
+
+/** The two boxes that make up everything a match ever sees about a person. */
+export function sharedFieldsFieldset(v: { firstName: string; locality: string }): string {
+  return `<label for="first_name">First name</label>
+  <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name"
+    value="${esc(v.firstName)}" required>
+  <label for="locality">Suburb or area</label>
+  <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2"
+    value="${esc(v.locality)}" required>`;
 }
 
 export function approvalPage(v: ApprovalView, error?: string): string {
@@ -311,6 +326,14 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   const passkeyBtn = v.hasPasskey && !v.elevated
     ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Approve with passkey instead</button>`
     : '';
+  // First time through: the page collects the two things it is about to
+  // share. They are stored under this account's own key when you approve.
+  const collect = v.collectProfile
+    ? `<h2>What should we share?</h2>
+  <p class="small">Your match sees a first name and a rough area. That is the whole of it.
+  You can change both any time on <a href="/counter/profile">what you share on a match</a>.</p>
+  ${sharedFieldsFieldset(v.collectProfile)}`
+    : '';
   return layout(title, `
 <h1>${esc(title)}</h1>
 ${errBox(error)}
@@ -318,9 +341,10 @@ ${errBox(error)}
 <form method="POST" action="${esc(v.postPath)}" id="approveForm">
   <input type="hidden" name="ref_id" value="${esc(v.refId)}">
   <input type="hidden" name="action" value="${esc(v.action)}">
+  ${collect}
   ${pinBlock}
   <button type="submit" name="decision" value="approve" class="approve">Approve</button>
-  <button type="submit" name="decision" value="decline" class="secondary">Decline — nothing ${{ 'offer-accept': 'is accepted', 'stage3-disclosure': 'is shared', 'settlement-approve': 'is paid' }[v.action]}</button>
+  <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Decline — nothing ${{ 'offer-accept': 'is accepted', 'stage3-disclosure': 'is shared', 'settlement-approve': 'is paid' }[v.action]}</button>
 </form>
 ${passkeyBtn}
 <p class="small muted">Approve needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Decline shares nothing and carries no reason.</p>
