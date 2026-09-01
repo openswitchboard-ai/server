@@ -4,6 +4,8 @@
  *   create-match  (0.F matching engine)  : --card-want <id> --card-have <id> [--score 0.9]
  *   accept-offer  (0.D counter human UI) : --offer-id <id> --account-id <id>
  *   ttl-expiry                           : trigger an expiry sweep now
+ *   backfill-geo  (0.3.0 locations)      : place cards written before 0.3.0
+ *                                          [--rematch false to skip requeue]
  */
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
@@ -41,8 +43,14 @@ switch (cmd) {
   case 'ttl-expiry':
     body = { op: 'ttl-expiry' };
     break;
+  case 'backfill-geo':
+    // Place cards written before 0.3.0 and hand them back to the matcher.
+    body = { op: 'backfill-geo', rematch: arg('rematch', 'true') !== 'false' };
+    break;
   default:
-    console.error('usage: ops.ts <create-match|accept-offer|ttl-expiry> [--env dev] ...');
+    console.error(
+      'usage: ops.ts <create-match|accept-offer|ttl-expiry|backfill-geo> [--env dev] ...',
+    );
     process.exit(1);
 }
 

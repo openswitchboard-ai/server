@@ -3,6 +3,8 @@ import { sqs } from '../aws.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
+import { backfillCardGeo } from '../geo/backfill.js';
+import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
@@ -89,6 +91,37 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   );
                 });
                 log('backfill-embeddings: cards embedded', { count: n });
+                break;
+              }
+              case 'backfill-geo': {
+                // One-shot, idempotent: place cards written before 0.3.0, then
+                // hand each placed card back to the matching queue so pairs
+                // that could not meet on unequal bucket strings get another go.
+                log('backfill-geo: starting', gazetteerSource());
+                const r = await backfillCardGeo(log);
+                log('backfill-geo: done', r);
+                if (body.rematch !== false) {
+                  const placed = await import('../db.js').then(({ getPool }) =>
+                    getPool().query(
+                      `SELECT id FROM cards WHERE geo_lat IS NOT NULL
+                         AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
+                    ),
+                  );
+                  for (const row of placed.rows) {
+                    await sqs.send(
+                      new SendMessageCommand({
+                        QueueUrl: cfg.matchingQueueUrl,
+                        MessageBody: JSON.stringify({
+                          kind: 'card-published',
+                          card_id: row.id,
+                        }),
+                      }),
+                    );
+                  }
+                  log('backfill-geo: cards requeued for matching', {
+                    count: placed.rowCount,
+                  });
+                }
                 break;
               }
               case 'match-notify': {

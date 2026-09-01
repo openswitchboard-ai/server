@@ -8,9 +8,10 @@
  *                              projection embeddings, clamped to [0,1])
  *         + 0.20 * category   (taxonomy-tree closeness: 1.0 exact node,
  *                              -0.15 per ancestor/descendant step, floor 0.4)
- *         + 0.15 * geo        (1.0 same bucket; geohash pairs decay linearly
- *                              with centre distance over the combined reach;
- *                              prefix-related non-geohash buckets 0.8)
+ *         + 0.15 * geo        (1.0 at the same centre point, decaying linearly
+ *                              with distance over the two cards' combined
+ *                              radii; buckets with no resolved centre point
+ *                              fall back to the pre-0.3.0 string comparison)
  *         + 0.10 * price      (fit of WANT ceiling over HAVE reserve floor;
  *                              neutral 0.6 when either side declared no band)
  *
@@ -31,7 +32,7 @@
  *   - opposite types (WANT vs HAVE), different accounts, no mute either way;
  *   - both PUBLISHED, unexpired (TTL), not paused by a kill switch;
  *   - category-tree compatibility (equal, ancestor, or descendant);
- *   - geo bucket + radius overlap;
+ *   - geo: centre points within the sum of the two radii;
  *   - price-band intersection: WANT ceiling >= HAVE reserve floor, computed
  *     on decrypted bands server-side only - bands NEVER leave the engine;
  *   - urgency routing: a card with urgency='today' only matches counterparties
@@ -125,57 +126,32 @@ export function categoryCloseness(a: string, b: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Geo: buckets are coarse cells (geohash where they parse as one, otherwise
-// opaque region codes). Radius overlap is APPROXIMATE by design - location is
-// never exact on the switchboard, so neither is distance.
+// Geo. Since 0.3.0 every card that names a locality carries a centre point,
+// resolved server-side (see geo/normalise.ts). Two cards meet when the
+// great-circle distance between their centres is within the sum of their
+// radii, so "Canberra" and "AU-ACT" — once two unequal strings — now overlap.
+//
+// A card whose bucket answers to nothing in the gazetteer has no centre
+// point. Those fall back to the pre-0.3.0 comparison: same bucket, or one
+// bucket a prefix of the other. That path exists for cards written before
+// the change and for run-scoped test islands.
+//
+// Distance is APPROXIMATE by design — location on the switchboard is an area,
+// never a point, so neither is the answer.
 // ---------------------------------------------------------------------------
-const GEOHASH32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+export { decodeGeohash, encodeGeohash, haversineKm, isGeohash } from '../geo/geohash.js';
+import { decodeGeohash, haversineKm, isGeohash } from '../geo/geohash.js';
 
-export function isGeohash(bucket: string): boolean {
-  const b = bucket.toLowerCase();
-  return b.length >= 2 && b.length <= 12 && [...b].every((c) => GEOHASH32.includes(c));
-}
-
-/** Decode a geohash to its cell centre {lat, lon} and half-diagonal km. */
-export function decodeGeohash(bucket: string): { lat: number; lon: number; cellKm: number } {
-  let latMin = -90, latMax = 90, lonMin = -180, lonMax = 180;
-  let even = true;
-  for (const c of bucket.toLowerCase()) {
-    const idx = GEOHASH32.indexOf(c);
-    for (let bit = 4; bit >= 0; bit--) {
-      const on = (idx >> bit) & 1;
-      if (even) {
-        const mid = (lonMin + lonMax) / 2;
-        if (on) lonMin = mid; else lonMax = mid;
-      } else {
-        const mid = (latMin + latMax) / 2;
-        if (on) latMin = mid; else latMax = mid;
-      }
-      even = !even;
-    }
-  }
-  const lat = (latMin + latMax) / 2;
-  const lon = (lonMin + lonMax) / 2;
-  // Half-diagonal of the cell, km (approx; 1 deg lat ~ 111 km).
-  const dLatKm = ((latMax - latMin) / 2) * 111;
-  const dLonKm = ((lonMax - lonMin) / 2) * 111 * Math.cos((lat * Math.PI) / 180);
-  return { lat, lon, cellKm: Math.sqrt(dLatKm * dLatKm + dLonKm * dLonKm) };
-}
-
-export function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lon - a.lon);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
-}
+/** Radius assumed for a card that carries a centre point but no radius. */
+export const DEFAULT_GEO_RADIUS_KM = 25;
 
 export interface GeoBucket {
   bucket: string;
+  place?: string;
   radius_km?: number;
+  /** Resolved centre point; null/undefined for an unresolved bucket. */
+  lat?: number | null;
+  lon?: number | null;
 }
 
 interface GeoEval {
@@ -183,13 +159,29 @@ interface GeoEval {
   closeness: number; // [0,1]
 }
 
+function centre(g: GeoBucket): { lat: number; lon: number } | undefined {
+  if (typeof g.lat === 'number' && typeof g.lon === 'number') {
+    return { lat: g.lat, lon: g.lon };
+  }
+  return undefined;
+}
+
 export function evaluateGeo(a: GeoBucket, b: GeoBucket): GeoEval {
+  const ca = centre(a);
+  const cb = centre(b);
+  if (ca && cb) {
+    const dist = haversineKm(ca, cb);
+    const reach = (a.radius_km ?? DEFAULT_GEO_RADIUS_KM) + (b.radius_km ?? DEFAULT_GEO_RADIUS_KM);
+    if (dist > reach) return { compatible: false, closeness: 0 };
+    return { compatible: true, closeness: reach > 0 ? Math.max(0, 1 - dist / reach) : 1 };
+  }
+  // ---- pre-0.3.0 buckets, no centre point on at least one side ----
   if (a.bucket === b.bucket) return { compatible: true, closeness: 1 };
   if (isGeohash(a.bucket) && isGeohash(b.bucket)) {
-    const ca = decodeGeohash(a.bucket);
-    const cb = decodeGeohash(b.bucket);
-    const dist = haversineKm(ca, cb);
-    const reach = (a.radius_km ?? 0) + (b.radius_km ?? 0) + ca.cellKm + cb.cellKm;
+    const ga = decodeGeohash(a.bucket);
+    const gb = decodeGeohash(b.bucket);
+    const dist = haversineKm(ga, gb);
+    const reach = (a.radius_km ?? 0) + (b.radius_km ?? 0) + ga.cellKm + gb.cellKm;
     if (dist > reach) return { compatible: false, closeness: 0 };
     return { compatible: true, closeness: Math.max(0, 1 - dist / reach) };
   }

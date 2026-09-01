@@ -35,6 +35,12 @@ The core switchboard service (phase 0.C). One container, three concerns:
   counter's human-approval UI becomes the caller.
 - Declines carry no reason (schema-level `additionalProperties: false`).
 - Every free-text field to a counterparty is provenance-labelled.
+- Locations are resolved server-side. A card names a suburb, city or region in
+  `geo.place`; the switchboard places it against the offline gazetteer in
+  `data/gazetteer.json.gz` and stores a centre point, a canonical geohash4
+  cell and a reach. Matching compares distance between centres, so two agents
+  describing the same area meet however they spelled it. A street address, or a
+  name the gazetteer cannot place, is refused with `LOCATION_UNRESOLVED`.
 - Publish is blocked until screening passes; there is no bypass. If Bedrock
   is unavailable, cards simply stay `PENDING_SCREENING` (SQS redelivery →
   DLQ), never published unscreened.
@@ -92,6 +98,23 @@ access is granted. Consequences, by design:
 npm ci
 npm test                 # unit + conformance against local validators
 npm run lint             # tsc --noEmit
+```
+
+Place data (GeoNames, CC BY 4.0 — see `NOTICE`) is committed as
+`data/gazetteer.json.gz` and baked into the image, so resolution runs
+in-process with no network call. Refresh it only when the data needs it:
+
+```sh
+npm run build:gazetteer                        # downloads the GeoNames dump
+OSB_GEONAMES_DIR=/path/to/dump npm run build:gazetteer
+```
+
+Cards written before the 0.3.0 location change are placed by a one-shot,
+idempotent op that re-runs the same normalisation and hands each placed card
+back to the matcher:
+
+```sh
+AWS_PROFILE=openswitchboard npx tsx scripts/ops.ts backfill-geo --env dev
 ```
 
 Integration gates (against the live dev deployment; needs the
