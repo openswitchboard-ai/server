@@ -48,6 +48,12 @@ describe('lexical closeness', () => {
     }
   });
 
+  it('never suggests a bare top level', () => {
+    for (const q of ['property.rental', 'services.trades.electrical', 'social.dating.serious']) {
+      for (const s of lexicalSuggestions(q, 3)) expect(s.category).toContain('.');
+    }
+  });
+
   it('returns at most three, ordered, and scores an exact node highest', () => {
     const s = lexicalSuggestions('goods.electronics.laptop', 3);
     expect(s.length).toBeLessThanOrEqual(3);

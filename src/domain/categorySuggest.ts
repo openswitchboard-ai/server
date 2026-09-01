@@ -40,6 +40,17 @@ export interface SuggestionResult {
   source: SuggestionSource;
 }
 
+/**
+ * What the switchboard is willing to suggest: every open category except the
+ * bare top levels. 'goods' and 'services' are open, but naming one back to an
+ * agent tells it nothing it did not already know, and a sentence that ends
+ * "Closest open ones: services.repairs, services.tech, services." reads like a
+ * typo. Somewhere to actually post is the point.
+ */
+export function suggestableCategories(): string[] {
+  return openCategories().filter((c) => c.includes('.'));
+}
+
 /** The text embedded for a node: the dotted path plus its human label path. */
 export function nodeText(category: string): string {
   return `category: ${category} (${categoryLabelPath(category)})`;
@@ -90,7 +101,7 @@ export function lexicalScore(query: string, candidate: string): number {
 }
 
 export function lexicalSuggestions(category: string, limit = 3): Suggestion[] {
-  const scored = openCategories().map((c) => ({
+  const scored = suggestableCategories().map((c) => ({
     category: c,
     score: lexicalScore(category, `${c} ${categoryLabelPath(c)}`),
   }));
@@ -140,7 +151,7 @@ async function buildCorpus(
   cfg: Config,
   log: (msg: string, extra?: any) => void,
 ): Promise<Corpus | undefined> {
-  const categories = openCategories();
+  const categories = suggestableCategories();
   const vectors: number[][] = new Array(categories.length);
   const CONCURRENCY = 8;
   let next = 0;
