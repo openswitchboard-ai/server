@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getPool } from '../db.js';
-import { decryptFields, writeConsentEvent } from '../crypto.js';
+import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { getCard } from './cards.js';
 import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP } from './matchRules.js';
@@ -468,10 +468,16 @@ export async function openChannel(matchId: string, accountId: string) {
   if (!channelId) {
     channelId = `ch_${randomUUID()}`;
     openedAt = new Date();
+    // The channel gets its own key at the moment it comes into being. Message
+    // bodies are encrypted under it and nothing else can read them; it lives
+    // on the match row and dies with it. See domain/channel.ts for why the
+    // account envelope keys are deliberately not used for a conversation.
+    const channelKey = await generateChannelKey(channelId);
     await getPool().query(
-      `UPDATE matches SET stage = 4, channel_id = $2, opened_at = $3, updated_at = now()
+      `UPDATE matches SET stage = 4, channel_id = $2, opened_at = $3,
+              channel_key_enc = $4, updated_at = now()
        WHERE id = $1`,
-      [matchId, channelId, openedAt],
+      [matchId, channelId, openedAt, channelKey],
     );
   }
   return assertOutbound('channel.open', {
@@ -556,6 +562,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         interested_parties: w.interestedParties,
       };
     }
+    // A match that has reached stage 4 names its channel here, so an agent
+    // polling for matches already knows where to collect from. How many
+    // messages are waiting is counted once for the whole sweep, in the tool
+    // layer, alongside the sentence written for the human.
+    if (m.stage >= 4 && m.channel_id) entry.channel = { channel_id: m.channel_id };
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
       try {
