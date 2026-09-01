@@ -1274,6 +1274,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
         throw e;
       }
+      // Security notice: a static credential for the account now exists.
+      const noticeEmail = await ops.accountEmail(s.accountId!, 'security-notice');
+      if (noticeEmail) {
+        await notifyBestEffort(req, 'agent-key-created', () =>
+          sendSecurityNoticeEmail(cfg, noticeEmail, s.accountId!, 'agent-key-created', made.row.name),
+        );
+      }
       return html(
         reply,
         home.agentKeyCreatedPage({
