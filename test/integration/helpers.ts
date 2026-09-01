@@ -349,15 +349,17 @@ export async function mcpRpc(token: string, method: string, params: any): Promis
   return JSON.parse(dataLine ? dataLine.slice(5) : raw);
 }
 
-export const SCHEMA_VERSION = '0.1.0';
+export const SCHEMA_VERSION = '0.3.0';
 
 /**
  * Run-unique geo bucket for the minimal fixtures. Since 0.F the matcher is
  * live on dev: cards in a bucket shared with previous runs' leftovers get
  * auto-matched against them, turning fixture cards into CONTESTED holders
  * (collection window) and breaking single-pair assertions. A per-run bucket
- * keeps each suite run an island ('_' keeps it out of the geohash namespace,
- * so only exact-bucket/prefix geo matching applies).
+ * keeps each suite run an island: '_' keeps it out of the geohash namespace
+ * AND out of the 0.3.0 gazetteer, so these cards stay unplaced and meet only
+ * cards carrying the same string. Real place resolution is proved in
+ * geo.test.ts, where two spellings of one city have to meet.
  */
 export const RUN_BUCKET = `g_${randomBytes(2).toString('hex')}`;
 
