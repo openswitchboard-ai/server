@@ -179,6 +179,24 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderSecurityNotice({ event: 'pin-changed', counterUrl: `${COUNTER}/counter` }, links),
     },
     {
+      name: 'security-agent-key-created',
+      blind: false,
+      content: renderSecurityNotice(
+        { event: 'agent-key-created', agentName: 'the laptop agent', counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
+      // Blind mode strips the key's name before render (see counter/email.ts);
+      // what remains must be a pure pointer.
+      name: 'security-agent-key-created-blind',
+      blind: true,
+      content: renderSecurityNotice(
+        { event: 'agent-key-created', counterUrl: `${COUNTER}/counter` },
+        links,
+      ),
+    },
+    {
       name: 'settlement-proposed',
       blind: false,
       content: renderSettlementProposed(

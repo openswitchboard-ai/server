@@ -436,22 +436,31 @@ export function renderKillSwitch(
 // ---------------------------------------------------------------------------
 // (g) Security notices.
 // ---------------------------------------------------------------------------
+export type SecurityNoticeEvent = 'agent-authorized' | 'pin-changed' | 'agent-key-created';
+
 export function renderSecurityNotice(
-  v: { event: 'agent-authorized' | 'pin-changed'; agentName?: string; counterUrl: string },
+  v: { event: SecurityNoticeEvent; agentName?: string; counterUrl: string },
   f: FooterLinks,
 ): EmailContent {
-  const subject =
-    v.event === 'agent-authorized'
-      ? 'OpenSwitchboard: a new agent was authorised'
-      : 'OpenSwitchboard: your PIN was changed';
-  const line =
-    v.event === 'agent-authorized'
-      ? `A new agent${v.agentName ? ` (&#8220;${esc(v.agentName)}&#8221;)` : ''} was just authorised to use your account.`
-      : 'The PIN on your account was just changed.';
-  const textLine =
-    v.event === 'agent-authorized'
-      ? `A new agent${v.agentName ? ` ("${v.agentName}")` : ''} was just authorised to use your account.`
-      : 'The PIN on your account was just changed.';
+  const subject = {
+    'agent-authorized': 'OpenSwitchboard: a new agent was authorised',
+    'pin-changed': 'OpenSwitchboard: your PIN was changed',
+    'agent-key-created': 'OpenSwitchboard: a new agent key was created',
+  }[v.event];
+  // Blind mode is the caller's job here: it strips agentName, and the copy
+  // below carries nothing else about the account.
+  const namedHtml = v.agentName ? ` (&#8220;${esc(v.agentName)}&#8221;)` : '';
+  const namedText = v.agentName ? ` ("${v.agentName}")` : '';
+  const line = {
+    'agent-authorized': `A new agent${namedHtml} was just authorised to use your account.`,
+    'pin-changed': 'The PIN on your account was just changed.',
+    'agent-key-created': `A new agent key${namedHtml} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
+  }[v.event];
+  const textLine = {
+    'agent-authorized': `A new agent${namedText} was just authorised to use your account.`,
+    'pin-changed': 'The PIN on your account was just changed.',
+    'agent-key-created': `A new agent key${namedText} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
+  }[v.event];
   const html = shell(
     h1('A change on your account.') +
       para(line) +
