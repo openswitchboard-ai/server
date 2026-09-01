@@ -1485,6 +1485,21 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       target.searchParams.set('code', code);
       if (ctx.state) target.searchParams.set('state', ctx.state);
+      // Loopback callbacks get the handoff page: it delivers the code to the
+      // local listener itself, and shows the code for copy-back when no
+      // listener answers (some CLIs print the link and exit). Real https
+      // redirects proceed untouched.
+      const isLoopback = ['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname);
+      if (isLoopback) {
+        return html(
+          reply,
+          pages.loopbackHandoffPage({
+            callbackUrl: target.toString(),
+            code,
+            clientName: v.client!.client_name,
+          }),
+        );
+      }
       return reply.redirect(target.toString(), 303);
     });
   }, { prefix: '/counter' });
