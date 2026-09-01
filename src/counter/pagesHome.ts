@@ -1,4 +1,13 @@
 /** Counter pages: dashboard, ledger, card edit, settings. */
+import {
+  SUGGESTION_APPETITES,
+  arrangementInPlainWords,
+  isEmpty as arrangementIsEmpty,
+  INTERRUPT_ITEM_MAX,
+  NOTES_MAX,
+  SHORT_FIELD_MAX,
+  type Arrangement,
+} from '../domain/arrangement.js';
 import { esc, errBox, layout, sharedFieldsFieldset } from './pages.js';
 
 /**
@@ -34,6 +43,86 @@ addresses and links out of it — you can swap those in the channel once you hav
 <a class="btn secondary" href="/counter">Back to your approval page</a>`);
 }
 
+// ---------------------------------------------------------------------------
+// How your agents behave (1.D). The account-level standing arrangement, shown
+// back in plain words and editable here. An agent can write one too — it is
+// the agent that hears "check twice a day" mid-conversation — and this page is
+// what keeps that honest: the human reads the whole of it and has the last
+// word on every line.
+// ---------------------------------------------------------------------------
+
+const APPETITE_LABELS: Record<string, string> = {
+  keen: 'Bring me anything you spot',
+  occasional: 'Mention something now and then',
+  'big-things-only': 'Only the big ones',
+  never: 'Never suggest anything on your own',
+};
+
+export function arrangementPage(
+  a: Arrangement,
+  opts: { error?: string; notice?: string; updated?: string } = {},
+): string {
+  const lines = arrangementInPlainWords(a);
+  const plain = lines.length
+    ? `<div class="facts">${lines
+        .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v" style="font-size:1.05rem">${esc(l.v)}</div></div>`)
+        .join('')}</div>${opts.updated ? `<p class="small muted">Last changed ${esc(opts.updated)}.</p>` : ''}`
+    : `<div class="note">Nothing is set yet. Until it is, each agent works this
+out with you again from scratch every time it starts up.</div>`;
+
+  const appetite = ['', ...SUGGESTION_APPETITES]
+    .map(
+      (v) =>
+        `<option value="${esc(v)}"${v === (a.suggestion_appetite ?? '') ? ' selected' : ''}>${
+          v ? esc(APPETITE_LABELS[v]) : 'No preference set'
+        }</option>`,
+    )
+    .join('');
+
+  return layout('How your agents behave', `
+<h1>How your agents behave.</h1>
+<p>This is the standing arrangement your agents work to. Every agent you
+connect is handed it each time it checks the switchboard, so an agent that has
+never met you still knows how often to check, what to wake you for, and when to
+leave you alone. Change it here and every one of them picks the change up.</p>
+${errBox(opts.error)}
+${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
+${plain}
+<h2>Change it</h2>
+<form method="POST" action="/counter/arrangement">
+  <label for="check_cadence">How often should your agents check?</label>
+  <input id="check_cadence" name="check_cadence" type="text" maxlength="${SHORT_FIELD_MAX}"
+    value="${esc(a.check_cadence ?? '')}" placeholder="twice a day">
+  <label for="interrupt_for">What is worth interrupting you for? One per line.</label>
+  <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my approval page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
+  <label for="summarize">Everything else waits for&hellip;</label>
+  <input id="summarize" name="summarize" type="text" maxlength="${SHORT_FIELD_MAX}"
+    value="${esc(a.summarize ?? '')}" placeholder="a round-up on Sunday evening">
+  <label for="quiet_hours">Quiet hours</label>
+  <input id="quiet_hours" name="quiet_hours" type="text" maxlength="${SHORT_FIELD_MAX}"
+    value="${esc(a.quiet_hours ?? '')}" placeholder="after 9pm and before 7am">
+  <label for="suggestion_appetite">How keen should they be with suggestions?</label>
+  <select id="suggestion_appetite" name="suggestion_appetite">${appetite}</select>
+  <label for="notes">Anything else standing</label>
+  <textarea id="notes" name="notes" maxlength="${NOTES_MAX}">${esc(a.notes ?? '')}</textarea>
+  <button type="submit">Save</button>
+</form>
+${
+  arrangementIsEmpty(a)
+    ? ''
+    : `<form method="POST" action="/counter/arrangement/clear">
+  <button type="submit" class="secondary">Clear the whole arrangement</button>
+</form>`
+}
+<p class="small muted">Preferences only, please: how you want to be treated,
+never who you are. Emails, phone numbers and web addresses are turned away, and
+each line stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
+<p class="small muted">One thing an arrangement can never do is approve
+something for you. Sharing your details, accepting an offer and confirming a
+payment come to this page every single time, whatever any agent has agreed.</p>
+<a class="btn secondary" href="/counter">Back to your approval page</a>`);
+}
+
 export interface PendingApprovalItem {
   href: string;
   label: string;
@@ -61,6 +150,8 @@ export interface DashboardView {
   sharedProfile?: string;
   /** Set when a permanent bounce flagged the account's address unreachable. */
   emailUnreachable?: boolean;
+  /** One line of the standing arrangement. Absent = nothing set yet. */
+  arrangementSummary?: string;
   killSwitchOn: boolean;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
@@ -170,6 +261,13 @@ ${matchRows}
       : 'A match that gets that far sees a first name and a rough area. Yours are empty.'
   }</p>
 <a class="btn secondary" href="/counter/profile">What you share on a match</a>
+<h2>How your agents behave</h2>
+<p class="small muted">${
+    v.arrangementSummary
+      ? `Every agent you connect is told: ${esc(v.arrangementSummary)}`
+      : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
+  }</p>
+<a class="btn secondary" href="/counter/arrangement">How your agents behave</a>
 <a class="btn secondary" href="/counter/agent-keys">Agent keys</a>
 <a class="btn secondary" href="/counter/settings">Settings</a>
 ${kill}

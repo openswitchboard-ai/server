@@ -4,6 +4,7 @@
  * use the protocol's machine-readable error shape.
  */
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
+import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
@@ -244,6 +245,58 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'standing_arrangement',
+    description:
+      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — how often to check, what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. The arrangement is remembered by the switchboard and handed to every agent on every check_matches sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or card content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'] },
+        arrangement: {
+          type: 'object',
+          description: "Required for 'set'. The complete new arrangement; it replaces the old one.",
+          properties: {
+            check_cadence: {
+              type: 'string',
+              maxLength: arrangement.SHORT_FIELD_MAX,
+              description: 'How often to check, in your human\'s words, e.g. "twice a day".',
+            },
+            interrupt_for: {
+              type: 'array',
+              maxItems: arrangement.INTERRUPT_MAX_ITEMS,
+              items: { type: 'string', maxLength: arrangement.INTERRUPT_ITEM_MAX },
+              description:
+                'What earns an interruption there and then, e.g. ["a new match", "a message on a match we are talking on", "anything waiting on my approval page"].',
+            },
+            summarize: {
+              type: 'string',
+              maxLength: arrangement.SHORT_FIELD_MAX,
+              description: 'What waits for a summary, and when that summary comes.',
+            },
+            suggestion_appetite: {
+              type: 'string',
+              enum: arrangement.SUGGESTION_APPETITES,
+              description: 'How bold to be about surfacing new wants and haves.',
+            },
+            quiet_hours: {
+              type: 'string',
+              maxLength: arrangement.SHORT_FIELD_MAX,
+              description: 'When to stay quiet, e.g. "after 9pm and before 7am".',
+            },
+            notes: {
+              type: 'string',
+              maxLength: arrangement.NOTES_MAX,
+              description: 'Anything else standing.',
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'settle',
     description:
       "Propose an escrowed settlement on a stage-3 match, or read settlement state. Proposing (match_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. No agent action moves a settlement past 'proposed'. Pass settlement_id (or match_id alone) to read state.",
@@ -346,7 +399,16 @@ export async function dispatchTool(
               };
             }
           }
-          return ok({ matches: withNotes });
+          // The standing arrangement rides on every sweep. This is the whole
+          // persistence guarantee: an agent that has never spoken to this
+          // human before, on a client that has just been installed, still
+          // learns how they want to be treated on its first call.
+          const standing = await arrangement.readArrangement(accountId);
+          return ok({
+            matches: withNotes,
+            arrangement: standing,
+            arrangement_note: arrangement.arrangementNote(standing),
+          });
         }
       case 'open_channel':
         return ok(await matches.openChannel(args?.match_id, accountId));
@@ -354,6 +416,25 @@ export async function dispatchTool(
         return ok(await channel.sendMessage(accountId, args?.match_id, args?.text));
       case 'channel_receive':
         return ok(await channel.receiveMessages(accountId, args?.match_id));
+      case 'standing_arrangement': {
+        const action = args?.action;
+        if (action === 'get') {
+          const current = await arrangement.readArrangement(accountId);
+          return ok({ arrangement: current, note: arrangement.arrangementNote(current) });
+        }
+        if (action !== 'set') return invalidInput("standing_arrangement action is 'get' or 'set'");
+        const checked = arrangement.validateArrangement(args?.arrangement);
+        if (!checked.ok) return invalidInput(checked.error);
+        await arrangement.saveArrangement(accountId, checked.value, 'agent-attested');
+        return ok({
+          arrangement: checked.value,
+          saved: true,
+          note: {
+            text: 'Saved. Every agent your human connects will be handed this on its next check, and your human can see and change it on their approval page.',
+            provenance: 'switchboard-system',
+          },
+        });
+      }
       case 'amend_intent':
         return ok(await cards.amendIntent(cfg, accountId, args?.intent_id, args?.patch));
       case 'withdraw_intent':

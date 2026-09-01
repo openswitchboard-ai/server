@@ -103,6 +103,7 @@ d('integration gates against live deployment', () => {
       'publish_intent',
       'respond',
       'settle',
+      'standing_arrangement',
       'withdraw_intent',
     ]);
     const publish = tools.result.tools.find((t: any) => t.name === 'publish_intent');

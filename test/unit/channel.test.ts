@@ -596,6 +596,11 @@ describe('check_matches says when something is waiting', () => {
             rowCount: 1,
           };
         }
+        // The sweep also hands back the standing arrangement; this account
+        // has none set.
+        if (/SELECT arrangement FROM accounts/.test(sql)) {
+          return { rows: [{ arrangement: null }], rowCount: 1 };
+        }
         return run(sql, params);
       },
       connect: async () => client,
