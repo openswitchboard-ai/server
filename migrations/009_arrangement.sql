@@ -1,0 +1,35 @@
+-- OpenSwitchboard standing arrangement (phase 1.D)
+--
+-- One account-level object saying how a human wants their agents to behave:
+-- how often to check, what is worth interrupting them for, when to stay quiet,
+-- how bold to be with suggestions. Settled once with the human and then
+-- remembered by the network, so a restart, a model change, a new client or a
+-- brand-new agent all arrive already knowing the standing instruction.
+--
+-- ---------------------------------------------------------------------------
+-- WHY THIS ONE IS PLAINTEXT.
+--
+-- Every identity field on this table lives under the account's envelope key
+-- (crypto.ts), and every decrypt through that key writes a line to the
+-- write-once consent log. That is exactly right for a first name and an area:
+-- reading someone's identity is an event worth recording forever.
+--
+-- An arrangement is a different kind of thing. It holds cadence and etiquette
+-- — "check twice a day", "wake me for a new match", "quiet after nine",
+-- "suggest sparingly" — and it is read by every agent on every check_matches
+-- sweep. Putting it under the envelope would stamp an identity-audit line onto
+-- routine polling, which would make the audit log useless for the thing it is
+-- for and would tempt agents into checking less often to avoid the noise.
+--
+-- So it is stored in the clear, and the rule that keeps that honest is
+-- enforced in code rather than by hope: domain/arrangement.ts validates the
+-- whole object on the way in, holds every field to a short cap, and turns away
+-- anything shaped like an email address, a phone number or a web address. No
+-- identity, no contact detail, and no card content ever lands here. What DOES
+-- get written forever is the fact of a change: every set writes an
+-- 'arrangement-updated' event to the consent log naming the fields that
+-- changed and nothing of what they say.
+-- ---------------------------------------------------------------------------
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS arrangement jsonb,
+  ADD COLUMN IF NOT EXISTS arrangement_updated_at timestamptz;
