@@ -23,7 +23,8 @@ import { OsbError } from '../protocol.js';
 import { decodeGeohash, encodeGeohash, isGeohash } from './geohash.js';
 import { looksLikeStreetAddress, resolvePlace } from './gazetteer.js';
 
-/** Reach used when a card names an area but states no radius of its own. */
+/** Reach assumed for a bucket the gazetteer cannot place. A card that names
+ *  an area takes the width of that area instead. */
 export const DEFAULT_RADIUS_KM = 25;
 /** Ceiling from the protocol schema. */
 export const MAX_RADIUS_KM = 500;

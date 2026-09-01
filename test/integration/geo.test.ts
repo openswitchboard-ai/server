@@ -113,8 +113,9 @@ d('one city, two spellings, one match', () => {
       const r = await mcpCall(actor.accessToken, 'check_matches', {});
       const ours = (r.result.matches ?? []).find((m: any) => m.match_id === matchId);
       expect(ours, JSON.stringify(r.result)).toBeTruthy();
-      expect(ours.category).toBe('goods.bicycle.mountain');
-      expect(ours.score).toBeGreaterThanOrEqual(0.75);
+      expect(ours.signal.kind).toBe('match.signal');
+      expect(ours.signal.category).toBe('goods.bicycle.mountain');
+      expect(ours.signal.score).toBeGreaterThanOrEqual(0.75);
     }
   });
 
