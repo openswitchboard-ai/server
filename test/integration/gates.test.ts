@@ -95,6 +95,8 @@ d('integration gates against live deployment', () => {
     const names = tools.result.tools.map((t: any) => t.name).sort();
     expect(names).toEqual([
       'amend_intent',
+      'channel_receive',
+      'channel_send',
       'check_matches',
       'list_intents',
       'open_channel',
