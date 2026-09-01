@@ -56,16 +56,15 @@ export async function generateAccountDataKey(accountId: string): Promise<Buffer>
 // bypass the audit trail.
 const keyCache = new Map<string, { key: Buffer; expires: number }>();
 
-async function unwrapDataKey(accountId: string, wrapped: Buffer): Promise<Buffer> {
-  const d = mustDeps();
+async function unwrapKey(
+  context: Record<string, string>,
+  wrapped: Buffer,
+): Promise<Buffer> {
   const cacheKey = createHash('sha256').update(wrapped).digest('hex');
   const hit = keyCache.get(cacheKey);
   if (hit && hit.expires > Date.now()) return hit.key;
   const r = await kms.send(
-    new DecryptCommand({
-      CiphertextBlob: wrapped,
-      EncryptionContext: { account_id: accountId, env: d.envName },
-    }),
+    new DecryptCommand({ CiphertextBlob: wrapped, EncryptionContext: context }),
   );
   if (!r.Plaintext) throw new Error('KMS Decrypt returned no plaintext');
   const key = Buffer.from(r.Plaintext);
@@ -73,16 +72,83 @@ async function unwrapDataKey(accountId: string, wrapped: Buffer): Promise<Buffer
   return key;
 }
 
+async function unwrapDataKey(accountId: string, wrapped: Buffer): Promise<Buffer> {
+  const d = mustDeps();
+  return unwrapKey({ account_id: accountId, env: d.envName }, wrapped);
+}
+
+function gcmSeal(key: Buffer, plaintext: string): Buffer {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ct]); // 12 | 16 | n
+}
+
+function gcmOpen(key: Buffer, blob: Buffer): string {
+  const decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(0, 12));
+  decipher.setAuthTag(blob.subarray(12, 28));
+  return Buffer.concat([decipher.update(blob.subarray(28)), decipher.final()]).toString('utf8');
+}
+
+// ---------------------------------------------------------------------------
+// Channel keys — the patch-through relay.
+//
+// A stage-4 channel gets its own 256-bit data key, wrapped by KMS under the
+// env's identity key with the channel id in the encryption context. Message
+// bodies are stored encrypted under it, so the only code that can read a body
+// is the delivery path, and the key exists only as long as the match row it
+// hangs on.
+//
+// These three helpers deliberately write NO audit line, which is the one place
+// in this service where a decrypt does not. Every other decrypt here is
+// identity data, and auditing those to the write-once consent log is what
+// makes disclosure accountable. A relayed message is neither identity nor
+// consent, and the published posture is that the switchboard keeps nothing of
+// a conversation — which has to include not writing a per-message record into
+// a log it could not delete afterwards. What the relay leaves behind is a
+// count (see domain/channel.ts).
+// ---------------------------------------------------------------------------
+
+function channelContext(channelId: string): Record<string, string> {
+  return { channel_id: channelId, env: mustDeps().envName };
+}
+
+/** Generate a fresh per-channel data key. Returns the KMS-wrapped blob. */
+export async function generateChannelKey(channelId: string): Promise<Buffer> {
+  const d = mustDeps();
+  const r = await kms.send(
+    new GenerateDataKeyCommand({
+      KeyId: d.identityKeyArn,
+      KeySpec: 'AES_256',
+      EncryptionContext: channelContext(channelId),
+    }),
+  );
+  if (!r.CiphertextBlob) throw new Error('KMS GenerateDataKey returned no key');
+  return Buffer.from(r.CiphertextBlob);
+}
+
+export async function encryptForChannel(
+  channelId: string,
+  wrappedKey: Buffer,
+  plaintext: string,
+): Promise<Buffer> {
+  return gcmSeal(await unwrapKey(channelContext(channelId), wrappedKey), plaintext);
+}
+
+export async function decryptForChannel(
+  channelId: string,
+  wrappedKey: Buffer,
+  blob: Buffer,
+): Promise<string> {
+  return gcmOpen(await unwrapKey(channelContext(channelId), wrappedKey), blob);
+}
+
 export async function encryptField(
   accountId: string,
   wrappedKey: Buffer,
   plaintext: string,
 ): Promise<Buffer> {
-  const key = await unwrapDataKey(accountId, wrappedKey);
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return Buffer.concat([iv, cipher.getAuthTag(), ct]); // 12 | 16 | n
+  return gcmSeal(await unwrapDataKey(accountId, wrappedKey), plaintext);
 }
 
 export interface DecryptContext {
@@ -109,14 +175,7 @@ export async function decryptFields(
   const auditKey = await writeDecryptAudit(accountId, Object.keys(fields), ctx);
   const key = await unwrapDataKey(accountId, wrappedKey);
   const out: Record<string, string> = {};
-  for (const [name, blob] of Object.entries(fields)) {
-    const iv = blob.subarray(0, 12);
-    const tag = blob.subarray(12, 28);
-    const ct = blob.subarray(28);
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    out[name] = Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
-  }
+  for (const [name, blob] of Object.entries(fields)) out[name] = gcmOpen(key, blob);
   void auditKey; // object key returned for callers that want to reference it
   return out;
 }
