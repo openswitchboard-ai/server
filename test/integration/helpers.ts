@@ -267,10 +267,17 @@ export async function oauthFlow(jar: Jar): Promise<string> {
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ decision: 'approve' }).toString(),
   });
-  if (approve.status !== 303) throw new Error(`counter approve failed: ${approve.status}`);
-  const loc = new URL(approve.headers.get('location')!);
-  const authCode = loc.searchParams.get('code');
-  if (!authCode) throw new Error(`no code in redirect: ${loc}`);
+  // A loopback callback gets the handoff page (200), which carries the code
+  // for copy-back; an https callback gets the plain redirect (303).
+  let authCode: string | undefined;
+  if (approve.status === 303) {
+    authCode = new URL(approve.headers.get('location')!).searchParams.get('code') ?? undefined;
+  } else if (approve.status === 200) {
+    authCode = (await approve.text()).match(/id="codebox">(osb_ac_[A-Za-z0-9_-]+)</)?.[1];
+  } else {
+    throw new Error(`counter approve failed: ${approve.status}`);
+  }
+  if (!authCode) throw new Error(`no code handed back (status ${approve.status})`);
 
   // 5. Token exchange (MCP host).
   const tok = await fetch(`${BASE_URL}/oauth/token`, {
