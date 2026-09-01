@@ -128,6 +128,33 @@ export async function ensurePin(jar: Jar, pin = '246810'): Promise<string> {
   return pin;
 }
 
+/**
+ * Issue an agent key the way a human does: a signed-in counter session plus a
+ * PIN ceremony on /counter/agent-keys. Returns the plaintext key (shown once)
+ * and the handle the approval page revokes it by.
+ */
+export async function createAgentKey(
+  jar: Jar,
+  pin: string,
+  name = 'integration-suite key',
+): Promise<{ token: string; keyId: string }> {
+  const res = await counterFetch(jar, '/counter/agent-keys', form({ name, pin }));
+  if (res.status !== 200) throw new Error(`agent key create failed: ${res.status}`);
+  const body = await res.text();
+  const token = body.match(/id="keybox">(osb_ak_[A-Za-z0-9_-]+)</)?.[1];
+  if (!token) throw new Error('no key on the created page');
+  const list = await counterFetch(jar, '/counter/agent-keys');
+  const keyId = (await list.text()).match(/name="key_id" value="([0-9a-f-]{36})"/)?.[1];
+  if (!keyId) throw new Error('new key is missing from the listing');
+  return { token, keyId };
+}
+
+/** Revoke an agent key from the approval page. */
+export async function revokeAgentKey(jar: Jar, keyId: string): Promise<void> {
+  const res = await counterFetch(jar, '/counter/agent-keys/revoke', form({ key_id: keyId }));
+  if (res.status !== 200) throw new Error(`agent key revoke failed: ${res.status}`);
+}
+
 let opsQueueUrl: string | undefined;
 export async function sendOp(body: Record<string, unknown>): Promise<void> {
   if (!opsQueueUrl) {

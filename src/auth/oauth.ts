@@ -20,23 +20,38 @@ const CODE_TTL_S = 600; // 10m
 
 export interface AuthContext {
   accountId: string;
-  clientId: string;
+  /** null for an agent key: the human issued it, so no OAuth client owns it. */
+  clientId: string | null;
   scope: string;
 }
+
+/** Prefix of an OAuth access token minted by the token endpoint. */
+export const ACCESS_TOKEN_PREFIX = 'osb_at_';
+/** Prefix of an agent key: a static bearer token a human issues by hand. */
+export const AGENT_KEY_PREFIX = 'osb_ak_';
 
 /** Resolve a Bearer token to an account. Returns undefined when invalid. */
 export async function authenticate(req: FastifyRequest): Promise<AuthContext | undefined> {
   const h = req.headers.authorization;
   if (!h?.startsWith('Bearer ')) return undefined;
   const token = h.slice(7).trim();
-  if (!token.startsWith('osb_at_')) return undefined;
+  // Two credentials reach the agent surface: an OAuth access token, and an
+  // agent key for clients that cannot run the OAuth flow. Both are opaque,
+  // stored sha256-hashed, bound to one account, and carry identical
+  // revoked/suspended/expiry semantics — only the row's kind differs.
+  const kind = token.startsWith(ACCESS_TOKEN_PREFIX)
+    ? 'access'
+    : token.startsWith(AGENT_KEY_PREFIX)
+      ? 'api-key'
+      : undefined;
+  if (!kind) return undefined;
   // NOT suspended: the counter's kill switch suspends (reversibly) every
-  // agent token on the account.
+  // agent token on the account, agent keys included.
   const r = await getPool().query(
     `SELECT account_id, client_id, scope FROM oauth_tokens
-     WHERE token_hash = $1 AND kind = 'access' AND NOT revoked AND NOT suspended
+     WHERE token_hash = $1 AND kind = $2 AND NOT revoked AND NOT suspended
        AND expires_at > now()`,
-    [sha256hex(token)],
+    [sha256hex(token), kind],
   );
   if (!r.rows[0]) return undefined;
   // Urgency-routing input ("agent seen in the last hour"): stamp last_used_at,
@@ -51,7 +66,7 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
     .catch(() => {});
   return {
     accountId: r.rows[0].account_id,
-    clientId: r.rows[0].client_id,
+    clientId: r.rows[0].client_id ?? null,
     scope: r.rows[0].scope,
   };
 }
