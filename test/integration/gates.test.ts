@@ -18,15 +18,18 @@ import {
 } from '../../src/counter/session.js';
 import {
   BASE_URL,
+  COUNTER_URL,
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
+  createAgentKey,
   dbExec,
   mcpCall,
   mcpRpc,
   minimalHave,
   minimalWant,
   poll,
+  revokeAgentKey,
   sendOp,
   waitForCardState,
 } from './helpers.js';
@@ -300,6 +303,41 @@ d('integration gates against live deployment', () => {
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(errors[0].result.code).toBe('QUOTA_EXCEEDED');
     expect(errors[0].result.docs_url).toContain('QUOTA_EXCEEDED');
+  });
+
+  it('GATE (f): an agent key issued by hand works on MCP, dies on revoke, and is refused at the approval pages', async () => {
+    const { token, keyId } = await createAgentKey(alice.jar, alice.pin, 'gate-f key');
+    expect(token.startsWith('osb_ak_')).toBe(true);
+
+    // It is a full agent credential on the MCP surface.
+    const tools = await mcpRpc(token, 'tools/list', {});
+    expect(tools.result.tools.map((t: any) => t.name)).toContain('publish_intent');
+    const published = await mcpCall(token, 'publish_intent', {
+      card: minimalWant({ attributes: { condition: 'fair' } }),
+    });
+    expect(published.isError).toBe(false);
+    expect(published.result.intent_id).toBeTruthy();
+
+    // It is refused outright at the human-only pages.
+    const atCounter = await fetch(`${COUNTER_URL}/counter`, {
+      headers: { authorization: `Bearer ${token}` },
+      redirect: 'manual',
+    });
+    expect(atCounter.status).toBe(403);
+    expect((await atCounter.json()).error).toBe('agent_credentials_rejected');
+
+    // Revoking on the approval page kills it immediately.
+    await revokeAgentKey(alice.jar, keyId);
+    const afterRevoke = await fetch(`${BASE_URL}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(afterRevoke.status).toBe(401);
   });
 
   it('rejects prohibited categories with CATEGORY_PROHIBITED', async () => {

@@ -28,6 +28,7 @@ import {
 import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
+import * as agentKeys from '../domain/agentKeys.js';
 import * as settlements from '../domain/settlements.js';
 import {
   cancelPaymentForSettlement,
@@ -1210,6 +1211,101 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
       if (email) await notifyBestEffort(req, 'kill-switch-off', () => sendKillSwitchEmail(cfg, email, s.accountId!, false));
       return reply.redirect('/counter', 303);
+    });
+
+    // ------------------------------------------------------------------
+    // Agent keys (1.C). Static bearer tokens for the agents that cannot do
+    // a browser sign-in. Issuing one is a sensitive action: signed-in
+    // session PLUS a PIN or passkey ceremony, exactly like an approval.
+    // The key itself never reaches an approval surface — every route in
+    // this plugin 403s an Authorization header, keys included.
+    // ------------------------------------------------------------------
+    const agentKeysView = async (accountId: string, s: Session): Promise<home.AgentKeysView> => {
+      const keys = await agentKeys.listAgentKeys(accountId);
+      const when = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : undefined);
+      return {
+        keys: keys.map((k) => ({
+          keyId: k.keyId,
+          name: k.name,
+          created: when(k.createdAt)!,
+          lastUsed: when(k.lastUsedAt),
+          expires: when(k.expiresAt)!,
+        })),
+        hasPasskey: await wa.accountHasPasskey(accountId),
+        elevated: sess.isElevated(s),
+        atLimit: keys.length >= agentKeys.AGENT_KEY_MAX_LIVE,
+      };
+    };
+
+    counter.get('/agent-keys', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      return html(reply, home.agentKeysPage(await agentKeysView(s.accountId!, s)));
+    });
+
+    counter.post('/agent-keys', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const name = String(b.name ?? '').trim();
+      if (!name) {
+        return html(
+          reply,
+          home.agentKeysPage(await agentKeysView(s.accountId!, s), undefined, 'Give the key a name so you can tell your keys apart.'),
+          400,
+        );
+      }
+      // Sensitive action: PIN (or a passkey ceremony that elevated the session).
+      const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
+      if (!okNow) return;
+      let made: Awaited<ReturnType<typeof agentKeys.createAgentKey>>;
+      try {
+        made = await agentKeys.createAgentKey(s.accountId!, name);
+      } catch (e) {
+        if (e instanceof agentKeys.AgentKeyLimitError) {
+          return html(
+            reply,
+            home.agentKeysPage(
+              await agentKeysView(s.accountId!, s),
+              undefined,
+              'You are holding as many keys as we allow at once. Revoke one to make room.',
+            ),
+            409,
+          );
+        }
+        throw e;
+      }
+      return html(
+        reply,
+        home.agentKeyCreatedPage({
+          name: made.row.name,
+          token: made.token,
+          expires: made.row.expiresAt.toISOString().slice(0, 10),
+        }),
+      );
+    });
+
+    counter.post('/agent-keys/revoke', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const keyId = String((req.body as any)?.key_id ?? '');
+      if (!/^[0-9a-f-]{36}$/i.test(keyId)) {
+        return html(
+          reply,
+          home.agentKeysPage(await agentKeysView(s.accountId!, s), undefined, 'That key is unknown.'),
+          400,
+        );
+      }
+      const revoked = await agentKeys.revokeAgentKey(s.accountId!, keyId);
+      return html(
+        reply,
+        home.agentKeysPage(
+          await agentKeysView(s.accountId!, s),
+          revoked
+            ? `Revoked. Anything still using that key stops working right now.`
+            : 'That key was already gone.',
+        ),
+      );
     });
 
     // ------------------------------------------------------------------

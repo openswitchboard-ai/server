@@ -41,7 +41,7 @@ async function loadSourceCard(cardId: string): Promise<(CardRow & {
     `SELECT c.*, c.embedding::text AS embedding_text, a.data_key_enc, a.is_business AS account_is_business,
             COALESCE(rep.threshold_bump, 0) AS threshold_bump,
             EXISTS (SELECT 1 FROM oauth_tokens t
-                    WHERE t.account_id = c.account_id AND t.kind = 'access'
+                    WHERE t.account_id = c.account_id AND t.kind IN ('access','api-key')
                       AND NOT t.revoked AND NOT t.suspended AND t.expires_at > now()
                       AND t.last_used_at > now() - interval '1 hour') AS agent_seen_recently
      FROM cards c
@@ -73,7 +73,7 @@ async function retrieveCandidates(source: {
             COALESCE(rep.threshold_bump, 0) AS threshold_bump,
             1 - (c.embedding <=> $1::vector) AS similarity,
             EXISTS (SELECT 1 FROM oauth_tokens t
-                    WHERE t.account_id = c.account_id AND t.kind = 'access'
+                    WHERE t.account_id = c.account_id AND t.kind IN ('access','api-key')
                       AND NOT t.revoked AND NOT t.suspended AND t.expires_at > now()
                       AND t.last_used_at > now() - interval '1 hour') AS agent_seen_recently
      FROM cards c

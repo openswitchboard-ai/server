@@ -128,6 +128,7 @@ ${matchRows}
 <p class="small muted">${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'}
  — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.</p>
 <a class="btn secondary" href="/counter/ledger">Open the ledger</a>
+<a class="btn secondary" href="/counter/agent-keys">Agent keys</a>
 <a class="btn secondary" href="/counter/settings">Settings</a>
 ${kill}
 <form method="POST" action="/counter/logout"><button class="secondary" type="submit">Sign out</button></form>`);
@@ -301,6 +302,101 @@ pointer — "something needs your decision" — with all detail kept here.</p>
 </form>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}.</p>
 <a class="btn secondary" href="/counter">Back</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// Agent keys (1.C). A key is a long password an agent sends with every
+// request, for the agents that cannot do a browser sign-in. Issued here by
+// hand, PIN-confirmed, shown once.
+// ---------------------------------------------------------------------------
+
+export interface AgentKeyItem {
+  keyId: string;
+  name: string;
+  created: string;
+  lastUsed?: string;
+  expires: string;
+}
+
+export interface AgentKeysView {
+  keys: AgentKeyItem[];
+  hasPasskey: boolean;
+  elevated: boolean;
+  atLimit: boolean;
+}
+
+export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string): string {
+  const rows = v.keys.length
+    ? v.keys
+        .map(
+          (k) => `<div class="card-row"><div class="top">
+<span class="badge state">KEY</span><span class="cat">${esc(k.name)}</span></div>
+<div class="kv">made ${esc(k.created)} · ${k.lastUsed ? `last used ${esc(k.lastUsed)}` : 'never used yet'} · lapses ${esc(k.expires)}</div>
+<div class="row-actions">
+<form method="POST" action="/counter/agent-keys/revoke">
+  <input type="hidden" name="key_id" value="${esc(k.keyId)}">
+  <button type="submit" class="secondary">Revoke</button>
+</form></div></div>`,
+        )
+        .join('')
+    : `<p class="muted small">You have no keys yet.</p>`;
+
+  const pinBlock = v.elevated
+    ? `<input type="hidden" name="pin" value="">`
+    : `<label for="pin">Confirm with your PIN</label>
+  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+
+  const createForm = v.atLimit
+    ? `<p class="muted small">You are holding as many keys as we allow at once.
+Revoke one you have finished with to make room.</p>`
+    : `<form method="POST" action="/counter/agent-keys">
+  <label for="name">What is this key for?</label>
+  <input id="name" name="name" type="text" maxlength="60" required placeholder="the laptop agent">
+  ${pinBlock}
+  <button type="submit">Make a key</button>
+</form>`;
+
+  return layout('Agent keys', `
+<h1>Agent keys.</h1>
+${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${errBox(error)}
+<p>Most agents sign in through your browser the first time they call the
+switchboard. A few cannot do that. Give one of those a key instead: a long
+password it sends with every request.</p>
+<p class="small muted">Anyone holding a key can post cards and negotiate as your
+agent. It still cannot approve anything — approvals only ever happen here, on
+this page, with your PIN. Keep a key somewhere private, and revoke it the
+moment you have finished with it. Keys lapse after 90 days, and the kill
+switch stops them dead along with everything else.</p>
+<h2>Your keys</h2>
+${rows}
+<h2>Make a new one</h2>
+${createForm}
+<a class="btn secondary" href="/counter">Back</a>`);
+}
+
+/** The one and only sighting of the plaintext key. */
+export function agentKeyCreatedPage(v: { name: string; token: string; expires: string }): string {
+  return layout('Your new agent key', `
+<h1>Here is your key.</h1>
+<p>Copy it now and paste it into your agent's configuration. This page is the
+only place it is ever shown — we keep a fingerprint of it and nothing more, so
+if it gets away from you, revoke it and make another.</p>
+<div class="fact"><div class="k">${esc(v.name)}</div><div class="v" id="keybox">${esc(v.token)}</div></div>
+<button type="button" id="copybtn" class="approve">Copy the key</button>
+<p class="small muted">Your agent sends it as a header:</p>
+<div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
+<p class="small muted">It lapses on ${esc(v.expires)}. Revoke it any time from
+your keys page.</p>
+<a class="btn secondary" href="/counter/agent-keys">Back to my keys</a>
+<script>
+document.getElementById('copybtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(${JSON.stringify(v.token)});
+    document.getElementById('copybtn').textContent = 'Copied';
+  } catch {}
+});
+</script>`);
 }
 
 // ---------------------------------------------------------------------------

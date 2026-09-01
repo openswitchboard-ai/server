@@ -299,6 +299,34 @@ describe('counter pages: copy-cull render suite', () => {
         'osb_em_tok',
       ),
     },
+    {
+      name: 'agent-keys',
+      html: chome.agentKeysPage(
+        {
+          keys: [
+            {
+              keyId: 'k-1',
+              name: 'the laptop agent',
+              created: '2026-09-01',
+              lastUsed: '2026-09-02',
+              expires: '2026-11-30',
+            },
+          ],
+          hasPasskey: true,
+          elevated: false,
+          atLimit: false,
+        },
+        'Revoked. Anything still using that key stops working right now.',
+      ),
+    },
+    {
+      name: 'agent-key-created',
+      html: chome.agentKeyCreatedPage({
+        name: 'the laptop agent',
+        token: 'osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU',
+        expires: '2026-11-30',
+      }),
+    },
     { name: 'unsub', html: chome.unsubPage('osb_em_tok') },
     { name: 'reverify', html: chome.reverifyCodePage('v-1') },
   ];
