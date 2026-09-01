@@ -4,7 +4,15 @@ import { decryptFields, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { getCard } from './cards.js';
 import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP } from './matchRules.js';
+import {
+  counterpartyProfileConsentError,
+  profileIsFilled,
+  readSharedProfile,
+  sharedProfileConsentError,
+  type SharedProfile,
+} from './profile.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
+import type { Config } from '../config.js';
 
 export interface MatchRow {
   id: string;
@@ -255,13 +263,25 @@ export async function expressInterest(matchId: string, accountId: string): Promi
   return updated;
 }
 
+/** The other party's account on a match. */
+function counterpartyOf(m: MatchRow, accountId: string): string {
+  return sideOf(m, accountId) === 'want' ? m.account_have : m.account_want;
+}
+
 /**
  * Record the calling human's stage-3 opt-in (0.C: agent-attested via the
  * respond tool; 0.D moves capture to the counter). Written to the WORM
  * consent log before the token row is committed. Advances stage to 3 only
  * when BOTH humans' tokens are recorded.
+ *
+ * An opt-in is a promise to hand over a first name and an area, so an account
+ * that has neither on file cannot make it. That case is refused BEFORE the
+ * WORM write with CONSENT_REQUIRED and the human's own approval link: the
+ * opt-in is not recorded, and the agent is never the one that supplies the
+ * name.
  */
 export async function recordStage3OptIn(
+  cfg: Config,
   matchId: string,
   accountId: string,
   recordedVia: string,
@@ -276,6 +296,18 @@ export async function recordStage3OptIn(
   // collecting, the holder cannot commit to one counterpart. (The other,
   // non-holder side is unaffected - and never told a contest exists.)
   await assertNotCollecting(m, accountId);
+  const own = await readSharedProfile(accountId, {
+    purpose: 'stage3-optin-profile-check',
+    actor: accountId,
+    refs: { match_id: matchId },
+  });
+  if (!profileIsFilled(own)) {
+    throw await sharedProfileConsentError(cfg, {
+      accountId,
+      matchId,
+      counterpartyAccount: counterpartyOf(m, accountId),
+    });
+  }
   await writeConsentEvent({
     event: 'stage3-optin',
     match_id: matchId,
@@ -349,7 +381,12 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   return assertOutbound('match.attributes', payload);
 }
 
-export async function buildMutual(m: MatchRow, accountId: string) {
+export async function buildMutual(
+  cfg: Config,
+  m: MatchRow,
+  accountId: string,
+  ownProfile?: SharedProfile,
+) {
   if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
   // HARD GATE: stage-3 data is NEVER returned without BOTH humans' recorded
   // opt-in tokens. The check queries consent_tokens directly — not the stage
@@ -363,6 +400,24 @@ export async function buildMutual(m: MatchRow, accountId: string) {
   }
   const side = sideOf(m, accountId);
   const counterAccountId = side === 'want' ? m.account_have : m.account_want;
+  // Both opt-ins are on record, so the only thing that can still be missing is
+  // the substance of the disclosure. An empty profile on either side is
+  // answered with CONSENT_REQUIRED and a plain instruction — the recorded
+  // opt-ins stand, and the reveal completes the moment both profiles exist.
+  const own =
+    ownProfile ??
+    (await readSharedProfile(accountId, {
+      purpose: 'stage3-own-profile-check',
+      actor: accountId,
+      refs: { match_id: m.id },
+    }));
+  if (!profileIsFilled(own)) {
+    throw await sharedProfileConsentError(cfg, {
+      accountId,
+      matchId: m.id,
+      counterpartyAccount: counterAccountId,
+    });
+  }
   const account = await getAccount(counterAccountId);
   if (!account) throw new Error('counterparty account missing');
   const optinRow = await getPool().query(
@@ -380,11 +435,18 @@ export async function buildMutual(m: MatchRow, accountId: string) {
       refs: { match_id: m.id },
     },
   );
+  const counterparty = {
+    first_name: fields.first_name.trim(),
+    locality: fields.locality.trim(),
+  };
+  if (!profileIsFilled({ firstName: counterparty.first_name, locality: counterparty.locality })) {
+    throw counterpartyProfileConsentError();
+  }
   return assertOutbound('match.mutual', {
     schema_version: SCHEMA_VERSION,
     kind: 'match.mutual' as const,
     match_id: m.id,
-    counterparty: { first_name: fields.first_name, locality: fields.locality },
+    counterparty,
     optin: {
       both_recorded: true as const,
       recorded_at: new Date(optinRow.rows[0].at).toISOString(),
@@ -426,7 +488,12 @@ export async function openChannel(matchId: string, accountId: string) {
  * requested stage is not unlocked for this pair (e.g. stage 3 without both
  * humans' opt-in tokens).
  */
-export async function getStagePayload(accountId: string, matchId: string, stage: number) {
+export async function getStagePayload(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+  stage: number,
+) {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
   sideOf(m, accountId);
@@ -437,7 +504,7 @@ export async function getStagePayload(accountId: string, matchId: string, stage:
     case 2:
       return buildAttributes(m, accountId);
     case 3:
-      return buildMutual(m, accountId);
+      return buildMutual(cfg, m, accountId);
     default:
       throw Object.assign(new Error(`stage must be 1, 2 or 3 (channel.open via open_channel)`), {
         validation: ['stage'],
@@ -446,7 +513,7 @@ export async function getStagePayload(accountId: string, matchId: string, stage:
 }
 
 /** All matches visible to an account, as stage-appropriate payloads. */
-export async function checkMatches(accountId: string, intentId?: string) {
+export async function checkMatches(cfg: Config, accountId: string, intentId?: string) {
   const params: any[] = [accountId];
   let filter = '';
   if (intentId) {
@@ -460,6 +527,14 @@ export async function checkMatches(accountId: string, intentId?: string) {
     params,
   );
   const out: any[] = [];
+  // The caller's own profile is the same for every match in the list, so it is
+  // read at most once for the whole sweep (one audit line, not fifty).
+  let own: SharedProfile | undefined;
+  const ownProfile = async (): Promise<SharedProfile> =>
+    (own ??= await readSharedProfile(accountId, {
+      purpose: 'stage3-own-profile-check',
+      actor: accountId,
+    }));
   for (const m of r.rows as MatchRow[]) {
     if (m.state !== 'open') {
       out.push({ match_id: m.id, state: m.state });
@@ -484,9 +559,13 @@ export async function checkMatches(accountId: string, intentId?: string) {
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
       try {
-        entry.mutual = await buildMutual(m, accountId);
+        entry.mutual = await buildMutual(cfg, m, accountId, await ownProfile());
       } catch (e) {
         if (!(e instanceof OsbError)) throw e;
+        // A stage-3 reveal that is only waiting on someone's first name and
+        // area is worth saying out loud, so the agent can relay the one thing
+        // its human has to do.
+        if (e.payload.code === 'CONSENT_REQUIRED') entry.mutual_blocked = e.payload;
       }
     }
     out.push(entry);

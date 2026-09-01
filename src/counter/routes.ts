@@ -26,6 +26,12 @@ import {
   sideOf,
 } from '../domain/matches.js';
 import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
+import {
+  profileIsFilled,
+  readSharedProfile,
+  saveSharedProfile,
+  validateSharedProfile,
+} from '../domain/profile.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import * as agentKeys from '../domain/agentKeys.js';
@@ -161,7 +167,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
+      const [profile, offers, disclosures, verdictable, windows, counts, liveSettlements] = await Promise.all([
+        readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
         ops.verdictableMatches(s.accountId),
@@ -207,6 +214,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return html(
         reply,
         home.dashboardPage({
+          firstName: profile.firstName || undefined,
+          sharedProfile: profileIsFilled(profile)
+            ? `${profile.firstName}, ${profile.locality}`
+            : undefined,
           emailUnreachable: !!a.email_unreachable_at,
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
@@ -554,6 +565,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     ): Promise<pages.ApprovalView | { error: string }> => {
       const anomalies: string[] = [];
       const facts: { k: string; v: string }[] = [];
+      let collectProfile: pages.ApprovalView['collectProfile'];
       if (action === 'settlement-approve') {
         const s = await settlements.getSettlement(refId);
         if (!s) return { error: 'This settlement no longer exists.' };
@@ -621,12 +633,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
         const cp = await newCounterpartyAnomaly(counterparty, 'stage3-disclosure');
         if (cp) anomalies.push(cp.text);
+        // Nothing was ever asked for at sign-up, so the first time someone
+        // gets here the page asks for the two things it is about to share.
+        const own = await readSharedProfile(accountId, {
+          purpose: 'stage3-approval-page',
+          actor: accountId,
+          refs: { match_id: refId },
+        });
+        if (!profileIsFilled(own)) collectProfile = { firstName: own.firstName, locality: own.locality };
       }
       return {
         action,
         refId,
         facts,
         anomalies,
+        collectProfile,
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: false,
         postPath: '/counter/approve',
@@ -723,10 +744,36 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
       }
       if (decision !== 'approve') return reply.code(400).send({ error: 'bad_request' });
+      // Approving a disclosure with an empty profile means saying, right here,
+      // what gets shared. The boxes are checked BEFORE the PIN ceremony so a
+      // typo in a suburb never costs a PIN attempt.
+      let profileToSave: { firstName: string; locality: string } | undefined;
+      if (action === 'stage3-disclosure') {
+        const view = await approvalView(s.accountId!, 'stage3-disclosure', refId);
+        if ('error' in view) {
+          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(view.error)}</p>`));
+        }
+        if (view.collectProfile) {
+          const checked = validateSharedProfile({
+            firstName: b.first_name,
+            locality: b.locality,
+          });
+          if (!checked.ok) {
+            view.elevated = sess.isElevated(s);
+            view.collectProfile = {
+              firstName: String(b.first_name ?? ''),
+              locality: String(b.locality ?? ''),
+            };
+            return html(reply, pages.approvalPage(view, checked.error), 400);
+          }
+          profileToSave = checked.value;
+        }
+      }
       // Sensitive action: PIN (or a passkey ceremony that elevated the session).
       const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       try {
+        if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
         if (action === 'settlement-approve') {
           const r = await settlements.approveSettlement(
             settlements.counterAction(s.accountId!),
@@ -746,7 +793,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             pages.messagePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
           );
         }
-        const r = await recordStage3OptIn(refId, s.accountId!, 'counter');
+        const r = await recordStage3OptIn(cfg, refId, s.accountId!, 'counter');
         return html(
           reply,
           pages.messagePage(
@@ -757,6 +804,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           ),
         );
       } catch (e) {
+        // An empty profile at this point means the collection boxes were
+        // skipped: send the person back to the page that asks for them.
+        if (e instanceof OsbError && e.payload.code === 'CONSENT_REQUIRED') {
+          return reply.redirect(`/counter/approvals/match/${encodeURIComponent(refId)}`, 303);
+        }
         // Collection window still open on the holder's card: explain, don't 500.
         if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
           return html(
@@ -1311,6 +1363,46 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             ? 'Revoked. Anything still using that key stops working right now.'
             : 'That key was already gone.',
         ),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // What you share on a match: the first name and area that go across at
+    // stage 3, viewable and changeable any time. A signed-in session is
+    // enough — changing these two boxes discloses nothing by itself, and the
+    // disclosure they feed still needs its own PIN ceremony.
+    // ------------------------------------------------------------------
+    counter.get('/profile', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const p = await readSharedProfile(s.accountId!, {
+        purpose: 'shared-profile-page',
+        actor: s.accountId!,
+      });
+      return html(reply, home.sharedProfilePage({ firstName: p.firstName, locality: p.locality }));
+    });
+
+    counter.post('/profile', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const checked = validateSharedProfile({ firstName: b.first_name, locality: b.locality });
+      if (!checked.ok) {
+        return html(
+          reply,
+          home.sharedProfilePage(
+            { firstName: String(b.first_name ?? ''), locality: String(b.locality ?? '') },
+            { error: checked.error },
+          ),
+          400,
+        );
+      }
+      await saveSharedProfile(s.accountId!, checked.value, 'counter');
+      return html(
+        reply,
+        home.sharedProfilePage(checked.value, {
+          notice: 'Saved. This is what a match sees once you both say yes.',
+        }),
       );
     });
 
