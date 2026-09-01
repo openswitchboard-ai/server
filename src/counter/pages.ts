@@ -520,3 +520,50 @@ ${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#
 <div class="facts">${facts}</div>
 ${blocks.join('\n<hr>\n')}`);
 }
+
+/**
+ * Loopback handoff: shown instead of a blind redirect when the agent's
+ * callback lives on 127.0.0.1/localhost. The page first tries to deliver the
+ * code to the local listener itself; when nothing answers (some CLIs print
+ * the sign-in link and exit), it shows the code with a copy button so the
+ * person can finish in their terminal. The code is single-use, short-lived,
+ * and useless without the client's own PKCE secret.
+ */
+export function loopbackHandoffPage(v: { callbackUrl: string; code: string; clientName: string }): string {
+  return layout('Almost connected', `
+<h1>Almost connected</h1>
+<div id="trying">
+  <p>Handing you back to <b>${esc(v.clientName)}</b>&hellip;</p>
+</div>
+<div id="done" hidden>
+  <p>Connected. You can close this tab and return to your terminal.</p>
+</div>
+<div id="manual" hidden>
+  <p>${esc(v.clientName)} isn't listening on this computer right now, so finish the sign-in
+  yourself: copy this code into the terminal that gave you the link.</p>
+  <div class="fact"><div class="k">Your one-time code</div><div class="v" id="codebox">${esc(v.code)}</div></div>
+  <button type="button" id="copybtn" class="approve">Copy the code</button>
+  <p class="small muted">It works once and expires in a few minutes. If your client takes a
+  command, it looks like: <code>&hellip; --code '${esc(v.code)}'</code></p>
+</div>
+<script>
+(async () => {
+  const show = (id) => {
+    for (const x of ['trying','done','manual']) document.getElementById(x).hidden = (x !== id);
+  };
+  try {
+    await fetch(${JSON.stringify(v.callbackUrl)}, { mode: 'no-cors' });
+    show('done');
+  } catch {
+    show('manual');
+  }
+})();
+document.getElementById('copybtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(${JSON.stringify(v.code)});
+    document.getElementById('copybtn').textContent = 'Copied';
+  } catch {}
+});
+</script>
+`);
+}
