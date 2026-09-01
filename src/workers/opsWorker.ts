@@ -146,11 +146,13 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 const r = await snapCardCategories(cfg, log, {
                   after: body.after,
                   dryRun: body.dry_run === true,
+                  minScore: body.min_score,
                 });
                 log('snap-categories: pass done', {
                   scanned: r.scanned,
                   remapped: r.remapped.length,
                   already_open: r.already_open,
+                  islands: r.islands,
                   unmatched: r.unmatched,
                   embed_failed: r.embed_failed,
                   dry_run: body.dry_run === true,
