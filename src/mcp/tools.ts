@@ -58,6 +58,10 @@ function grammarFriendly(node: any): any {
   const out: any = {};
   for (const [k, v] of Object.entries(node)) {
     if (['propertyNames', 'not', 'if', 'then', 'else', 'allOf', 'format'].includes(k)) continue;
+    // Large string-length bounds become huge bounded repetitions in grammar
+    // compilers (LM Studio chokes past a few hundred); the server enforces
+    // the real limits regardless.
+    if ((k === 'maxLength' || k === 'minLength') && typeof v === 'number' && v > 256) continue;
     if (k === 'properties' && v && typeof v === 'object') {
       const props: any = {};
       for (const [pk, pv] of Object.entries(v as Record<string, unknown>)) {
