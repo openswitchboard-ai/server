@@ -3,6 +3,7 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
+import { sweepExpiredChannelMessages } from '../domain/channel.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
 import { backfillCardGeo } from '../geo/backfill.js';
 import { requeueSnapped, snapCardCategories } from '../domain/categoryBackfill.js';
@@ -50,6 +51,14 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
               case 'ttl-expiry': {
                 const n = await expireDueCards();
                 if (n > 0) log('ttl-expiry: expired cards', { count: n });
+                // The same tick sweeps the relay: messages nobody collected
+                // are deleted once they pass their expiry, and the send
+                // tallies are dropped once their hour is behind us. Counts
+                // only — the sweep never looks at what it deletes.
+                const swept = await sweepExpiredChannelMessages();
+                if (swept.messages > 0 || swept.rate_windows > 0) {
+                  log('ttl-expiry: channel sweep', swept);
+                }
                 break;
               }
               case 'create-account': {
