@@ -98,15 +98,23 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 // One-shot, idempotent: place cards written before 0.3.0, then
                 // hand each placed card back to the matching queue so pairs
                 // that could not meet on unequal bucket strings get another go.
-                log('backfill-geo: starting', gazetteerSource());
-                const r = await backfillCardGeo(log);
-                log('backfill-geo: done', r);
-                if (body.rematch !== false) {
-                  const placed = await getPool().query(
-                    `SELECT id FROM cards WHERE geo_lat IS NOT NULL
+                if (!body.after) log('backfill-geo: starting', gazetteerSource());
+                const r = await backfillCardGeo(log, body.after);
+                log('backfill-geo: pass done', {
+                  placed: r.placed.length,
+                  unplaced: r.unplaced,
+                  refused: r.refused,
+                  more: !!r.next,
+                });
+                if (body.rematch !== false && r.placed.length) {
+                  // A card that just gained a centre point gets another go at
+                  // the counterparties it could not reach on a bucket string.
+                  const live = await getPool().query(
+                    `SELECT id FROM cards WHERE id = ANY($1::uuid[])
                        AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
+                    [r.placed],
                   );
-                  for (const row of placed.rows) {
+                  for (const row of live.rows) {
                     await sqs.send(
                       new SendMessageCommand({
                         QueueUrl: cfg.matchingQueueUrl,
@@ -117,9 +125,15 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                       }),
                     );
                   }
-                  log('backfill-geo: cards requeued for matching', {
-                    count: placed.rowCount,
-                  });
+                  log('backfill-geo: cards requeued for matching', { count: live.rowCount });
+                }
+                if (r.next) {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.opsQueueUrl,
+                      MessageBody: JSON.stringify({ ...body, after: r.next }),
+                    }),
+                  );
                 }
                 break;
               }

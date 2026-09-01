@@ -1,5 +1,6 @@
 /**
- * One-shot, idempotent placement of cards written before 0.3.0.
+ * Placement of cards written before 0.3.0. Idempotent: a card is touched
+ * once, because placing it fills the very column the sweep selects on.
  *
  * Every card whose centre point is still unknown goes back through the same
  * normalisation the publish path runs. A geohash bucket decodes to the centre
@@ -9,23 +10,58 @@
  * answers to keeps its string with no centre point, and meets only cards
  * carrying the same string — a compatibility shim for the cards that predate
  * this change, never a softened path for new ones.
+ *
+ * The sweep is bounded so one run always finishes well inside the ops queue's
+ * visibility window, and it pages forward on a cursor. Paging on a cursor
+ * rather than re-selecting the unplaced matters: a card the gazetteer cannot
+ * answer for stays unplaced forever, so a sweep that kept re-reading the same
+ * unplaced rows would never move.
  */
 import { getPool } from '../db.js';
 import { normaliseGeo } from './normalise.js';
 
+/** Cards per run. One pass is a few hundred small UPDATEs. */
+export const BACKFILL_BATCH = 500;
+
+/** Where the previous pass stopped. */
+export interface BackfillCursor {
+  created_at: string;
+  id: string;
+}
+
 export interface BackfillOutcome {
-  placed: number;
+  /** Cards that gained a centre point in this pass. */
+  placed: string[];
+  /** Cards whose bucket answers to nothing in the gazetteer. */
   unplaced: number;
+  /** Cards whose location the current rules would refuse outright. */
   refused: number;
+  /** Pass this back to continue; null when the sweep is done. */
+  next: BackfillCursor | null;
 }
 
 export async function backfillCardGeo(
   log: (msg: string, extra?: any) => void = () => {},
+  after?: BackfillCursor,
+  batch = BACKFILL_BATCH,
 ): Promise<BackfillOutcome> {
   const rows = await getPool().query(
-    `SELECT id, geo FROM cards WHERE geo_lat IS NULL ORDER BY created_at`,
+    `SELECT id, geo, created_at FROM cards
+      WHERE geo_lat IS NULL
+        AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
+      ORDER BY created_at, id LIMIT $1`,
+    [batch, after?.created_at ?? null, after?.id ?? null],
   );
-  const outcome: BackfillOutcome = { placed: 0, unplaced: 0, refused: 0 };
+  const last = rows.rows[rows.rows.length - 1];
+  const outcome: BackfillOutcome = {
+    placed: [],
+    unplaced: 0,
+    refused: 0,
+    next:
+      rows.rowCount === batch && last
+        ? { created_at: new Date(last.created_at).toISOString(), id: last.id }
+        : null,
+  };
   for (const row of rows.rows as { id: string; geo: any }[]) {
     let normalised;
     try {
@@ -50,7 +86,7 @@ export async function backfillCardGeo(
        WHERE id = $1`,
       [row.id, JSON.stringify(normalised.geo), normalised.lat, normalised.lon, normalised.radius_km],
     );
-    outcome.placed++;
+    outcome.placed.push(row.id);
     log('backfill-geo: card placed', {
       card_id: row.id,
       place: normalised.geo.place ?? null,
