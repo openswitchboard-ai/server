@@ -92,7 +92,7 @@ export async function sendSecurityNoticeEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  event: 'agent-authorized' | 'pin-changed',
+  event: 'agent-authorized' | 'pin-changed' | 'agent-key-created',
   agentName?: string,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
