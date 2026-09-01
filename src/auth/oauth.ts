@@ -214,13 +214,18 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       ]);
       const row = r.rows[0];
       if (!row || row.used || new Date(row.expires_at) < new Date()) {
-        return reply.code(400).send({ error: 'invalid_grant' });
+        const why = !row ? 'unknown-code' : row.used ? 'code-already-used' : 'code-expired';
+        req.log.warn({ why }, 'token exchange refused');
+        return reply.code(400).send({ error: 'invalid_grant', error_description: why });
       }
       if (b.client_id !== row.client_id || b.redirect_uri !== row.redirect_uri) {
-        return reply.code(400).send({ error: 'invalid_grant' });
+        const why = b.client_id !== row.client_id ? 'client-mismatch' : 'redirect-uri-mismatch';
+        req.log.warn({ why, got_redirect: b.redirect_uri, want_redirect: row.redirect_uri }, 'token exchange refused');
+        return reply.code(400).send({ error: 'invalid_grant', error_description: why });
       }
       const challenge = b64url(createHash('sha256').update(b.code_verifier).digest());
       if (challenge !== row.code_challenge) {
+        req.log.warn({ why: 'pkce-mismatch' }, 'token exchange refused');
         return reply.code(400).send({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
       }
       await getPool().query('UPDATE oauth_codes SET used = true WHERE code_hash = $1', [
