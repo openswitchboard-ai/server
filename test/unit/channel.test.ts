@@ -644,5 +644,7 @@ describe('the agent guidance', () => {
 
   it('points at settlement when a price is agreed', () => {
     expect(instructions).toMatch(/settle proposes a settlement that holds the money/);
+    expect(instructions).toMatch(/the paying is for the two people to arrange between themselves/);
+    expect(instructions).toMatch(/settle answers SETTLEMENT_UNAVAILABLE/);
   });
 });
