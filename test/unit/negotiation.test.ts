@@ -19,7 +19,7 @@
  *    it the server enforces the opening figure, the limit and the step;
  *  - the numbers a human wrote never appear in anything a counterparty can
  *    read, in the same way and for the same reason as the private price band;
- *  - the operating manual says all of this in the first person.
+ *  - the operating manual says all of this to the agent directly.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -860,10 +860,10 @@ describe('the pages say it in plain words', () => {
 
 // ---------------------------------------------------------------------------
 describe('the operating manual', () => {
-  it('says whose the numbers are, in the first person', () => {
+  it('says whose the numbers are, to the agent it addresses', () => {
     expect(SERVER_INSTRUCTIONS).toContain('THE NUMBERS ARE THEIRS');
-    expect(SERVER_INSTRUCTIONS).toContain('the money is my human');
-    expect(SERVER_INSTRUCTIONS).toContain('I never invent a figure of my own');
+    expect(SERVER_INSTRUCTIONS).toContain("the money is your human's");
+    expect(SERVER_INSTRUCTIONS).toContain('Never invent a figure of your own');
     expect(SERVER_INSTRUCTIONS).toContain('Pass on');
     expect(SERVER_INSTRUCTIONS).toContain('Auto-negotiate');
     expect(SERVER_INSTRUCTIONS).toContain('approval page');
