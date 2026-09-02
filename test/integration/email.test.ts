@@ -175,7 +175,9 @@ d('0.E email daemon (live dev)', () => {
     await sendOp({ op: 'email-digest-tick', cadence: 'weekly' });
     const rowsA = await poll(async () => {
       const rows = await sendsFor(accountA, 'digest');
-      return rows.length ? rows : undefined;
+      // Wait past the in-flight 'sending' marker so the status assert below
+      // reads the terminal outcome.
+      return rows.length && rows[0][1] !== 'sending' && rows[0][1] !== 'failed' ? rows : undefined;
     }, 'weekly digest for A');
     expect(rowsA.length).toBe(1);
     expect(String(rowsA[0][0])).toContain('digest:weekly:');
@@ -210,11 +212,11 @@ d('0.E email daemon (live dev)', () => {
     const before = (await sendsFor(accountA, 'verification')).length;
     const login = await counterFetch(new Jar(), '/login', form({ email: emailA }));
     expect(login.status).toBe(200);
-    await poll(async () => {
+    const vRows = await poll(async () => {
       const rows = await sendsFor(accountA, 'verification');
-      return rows.length > before ? rows : undefined;
+      // Wait for the new row AND its terminal status (not in-flight 'sending').
+      return rows.length > before && rows[rows.length - 1][1] === 'sent' ? rows : undefined;
     }, 'verification send for A');
-    const vRows = await sendsFor(accountA, 'verification');
     expect(vRows[vRows.length - 1][1]).toBe('sent');
   }, 180_000);
 
@@ -298,11 +300,12 @@ d('0.E email daemon (live dev)', () => {
     const accountId = await createAccount(email);
     const cardId = await insertCard(accountId, 'HAVE', 3, { colour: `teal-${runId}` }); // lapses in 3 days
     await sendOp({ op: 'email-renewal-tick' });
-    // Poll until the send-log row reaches a TERMINAL state ('failed' with
-    // detail 'send in flight' is the pre-SES marker, not an outcome).
+    // Poll until the send-log row reaches a TERMINAL success ('sending' is
+    // the in-flight pre-SES marker; 'failed' is terminal for the attempt but
+    // reclaimed and retried on redelivery, so keep waiting through it).
     const rows = await poll(async () => {
       const r = await sendsFor(accountId, 'renewal');
-      return r.length && r[0][1] !== 'failed' ? r : undefined;
+      return r.length && r[0][1] !== 'sending' && r[0][1] !== 'failed' ? r : undefined;
     }, 'renewal email send (terminal status)');
     expect(rows[0][1]).toBe('sent');
     const stamped = await dbExec(

@@ -3,7 +3,9 @@
  * transactional set included — goes through sendEmail(), which enforces:
  *
  *  - IDEMPOTENCY: a send happens only when this call wins the INSERT of its
- *    dedupe_key into email_sends. A redelivered queue job or double-submitted
+ *    dedupe_key into email_sends (or reclaims a terminally 'failed' row — an
+ *    SES quota/outage failure must stay retryable — or a 'sending' row left
+ *    stale by a crash mid-send). A redelivered queue job or double-submitted
  *    request can never double-send.
  *  - SUPPRESSION: a permanent bounce (email_unreachable_at) withholds every
  *    send except address re-verification; a spam complaint
@@ -53,6 +55,10 @@ export type SendStatus =
   | 'suppressed'
   | 'duplicate'
   | 'failed';
+
+/** Row states in email_sends. 'sending' marks an in-flight attempt; 'failed'
+ *  is terminal for the attempt but reclaimable by a retry (see recordSend). */
+type RowStatus = 'sent' | 'sandbox-rejected' | 'suppressed' | 'failed' | 'sending';
 
 export interface SendOutcome {
   status: SendStatus;
@@ -105,13 +111,27 @@ export async function emailAccountContext(
 
 async function recordSend(
   input: SendEmailInput,
-  status: Exclude<SendStatus, 'duplicate'>,
+  status: RowStatus,
   detail?: string,
 ): Promise<boolean> {
+  // The INSERT is the idempotency lock. A terminal 'failed' row (SES quota /
+  // throttle / outage) is RECLAIMED so the next tick can retry the send —
+  // otherwise a throttled email consumes its dedupe key forever and is
+  // silently lost. A 'sending' row STALE by 15+ minutes is reclaimed too: a
+  // process that crashed mid-send would otherwise eat its dedupe key forever.
+  // Fresh 'sending' and successful rows never reclaim, so a concurrently
+  // redelivered job still reads 'duplicate' and cannot double-send. The
+  // reclaim refreshes created_at — the row now records the new attempt, and a
+  // second crash gets the full staleness window again. (This SQL is exercised
+  // by the integration suite; the unit tests mock the pool.)
   const r = await getPool().query(
     `INSERT INTO email_sends (dedupe_key, account_id, email_hash, template, kind, subject, status, detail)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     ON CONFLICT (dedupe_key) DO NOTHING
+     ON CONFLICT (dedupe_key) DO UPDATE
+       SET status = EXCLUDED.status, detail = EXCLUDED.detail, created_at = now()
+       WHERE email_sends.status = 'failed'
+          OR (email_sends.status = 'sending'
+              AND email_sends.created_at < now() - interval '15 minutes')
      RETURNING id`,
     [
       input.dedupeKey,
@@ -129,7 +149,7 @@ async function recordSend(
 
 async function updateSend(
   dedupeKey: string,
-  status: Exclude<SendStatus, 'duplicate'>,
+  status: RowStatus,
   sesMessageId?: string,
   detail?: string,
 ): Promise<void> {
@@ -140,6 +160,25 @@ async function updateSend(
     [dedupeKey, status, sesMessageId ?? null, detail ?? null],
   );
 }
+
+// ---------------------------------------------------------------------------
+// SES rate pacing. The sandbox caps the account at 1 send/second; a digest
+// tick's back-to-back loop trips "Maximum sending rate exceeded" without
+// spacing. Serialise SES calls in this process with a minimum gap, and give a
+// throttle that still slips through (another task sending concurrently) one
+// spaced retry. Daily-quota failures are NOT retried here — they are terminal
+// for the attempt and land as a reclaimable 'failed' row.
+// ---------------------------------------------------------------------------
+const SES_MIN_SEND_GAP_MS = 1100;
+let sesGate: Promise<void> = Promise.resolve();
+function paceSes(): Promise<void> {
+  const turn = sesGate;
+  sesGate = turn.then(() => new Promise((r) => setTimeout(r, SES_MIN_SEND_GAP_MS)));
+  return turn;
+}
+// SESv2 raises TooManyRequestsException for the per-second throttle AND the
+// daily quota; only the former is worth a quick retry.
+const isSesThrottle = (e: any) => /sending rate exceeded/i.test(String(e?.message ?? ''));
 
 export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<SendOutcome> {
   // VOICE gate: banned phrases never leave the building, any env.
@@ -165,9 +204,10 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
     }
   }
 
-  // Idempotency: the INSERT is the lock. Record as 'failed' first; flip to
-  // 'sent' after SES accepts, so a crash mid-send reads truthfully.
-  const won = await recordSend(input, 'failed', 'send in flight');
+  // Idempotency: the INSERT (or reclaim of a terminal 'failed' row) is the
+  // lock. Record as 'sending' first; flip to a terminal state after SES
+  // answers, so a crash mid-send reads truthfully.
+  const won = await recordSend(input, 'sending', 'send in flight');
   if (!won) return { status: 'duplicate' };
 
   const headers: { Name: string; Value: string }[] = [];
@@ -183,28 +223,38 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
     );
   }
 
-  try {
-    const res = await sesv2.send(
-      new SendEmailCommand({
-        FromEmailAddress: cfg.sesFrom,
-        ReplyToAddresses: [cfg.sesReplyTo],
-        Destination: { ToAddresses: [input.to] },
-        ConfigurationSetName: cfg.sesConfigurationSet,
-        Content: {
-          Simple: {
-            Subject: {
-              Data: (input.subjectPrefix ?? '') + input.content.subject,
-              Charset: 'UTF-8',
-            },
-            Body: {
-              Text: { Data: input.content.text, Charset: 'UTF-8' },
-              Html: { Data: input.content.html, Charset: 'UTF-8' },
-            },
-            Headers: headers.length ? headers : undefined,
-          },
+  const command = new SendEmailCommand({
+    FromEmailAddress: cfg.sesFrom,
+    ReplyToAddresses: [cfg.sesReplyTo],
+    Destination: { ToAddresses: [input.to] },
+    ConfigurationSetName: cfg.sesConfigurationSet,
+    Content: {
+      Simple: {
+        Subject: {
+          Data: (input.subjectPrefix ?? '') + input.content.subject,
+          Charset: 'UTF-8',
         },
-      }),
-    );
+        Body: {
+          Text: { Data: input.content.text, Charset: 'UTF-8' },
+          Html: { Data: input.content.html, Charset: 'UTF-8' },
+        },
+        Headers: headers.length ? headers : undefined,
+      },
+    },
+  });
+
+  try {
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      await paceSes();
+      try {
+        res = await sesv2.send(command);
+        break;
+      } catch (e: any) {
+        if (attempt < 1 && isSesThrottle(e)) continue; // one spaced retry
+        throw e;
+      }
+    }
     await updateSend(input.dedupeKey, 'sent', res.MessageId);
     return { status: 'sent', sesMessageId: res.MessageId };
   } catch (e: any) {
