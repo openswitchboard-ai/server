@@ -65,7 +65,8 @@ export interface Mandate {
 
 export interface Negotiation {
   mode: NegotiationMode;
-  /** Present only in mandate mode with a mandate on file. */
+  /** The numbers on file, if any. Only `mode` decides whether an agent may
+   *  act on them; a card parked back on Pass on keeps what its human wrote. */
   mandate?: Mandate;
 }
 
@@ -225,9 +226,9 @@ async function negotiationRow(cardId: string): Promise<NegotiationRow | undefine
 }
 
 /**
- * The mode and (in mandate mode) the numbers for one of this account's cards.
- * A card belonging to anyone else is not found, and a card whose row predates
- * this feature reads as 'relay' — the default in the column and here.
+ * The mode and the numbers for one of this account's cards. A card belonging to
+ * anyone else is not found, and a card whose row predates this feature reads as
+ * 'relay' — the default in the column and here.
  */
 export async function readNegotiation(
   accountId: string,
