@@ -22,7 +22,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'http://localhost:8080',
-  counterOrigin: 'http://counter.localhost',
+  counterOrigin: 'http://my.localhost',
+  legacyCounterHosts: [],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -41,7 +42,7 @@ const cfg: Config = {
 };
 
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
-const COUNTER_HOST = 'counter.localhost';
+const COUNTER_HOST = 'my.localhost';
 
 await initDb(cfg);
 await migrate();
@@ -85,32 +86,32 @@ const counterReq = async (method: 'GET' | 'POST', url: string, body?: Record<str
   return res;
 };
 
-const reg = await counterReq('POST', '/counter/register', { email });
+const reg = await counterReq('POST', '/register', { email });
 assert.equal(reg.statusCode, 200, reg.body);
 const vid = reg.body.match(/name="verification_id" value="([^"]+)"/)![1];
 await getPool().query('UPDATE email_verifications SET code_hash = $2 WHERE id = $1', [
   vid,
   sha256hex(`424242:${vid}`),
 ]);
-const ver = await counterReq('POST', '/counter/verify', { verification_id: vid, code: '424242' });
+const ver = await counterReq('POST', '/verify', { verification_id: vid, code: '424242' });
 assert.equal(ver.statusCode, 303, ver.body);
-assert.equal(ver.headers.location, '/counter/pin');
+assert.equal(ver.headers.location, '/pin');
 // single-use: the same code again must fail
-const again = await counterReq('POST', '/counter/verify', { verification_id: vid, code: '424242' });
+const again = await counterReq('POST', '/verify', { verification_id: vid, code: '424242' });
 assert.equal(again.statusCode, 401, 'verification must be single-use');
 
-const pinSet = await counterReq('POST', '/counter/pin/set', { pin: '135790', pin2: '135790' });
+const pinSet = await counterReq('POST', '/pin/set', { pin: '135790', pin2: '135790' });
 assert.equal(pinSet.statusCode, 303, pinSet.body);
-const consent = await counterReq('POST', '/counter/consent', { adult: 'yes', consent: 'yes' });
+const consent = await counterReq('POST', '/consent', { adult: 'yes', consent: 'yes' });
 assert.equal(consent.statusCode, 303, consent.body);
 console.log('counter registration OK (email code -> PIN -> consent, WORM event written via real S3)');
 
 // PIN lockout: 5 wrong PINs lock; the locked attempt reports 423.
 for (let i = 0; i < 5; i++) {
-  const bad = await counterReq('POST', '/pin/verify'.replace(/^/, '/counter'), { pin: '000000' });
+  const bad = await counterReq('POST', '/pin/verify'.replace(/^/, '/'), { pin: '000000' });
   assert.ok([401, 423].includes(bad.statusCode), bad.body);
 }
-const locked = await counterReq('POST', '/counter/pin/verify', { pin: '135790' });
+const locked = await counterReq('POST', '/pin/verify', { pin: '135790' });
 assert.equal(locked.statusCode, 423, 'correct PIN while locked must still 423');
 await getPool().query(
   `UPDATE accounts SET pin_failed_attempts = 0, pin_locked_until = NULL WHERE email_hash = $1`,
@@ -142,10 +143,10 @@ const q = new URLSearchParams({
 });
 const handoff = await app.inject({ method: 'GET', url: `/oauth/authorize?${q}` });
 assert.equal(handoff.statusCode, 302, handoff.body);
-assert.ok(String(handoff.headers.location).startsWith(cfg.counterOrigin + '/counter/authorize'));
-const authzPage = await counterReq('GET', `/counter/authorize?${q}`);
+assert.ok(String(handoff.headers.location).startsWith(cfg.counterOrigin + '/authorize'));
+const authzPage = await counterReq('GET', `/authorize?${q}`);
 assert.equal(authzPage.statusCode, 200, `${authzPage.statusCode} ${authzPage.headers.location ?? ''}`);
-const approve = await counterReq('POST', '/counter/authorize', { decision: 'approve' });
+const approve = await counterReq('POST', '/authorize', { decision: 'approve' });
 assert.equal(approve.statusCode, 303, approve.body);
 const authCode = new URL(approve.headers.location as string).searchParams.get('code')!;
 assert.ok(authCode);
@@ -181,17 +182,17 @@ assert.equal(ref.statusCode, 200, ref.body);
 console.log('refresh rotation OK');
 
 // ---------------------------------------------------------------------------
-// Route isolation, live: bearer on /counter -> 403; cookie on /mcp -> 401.
+// Route isolation, live: bearer on a human page -> 403; cookie on /mcp -> 401.
 // ---------------------------------------------------------------------------
 const cross1 = await app.inject({
   method: 'GET',
-  url: '/counter/ledger',
+  url: '/ledger',
   headers: { host: COUNTER_HOST, authorization: `Bearer ${tokens.access_token}` },
 });
 assert.equal(cross1.statusCode, 403, 'a REAL agent token must be rejected at the counter');
 
 // Kill switch: suspends the agent token; un-pause restores it.
-const kill = await counterReq('POST', '/counter/kill', {});
+const kill = await counterReq('POST', '/kill', {});
 assert.equal(kill.statusCode, 303, kill.body);
 
 const listen = await app.listen({ port: 0, host: '127.0.0.1' });
@@ -207,7 +208,7 @@ const suspended = await fetch(`${base}/mcp`, {
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
 });
 assert.equal(suspended.status, 401, 'kill switch must suspend agent tokens');
-const unkill = await counterReq('POST', '/counter/kill/off', { pin: '135790' });
+const unkill = await counterReq('POST', '/kill/off', { pin: '135790' });
 assert.equal(unkill.statusCode, 303, unkill.body);
 console.log('kill switch OK (tokens suspended + restored)');
 

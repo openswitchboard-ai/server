@@ -1,15 +1,17 @@
 /**
- * /counter — the ONE secure page-class where humans do everything agents
- * must never do: register, set the PIN, approve disclosures & settlements,
- * review the ledger, hit the kill switch.
+ * The human page class — the ONE secure surface where humans do everything
+ * agents must never do: register, set the PIN, approve disclosures &
+ * settlements, review the ledger, hit the kill switch. It is served from the
+ * root of its own hostname (my[-dev].openswitchboard.ai); the old counter
+ * hostname and the old /counter path prefix both 308 here (see app.ts).
  *
  * STRUCTURAL ISOLATION (tested in both directions):
- *  - every /counter route lives inside this scoped plugin, whose FIRST
+ *  - every one of these routes lives inside this scoped plugin, whose FIRST
  *    onRequest hook hard-403s any request carrying an Authorization header —
  *    an MCP bearer token is useless here by construction;
  *  - counter auth is a host-only session cookie that /mcp never reads
  *    (its auth looks exclusively at the Authorization header);
- *  - requests for /counter on the MCP hostname 404 (and vice versa).
+ *  - these routes 404 on the MCP hostname (and /mcp 404s on this one).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
@@ -88,7 +90,7 @@ import type { Config } from '../config.js';
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
 
-/** Every registered /counter route (method + url), recorded at registration
+/** Every registered human-page route (method + url), recorded at registration
  *  time so the isolation test can enumerate the ENTIRE route class. */
 export const COUNTER_ROUTE_TABLE: { method: string; url: string }[] = [];
 
@@ -113,7 +115,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return reply.code(403).send({
           error: 'agent_credentials_rejected',
           error_description:
-            'These pages are human-only. Agent bearer tokens are not accepted on any /counter route.',
+            'These pages are human-only. Agent bearer tokens are not accepted on any of them.',
         });
       }
       if ((req.headers.host ?? '').toLowerCase() === mcpHost.toLowerCase()) {
@@ -156,7 +158,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     ): Promise<Session | undefined> => {
       const s = await sess.loadSession(req);
       if (!s?.accountId) {
-        if (req.method === 'GET') void reply.redirect('/counter/login', 303);
+        if (req.method === 'GET') void reply.redirect('/login', 303);
         else void reply.code(401).send({ error: 'not_signed_in' });
         return undefined;
       }
@@ -165,11 +167,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
 
     const nextStep = async (accountId: string, s: Session): Promise<string> => {
       const a: any = await getAccount(accountId);
-      if (!a) return '/counter/login';
-      if (!a.pin_hash) return '/counter/pin';
-      if (a.status === 'pending') return '/counter/consent';
-      if (s.oauthCtx) return '/counter/authorize';
-      return '/counter';
+      if (!a) return '/login';
+      if (!a.pin_hash) return '/pin';
+      if (a.status === 'pending') return '/consent';
+      if (s.oauthCtx) return '/authorize';
+      return '/';
     };
 
     // ------------------------------------------------------------------
@@ -210,17 +212,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         // A card screening turned away is off the board until this person
         // changes it, so it sits at the top of what is waiting for them.
         ...rejected.map((c) => ({
-          href: `/counter/ledger/${c.id}/edit`,
+          href: `/ledger/${c.id}/edit`,
           label: `Your ${categoryLeafLabel(c.category)} card didn't pass screening — see why and fix it`,
           cta: 'See why and fix it',
         })),
         ...offers.map((o) => ({
-          href: `/counter/approvals/offer/${o.offer_id}`,
+          href: `/approvals/offer/${o.offer_id}`,
           label: `Offer on your ${categoryLeafLabel(o.category)} match`,
           amount: `${Number(o.amount)} ${o.ccy}`,
         })),
         ...disclosures.map((d) => ({
-          href: `/counter/approvals/match/${d.match_id}`,
+          href: `/approvals/match/${d.match_id}`,
           label: `Share your details on your ${categoryLeafLabel(d.category)} match?`,
         })),
         ...liveSettlements.rows.map((st: any) => {
@@ -229,8 +231,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             !mine && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(st.state);
           return {
             href: needsApproval
-              ? `/counter/approvals/settlement/${st.id}`
-              : `/counter/settlements/${st.id}`,
+              ? `/approvals/settlement/${st.id}`
+              : `/settlements/${st.id}`,
             label: `Settlement on your ${categoryLeafLabel(st.category)} match (${st.state})`,
             amount: `${Number(st.amount)} ${st.ccy}`,
           };
@@ -274,7 +276,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
 
     counter.post('/logout', async (req, reply) => {
       await sess.destroySession(req, reply);
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -313,7 +315,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       }
       const v = await createVerification(cfg, email, 'register');
       const note = await sendCodeOrNote(req, email, v, 'register');
-      return html(reply, pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify', error: note }));
+      return html(reply, pages.codeEntryPage({ verificationId: v.id, action: '/verify', error: note }));
     });
 
     const finishVerification = async (
@@ -335,7 +337,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             reply,
             pages.codeEntryPage({
               verificationId: verificationIdForRetry,
-              action: '/counter/verify',
+              action: '/verify',
               error: msg,
             }),
             401,
@@ -343,7 +345,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
         return html(
           reply,
-          pages.messagePage('That code did not work', `<p>${pages.esc(msg!)}</p>`, '/counter/register', 'Start again'),
+          pages.messagePage('That code did not work', `<p>${pages.esc(msg!)}</p>`, '/register', 'Start again'),
           401,
         );
       }
@@ -358,7 +360,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             pages.messagePage(
               'No account for that email',
               `<p>There is no account under that address yet.</p>`,
-              '/counter/register',
+              '/register',
               'Open an account',
             ),
             404,
@@ -427,8 +429,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
         if (email) await notifyBestEffort(req, 'pin-changed', () => sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed'));
       }
-      if (a?.status === 'pending') return reply.redirect('/counter/passkey', 303);
-      return reply.redirect('/counter', 303);
+      if (a?.status === 'pending') return reply.redirect('/passkey', 303);
+      return reply.redirect('/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -460,7 +462,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     counter.post('/passkey/skip', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      return reply.redirect('/counter/consent', 303);
+      return reply.redirect('/consent', 303);
     });
 
     // ------------------------------------------------------------------
@@ -470,7 +472,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const a: any = await getAccount(s.accountId!);
-      if (a?.status !== 'pending') return reply.redirect('/counter', 303);
+      if (a?.status !== 'pending') return reply.redirect('/', 303);
       return html(reply, pages.consentPage());
     });
 
@@ -482,11 +484,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(reply, pages.consentPage('Both statements are required to open the account.'), 400);
       }
       const a: any = await getAccount(s.accountId!);
-      if (!a?.pin_hash) return reply.redirect('/counter/pin', 303);
+      if (!a?.pin_hash) return reply.redirect('/pin', 303);
       if (a.status === 'pending') {
         await ops.activateAccountWithConsent(s.accountId!, pages.CONSENT_STATEMENT);
       }
-      return reply.redirect(s.oauthCtx ? '/counter/authorize' : '/counter', 303);
+      return reply.redirect(s.oauthCtx ? '/authorize' : '/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -494,7 +496,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     // ------------------------------------------------------------------
     counter.get('/login', async (req, reply) => {
       const s = await sess.loadSession(req);
-      if (s?.accountId) return reply.redirect('/counter', 303);
+      if (s?.accountId) return reply.redirect('/', 303);
       return html(reply, pages.loginEmailPage());
     });
 
@@ -524,7 +526,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const note = await sendCodeOrNote(req, email, v, 'login');
       return html(
         reply,
-        pages.codeEntryPage({ verificationId: v.id, action: '/counter/verify', heading: 'Check your email.', error: note }),
+        pages.codeEntryPage({ verificationId: v.id, action: '/verify', heading: 'Check your email.', error: note }),
       );
     });
 
@@ -588,7 +590,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // ------------------------------------------------------------------
-    // Approvals. Link entry (/counter/a/:token) is single-use + 15-min TTL;
+    // Approvals. Link entry (/a/:token) is single-use + 15-min TTL;
     // the dashboard reaches the same page via a session-authorized route.
     // ------------------------------------------------------------------
     const approvalView = async (
@@ -687,7 +689,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         counterOffer,
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: false,
-        postPath: '/counter/approve',
+        postPath: '/approve',
       };
     };
 
@@ -709,7 +711,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           pages.messagePage(
             'Sign in to review this',
             '<p>Sign in, then open the link from your email again.</p>',
-            '/counter/login',
+            '/login',
             'Sign in',
           ),
           401,
@@ -821,7 +823,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           if (r.row.seller_account === s.accountId && settlementsConfigured(cfg)) {
             await ensureSellerStripeAccount(cfg, s.accountId!, refId);
           }
-          return reply.redirect(`/counter/settlements/${refId}`, 303);
+          return reply.redirect(`/settlements/${refId}`, 303);
         }
         if (action === 'offer-accept') {
           await acceptOfferByHuman(refId, s.accountId!, 'counter');
@@ -844,7 +846,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         // An empty profile at this point means the collection boxes were
         // skipped: send the person back to the page that asks for them.
         if (e instanceof OsbError && e.payload.code === 'CONSENT_REQUIRED') {
-          return reply.redirect(`/counter/approvals/match/${encodeURIComponent(refId)}`, 303);
+          return reply.redirect(`/approvals/match/${encodeURIComponent(refId)}`, 303);
         }
         // Collection window still open on the holder's card: explain, don't 500.
         if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
@@ -853,7 +855,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             pages.messagePage(
               'Not yet',
               `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
-              '/counter',
+              '/',
               'Back to your approval page',
             ),
             409,
@@ -1031,7 +1033,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           );
         }
       }
-      return reply.redirect(`/counter/settlements/${found.row.id}`, 303);
+      return reply.redirect(`/settlements/${found.row.id}`, 303);
     });
 
     // Buyer confirms receipt (PIN/passkey ceremony) — this is what releases
@@ -1111,7 +1113,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       }
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     counter.post('/collect/:cardId/close', async (req, reply) => {
@@ -1122,7 +1124,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
       }
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -1255,7 +1257,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             pages.messagePage(
               'Could not save',
               `<p>The collection window may only be shortened: 1–${dflt} minutes for this card.</p>`,
-              `/counter/ledger/${id}/edit`,
+              `/ledger/${id}/edit`,
               'Back to editing',
             ),
             400,
@@ -1268,7 +1270,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       } catch (e: any) {
         return html(
           reply,
-          pages.messagePage('Could not save', `<p>${pages.esc(e?.message ?? 'invalid card')}</p>`, `/counter/ledger/${id}/edit`, 'Back to editing'),
+          pages.messagePage('Could not save', `<p>${pages.esc(e?.message ?? 'invalid card')}</p>`, `/ledger/${id}/edit`, 'Back to editing'),
           400,
         );
       }
@@ -1386,7 +1388,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     // 1.E: the offers on one match, and the box where this person types the
     // next figure. Sending one is the human acting, so it needs a signed-in
     // session — and no more than that, because a proposal binds nothing.
-    // Accepting one still asks for the PIN, on /counter/approve.
+    // Accepting one still asks for the PIN, on /approve.
     // ------------------------------------------------------------------
     const offersView = async (
       accountId: string,
@@ -1513,7 +1515,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       await ops.killSwitchOn(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
       if (email) await notifyBestEffort(req, 'kill-switch-on', () => sendKillSwitchEmail(cfg, email, s.accountId!, true));
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     counter.post('/kill/off', async (req, reply) => {
@@ -1524,7 +1526,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       await ops.killSwitchOff(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
       if (email) await notifyBestEffort(req, 'kill-switch-off', () => sendKillSwitchEmail(cfg, email, s.accountId!, false));
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -1698,7 +1700,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         .map((l) => l.trim())
         .filter(Boolean);
       const submitted = {
-        ...(b.check_cadence ? { check_cadence: String(b.check_cadence) } : {}),
+        ...(String(b.check_every_minutes ?? '').trim()
+          ? { check_every_minutes: Number(String(b.check_every_minutes).trim()) }
+          : {}),
         ...(interruptFor.length ? { interrupt_for: interruptFor } : {}),
         ...(b.summarize ? { summarize: String(b.summarize) } : {}),
         ...(b.suggestion_appetite ? { suggestion_appetite: String(b.suggestion_appetite) } : {}),
@@ -1824,7 +1828,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           'Unsubscribed',
           `<p>Match summons and activity digests are off. Sign-in codes, approvals
 and security notices keep sending.
-Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`,
+Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         ),
       );
     });
@@ -1847,7 +1851,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
       if (!cards.rowCount) {
         return html(
           reply,
-          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/counter', 'To your approval page'),
+          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/', 'To your approval page'),
         );
       }
       return html(
@@ -1876,7 +1880,7 @@ Turn anything back on any time in <a href="/counter/settings">settings</a>.</p>`
           'Renewed',
           `<p>${renewed.length} card${renewed.length === 1 ? '' : 's'} renewed — each clock
 restarted for its own TTL. The renewal is in your consent log.</p>`,
-          '/counter/ledger',
+          '/ledger',
           'Open the ledger',
         ),
       );
@@ -1927,7 +1931,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
         return html(reply, pages.messagePage('Wrong account', '<p>That code belongs to a different address.</p>'), 403);
       }
       await ops.clearEmailUnreachable(s.accountId!);
-      return reply.redirect('/counter', 303);
+      return reply.redirect('/', 303);
     });
 
     // ------------------------------------------------------------------
@@ -1958,14 +1962,14 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       if (!s) s = await sess.createSession(reply, null);
       await sess.setOauthCtx(s.id, ctx);
-      if (!s.accountId) return reply.redirect('/counter/login', 303);
+      if (!s.accountId) return reply.redirect('/login', 303);
       const a: any = await getAccount(s.accountId);
       if (!a?.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       return html(
         reply,
-        pages.authorizePage(v.client!.client_name, '/counter/authorize', {}),
+        pages.authorizePage(v.client!.client_name, '/authorize', {}),
       );
     });
 
@@ -2025,5 +2029,5 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       return reply.redirect(target.toString(), 303);
     });
-  }, { prefix: '/counter' });
+  });
 }

@@ -28,11 +28,11 @@ import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { signEmailToken, verifyEmailToken } from '../../src/email/tokens.js';
 
-const COUNTER = 'https://counter-dev.openswitchboard.ai';
+const COUNTER = 'https://my-dev.openswitchboard.ai';
 const links: FooterLinks = {
-  settingsUrl: `${COUNTER}/counter/settings`,
-  ledgerUrl: `${COUNTER}/counter/ledger`,
-  unsubUrl: `${COUNTER}/counter/email/unsub?t=osb_em_test`,
+  settingsUrl: `${COUNTER}/settings`,
+  ledgerUrl: `${COUNTER}/ledger`,
+  unsubUrl: `${COUNTER}/email/unsub?t=osb_em_test`,
 };
 
 // Raw slugs must NEVER appear in an email — only the taxonomy's human label.
@@ -50,7 +50,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'verification-register',
       blind: false,
       content: renderVerification(
-        { code: '123456', link: `${COUNTER}/counter/verify?t=tok`, purpose: 'register' },
+        { code: '123456', link: `${COUNTER}/verify?t=tok`, purpose: 'register' },
         links,
       ),
     },
@@ -58,7 +58,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'verification-login',
       blind: false,
       content: renderVerification(
-        { code: '654321', link: `${COUNTER}/counter/verify?t=tok`, purpose: 'login' },
+        { code: '654321', link: `${COUNTER}/verify?t=tok`, purpose: 'login' },
         links,
       ),
     },
@@ -66,7 +66,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'approval',
       blind: false,
       content: renderApproval(
-        { link: `${COUNTER}/counter/a/tok`, summary: SUMMARY, blind: false, counterUrl: `${COUNTER}/counter` },
+        { link: `${COUNTER}/a/tok`, summary: SUMMARY, blind: false, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -74,7 +74,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'approval-blind',
       blind: true,
       content: renderApproval(
-        { link: `${COUNTER}/counter/a/tok`, blind: true, counterUrl: `${COUNTER}/counter` },
+        { link: `${COUNTER}/a/tok`, blind: true, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -82,20 +82,20 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'summons',
       blind: false,
       content: renderSummons(
-        { count: 1, categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/counter` },
+        { count: 1, categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
     {
       name: 'summons-batch',
       blind: false,
-      content: renderSummons({ count: 3, blind: false, counterUrl: `${COUNTER}/counter` }, links),
+      content: renderSummons({ count: 3, blind: false, counterUrl: `${COUNTER}/` }, links),
     },
     {
       name: 'summons-blind',
       blind: true,
       content: renderSummons(
-        { count: 1, categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/counter` },
+        { count: 1, categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -106,7 +106,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         {
           cadence: 'weekly',
           blind: false,
-          counterUrl: `${COUNTER}/counter`,
+          counterUrl: `${COUNTER}/`,
           items: [
             { type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 },
             { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 1 },
@@ -122,7 +122,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         {
           cadence: 'daily',
           blind: true,
-          counterUrl: `${COUNTER}/counter`,
+          counterUrl: `${COUNTER}/`,
           items: [{ type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 }],
         },
         links,
@@ -134,8 +134,8 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderRenewal(
         {
           blind: false,
-          counterUrl: `${COUNTER}/counter`,
-          renewAllUrl: `${COUNTER}/counter/renew?t=tok`,
+          counterUrl: `${COUNTER}/`,
+          renewAllUrl: `${COUNTER}/renew?t=tok`,
           cards: [
             { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
             { type: 'HAVE', categoryLabel: LABEL2, expiresAt: new Date('2026-10-20'), expiringSoon: false },
@@ -150,8 +150,8 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderRenewal(
         {
           blind: true,
-          counterUrl: `${COUNTER}/counter`,
-          renewAllUrl: `${COUNTER}/counter/renew?t=tok`,
+          counterUrl: `${COUNTER}/`,
+          renewAllUrl: `${COUNTER}/renew?t=tok`,
           cards: [
             { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
           ],
@@ -162,31 +162,31 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
     {
       name: 'kill-switch-on',
       blind: false,
-      content: renderKillSwitch({ on: true, counterUrl: `${COUNTER}/counter` }, links),
+      content: renderKillSwitch({ on: true, counterUrl: `${COUNTER}/` }, links),
     },
     {
       name: 'kill-switch-off',
       blind: false,
-      content: renderKillSwitch({ on: false, counterUrl: `${COUNTER}/counter` }, links),
+      content: renderKillSwitch({ on: false, counterUrl: `${COUNTER}/` }, links),
     },
     {
       name: 'security-agent-authorized',
       blind: false,
       content: renderSecurityNotice(
-        { event: 'agent-authorized', agentName: 'Claude for Chores', counterUrl: `${COUNTER}/counter` },
+        { event: 'agent-authorized', agentName: 'Claude for Chores', counterUrl: `${COUNTER}/` },
         links,
       ),
     },
     {
       name: 'security-pin-changed',
       blind: false,
-      content: renderSecurityNotice({ event: 'pin-changed', counterUrl: `${COUNTER}/counter` }, links),
+      content: renderSecurityNotice({ event: 'pin-changed', counterUrl: `${COUNTER}/` }, links),
     },
     {
       name: 'security-agent-key-created',
       blind: false,
       content: renderSecurityNotice(
-        { event: 'agent-key-created', agentName: 'the laptop agent', counterUrl: `${COUNTER}/counter` },
+        { event: 'agent-key-created', agentName: 'the laptop agent', counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -196,7 +196,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'security-agent-key-created-blind',
       blind: true,
       content: renderSecurityNotice(
-        { event: 'agent-key-created', counterUrl: `${COUNTER}/counter` },
+        { event: 'agent-key-created', counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -207,9 +207,9 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         {
           categoryLabel: LABEL,
           reason: REJECTION_REASON,
-          editUrl: `${COUNTER}/counter/ledger/card-1/edit`,
+          editUrl: `${COUNTER}/ledger/card-1/edit`,
           blind: false,
-          counterUrl: `${COUNTER}/counter`,
+          counterUrl: `${COUNTER}/`,
         },
         links,
       ),
@@ -222,9 +222,9 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderScreeningRejected(
         {
           reason: REJECTION_REASON,
-          editUrl: `${COUNTER}/counter/ledger/card-1/edit`,
+          editUrl: `${COUNTER}/ledger/card-1/edit`,
           blind: true,
-          counterUrl: `${COUNTER}/counter`,
+          counterUrl: `${COUNTER}/`,
         },
         links,
       ),
@@ -234,10 +234,10 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       blind: false,
       content: renderSettlementProposed(
         {
-          link: `${COUNTER}/counter/a/tok`,
+          link: `${COUNTER}/a/tok`,
           summary: `A settlement of 600 AUD on your ${LABEL} match is waiting for your approval.`,
           blind: false,
-          counterUrl: `${COUNTER}/counter`,
+          counterUrl: `${COUNTER}/`,
         },
         links,
       ),
@@ -246,7 +246,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-proposed-blind',
       blind: true,
       content: renderSettlementProposed(
-        { link: `${COUNTER}/counter/a/tok`, blind: true, counterUrl: `${COUNTER}/counter` },
+        { link: `${COUNTER}/a/tok`, blind: true, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -254,7 +254,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-payment-held-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'payment-held', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'payment-held', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -262,7 +262,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-payment-held-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'payment-held', role: 'seller', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'payment-held', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -270,7 +270,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-confirm-receipt-request',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'confirm-receipt-request', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'confirm-receipt-request', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -278,7 +278,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-released-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -286,7 +286,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-refund-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'refund', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'refund', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -294,7 +294,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-update-blind',
       blind: true,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'seller', blind: true, settlementUrl: `${COUNTER}/counter/settlements/x`, counterUrl: `${COUNTER}/counter` },
+        { event: 'released', role: 'seller', blind: true, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
         links,
       ),
     },
@@ -355,7 +355,7 @@ describe('email templates: render suite', () => {
     for (const part of [c.html, c.text]) {
       expect(part).toContain(LABEL);
       expect(part).toContain(REJECTION_REASON);
-      expect(part).toContain(`${COUNTER}/counter/ledger/card-1/edit`);
+      expect(part).toContain(`${COUNTER}/ledger/card-1/edit`);
     }
     // Blind mode: the pointer, and nothing of why.
     const blind = byName['card-screening-rejected-blind'];

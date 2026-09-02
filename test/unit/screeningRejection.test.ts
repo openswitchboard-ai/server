@@ -47,7 +47,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -163,7 +164,7 @@ const get = (url: string) =>
   app.inject({
     method: 'GET',
     url,
-    headers: { host: 'counter.test', cookie: 'osb_counter=osb_cs_test-session' },
+    headers: { host: 'my.test', cookie: 'osb_counter=osb_cs_test-session' },
   });
 
 // ---------------------------------------------------------------------------
@@ -176,10 +177,10 @@ describe('approval-page dashboard: a card that failed screening', () => {
         [REJECTED_QUERY]: [{ id: CARD, category: SLUG, screening: rejectedRow().screening }],
       }),
     );
-    const res = await get('/counter');
+    const res = await get('/');
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain(`Your ${LABEL} card didn&#39;t pass screening`);
-    expect(res.body).toContain(`/counter/ledger/${CARD}/edit`);
+    expect(res.body).toContain(`/ledger/${CARD}/edit`);
     expect(res.body).toContain('See why and fix it');
     // The raw slug and the model's internal note never render.
     expect(res.body).not.toContain(SLUG);
@@ -188,7 +189,7 @@ describe('approval-page dashboard: a card that failed screening', () => {
 
   it('says nothing when no card of theirs was rejected', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({}));
-    const res = await get('/counter');
+    const res = await get('/');
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('pass screening');
     expect(res.body).toContain('Nothing is waiting for you.');
@@ -201,7 +202,7 @@ describe('approval-page dashboard: a card that failed screening', () => {
 describe('ledger edit page: the reason in plain words', () => {
   it('renders the plain-words sentence with the raw code small beneath', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({ [LEDGER_QUERY]: [rejectedRow()] }));
-    const res = await get(`/counter/ledger/${CARD}/edit`);
+    const res = await get(`/ledger/${CARD}/edit`);
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('This card didn&#39;t pass screening.');
     expect(res.body).toContain('reads like an instruction aimed at an AI');
@@ -213,7 +214,7 @@ describe('ledger edit page: the reason in plain words', () => {
   it('a card that is not rejected carries no screening block', async () => {
     const ok = { ...rejectedRow(), lifecycle_state: 'PUBLISHED', screening: { pass: true, at: REJECTED_AT } };
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({ [LEDGER_QUERY]: [ok] }));
-    const res = await get(`/counter/ledger/${CARD}/edit`);
+    const res = await get(`/ledger/${CARD}/edit`);
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('pass screening');
     expect(res.body).not.toContain('screening code:');

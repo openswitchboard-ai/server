@@ -195,6 +195,9 @@ function run(sql: string, params: any[] = []) {
     }
     return { rows: [], rowCount: before - world.rate.size };
   }
+  // The shared read ceiling is checked before every read tool; this world is
+  // never near it, so the window always has room.
+  if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
   // Anything the transport reaches for that this world does not know about is
   // a change worth noticing, so it comes back empty rather than plausible.
   return rows([]);
@@ -574,6 +577,7 @@ describe('check_matches says when something is waiting', () => {
     // query with the one match it holds.
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string, params: any[] = []) => {
+        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
         if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 }; // no collection window
         if (/^\s*SELECT m\.\* FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
         // Stage 3 is behind stage 4, so the sweep also builds the mutual

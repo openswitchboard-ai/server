@@ -15,21 +15,21 @@ import {
   type FooterLinks,
 } from '../src/email/templates.js';
 
-const COUNTER = 'https://counter-dev.openswitchboard.ai';
+const COUNTER = 'https://my-dev.openswitchboard.ai';
 
 const links: FooterLinks = {
-  settingsUrl: `${COUNTER}/counter/settings`,
-  ledgerUrl: `${COUNTER}/counter/ledger`,
-  unsubUrl: `${COUNTER}/counter/email/unsub?t=sample`,
+  settingsUrl: `${COUNTER}/settings`,
+  ledgerUrl: `${COUNTER}/ledger`,
+  unsubUrl: `${COUNTER}/email/unsub?t=sample`,
 };
 
 export function sampleSet(): { name: string; content: EmailContent }[] {
-  const counterUrl = `${COUNTER}/counter`;
+  const counterUrl = `${COUNTER}/`;
   return [
     {
       name: 'verification',
       content: renderVerification(
-        { code: '480291', link: `${COUNTER}/counter/verify?t=sample`, purpose: 'register' },
+        { code: '480291', link: `${COUNTER}/verify?t=sample`, purpose: 'register' },
         links,
       ),
     },
@@ -37,7 +37,7 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
       name: 'approval',
       content: renderApproval(
         {
-          link: `${COUNTER}/counter/a/sample`,
+          link: `${COUNTER}/a/sample`,
           summary: 'An offer on your Garden tools match is waiting for your decision.',
           blind: false,
           counterUrl,
@@ -78,7 +78,7 @@ export function sampleSet(): { name: string; content: EmailContent }[] {
         {
           blind: false,
           counterUrl,
-          renewAllUrl: `${COUNTER}/counter/renew?t=sample`,
+          renewAllUrl: `${COUNTER}/renew?t=sample`,
           cards: [
             { type: 'WANT', categoryLabel: 'Garden tools', expiresAt: new Date(Date.now() + 4 * 86400e3), expiringSoon: true },
             { type: 'HAVE', categoryLabel: 'Mountain bikes', expiresAt: new Date(Date.now() + 41 * 86400e3), expiringSoon: false },

@@ -192,7 +192,7 @@ async function stage3LinkFor(
             counterpartyAccount,
           })
         ).token;
-    return `${cfg.counterOrigin}/counter/a/${encodeURIComponent(token)}`;
+    return `${cfg.counterOrigin}/a/${encodeURIComponent(token)}`;
   } catch (err) {
     // A link is the courtesy, the refusal is the rule: if the link cannot be
     // minted the account is still refused, with the plain instruction.

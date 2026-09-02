@@ -105,7 +105,7 @@ export function isElevated(s: CounterSession): boolean {
 }
 
 /** WebAuthn ceremony state. The SQL is exported so the tests exercise the
- *  exact statements production runs (see test/unit/counter.test.ts for the
+ *  exact statements production runs (see test/unit/my.test.ts for the
  *  structural invariant and test/integration/gates.test.ts for the lifecycle
  *  against a real PostgreSQL). */
 export const WEBAUTHN_CHALLENGE_TTL = '5 minutes';

@@ -26,7 +26,7 @@ async function main() {
     await ssm.send(new GetParameterCommand({ Name: `/osb/${envName}/ses/configuration-set` }))
   ).Parameter!.Value!;
 
-  const unsubUrl = `https://counter-${envName}.openswitchboard.ai/counter/email/unsub?t=sample`;
+  const unsubUrl = `https://my-${envName}.openswitchboard.ai/email/unsub?t=sample`;
   for (const s of sampleSet()) {
     const r = await ses.send(
       new SendEmailCommand({

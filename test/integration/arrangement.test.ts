@@ -28,7 +28,7 @@ const d = RUN ? describe : describe.skip;
 let ada: TestActor;
 
 const ARRANGEMENT = {
-  check_cadence: 'twice a day',
+  check_every_minutes: 720,
   interrupt_for: ['a new match', 'anything waiting on my approval page'],
   summarize: 'a round-up on Sunday evening',
   suggestion_appetite: 'occasional',
@@ -89,16 +89,16 @@ d('standing arrangement against live deployment', () => {
   });
 
   it('the human sees it in plain words on their approval page', async () => {
-    const res = await counterFetch(ada.jar, '/counter/arrangement');
+    const res = await counterFetch(ada.jar, '/arrangement');
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('How your agents behave');
-    expect(body).toContain('twice a day');
+    expect(body).toContain('every 12 hours');
     expect(body).toContain('anything waiting on my approval page');
   });
 
   it('an agent bearer token is turned away from that page', async () => {
-    const res = await fetch(`${COUNTER_URL}/counter/arrangement`, {
+    const res = await fetch(`${COUNTER_URL}/arrangement`, {
       headers: { authorization: `Bearer ${ada.accessToken}` },
     });
     expect(res.status).toBe(403);
@@ -107,9 +107,9 @@ d('standing arrangement against live deployment', () => {
   it('the human can change it, and the agent sees the change on its next sweep', async () => {
     const res = await counterFetch(
       ada.jar,
-      '/counter/arrangement',
+      '/arrangement',
       form({
-        check_cadence: 'once a week',
+        check_every_minutes: '10080',
         interrupt_for: 'a new match',
         summarize: '',
         quiet_hours: '',
@@ -120,14 +120,40 @@ d('standing arrangement against live deployment', () => {
     expect(res.status).toBe(200);
     const sweep = await mcpCall(ada.accessToken, 'check_matches', {});
     expect(sweep.result.arrangement).toEqual({
-      check_cadence: 'once a week',
+      check_every_minutes: 10080,
       interrupt_for: ['a new match'],
       suggestion_appetite: 'never',
     });
   });
 
+  it('a cadence oftener than every 30 minutes is refused, and the floor is named', async () => {
+    const bad = await mcpCall(ada.accessToken, 'standing_arrangement', {
+      action: 'set',
+      arrangement: { ...ARRANGEMENT, check_every_minutes: 5 },
+    });
+    expect(bad.isError).toBe(true);
+    expect(JSON.stringify(bad)).toContain('No more often than every 30 minutes');
+  });
+
+  it('the page refuses it too, in the same sentence', async () => {
+    const res = await counterFetch(
+      ada.jar,
+      '/arrangement',
+      form({
+        check_every_minutes: '5',
+        interrupt_for: '',
+        summarize: '',
+        quiet_hours: '',
+        suggestion_appetite: '',
+        notes: '',
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('No more often than every 30 minutes');
+  });
+
   it('the human can clear it, and the agent is told to ask again', async () => {
-    const res = await counterFetch(ada.jar, '/counter/arrangement/clear', form({}));
+    const res = await counterFetch(ada.jar, '/arrangement/clear', form({}));
     expect(res.status).toBe(200);
     const sweep = await mcpCall(ada.accessToken, 'check_matches', {});
     expect(sweep.result.arrangement).toEqual({});

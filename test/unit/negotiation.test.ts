@@ -58,7 +58,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -242,6 +243,7 @@ function fakePool() {
             })),
         );
       }
+      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       world.writes.push({ sql, params });
       return rows([]);
     },
@@ -403,7 +405,7 @@ describe('Pass on: an agent may not author a figure at all', () => {
     } catch (e: any) {
       expect(e.payload.code).toBe('CONSENT_REQUIRED');
       expect(e.payload.human_action).toContain('Your numbers come from you');
-      expect(e.payload.human_action).toContain(`https://counter.test/counter/matches/${MATCH}`);
+      expect(e.payload.human_action).toContain(`https://my.test/matches/${MATCH}`);
       expect(e.payload.human_action.length).toBeLessThanOrEqual(300);
     }
     expect(world.offers).toHaveLength(0);
@@ -483,7 +485,7 @@ describe('Auto-negotiate: inside the box and nowhere else', () => {
     } catch (e: any) {
       expect(e.payload.code).toBe('CONSENT_REQUIRED');
       expect(e.payload.human_action).toContain('4321.5');
-      expect(e.payload.human_action).toContain(`/counter/ledger/${CARD_H}/numbers`);
+      expect(e.payload.human_action).toContain(`/ledger/${CARD_H}/numbers`);
     }
     expect(world.offers).toHaveLength(1); // the seed only
   });
@@ -496,7 +498,7 @@ describe('Auto-negotiate: inside the box and nowhere else', () => {
     } catch (e: any) {
       expect(e.payload.code).toBe('CONSENT_REQUIRED');
       expect(e.payload.human_action).toContain('Auto-negotiate');
-      expect(e.payload.human_action).toContain(`/counter/ledger/${CARD_H}/numbers`);
+      expect(e.payload.human_action).toContain(`/ledger/${CARD_H}/numbers`);
     }
   });
 
@@ -591,7 +593,7 @@ describe('the human page class owns both settings', () => {
       method,
       url,
       headers: {
-        host: 'counter.test',
+        host: 'my.test',
         ...(cookie ? { cookie: `osb_counter=${SID}` } : {}),
         ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
       },
@@ -601,11 +603,11 @@ describe('the human page class owns both settings', () => {
   it('the routes are in the enumerated human-only class', () => {
     const urls = COUNTER_ROUTE_TABLE.map((r) => `${r.method} ${r.url}`);
     for (const must of [
-      'GET /counter/ledger/:id/numbers',
-      'POST /counter/ledger/:id/numbers',
-      'POST /counter/ledger/:id/numbers/clear',
-      'GET /counter/matches/:id',
-      'POST /counter/matches/:id/offer',
+      'GET /ledger/:id/numbers',
+      'POST /ledger/:id/numbers',
+      'POST /ledger/:id/numbers/clear',
+      'GET /matches/:id',
+      'POST /matches/:id/offer',
     ]) {
       expect(urls, `missing route ${must}`).toContain(must);
     }
@@ -613,16 +615,16 @@ describe('the human page class owns both settings', () => {
 
   it('an agent bearer token is turned away from every one of them', async () => {
     for (const [method, url] of [
-      ['GET', `/counter/ledger/${CARD_W}/numbers`],
-      ['POST', `/counter/ledger/${CARD_W}/numbers`],
-      ['POST', `/counter/ledger/${CARD_W}/numbers/clear`],
-      ['GET', `/counter/matches/${MATCH}`],
-      ['POST', `/counter/matches/${MATCH}/offer`],
+      ['GET', `/ledger/${CARD_W}/numbers`],
+      ['POST', `/ledger/${CARD_W}/numbers`],
+      ['POST', `/ledger/${CARD_W}/numbers/clear`],
+      ['GET', `/matches/${MATCH}`],
+      ['POST', `/matches/${MATCH}/offer`],
     ] as const) {
       const res = await app.inject({
         method: method as any,
         url,
-        headers: { host: 'counter.test', authorization: 'Bearer whatever' },
+        headers: { host: 'my.test', authorization: 'Bearer whatever' },
       });
       expect(res.statusCode, `${method} ${url}`).toBe(403);
       expect(res.json().error).toBe('agent_credentials_rejected');
@@ -630,13 +632,13 @@ describe('the human page class owns both settings', () => {
   });
 
   it('a caller with no session gets nowhere', async () => {
-    const res = await inject('POST', `/counter/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' }, false);
+    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' }, false);
     expect(res.statusCode).toBe(401);
     expect(res.json().error).toBe('not_signed_in');
   });
 
   it('a signed-in human sends their number, and it lands as their side\'s offer', async () => {
-    const res = await inject('POST', `/counter/matches/${MATCH}/offer`, {
+    const res = await inject('POST', `/matches/${MATCH}/offer`, {
       amount: '412.50',
       ccy: 'aud',
       note: 'Can collect Saturday morning.',
@@ -661,7 +663,7 @@ describe('the human page class owns both settings', () => {
       { amount: '400.005', ccy: 'AUD' },
       { amount: '400', ccy: 'AU' },
     ]) {
-      const res = await inject('POST', `/counter/matches/${MATCH}/offer`, body);
+      const res = await inject('POST', `/matches/${MATCH}/offer`, body);
       expect(res.statusCode, JSON.stringify(body)).toBe(400);
     }
     for (const note of [
@@ -670,7 +672,7 @@ describe('the human page class owns both settings', () => {
       'see www.example.com for photos',
       'x'.repeat(neg.MANDATE_NOTE_MAX + 1),
     ]) {
-      const res = await inject('POST', `/counter/matches/${MATCH}/offer`, {
+      const res = await inject('POST', `/matches/${MATCH}/offer`, {
         amount: '400',
         ccy: 'AUD',
         note,
@@ -682,27 +684,27 @@ describe('the human page class owns both settings', () => {
 
   it('the per-match rail is shown to the human rather than swallowed', async () => {
     for (let i = 0; i < 3; i++) {
-      await inject('POST', `/counter/matches/${MATCH}/offer`, { amount: String(400 + i), ccy: 'AUD' });
+      await inject('POST', `/matches/${MATCH}/offer`, { amount: String(400 + i), ccy: 'AUD' });
     }
-    const res = await inject('POST', `/counter/matches/${MATCH}/offer`, { amount: '500', ccy: 'AUD' });
+    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '500', ccy: 'AUD' });
     expect(res.statusCode).toBe(429);
     expect(world.offers).toHaveLength(3);
   });
 
   it('a match that has moved on says so rather than 500ing', async () => {
     world.matchState = 'closed';
-    const res = await inject('POST', `/counter/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' });
+    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' });
     expect(res.statusCode).toBe(409);
     expect(world.offers).toHaveLength(0);
   });
 
   it('switching to Auto-negotiate with no numbers is refused; with them it saves', async () => {
-    const bare = await inject('POST', `/counter/ledger/${CARD_W}/numbers`, { mode: 'mandate' });
+    const bare = await inject('POST', `/ledger/${CARD_W}/numbers`, { mode: 'mandate' });
     expect(bare.statusCode).toBe(400);
     expect(bare.body).toContain('Auto-negotiate needs your numbers');
     expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
 
-    const wrongWay = await inject('POST', `/counter/ledger/${CARD_W}/numbers`, {
+    const wrongWay = await inject('POST', `/ledger/${CARD_W}/numbers`, {
       mode: 'mandate',
       open: '900',
       limit: '400',
@@ -711,7 +713,7 @@ describe('the human page class owns both settings', () => {
     expect(wrongWay.statusCode).toBe(400);
     expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
 
-    const good = await inject('POST', `/counter/ledger/${CARD_W}/numbers`, {
+    const good = await inject('POST', `/ledger/${CARD_W}/numbers`, {
       mode: 'mandate',
       open: '300',
       limit: '400',
@@ -722,7 +724,7 @@ describe('the human page class owns both settings', () => {
     expect(good.body).toContain('Auto-negotiate');
     expect(world.cards[CARD_W].negotiation_mode).toBe('mandate');
 
-    const cleared = await inject('POST', `/counter/ledger/${CARD_W}/numbers/clear`, {});
+    const cleared = await inject('POST', `/ledger/${CARD_W}/numbers/clear`, {});
     expect(cleared.statusCode).toBe(200);
     expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
     expect(world.cards[CARD_W].mandate_enc).toBeNull();
@@ -741,7 +743,7 @@ describe('the human page class owns both settings', () => {
       authored_by: 'agent',
       created_at: new Date(),
     });
-    const res = await inject('GET', `/counter/matches/${MATCH}`);
+    const res = await inject('GET', `/matches/${MATCH}`);
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('THEIRS');
     expect(res.body).toContain('5000 AUD');
@@ -754,7 +756,7 @@ describe('the human page class owns both settings', () => {
 
   it('a match at stage 1 says so instead of offering a box', async () => {
     world.stage = 1;
-    const res = await inject('GET', `/counter/matches/${MATCH}`);
+    const res = await inject('GET', `/matches/${MATCH}`);
     expect(res.body).toContain('Offers open once both sides have shown interest');
     expect(res.body).not.toContain('Send this number');
   });
@@ -803,7 +805,7 @@ describe('the pages say it in plain words', () => {
         anomalies: [],
         hasPasskey: false,
         elevated: false,
-        postPath: '/counter/approve',
+        postPath: '/approve',
         counterOffer: { matchId: MATCH, ccy: 'AUD' },
       }),
     },
@@ -825,7 +827,7 @@ describe('the pages say it in plain words', () => {
   it('the offer approval page offers a third answer beside yes and no', () => {
     const html = rendered.find((r) => r.name === 'offer-approval')!.html;
     expect(html).toContain('Or reply with a number of your own');
-    expect(html).toContain(`/counter/matches/${MATCH}/offer`);
+    expect(html).toContain(`/matches/${MATCH}/offer`);
     // Approving still asks for the PIN; replying with a figure does not.
     expect(html).toContain('Approve needs your PIN');
   });
@@ -835,14 +837,14 @@ describe('the pages say it in plain words', () => {
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [
-        { href: `/counter/approvals/offer/${offerId(1)}`, label: 'Offer on your Mountain bikes match', amount: '400 AUD' },
+        { href: `/approvals/offer/${offerId(1)}`, label: 'Offer on your Mountain bikes match', amount: '400 AUD' },
       ],
       matches: [{ matchId: MATCH, category: 'Mountain bikes', score: 0.8 }],
       collectionWindows: [],
     });
-    expect(html).toContain(`/counter/matches/${MATCH}`);
+    expect(html).toContain(`/matches/${MATCH}`);
     expect(html).toContain('Offers &amp; your number');
-    expect(html).toContain(`/counter/approvals/offer/${offerId(1)}`);
+    expect(html).toContain(`/approvals/offer/${offerId(1)}`);
   });
 
   it('a set of numbers is shown back to the person who wrote it', () => {

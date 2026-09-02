@@ -31,7 +31,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -107,16 +108,16 @@ beforeEach(() => {
 const createKey = (name = 'the laptop agent') =>
   app.inject({
     method: 'POST',
-    url: '/counter/agent-keys',
+    url: '/agent-keys',
     headers: {
-      host: 'counter.test',
+      host: 'my.test',
       'content-type': 'application/x-www-form-urlencoded',
       cookie: 'osb_counter=osb_cs_test-session',
     },
     payload: new URLSearchParams({ name }).toString(),
   });
 
-describe('POST /counter/agent-keys: the security notice', () => {
+describe('POST /agent-keys: the security notice', () => {
   it('mints the key and mails an agent-key-created notice with the key name', async () => {
     const res = await createKey();
     expect(res.statusCode).toBe(200);
