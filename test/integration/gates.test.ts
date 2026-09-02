@@ -13,6 +13,7 @@
  *  (e) quota exceeded -> QUOTA_EXCEEDED
  * plus: OAuth 2.1 flow, screening accept path, TTL/queue plumbing via ops.
  */
+import { randomBytes } from 'node:crypto';
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import {
   SET_WEBAUTHN_CHALLENGE_SQL,
@@ -273,11 +274,24 @@ d('integration gates against live deployment', () => {
       bootstrapActor('Dana', 'Cottesloe'),
       bootstrapActor('Eli', 'Claremont'),
     ]);
+    // Their own geo island. Every minimalWant/minimalHave in a run shares one
+    // bucket, so a pair published into it would also match Alice's and Bob's
+    // cards — which would contest those cards and lock the acceptance GATE (d)
+    // depends on. This pair matches each other and nobody else.
+    const island = { bucket: `gf_${randomBytes(2).toString('hex')}`, radius_km: 25 };
     const dw = await mcpCall(dana.accessToken, 'publish_intent', {
-      card: minimalWant({ price: { band: { min: 0, max: 900 }, ccy: 'AUD' }, attributes: { condition: 'good' } }),
+      card: minimalWant({
+        geo: island,
+        price: { band: { min: 0, max: 900 }, ccy: 'AUD' },
+        attributes: { condition: 'good' },
+      }),
     });
     const eh = await mcpCall(eli.accessToken, 'publish_intent', {
-      card: minimalHave({ price: { band: { min: 300, max: 300 }, ccy: 'AUD' }, attributes: { condition: 'good' } }),
+      card: minimalHave({
+        geo: island,
+        price: { band: { min: 300, max: 300 }, ccy: 'AUD' },
+        attributes: { condition: 'good' },
+      }),
     });
     expect(dw.isError).toBe(false);
     expect(eh.isError).toBe(false);
