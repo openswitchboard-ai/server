@@ -27,6 +27,7 @@ import {
   counterFetch,
   createAgentKey,
   dbExec,
+  humanOffer,
   mcpCall,
   mcpRpc,
   minimalHave,
@@ -34,6 +35,7 @@ import {
   poll,
   revokeAgentKey,
   sendOp,
+  setAutoNegotiate,
   waitForCardState,
 } from './helpers.js';
 
@@ -261,7 +263,108 @@ d('integration gates against live deployment', () => {
     expect(forThisCard[0][1]).toBe('transactional');
   });
 
+  // -------------------------------------------------------------------------
+  // 1.E: the numbers come from the human. On its own pair of actors and its own
+  // match, because the per-match offer rail (3 a day a side) is deliberately
+  // tight and this walks a whole negotiation.
+  // -------------------------------------------------------------------------
+  it('GATE (f): Pass on refuses an agent figure; the human sends theirs from their page', async () => {
+    const [dana, eli] = await Promise.all([
+      bootstrapActor('Dana', 'Cottesloe'),
+      bootstrapActor('Eli', 'Claremont'),
+    ]);
+    const dw = await mcpCall(dana.accessToken, 'publish_intent', {
+      card: minimalWant({ price: { band: { min: 0, max: 900 }, ccy: 'AUD' }, attributes: { condition: 'good' } }),
+    });
+    const eh = await mcpCall(eli.accessToken, 'publish_intent', {
+      card: minimalHave({ price: { band: { min: 300, max: 300 }, ccy: 'AUD' }, attributes: { condition: 'good' } }),
+    });
+    expect(dw.isError).toBe(false);
+    expect(eh.isError).toBe(false);
+    await waitForCardState(dana.accessToken, dw.result.intent_id, ['PUBLISHED']);
+    await waitForCardState(eli.accessToken, eh.result.intent_id, ['PUBLISHED']);
+    await sendOp({
+      op: 'create-match',
+      card_want: dw.result.intent_id,
+      card_have: eh.result.intent_id,
+      score: 0.86,
+    });
+    const mid = await poll(async () => {
+      const r = await mcpCall(dana.accessToken, 'check_matches', { intent_id: dw.result.intent_id });
+      return r.result.matches?.[0]?.match_id as string | undefined;
+    }, 'dana/eli match to appear');
+    await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
+    await mcpCall(eli.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
+
+    // Pass on is the default on a card nobody has touched.
+    const refused = await mcpCall(dana.accessToken, 'respond', {
+      match_id: mid,
+      action: 'propose_offer',
+      offer: { amount: 500, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.result.code).toBe('CONSENT_REQUIRED');
+    expect(refused.result.human_action).toContain('Your numbers come from you');
+    expect(refused.result.human_action).toContain(`/counter/matches/${mid}`);
+
+    // Nothing was written: the refusal lands before any offer row exists.
+    const empty = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    expect(empty.result.offers).toHaveLength(0);
+
+    // Dana types her own number on her own page, and it lands on Eli's side.
+    const page = await counterFetch(dana.jar, `/counter/matches/${mid}`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('Reply with your number');
+    const sent = await humanOffer(dana.jar, mid, {
+      amount: 505,
+      note: 'Cash, and I can collect this weekend.',
+    });
+    expect(sent.status).toBe(200);
+    const eliSees = await mcpCall(eli.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    const hers = eliSees.result.offers.find((o: any) => Number(o.amount) === 505);
+    expect(hers).toBeTruthy();
+    expect(hers.state).toBe('proposed');
+    expect(hers.message.text).toContain('collect this weekend');
+    // Her page, her numbers: nothing about how her card negotiates crosses.
+    expect(eliSees.raw).not.toContain('mandate');
+    expect(eliSees.raw).not.toContain('negotiation_mode');
+    expect(eliSees.raw).not.toContain('authored_by');
+
+    // A note shaped like a way to reach someone never leaves the page.
+    const leak = await humanOffer(dana.jar, mid, { amount: 510, note: 'ring me on 0412 345 678' });
+    expect(leak.status).toBe(400);
+
+    // Eli switches HIS card to Auto-negotiate and writes his numbers: a floor
+    // of 700 on something he is selling, opening at 800.
+    await setAutoNegotiate(eli.jar, eh.result.intent_id, { open: 800, limit: 700, step: 20 });
+
+    const inRange = await mcpCall(eli.accessToken, 'respond', {
+      match_id: mid,
+      action: 'propose_offer',
+      offer: { amount: 800, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
+    });
+    expect(inRange.isError, JSON.stringify(inRange.result)).toBe(false);
+    expect(inRange.result.state).toBe('proposed');
+
+    const outOfRange = await mcpCall(eli.accessToken, 'respond', {
+      match_id: mid,
+      action: 'propose_offer',
+      offer: { amount: 400, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
+    });
+    expect(outOfRange.isError).toBe(true);
+    expect(outOfRange.result.code).toBe('CONSENT_REQUIRED');
+    expect(outOfRange.result.human_action).toContain('700');
+
+    // The boundary named to his own agent is named to nobody else.
+    const danaAgain = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    expect(danaAgain.raw).not.toContain('700');
+    expect(danaAgain.raw).not.toContain('"step"');
+  }, 300_000);
+
   it('GATE (d): no agent-reachable accept state other than awaiting-human', async () => {
+    // Alice's card has to be on Auto-negotiate before her agent may name a
+    // figure at all. A ceiling and nothing else: the amounts below are hers.
+    await setAutoNegotiate(alice.jar, wantId, { limit: 700 });
     const offer = await mcpCall(alice.accessToken, 'respond', {
       match_id: matchId,
       action: 'propose_offer',

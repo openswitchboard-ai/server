@@ -124,7 +124,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer, send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
+      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every card starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only a card they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone), send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -152,7 +152,8 @@ export const TOOLS: ToolDef[] = [
         offer_id: { type: 'string', format: 'uuid', description: 'Required for offer actions on an existing offer.' },
         offer: {
           type: 'object',
-          description: 'Required for propose_offer.',
+          description:
+            'Required for propose_offer. The amount has to be one your human authored: on a card set to Auto-negotiate it lives inside the numbers they wrote, and on a card set to Pass on there is no amount you may send at all.',
           properties: {
             amount: { type: 'number', exclusiveMinimum: 0 },
             ccy: { type: 'string', pattern: '^[A-Z]{3}$' },

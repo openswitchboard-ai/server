@@ -23,7 +23,15 @@ import {
   validateArrangement,
 } from '../domain/arrangement.js';
 import { amendIntent, withdrawIntent } from '../domain/cards.js';
-import { acceptOfferByHuman } from '../domain/offers.js';
+import { acceptOfferByHuman, proposeOffer } from '../domain/offers.js';
+import {
+  MODE_NAMES,
+  readNegotiation,
+  saveNegotiation,
+  validateMandate,
+  validateOfferNote,
+  type NegotiationMode,
+} from '../domain/negotiation.js';
 import {
   closeCollectionByCard,
   declineMatch,
@@ -591,6 +599,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const anomalies: string[] = [];
       const facts: { k: string; v: string }[] = [];
       let collectProfile: pages.ApprovalView['collectProfile'];
+      let counterOffer: pages.ApprovalView['counterOffer'];
       if (action === 'settlement-approve') {
         const s = await settlements.getSettlement(refId);
         if (!s) return { error: 'This settlement no longer exists.' };
@@ -638,6 +647,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           { k: 'For', v: categoryLeafLabel(o.category) },
           { k: 'Offer expires', v: new Date(o.expiry).toUTCString() },
         );
+        // The third door out of this page: answer with a figure of your own.
+        counterOffer = { matchId: o.match_id, ccy: o.ccy };
         const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
         if (amountAnomaly) anomalies.push(amountAnomaly.text);
         const cp = await newCounterpartyAnomaly(o.proposer_account, 'offer-accept');
@@ -673,6 +684,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         facts,
         anomalies,
         collectProfile,
+        counterOffer,
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: false,
         postPath: '/counter/approve',
@@ -1147,6 +1159,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       ask: c.ask ? `${c.ask.amount} ${c.ask.ccy ?? ''}`.trim() : undefined,
       matchSummary: c.matchCount === 0 ? 'no matches yet' : `${c.matchCount} match${c.matchCount === 1 ? '' : 'es'}`,
       attributes: attrsSummary(c.attributes),
+      mode: c.negotiation_mode,
     });
 
     counter.get('/ledger', async (req, reply) => {
@@ -1262,6 +1275,217 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return html(
         reply,
         home.ledgerPage((await ops.ledgerCards(cfg, s.accountId!)).map(cardToView), 'Saved. The card is back in screening before it returns to the network.'),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // 1.E "Your numbers": who authors the figures this card negotiates with.
+    //
+    // These routes live in the human page class, which is the whole point of
+    // them — the onRequest guard above 403s any agent bearer token before a
+    // line of this code runs, so a mandate can only ever be written by the
+    // person it belongs to. Nothing here re-screens the card: a negotiating
+    // instruction is not card content and never goes near the network.
+    // ------------------------------------------------------------------
+    const numbersView = async (
+      accountId: string,
+      cardId: string,
+    ): Promise<home.CardNumbersView | undefined> => {
+      const cards = await ops.ledgerCards(cfg, accountId);
+      const c = cards.find((x) => x.id === cardId);
+      if (!c) return undefined;
+      const neg = await readNegotiation(accountId, cardId, { purpose: 'counter-numbers-view' });
+      return {
+        id: c.id,
+        type: c.type,
+        category: categoryLeafLabel(c.category),
+        mode: neg.mode,
+        mandate: neg.mandate,
+      };
+    };
+
+    counter.get('/ledger/:id/numbers', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const v = await numbersView(s.accountId!, String((req.params as any).id));
+      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      return html(reply, home.cardNumbersPage(v));
+    });
+
+    counter.post('/ledger/:id/numbers', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const id = String((req.params as any).id);
+      const v = await numbersView(s.accountId!, id);
+      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      const b: any = req.body ?? {};
+      const mode: NegotiationMode = b.mode === 'mandate' ? 'mandate' : 'relay';
+      const form = {
+        open: String(b.open ?? ''),
+        limit: String(b.limit ?? ''),
+        step: String(b.step ?? ''),
+        ccy: String(b.ccy ?? ''),
+      };
+      const wroteNumbers = [form.open, form.limit, form.step, form.ccy].some((x) => x.trim() !== '');
+
+      // Switching to Auto-negotiate without numbers is the one combination
+      // that cannot stand: it would leave an agent inside a box with no walls.
+      if (mode === 'mandate' && !wroteNumbers && !v.mandate) {
+        return html(
+          reply,
+          home.cardNumbersPage(
+            { ...v, mode, form },
+            'Auto-negotiate needs your numbers. Write at least a limit and a currency.',
+          ),
+          400,
+        );
+      }
+      let mandate: ReturnType<typeof validateMandate> | undefined;
+      if (wroteNumbers) {
+        mandate = validateMandate(form, v.type);
+        if (!mandate.ok) {
+          return html(reply, home.cardNumbersPage({ ...v, mode, form }, mandate.error), 400);
+        }
+      }
+      await saveNegotiation(
+        s.accountId!,
+        id,
+        { mode, ...(mandate?.ok ? { mandate: mandate.value } : {}) },
+        'counter',
+      );
+      const saved = await numbersView(s.accountId!, id);
+      return html(
+        reply,
+        home.cardNumbersPage(
+          saved!,
+          undefined,
+          `Saved. This card negotiates on ${MODE_NAMES[mode]}.`,
+        ),
+      );
+    });
+
+    counter.post('/ledger/:id/numbers/clear', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const id = String((req.params as any).id);
+      const v = await numbersView(s.accountId!, id);
+      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      await saveNegotiation(s.accountId!, id, { mode: 'relay', mandate: null }, 'counter');
+      const saved = await numbersView(s.accountId!, id);
+      return html(
+        reply,
+        home.cardNumbersPage(
+          saved!,
+          undefined,
+          `Cleared. This card is back on ${MODE_NAMES.relay} — every figure comes from you.`,
+        ),
+      );
+    });
+
+    // ------------------------------------------------------------------
+    // 1.E: the offers on one match, and the box where this person types the
+    // next figure. Sending one is the human acting, so it needs a signed-in
+    // session — and no more than that, because a proposal binds nothing.
+    // Accepting one still asks for the PIN, on /counter/approve.
+    // ------------------------------------------------------------------
+    const offersView = async (
+      accountId: string,
+      matchId: string,
+    ): Promise<home.MatchOffersView | undefined> => {
+      const m = await ops.matchForHuman(accountId, matchId);
+      if (!m) return undefined;
+      const offers = await ops.offersOnMatch(matchId);
+      const blocked =
+        m.state !== 'open'
+          ? 'This match is closed, so no more figures can go across it.'
+          : m.stage < 2
+            ? 'Offers open once both sides have shown interest.'
+            : undefined;
+      return {
+        matchId,
+        cardId: m.card_id,
+        category: categoryLeafLabel(m.category),
+        type: m.card_type,
+        mode: m.negotiation_mode,
+        canOffer: !blocked,
+        canOfferBlockedBecause: blocked,
+        offers: offers.map((o) => ({
+          amount: `${Number(o.amount)} ${o.ccy}`,
+          mine: o.proposer_account === accountId,
+          state: o.state,
+          authoredByMe: o.proposer_account === accountId ? o.authored_by : undefined,
+          note: o.message?.text,
+          expires: new Date(o.expiry).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+        })),
+      };
+    };
+
+    counter.get('/matches/:id', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const v = await offersView(s.accountId!, String((req.params as any).id));
+      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
+      return html(reply, home.matchOffersPage(v));
+    });
+
+    counter.post('/matches/:id/offer', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const matchId = String((req.params as any).id);
+      const v = await offersView(s.accountId!, matchId);
+      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
+      const b: any = req.body ?? {};
+      const form = {
+        amount: String(b.amount ?? '').trim(),
+        ccy: String(b.ccy ?? '').trim().toUpperCase(),
+        note: String(b.note ?? ''),
+      };
+      const bad = (error: string, code = 400) =>
+        html(reply, home.matchOffersPage({ ...v, form }, error), code);
+
+      const amount = Number(form.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return bad('Your number needs to be more than nothing.');
+      if (Math.round(amount * 100) !== Number((amount * 100).toFixed(6))) {
+        return bad('Your number goes no finer than cents.');
+      }
+      if (!/^[A-Z]{3}$/.test(form.ccy)) return bad('The currency is a three-letter code, like AUD.');
+      const note = validateOfferNote(form.note);
+      if (!note.ok) return bad(note.error);
+      const days = [3, 7, 14].includes(Number(b.good_for)) ? Number(b.good_for) : 7;
+
+      try {
+        await proposeOffer(
+          cfg,
+          s.accountId!,
+          {
+            match_id: matchId,
+            amount: Math.round(amount * 100) / 100,
+            ccy: form.ccy,
+            expiry: new Date(Date.now() + days * 86_400_000).toISOString(),
+            ...(note.value ? { message: note.value } : {}),
+          },
+          // The human typed this figure on their own page, so the card's
+          // negotiation mode has nothing to say about it: the mode governs
+          // what an AGENT may author, and this is the human authoring.
+          { author: 'human' },
+        );
+      } catch (e: any) {
+        if (e instanceof OsbError) {
+          return bad(
+            e.payload.human_action ??
+              (e.payload.code === 'RATE_LIMITED_OFFERS' || e.payload.code === 'QUOTA_EXCEEDED'
+                ? 'That is more offers than this match takes in a day. Try again later.'
+                : 'This match is not taking offers right now.'),
+            429,
+          );
+        }
+        if (e?.notFound) return bad('This match is no longer yours to offer on.', 404);
+        throw e;
+      }
+      const after = await offersView(s.accountId!, matchId);
+      return html(
+        reply,
+        home.matchOffersPage(after!, undefined, 'Sent. Your number is on the table for the other side.'),
       );
     });
 

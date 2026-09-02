@@ -31,6 +31,7 @@ import {
   minimalWant,
   poll,
   sendOp,
+  setAutoNegotiate,
   sha256hex,
   waitForCardState,
   type TestActor,
@@ -259,6 +260,9 @@ test('offer arrives: approval link is single-use', async () => {
   // Stage 1 -> 2 (offers unlock), then bob proposes and alice's agent parks it.
   await mcpCall(aliceToken, 'respond', { match_id: matchId, action: 'express_interest' });
   await mcpCall(bob.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+  // Bob's card starts on "Pass on", so his human writes a floor on it before
+  // his agent can name any figure at all.
+  await setAutoNegotiate(bob.jar, haveId, { limit: 50 });
   const offer = await mcpCall(bob.accessToken, 'respond', {
     match_id: matchId,
     action: 'propose_offer',
