@@ -435,7 +435,10 @@ export function ambiguousPlaces(input: string): Place[] | undefined {
     out.push(p);
     if (out.length === 5) break;
   }
-  return out;
+  // Two towns of one name in one division leave nothing to choose between:
+  // no qualified form tells them apart, so asking would get nowhere. The
+  // larger one answers, the way it did before.
+  return out.length < 2 ? undefined : out;
 }
 
 /**
