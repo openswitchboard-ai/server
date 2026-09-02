@@ -745,6 +745,7 @@ describe('the human page class owns both settings', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('THEIRS');
     expect(res.body).toContain('5000 AUD');
+    expect(res.body).toContain('Their words:');
     expect(res.body).toContain('Firm on this one.');
     expect(res.body).toContain('Reply with your number');
     // The other side's mode and numbers are no part of this page.
