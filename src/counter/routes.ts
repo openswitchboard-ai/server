@@ -1471,12 +1471,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
       } catch (e: any) {
         if (e instanceof OsbError) {
+          const rateLimited =
+            e.payload.code === 'RATE_LIMITED_OFFERS' || e.payload.code === 'QUOTA_EXCEEDED';
           return bad(
-            e.payload.human_action ??
-              (e.payload.code === 'RATE_LIMITED_OFFERS' || e.payload.code === 'QUOTA_EXCEEDED'
-                ? 'That is more offers than this match takes in a day. Try again later.'
-                : 'This match is not taking offers right now.'),
-            429,
+            rateLimited
+              ? 'That is more offers than this match takes in a day. Your figure is safe here; try again later.'
+              : (e.payload.human_action ?? 'This match is not taking offers right now.'),
+            rateLimited ? 429 : 409,
           );
         }
         if (e?.notFound) return bad('This match is no longer yours to offer on.', 404);

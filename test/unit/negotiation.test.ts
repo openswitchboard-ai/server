@@ -689,6 +689,13 @@ describe('the human page class owns both settings', () => {
     expect(world.offers).toHaveLength(3);
   });
 
+  it('a match that has moved on says so rather than 500ing', async () => {
+    world.matchState = 'closed';
+    const res = await inject('POST', `/counter/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' });
+    expect(res.statusCode).toBe(409);
+    expect(world.offers).toHaveLength(0);
+  });
+
   it('switching to Auto-negotiate with no numbers is refused; with them it saves', async () => {
     const bare = await inject('POST', `/counter/ledger/${CARD_W}/numbers`, { mode: 'mandate' });
     expect(bare.statusCode).toBe(400);
