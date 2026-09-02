@@ -119,6 +119,19 @@ d('one city, two spellings, one match', () => {
     }
   });
 
+  it('refuses a bare state or territory, and says to name a town in it', async () => {
+    // A card posted as "ACT" once resolved to Waco, Texas, on an airport code
+    // the source data hangs off the city. The switchboard now refuses the
+    // shorthand outright and asks for a real place inside it.
+    const r = await mcpCall(alice.accessToken, 'publish_intent', {
+      card: card('WANT', 'ACT'),
+    });
+    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
+    expect(r.result.human_action).toMatch(/state or territory/i);
+    expect(r.result.human_action).toContain('Australian Capital Territory');
+  });
+
   it('refuses a street address, and a name nothing answers to', async () => {
     // A leading street number never gets past the protocol schema itself.
     const numbered = await mcpCall(alice.accessToken, 'publish_intent', {
