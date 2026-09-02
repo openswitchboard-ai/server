@@ -18,6 +18,12 @@
  *     meet only cards holding the same bucket. That path exists for cards
  *     written before 0.3.0 and for run-scoped test islands, and it is the
  *     one case where a card has no coordinates.
+ *
+ * Resolution is never silent about a doubt. Text that names an area too wide
+ * to put a person in, and a name that several real cities answer to, are both
+ * refused with something the agent can act on rather than resolved to a point
+ * nobody chose. What does resolve comes back written out in full, so the
+ * agent can read it to its human and the human can say it is wrong.
  */
 import { OsbError } from '../protocol.js';
 import { decodeGeohash, encodeGeohash, isGeohash } from './geohash.js';
@@ -170,9 +176,13 @@ function refuseUnplaceable(text: string): void {
 }
 
 /**
- * Resolve a card's geo into stored columns. Throws a machine-readable
- * LOCATION_UNRESOLVED when the text is a street address or names nothing the
- * gazetteer knows.
+ * Resolve a card's geo into stored columns, and say what it resolved to.
+ *
+ * Throws a machine-readable LOCATION_UNRESOLVED when the text is a street
+ * address, names nothing the gazetteer knows, or names an area too wide to
+ * put a person in — a state, a country, a country code. Throws
+ * LOCATION_AMBIGUOUS, with the candidates, when several real cities answer to
+ * the name and none of them plainly owns it.
  */
 export function normaliseGeo(geo: any): NormalisedGeo {
   const place: string | undefined =
