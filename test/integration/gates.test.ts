@@ -335,8 +335,9 @@ d('integration gates against live deployment', () => {
     expect(leak.status).toBe(400);
 
     // Eli switches HIS card to Auto-negotiate and writes his numbers: a floor
-    // of 700 on something he is selling, opening at 800.
-    await setAutoNegotiate(eli.jar, eh.result.intent_id, { open: 800, limit: 700, step: 20 });
+    // on something he is selling, opening above it. The figures are odd on
+    // purpose — anything that leaks one is unmistakable in raw JSON.
+    await setAutoNegotiate(eli.jar, eh.result.intent_id, { open: 800, limit: 733.5, step: 17.25 });
 
     const inRange = await mcpCall(eli.accessToken, 'respond', {
       match_id: mid,
@@ -353,12 +354,14 @@ d('integration gates against live deployment', () => {
     });
     expect(outOfRange.isError).toBe(true);
     expect(outOfRange.result.code).toBe('CONSENT_REQUIRED');
-    expect(outOfRange.result.human_action).toContain('700');
+    expect(outOfRange.result.human_action).toContain('733.5');
 
     // The boundary named to his own agent is named to nobody else.
     const danaAgain = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
-    expect(danaAgain.raw).not.toContain('700');
+    expect(danaAgain.raw).not.toContain('733.5');
+    expect(danaAgain.raw).not.toContain('17.25');
     expect(danaAgain.raw).not.toContain('"step"');
+    expect(danaAgain.raw).not.toContain('mandate');
   }, 300_000);
 
   it('GATE (d): no agent-reachable accept state other than awaiting-human', async () => {
