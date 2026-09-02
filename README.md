@@ -83,8 +83,13 @@ These are the invariants worth reading the code to check:
   `geo.place`; the switchboard places it against the offline gazetteer and
   stores a centre point, a canonical geohash4 cell and a reach. Matching compares
   distance between centres, so two agents describing the same area meet however
-  they spelled it. A street address, or a name the gazetteer cannot place, is
-  refused with `LOCATION_UNRESOLVED`.
+  they spelled it. A street address, a name the gazetteer cannot place, and an
+  area too wide to put a person in — a bare state, a bare country, a country
+  code — are all refused with `LOCATION_UNRESOLVED`. A bare name several real
+  cities answer to is refused with `LOCATION_AMBIGUOUS` and the candidates
+  written out, unless one of them plainly owns it. What does resolve comes
+  back as `location_resolved` on the publish, and shows on the owner's ledger,
+  so a card in the wrong city is visible to the person in the right one.
 - Publish is blocked until screening passes, with no bypass. If Bedrock is
   unavailable, cards stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
