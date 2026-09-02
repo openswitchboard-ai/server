@@ -234,6 +234,17 @@ export async function poll<T>(
   }
 }
 
+/**
+ * Test-actor addresses live on the SES mailbox simulator, NOT a real domain:
+ * simulator deliveries are accepted in the sandbox and do NOT count against
+ * the account's daily sending quota. (Real `testsuite+…@openswitchboard.ai`
+ * addresses did, and two e2e runs' worth of summons/verification mail
+ * exhausted the 200/day sandbox quota on 2026-09-01, failing every suite that
+ * waits on an email side effect.)
+ */
+const testEmail = () =>
+  `success+testsuite-${randomBytes(6).toString('hex')}@simulator.amazonses.com`;
+
 export interface TestActor {
   email: string;
   accountId: string;
@@ -245,7 +256,7 @@ export interface TestActor {
 /** Bootstrap a dev account via the internal ops queue, then run the full
  * OAuth 2.1 flow (DCR + counter login/consent + PKCE) against live dev. */
 export async function bootstrapActor(firstName: string, locality: string): Promise<TestActor> {
-  const email = `testsuite+${randomBytes(6).toString('hex')}@openswitchboard.ai`;
+  const email = testEmail();
   const code = `osb-dev-${randomBytes(18).toString('base64url')}`;
   const salt = randomBytes(16);
   const hash = `scrypt$${salt.toString('hex')}$${scryptSync(code, salt, 32).toString('hex')}`;
@@ -277,7 +288,7 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
  * collection path.
  */
 export async function registerActor(): Promise<TestActor> {
-  const email = `testsuite+${randomBytes(6).toString('hex')}@openswitchboard.ai`;
+  const email = testEmail();
   const jar = new Jar();
   const start = await counterFetch(jar, '/register', form({ email }));
   if (start.status !== 200) throw new Error(`register start failed: ${start.status}`);
