@@ -6,7 +6,7 @@
  *      MCP -> match-less state -> ledger shows card -> withdraw;
  *  (b) approval link single-use (second GET -> clean "already used" page)
  *      and expiry (expires_at manipulated in the TEST database);
- *  (c) route isolation live: an MCP bearer token 403s on EVERY /counter
+ *  (c) route isolation live: an MCP bearer token 403s on EVERY /
  *      route (enumerated from the app's own route table) and a counter
  *      session cookie 401s on /mcp;
  *  (d) 6 wrong PINs -> lockout with backoff;
@@ -113,7 +113,7 @@ async function shot(page: Page, name: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 test('register: email -> code -> PIN -> consent -> account live', async () => {
-  await page.goto('/counter');
+  await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Your approval page.' })).toBeVisible();
   await shot(page, '01-landing');
 
@@ -222,7 +222,7 @@ test('agent posts a card; matches are empty; ledger shows it', async () => {
   const m = await mcpCall(aliceToken, 'check_matches', { intent_id: aliceCardId });
   expect(m.result.matches).toEqual([]);
 
-  await page.goto('/counter/ledger');
+  await page.goto('/ledger');
   // COPY CULL (0.H): the ledger shows the taxonomy's human label, and the raw
   // slug appears nowhere on the page.
   await expect(page.getByText('Mountain bikes')).toBeVisible();
@@ -278,12 +278,12 @@ test('offer arrives: approval link is single-use', async () => {
 
   const { token } = await latestLinkToken(aliceAccountId);
   // First authenticated GET renders the approval page and burns the link.
-  await page.goto(`/counter/a/${token}`);
+  await page.goto(`/a/${token}`);
   await expect(page.getByRole('heading', { name: 'Approve this settlement?' })).toBeVisible();
   await expect(page.getByText('100 AUD')).toBeVisible();
   await shot(page, '10-approval-from-link');
   // Second GET: clean "already used" page.
-  await page.goto(`/counter/a/${token}`);
+  await page.goto(`/a/${token}`);
   await expect(page.getByRole('heading', { name: 'Already used.' })).toBeVisible();
   await expect(page.getByText('works exactly once')).toBeVisible();
   await shot(page, '11-link-already-used');
@@ -307,7 +307,7 @@ test('approval link expires (created_at/expires_at manipulated in test DB)', asy
         expires_at = now() - interval '1 minute' WHERE id = :id::uuid`,
     [{ name: 'id', value: id }],
   );
-  await page.goto(`/counter/a/${token}`);
+  await page.goto(`/a/${token}`);
   await expect(page.getByRole('heading', { name: 'Link expired.' })).toBeVisible();
   await expect(page.getByText('links live for 15 minutes')).toBeVisible();
   await shot(page, '12-link-expired');
@@ -327,7 +327,7 @@ test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async 
     offer_id: offer.result.offer_id,
   });
 
-  await page.goto('/counter');
+  await page.goto('/');
   await expect(page.getByText('WAITING FOR YOU').first()).toBeVisible();
   await shot(page, '13-dashboard-pending');
   await page.getByRole('link', { name: 'Review & decide' }).first().click();
@@ -352,7 +352,7 @@ test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async 
 });
 
 test('ledger: withdraw is immediate', async () => {
-  await page.goto('/counter/ledger');
+  await page.goto('/ledger');
   await page
     .locator(`[data-card-id="${aliceCardId}"]`)
     .getByRole('button', { name: 'Withdraw' })
@@ -369,7 +369,7 @@ test('ledger: withdraw is immediate', async () => {
 // Gate (c): route isolation against LIVE dev, full enumeration.
 // ---------------------------------------------------------------------------
 
-test('route isolation live: bearer x every /counter route; cookie x /mcp', async () => {
+test('route isolation live: bearer x every human-page route; cookie x /mcp', async () => {
   // Enumerate the whole route class from the app's own route table.
   process.env.COUNTER_LINK_HMAC_KEY ??= 'aa'.repeat(32);
   process.env.COUNTER_COOKIE_KEY ??= 'bb'.repeat(32);
@@ -379,7 +379,8 @@ test('route isolation live: bearer x every /counter route; cookie x /mcp', async
     envName: 'dev',
     port: 0,
     publicOrigin: 'https://mcp.test',
-    counterOrigin: 'https://counter.test',
+    counterOrigin: 'https://my.test',
+    legacyCounterHosts: ['counter.test'],
     sesFrom: 'x',
     sesReplyTo: 'x',
     sesConfigurationSet: 'x',
@@ -446,7 +447,7 @@ test('6 wrong PINs lock the PIN with backoff', async () => {
     { name: 'a', value: aliceAccountId },
   ]);
   const attempt = async (pin: string) =>
-    counterFetch(jar, '/counter/pin/verify', {
+    counterFetch(jar, '/pin/verify', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ pin }).toString(),
@@ -474,7 +475,7 @@ test('6 wrong PINs lock the PIN with backoff', async () => {
 // ---------------------------------------------------------------------------
 
 test('kill switch suspends agent tokens; PIN un-pauses', async () => {
-  await page.goto('/counter');
+  await page.goto('/');
   await page.getByRole('button', { name: 'Pause everything now' }).click();
   await expect(page.getByText('Everything is paused.')).toBeVisible();
   await shot(page, '17-kill-switch-on');

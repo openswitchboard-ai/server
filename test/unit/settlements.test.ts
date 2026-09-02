@@ -34,7 +34,8 @@ const baseCfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -201,7 +202,7 @@ describe('route surface', () => {
     const counterHost = await app.inject({
       method: 'POST',
       url: '/stripe/webhook',
-      headers: { host: 'counter.test', 'content-type': 'application/json' },
+      headers: { host: 'my.test', 'content-type': 'application/json' },
       payload: '{}',
     });
     expect(counterHost.statusCode).toBe(404);

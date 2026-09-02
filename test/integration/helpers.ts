@@ -4,7 +4,10 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
 
 export const BASE_URL = process.env.OSB_BASE_URL ?? 'https://mcp-dev.openswitchboard.ai';
-export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
+export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://my-dev.openswitchboard.ai';
+/** The hostname the human pages used to be on. It still answers, with a 308. */
+export const LEGACY_COUNTER_URL =
+  process.env.OSB_LEGACY_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
 export const ENV_NAME = process.env.OSB_TEST_ENV ?? 'dev';
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
@@ -97,13 +100,13 @@ const form = (o: Record<string, string>) => ({
 });
 
 /**
- * Sign in to the counter by email code: POST /counter/login creates the
+ * Sign in to the counter by email code: POST /login creates the
  * verification (the server genuinely attempts the SES send), then the
  * harness stamps a known code onto that row (sandbox-era observability) and
  * submits it.
  */
 export async function counterLogin(jar: Jar, email: string): Promise<void> {
-  const res = await counterFetch(jar, '/counter/login', form({ email }));
+  const res = await counterFetch(jar, '/login', form({ email }));
   if (res.status !== 200) throw new Error(`login start failed: ${res.status}`);
   const htmlBody = await res.text();
   const m = htmlBody.match(/name="verification_id" value="([^"]+)"/);
@@ -114,15 +117,15 @@ export async function counterLogin(jar: Jar, email: string): Promise<void> {
     { name: 'h', value: sha256hex(`${code}:${verificationId}`) },
     { name: 'id', value: verificationId },
   ]);
-  const v = await counterFetch(jar, '/counter/verify', form({ verification_id: verificationId, code }));
+  const v = await counterFetch(jar, '/verify', form({ verification_id: verificationId, code }));
   if (v.status !== 303) throw new Error(`verify failed: ${v.status} ${await v.text()}`);
 }
 
 /** Ensure the signed-in account has a PIN (sets one if the flow asks for it). */
 export async function ensurePin(jar: Jar, pin = '246810'): Promise<string> {
-  const res = await counterFetch(jar, '/counter');
-  if (res.status === 303 && res.headers.get('location')?.includes('/counter/pin')) {
-    const set = await counterFetch(jar, '/counter/pin/set', form({ pin, pin2: pin }));
+  const res = await counterFetch(jar, '/');
+  if (res.status === 303 && res.headers.get('location')?.includes('/pin')) {
+    const set = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
     if (set.status !== 303) throw new Error(`pin set failed: ${set.status}`);
   }
   return pin;
@@ -130,7 +133,7 @@ export async function ensurePin(jar: Jar, pin = '246810'): Promise<string> {
 
 /**
  * Issue an agent key the way a human does: a signed-in counter session plus a
- * PIN ceremony on /counter/agent-keys. Returns the plaintext key (shown once)
+ * PIN ceremony on /agent-keys. Returns the plaintext key (shown once)
  * and the handle the approval page revokes it by.
  */
 export async function createAgentKey(
@@ -138,12 +141,12 @@ export async function createAgentKey(
   pin: string,
   name = 'integration-suite key',
 ): Promise<{ token: string; keyId: string }> {
-  const res = await counterFetch(jar, '/counter/agent-keys', form({ name, pin }));
+  const res = await counterFetch(jar, '/agent-keys', form({ name, pin }));
   if (res.status !== 200) throw new Error(`agent key create failed: ${res.status}`);
   const body = await res.text();
   const token = body.match(/id="keybox">(osb_ak_[A-Za-z0-9_-]+)</)?.[1];
   if (!token) throw new Error('no key on the created page');
-  const list = await counterFetch(jar, '/counter/agent-keys');
+  const list = await counterFetch(jar, '/agent-keys');
   const keyId = (await list.text()).match(/name="key_id" value="([0-9a-f-]{36})"/)?.[1];
   if (!keyId) throw new Error('new key is missing from the listing');
   return { token, keyId };
@@ -165,7 +168,7 @@ export async function setAutoNegotiate(
 ): Promise<void> {
   const res = await counterFetch(
     jar,
-    `/counter/ledger/${cardId}/numbers`,
+    `/ledger/${cardId}/numbers`,
     form({
       mode: 'mandate',
       ...(numbers.open !== undefined ? { open: String(numbers.open) } : {}),
@@ -187,7 +190,7 @@ export async function humanOffer(
 ): Promise<Response> {
   return counterFetch(
     jar,
-    `/counter/matches/${matchId}/offer`,
+    `/matches/${matchId}/offer`,
     form({
       amount: String(o.amount),
       ccy: o.ccy ?? 'AUD',
@@ -199,7 +202,7 @@ export async function humanOffer(
 
 /** Revoke an agent key from the approval page. */
 export async function revokeAgentKey(jar: Jar, keyId: string): Promise<void> {
-  const res = await counterFetch(jar, '/counter/agent-keys/revoke', form({ key_id: keyId }));
+  const res = await counterFetch(jar, '/agent-keys/revoke', form({ key_id: keyId }));
   if (res.status !== 200) throw new Error(`agent key revoke failed: ${res.status}`);
 }
 
@@ -276,7 +279,7 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
 export async function registerActor(): Promise<TestActor> {
   const email = `testsuite+${randomBytes(6).toString('hex')}@openswitchboard.ai`;
   const jar = new Jar();
-  const start = await counterFetch(jar, '/counter/register', form({ email }));
+  const start = await counterFetch(jar, '/register', form({ email }));
   if (start.status !== 200) throw new Error(`register start failed: ${start.status}`);
   const verificationId = (await start.text()).match(/name="verification_id" value="([^"]+)"/)?.[1];
   if (!verificationId) throw new Error('no verification_id on the code page');
@@ -285,13 +288,13 @@ export async function registerActor(): Promise<TestActor> {
     { name: 'h', value: sha256hex(`${code}:${verificationId}`) },
     { name: 'id', value: verificationId },
   ]);
-  const v = await counterFetch(jar, '/counter/verify', form({ verification_id: verificationId, code }));
+  const v = await counterFetch(jar, '/verify', form({ verification_id: verificationId, code }));
   if (v.status !== 303) throw new Error(`verify failed: ${v.status}`);
 
   const pin = '246810';
-  const setPin = await counterFetch(jar, '/counter/pin/set', form({ pin, pin2: pin }));
+  const setPin = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
   if (setPin.status !== 303) throw new Error(`pin set failed: ${setPin.status}`);
-  const consent = await counterFetch(jar, '/counter/consent', form({ adult: 'yes', consent: 'yes' }));
+  const consent = await counterFetch(jar, '/consent', form({ adult: 'yes', consent: 'yes' }));
   if (consent.status !== 303) throw new Error(`consent failed: ${consent.status}`);
 
   const accountId = (
@@ -308,7 +311,7 @@ export async function registerActor(): Promise<TestActor> {
 export async function readSharedProfilePage(
   jar: Jar,
 ): Promise<{ firstName: string; locality: string }> {
-  const res = await counterFetch(jar, '/counter/profile');
+  const res = await counterFetch(jar, '/profile');
   if (res.status !== 200) throw new Error(`profile page: ${res.status}`);
   const body = await res.text();
   return {
@@ -323,7 +326,7 @@ export async function setSharedProfile(
   firstName: string,
   locality: string,
 ): Promise<Response> {
-  return counterFetch(jar, '/counter/profile', form({ first_name: firstName, locality }));
+  return counterFetch(jar, '/profile', form({ first_name: firstName, locality }));
 }
 
 /**
@@ -336,12 +339,12 @@ export async function approveDisclosure(
   pin: string,
   shared?: { firstName: string; locality: string },
 ): Promise<{ status: number; body: string; asked: boolean }> {
-  const page = await counterFetch(jar, `/counter/approvals/match/${matchId}`);
+  const page = await counterFetch(jar, `/approvals/match/${matchId}`);
   const pageBody = await page.text();
   const asked = pageBody.includes('name="first_name"');
   const res = await counterFetch(
     jar,
-    '/counter/approve',
+    '/approve',
     form({
       action: 'stage3-disclosure',
       ref_id: matchId,
@@ -397,7 +400,7 @@ export async function oauthFlow(jar: Jar): Promise<string> {
   // 4. The counter authorize page (signed-in session) + approval post.
   const page = await counterFetch(jar, counterUrl);
   if (page.status !== 200) throw new Error(`counter authorize page: ${page.status} -> ${page.headers.get('location')}`);
-  const approve = await counterFetch(jar, '/counter/authorize', {
+  const approve = await counterFetch(jar, '/authorize', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ decision: 'approve' }).toString(),

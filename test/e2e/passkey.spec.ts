@@ -3,7 +3,7 @@
  * CDP virtual authenticator standing in for Touch ID / a security key.
  *
  * This is the regression cover for the enrolment bug where every
- * POST /counter/passkey/verify answered 400 no_pending_challenge: the
+ * POST /passkey/verify answered 400 no_pending_challenge: the
  * take-challenge UPDATE read back its own NULL (Postgres RETURNING sees NEW
  * values), so the challenge the options call had just stored was never
  * visible to verify. Nothing here is mocked: real registration, real
@@ -35,14 +35,14 @@ test('passkey enrolment: virtual authenticator enrols during registration', asyn
   // Surface the verify response so a failure names the server's own error.
   const verifyResponses: { status: number; body: string }[] = [];
   page.on('response', async (r) => {
-    if (r.url().endsWith('/counter/passkey/verify')) {
+    if (r.url().endsWith('/passkey/verify')) {
       verifyResponses.push({ status: r.status(), body: await r.text().catch(() => '') });
     }
   });
 
   try {
     // Register: email -> code -> PIN -> the passkey offer.
-    await page.goto('/counter/register');
+    await page.goto('/register');
     await page.getByLabel('Email').fill(email);
     await page.getByRole('button', { name: 'Email me a code' }).click();
     await expect(page.getByText('Enter the six-digit code')).toBeVisible();
@@ -77,11 +77,11 @@ test('passkey enrolment: virtual authenticator enrols during registration', asyn
 
     await page.getByRole('button', { name: 'Add a passkey' }).click();
 
-    // The page only leaves for /counter/consent when verify answered 2xx.
-    await page.waitForURL(/\/counter\/consent/, { timeout: 30_000 });
+    // The page only leaves for /consent when verify answered 2xx.
+    await page.waitForURL(/\/consent/, { timeout: 30_000 });
     expect(
       verifyResponses.map((r) => `${r.status} ${r.body}`).join(' | '),
-      'POST /counter/passkey/verify must succeed',
+      'POST /passkey/verify must succeed',
     ).toMatch(/^200 /);
     await expect(page.locator('#pkerr')).toHaveCount(0);
 

@@ -11,6 +11,7 @@ import { categoryLeafLabel } from '../domain/matchRules.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
+import { checkReadRate } from '../domain/quotas.js';
 import { settlementsConfigured, type Config } from '../config.js';
 
 export interface ToolDef {
@@ -248,7 +249,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'standing_arrangement',
     description:
-      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — how often to check, what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. The arrangement is remembered by the switchboard and handed to every agent on every check_matches sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or card content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
+      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — how often to check (`check_every_minutes`, a number of minutes with a 30-minute floor), what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. The arrangement is remembered by the switchboard and handed to every agent on every check_matches sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or card content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -257,10 +258,12 @@ export const TOOLS: ToolDef[] = [
           type: 'object',
           description: "Required for 'set'. The complete new arrangement; it replaces the old one.",
           properties: {
-            check_cadence: {
-              type: 'string',
-              maxLength: arrangement.SHORT_FIELD_MAX,
-              description: 'How often to check, in your human\'s words, e.g. "twice a day".',
+            check_every_minutes: {
+              type: 'integer',
+              minimum: arrangement.CHECK_EVERY_MINUTES_MIN,
+              maximum: arrangement.CHECK_EVERY_MINUTES_MAX,
+              description:
+                'How often to check, as a number of MINUTES. Agree it with your human in words and write the number: "twice a day" is 720, "every couple of hours" is 120. The floor is 30 — the switchboard refuses anything more often than every 30 minutes — and the ceiling is 10080 (a week). Leave it out and you check only when your human asks.',
             },
             interrupt_for: {
               type: 'array',
@@ -350,6 +353,9 @@ function invalidInput(message: string): ToolResult {
   };
 }
 
+/** The read surface: cheap to call, easy to loop, so it shares one ceiling. */
+const READ_TOOLS = new Set(['check_matches', 'channel_receive', 'list_intents']);
+
 export async function dispatchTool(
   cfg: Config,
   accountId: string,
@@ -357,6 +363,10 @@ export async function dispatchTool(
   args: any,
 ): Promise<ToolResult> {
   try {
+    // The three tools an unattended agent can call in a loop share one hourly
+    // ceiling. Checked before the work, so a refused call costs the switchboard
+    // a single statement.
+    if (READ_TOOLS.has(name)) await checkReadRate(accountId);
     switch (name) {
       case 'publish_intent':
         return ok(await cards.publishIntent(cfg, accountId, args?.card));

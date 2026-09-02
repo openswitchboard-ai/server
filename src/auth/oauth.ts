@@ -176,7 +176,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
     if (v.error) {
       return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
     }
-    const target = new URL('/counter/authorize', cfg.counterOrigin);
+    const target = new URL('/authorize', cfg.counterOrigin);
     for (const k of [
       'client_id',
       'redirect_uri',

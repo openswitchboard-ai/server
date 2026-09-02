@@ -103,7 +103,7 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
 <style>${CSS}</style>${opts.head ?? ''}</head><body>
 <div class="wrap">
 <header class="site"><span class="octo">🐙</span>
-  <a href="/counter"><span class="brand">OpenSwitchboard</span></a>
+  <a href="/"><span class="brand">OpenSwitchboard</span></a>
   <span class="sub">your approval page</span></header>
 ${body}
 <footer>Everything agents must never do, you do here.<br>openswitchboard.ai</footer>
@@ -121,8 +121,8 @@ export function landingPage(): string {
 negotiating. This page is the one place where <em>you</em> do everything it
 never can: open the account, set your PIN, approve what gets shared or paid,
 see the ledger, pull the plug.</p>
-<a class="btn" href="/counter/register">Open an account</a>
-<a class="btn secondary" href="/counter/login">Sign in</a>`);
+<a class="btn" href="/register">Open an account</a>
+<a class="btn secondary" href="/login">Sign in</a>`);
 }
 
 export function registerEmailPage(error?: string): string {
@@ -130,12 +130,12 @@ export function registerEmailPage(error?: string): string {
 <h1>Open an account.</h1>
 <p>We'll email you a six-digit code to prove this address is yours.</p>
 ${errBox(error)}
-<form method="POST" action="/counter/register">
+<form method="POST" action="/register">
   <label for="email">Email</label>
   <input id="email" name="email" type="email" autocomplete="email" required autofocus>
   <button type="submit">Email me a code</button>
 </form>
-<p class="small muted">Already have an account? <a href="/counter/login">Sign in</a>.</p>`);
+<p class="small muted">Already have an account? <a href="/login">Sign in</a>.</p>`);
 }
 
 export function codeEntryPage(params: {
@@ -162,7 +162,7 @@ export function pinSetPage(error?: string): string {
 <p>Six or more digits. Your PIN approves the sensitive stuff — disclosures,
 settlements, turning things back on. It never touches your agent.</p>
 ${errBox(error)}
-<form method="POST" action="/counter/pin/set">
+<form method="POST" action="/pin/set">
   <label for="pin">PIN (6+ digits)</label>
   <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
   <label for="pin2">PIN again</label>
@@ -188,12 +188,12 @@ export function passkeyOfferPage(): string {
 or your device passcode instead of email codes.</p>
 <div id="pkerr"></div>
 <button id="enrol">Add a passkey</button>
-<form method="POST" action="/counter/passkey/skip"><button class="secondary" type="submit">Skip for now</button></form>
+<form method="POST" action="/passkey/skip"><button class="secondary" type="submit">Skip for now</button></form>
 ${WEBAUTHN_HELPERS}
 <script>
 document.getElementById('enrol').addEventListener('click', async () => {
   try {
-    const opts = await postJson('/counter/passkey/options');
+    const opts = await postJson('/passkey/options');
     opts.challenge = b64uToBuf(opts.challenge);
     opts.user.id = b64uToBuf(opts.user.id);
     (opts.excludeCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
@@ -203,8 +203,8 @@ document.getElementById('enrol').addEventListener('click', async () => {
                   attestationObject: bufToB64u(cred.response.attestationObject),
                   transports: cred.response.getTransports ? cred.response.getTransports() : [] },
       clientExtensionResults: cred.getClientExtensionResults() };
-    await postJson('/counter/passkey/verify', body);
-    location.href = '/counter/consent';
+    await postJson('/passkey/verify', body);
+    location.href = '/consent';
   } catch (e) {
     document.getElementById('pkerr').innerHTML = '<div class="err">Passkey enrolment failed: '
       + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
@@ -217,7 +217,7 @@ export function consentPage(error?: string): string {
   return layout('One last thing', `
 <h1>One last thing.</h1>
 ${errBox(error)}
-<form method="POST" action="/counter/consent">
+<form method="POST" action="/consent">
   <div class="consent-box">
     <label><input type="checkbox" name="adult" value="yes" required>
       I am 18 or older.</label>
@@ -237,17 +237,17 @@ export function loginEmailPage(error?: string): string {
 ${errBox(error)}
 <div id="pkerr"></div>
 <button id="pk" class="secondary">Sign in with a passkey</button>
-<form method="POST" action="/counter/login">
+<form method="POST" action="/login">
   <label for="email">Or use email</label>
   <input id="email" name="email" type="email" autocomplete="email" required>
   <button type="submit">Email me a code</button>
 </form>
-<p class="small muted">New here? <a href="/counter/register">Open an account</a>.</p>
+<p class="small muted">New here? <a href="/register">Open an account</a>.</p>
 ${WEBAUTHN_HELPERS}
 <script>
 document.getElementById('pk').addEventListener('click', async () => {
   try {
-    const opts = await postJson('/counter/login/passkey/options');
+    const opts = await postJson('/login/passkey/options');
     opts.challenge = b64uToBuf(opts.challenge);
     (opts.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
     const cred = await navigator.credentials.get({ publicKey: opts });
@@ -257,8 +257,8 @@ document.getElementById('pk').addEventListener('click', async () => {
                   signature: bufToB64u(cred.response.signature),
                   userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
       clientExtensionResults: cred.getClientExtensionResults() };
-    const r = await postJson('/counter/login/passkey/verify', body);
-    location.href = r.next || '/counter';
+    const r = await postJson('/login/passkey/verify', body);
+    location.href = r.next || '/';
   } catch (e) {
     document.getElementById('pkerr').innerHTML = '<div class="err">Passkey sign-in failed: '
       + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
@@ -267,7 +267,7 @@ document.getElementById('pk').addEventListener('click', async () => {
 </script>`);
 }
 
-export function messagePage(title: string, html: string, backHref = '/counter', backLabel = 'Back to your approval page'): string {
+export function messagePage(title: string, html: string, backHref = '/', backLabel = 'Back to your approval page'): string {
   return layout(title, `<h1>${esc(title)}</h1>${html}
 <a class="btn secondary" href="${esc(backHref)}">${esc(backLabel)}</a>`);
 }
@@ -282,7 +282,7 @@ export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
   }[reason];
   const title = { used: 'Already used', expired: 'Link expired', invalid: 'Not a valid link' }[reason];
   return layout(title, `<h1>${esc(title)}.</h1>${text}
-<a class="btn" href="/counter">Go to your approval page</a>`);
+<a class="btn" href="/">Go to your approval page</a>`);
 }
 
 export interface ApprovalView {
@@ -316,7 +316,7 @@ export function counterOfferForm(
 <p class="small muted">What you type here goes to the other side as your offer.
 It binds nothing — either of you can still say no — and accepting anything
 still comes back to this page.</p>
-<form method="POST" action="/counter/matches/${esc(matchId)}/offer">
+<form method="POST" action="/matches/${esc(matchId)}/offer">
   <label for="amount">Your number</label>
   <input id="amount" name="amount" type="number" step="0.01" min="0" required value="${esc(opts.amount ?? '')}" placeholder="amount">
   <label for="ccy">Currency</label>
@@ -367,7 +367,7 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
   <p class="small">Your match sees a first name and a rough area. That is the whole of it.
-  You can change both any time on <a href="/counter/profile">what you share on a match</a>.</p>
+  You can change both any time on <a href="/profile">what you share on a match</a>.</p>
   ${sharedFieldsFieldset(v.collectProfile)}`
     : '';
   return layout(title, `
@@ -395,7 +395,7 @@ ${passkeyBtn}
 ${v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
 document.getElementById('pkapprove').addEventListener('click', async () => {
   try {
-    const opts = await postJson('/counter/login/passkey/options');
+    const opts = await postJson('/login/passkey/options');
     opts.challenge = b64uToBuf(opts.challenge);
     (opts.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
     const cred = await navigator.credentials.get({ publicKey: opts });
@@ -405,7 +405,7 @@ document.getElementById('pkapprove').addEventListener('click', async () => {
                   signature: bufToB64u(cred.response.signature),
                   userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
       clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true };
-    await postJson('/counter/login/passkey/verify', body);
+    await postJson('/login/passkey/verify', body);
     const f = document.getElementById('approveForm');
     const i = document.createElement('input'); i.type='hidden'; i.name='decision'; i.value='approve';
     f.appendChild(i); f.querySelector('#pin')?.removeAttribute('required'); f.submit();
@@ -496,15 +496,15 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
     .join('');
   const blocks: string[] = [];
   if (v.myApprovalPending) {
-    blocks.push(`<a class="btn" href="/counter/approvals/settlement/${esc(v.id)}">Review and decide</a>`);
+    blocks.push(`<a class="btn" href="/approvals/settlement/${esc(v.id)}">Review and decide</a>`);
   }
   if (v.needsPaymentSetup) {
-    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/payment-setup">
+    blocks.push(`<form method="POST" action="/settlements/${esc(v.id)}/payment-setup">
 <button type="submit">Finish payment setup with Stripe</button></form>
 <p class="small muted">Stripe collects your payout details directly; the switchboard never sees them.</p>`);
   }
   if (v.canPay) {
-    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/pay">
+    blocks.push(`<form method="POST" action="/settlements/${esc(v.id)}/pay">
 <button type="submit" class="approve">Pay on Stripe's secure page</button></form>
 <p class="small muted">Your card details go to Stripe only. The money is held and moves to the seller
 after you confirm receipt.</p>`);
@@ -516,7 +516,7 @@ write-once storage and shown to the buyer with the confirmation request.</p>
 <div id="evlist" class="note" style="display:none"></div>
 <div id="everr"></div>
 <input type="file" id="evfile" accept="image/jpeg,image/png,image/webp" multiple>
-<form method="POST" action="/counter/settlements/${esc(v.id)}/evidence/lock" id="lockForm">
+<form method="POST" action="/settlements/${esc(v.id)}/evidence/lock" id="lockForm">
 <button type="submit" id="lockBtn" disabled>Lock evidence</button></form>
 <script>
 const evfile = document.getElementById('evfile');
@@ -529,7 +529,7 @@ evfile.addEventListener('change', async () => {
       const bytes = await file.arrayBuffer();
       const digest = await crypto.subtle.digest('SHA-256', bytes);
       const sha = btoa(String.fromCharCode(...new Uint8Array(digest)));
-      const r = await fetch('/counter/settlements/${esc(v.id)}/evidence/presign', {
+      const r = await fetch('/settlements/${esc(v.id)}/evidence/presign', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size, sha256_b64: sha }),
@@ -568,13 +568,13 @@ evfile.addEventListener('change', async () => {
     blocks.push(`<h2>Confirm receipt</h2>
 <p>Confirming releases the held payment to the seller. Do this once the goods
 are in your hands and as described.</p>
-<form method="POST" action="/counter/settlements/${esc(v.id)}/confirm">
+<form method="POST" action="/settlements/${esc(v.id)}/confirm">
   ${pinBlock}
   <button type="submit" class="approve">Confirm receipt — release the payment</button>
 </form>`);
   }
   if (v.canDispute) {
-    blocks.push(`<form method="POST" action="/counter/settlements/${esc(v.id)}/dispute">
+    blocks.push(`<form method="POST" action="/settlements/${esc(v.id)}/dispute">
 <button type="submit" class="secondary">Dispute — send the payment back</button></form>
 <p class="small muted">A dispute returns the held payment to the buyer in full and closes the
 settlement. No reason is carried.</p>`);

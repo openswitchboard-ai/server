@@ -33,7 +33,7 @@ export async function sendVerificationEmail(
   const links = account
     ? (await emailAccountContext(cfg, account.id)).links
     : baseFooterLinks(cfg);
-  const link = `${cfg.counterOrigin}/counter/verify?t=${encodeURIComponent(linkToken)}`;
+  const link = `${cfg.counterOrigin}/verify?t=${encodeURIComponent(linkToken)}`;
   return sendEmail(cfg, {
     to,
     accountId: account?.id ?? null,
@@ -53,7 +53,7 @@ export async function sendApprovalEmail(
   summary?: string,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
-  const link = `${cfg.counterOrigin}/counter/a/${encodeURIComponent(linkToken)}`;
+  const link = `${cfg.counterOrigin}/a/${encodeURIComponent(linkToken)}`;
   return sendEmail(cfg, {
     to,
     accountId,
@@ -65,7 +65,7 @@ export async function sendApprovalEmail(
         link,
         summary: ctx.blind ? undefined : summary,
         blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/counter`,
+        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -85,7 +85,7 @@ export async function sendKillSwitchEmail(
     template: on ? 'kill-switch-on' : 'kill-switch-off',
     kind: 'transactional',
     dedupeKey: `kill-${on ? 'on' : 'off'}:${accountId}:${Date.now()}`,
-    content: renderKillSwitch({ on, counterUrl: `${cfg.counterOrigin}/counter` }, ctx.links),
+    content: renderKillSwitch({ on, counterUrl: `${cfg.counterOrigin}/` }, ctx.links),
   });
 }
 
@@ -107,7 +107,7 @@ export async function sendSecurityNoticeEmail(
       {
         event,
         agentName: ctx.blind ? undefined : agentName,
-        counterUrl: `${cfg.counterOrigin}/counter`,
+        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -145,9 +145,9 @@ export async function sendScreeningRejectedEmail(
       {
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         reason: input.reason,
-        editUrl: `${cfg.counterOrigin}/counter/ledger/${encodeURIComponent(input.cardId)}/edit`,
+        editUrl: `${cfg.counterOrigin}/ledger/${encodeURIComponent(input.cardId)}/edit`,
         blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/counter`,
+        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -178,12 +178,12 @@ export async function sendSettlementEmail(
   input: SettlementEmailInput,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, input.accountId);
-  const counterUrl = `${cfg.counterOrigin}/counter`;
+  const counterUrl = `${cfg.counterOrigin}/`;
   if (input.template === 'settlement-proposed') {
     if (!input.linkToken || !input.linkId) {
       throw new Error('settlement-proposed email requires the approval link');
     }
-    const link = `${cfg.counterOrigin}/counter/a/${encodeURIComponent(input.linkToken)}`;
+    const link = `${cfg.counterOrigin}/a/${encodeURIComponent(input.linkToken)}`;
     return sendEmail(cfg, {
       to: input.to,
       accountId: input.accountId,
@@ -208,7 +208,7 @@ export async function sendSettlementEmail(
         event: input.template,
         role: input.role,
         blind: ctx.blind,
-        settlementUrl: `${cfg.counterOrigin}/counter/settlements/${input.settlementId}`,
+        settlementUrl: `${cfg.counterOrigin}/settlements/${input.settlementId}`,
         counterUrl,
       },
       ctx.links,

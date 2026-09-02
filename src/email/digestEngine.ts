@@ -76,7 +76,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
           count: 1,
           categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
           blind: ctx.blind,
-          counterUrl: `${cfg.counterOrigin}/counter`,
+          counterUrl: `${cfg.counterOrigin}/`,
         },
         ctx.links,
       ),
@@ -118,7 +118,7 @@ export async function runSummonsBatch(cfg: Config, cadence: Cadence): Promise<nu
       kind: 'bulk',
       dedupeKey: `summons-batch:${cadence}:${accountId}:${periodKey(cadence)}`,
       content: renderSummons(
-        { count: n, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/counter` },
+        { count: n, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
         ctx.links,
       ),
     });
@@ -203,7 +203,7 @@ export async function runDigestTick(cfg: Config, cadence: Cadence): Promise<numb
       kind: 'bulk',
       dedupeKey: `digest:${cadence}:${row.id}:${periodKey(cadence)}`,
       content: renderDigest(
-        { cadence, items, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/counter` },
+        { cadence, items, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
         ctx.links,
       ),
     });
@@ -250,7 +250,7 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
       expiresAt: new Date(c.expires_at),
       expiringSoon: !!c.expiring_soon,
     }));
-    const renewAllUrl = `${cfg.counterOrigin}/counter/renew?t=${encodeURIComponent(
+    const renewAllUrl = `${cfg.counterOrigin}/renew?t=${encodeURIComponent(
       signEmailToken(accountId, 'renew-all'),
     )}`;
     const outcome = await sendEmail(cfg, {
@@ -260,7 +260,7 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
       kind: 'bulk',
       dedupeKey: `renewal:${accountId}:${expiring[0].id}`,
       content: renderRenewal(
-        { cards: items, renewAllUrl, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/counter` },
+        { cards: items, renewAllUrl, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
         ctx.links,
       ),
     });

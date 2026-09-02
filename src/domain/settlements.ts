@@ -49,7 +49,7 @@ export interface WebhookCtx {
 
 export type TransitionCtx = HumanCtx | WebhookCtx;
 
-/** Mint a human-action context. Call ONLY from /counter routes with a
+/** Mint a human-action context. Call ONLY from the human page routes with a
  *  session-authenticated human. */
 export function counterAction(accountId: string): HumanCtx {
   const ctx: HumanCtx = { kind: 'human', accountId, recordedVia: 'counter' };

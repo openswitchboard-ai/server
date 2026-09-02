@@ -19,8 +19,12 @@ export interface Config {
   envName: 'dev' | 'prod';
   port: number;
   publicOrigin: string;
-  /** Origin of the human-facing counter (separate hostname, same service). */
+  /** Origin of the human-facing pages (separate hostname, same service). */
   counterOrigin: string;
+  /** Hostnames this service used to serve the human pages on. A request
+   *  arriving on one is 308'd to the same path on counterOrigin, so links
+   *  already sent out keep working. */
+  legacyCounterHosts: string[];
   /** Secrets Manager secret holding {link_hmac_key, cookie_key}; unset only
    *  when both COUNTER_LINK_HMAC_KEY and COUNTER_COOKIE_KEY are provided
    *  directly (local test harness). */
@@ -69,6 +73,10 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 8080),
     publicOrigin: required('PUBLIC_ORIGIN'),
     counterOrigin: required('COUNTER_ORIGIN'),
+    legacyCounterHosts: (process.env.LEGACY_COUNTER_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
     counterKeysSecretArn:
       process.env.COUNTER_LINK_HMAC_KEY && process.env.COUNTER_COOKIE_KEY
         ? process.env.COUNTER_KEYS_SECRET_ARN

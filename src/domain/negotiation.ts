@@ -331,11 +331,11 @@ export async function saveNegotiation(
  * refused, with the plain instruction on its own.
  */
 export function numbersPageUrl(cfg: Config, cardId: string): string {
-  return `${cfg.counterOrigin}/counter/ledger/${encodeURIComponent(cardId)}/numbers`;
+  return `${cfg.counterOrigin}/ledger/${encodeURIComponent(cardId)}/numbers`;
 }
 
 export function matchPageUrl(cfg: Config, matchId: string): string {
-  return `${cfg.counterOrigin}/counter/matches/${encodeURIComponent(matchId)}`;
+  return `${cfg.counterOrigin}/matches/${encodeURIComponent(matchId)}`;
 }
 
 /** human_action is capped at 300 characters, so the link goes on only if it fits. */

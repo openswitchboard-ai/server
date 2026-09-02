@@ -6,20 +6,20 @@
  */
 import { test, expect } from '@playwright/test';
 
-const PROD_COUNTER = 'https://counter.openswitchboard.ai';
+const PROD_COUNTER = 'https://my.openswitchboard.ai';
 const PROD_MCP = 'https://mcp.openswitchboard.ai';
 
 test.skip(process.env.OSB_CHECK_PROD !== '1', 'prod gate runs post-deploy (OSB_CHECK_PROD=1)');
 
-test('prod /counter/register shows the closed page (GET)', async ({ page }) => {
-  await page.goto(`${PROD_COUNTER}/counter/register`);
+test('prod /register shows the closed page (GET)', async ({ page }) => {
+  await page.goto(`${PROD_COUNTER}/register`);
   await expect(page.getByRole('heading', { name: 'Registration opens at launch.' })).toBeVisible();
   await expect(page.locator('input[type=email]')).toHaveCount(0);
   await page.screenshot({ path: 'e2e-screenshots/19-prod-register-closed.png', fullPage: true });
 });
 
-test('prod /counter/register POST refuses to create anything', async () => {
-  const res = await fetch(`${PROD_COUNTER}/counter/register`, {
+test('prod /register POST refuses to create anything', async () => {
+  const res = await fetch(`${PROD_COUNTER}/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ email: 'door-check@example.com' }).toString(),

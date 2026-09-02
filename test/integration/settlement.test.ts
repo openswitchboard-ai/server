@@ -60,11 +60,11 @@ async function settleState(token: string, settlementId: string): Promise<string>
 async function approveOnCounter(actor: TestActor, settlementId: string): Promise<void> {
   const res = await counterFetch(
     actor.jar,
-    '/counter/approve',
+    '/approve',
     form({ action: 'settlement-approve', ref_id: settlementId, decision: 'approve', pin: actor.pin }),
   );
   expect(res.status, await res.clone().text().catch(() => '')).toBe(303);
-  expect(res.headers.get('location')).toBe(`/counter/settlements/${settlementId}`);
+  expect(res.headers.get('location')).toBe(`/settlements/${settlementId}`);
 }
 
 async function proposeSettlement(): Promise<string> {
@@ -139,7 +139,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
 
     // The hosted payment path is wired: the buyer's pay action redirects to
     // Stripe Checkout (the page a human buyer would complete).
-    const pay = await counterFetch(buyer.jar, `/counter/settlements/${sid}/pay`, form({}));
+    const pay = await counterFetch(buyer.jar, `/settlements/${sid}/pay`, form({}));
     expect(pay.status).toBe(303);
     expect(pay.headers.get('location')).toContain('checkout.stripe.com');
 
@@ -157,7 +157,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     // Seller locks handover evidence into the WORM vault.
     const png = tinyPng();
     const sha = createHash('sha256').update(png).digest('base64');
-    const presign = await counterFetch(seller.jar, `/counter/settlements/${sid}/evidence/presign`, {
+    const presign = await counterFetch(seller.jar, `/settlements/${sid}/evidence/presign`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ filename: 'handover.png', content_type: 'image/png', size: png.length, sha256_b64: sha }),
@@ -170,7 +170,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       body: png,
     });
     expect(put.status, await put.text()).toBe(200);
-    const lock = await counterFetch(seller.jar, `/counter/settlements/${sid}/evidence/lock`, form({}));
+    const lock = await counterFetch(seller.jar, `/settlements/${sid}/evidence/lock`, form({}));
     expect(lock.status).toBe(303);
     expect(await settleState(seller.accessToken, sid)).toBe('evidence-locked');
     const [[manifestKey]] = await dbExec(
@@ -182,7 +182,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     // Buyer confirms receipt (PIN) -> capture -> webhook releases.
     const confirm = await counterFetch(
       buyer.jar,
-      `/counter/settlements/${sid}/confirm`,
+      `/settlements/${sid}/confirm`,
       form({ pin: buyer.pin }),
     );
     expect(confirm.status, await confirm.clone().text()).toBe(200);
@@ -223,7 +223,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const piId = await fundAndWait(sid);
 
     // Buyer disputes: the held payment goes back; webhook records refunded.
-    const dispute = await counterFetch(buyer.jar, `/counter/settlements/${sid}/dispute`, form({}));
+    const dispute = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({}));
     expect(dispute.status, await dispute.clone().text()).toBe(200);
     await poll(
       async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
@@ -239,7 +239,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     expect(list.isError).toBe(false);
     const sid = list.result.settlements[0].settlement_id;
     for (const actor of [buyer, seller]) {
-      const page = await counterFetch(actor.jar, `${COUNTER_URL}/counter/settlements/${sid}`);
+      const page = await counterFetch(actor.jar, `${COUNTER_URL}/settlements/${sid}`);
       expect(page.status).toBe(200);
       const body = await page.text();
       expect(body).toContain('Settlement');
