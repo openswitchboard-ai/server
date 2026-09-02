@@ -20,6 +20,18 @@
  * is. A town is a few kilometres across, a state is a few hundred, and a
  * country is as wide as its people are spread. That reach becomes the card's
  * radius when its agent did not state one.
+ *
+ * What does NOT resolve, on purpose:
+ *   - a bare state or territory — "ACT", "NSW", "Texas". `regionNamed` names
+ *     them so the caller can refuse with guidance rather than guess a point.
+ *     Regions still resolve in their deliberate forms ("AU-ACT", "New South
+ *     Wales, Australia"), which is where a card that really means the whole
+ *     territory says so.
+ *   - a short or shouted token that only ever matched an alternate spelling.
+ *     The dump hangs airport codes off populated places — Waco carries "ACT",
+ *     Tashkent carries "TAS" — so a card reading "ACT" once landed in Texas.
+ *     A token of four characters or fewer, or one written in capitals, now has
+ *     to match a place's own name.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -107,6 +119,8 @@ let cache:
       coarseKeys: Map<number, Set<string>>;
       countryRow: Map<string, number>;
       admin1Row: Map<string, number>;
+      /** bare region name or abbreviation -> the division row it names */
+      regionKeys: Map<string, number>;
     }
   | undefined;
 
@@ -137,17 +151,26 @@ function load() {
   const coarseKeys = new Map<number, Set<string>>();
   const countryRow = new Map<string, number>();
   const admin1Row = new Map<string, number>();
+  const regionKeys = new Map<string, number>();
   for (const [key, v] of Object.entries(file.index)) {
     for (const i of Array.isArray(v) ? v : [v]) {
       if (file.rows[i]?.[6] === 0) continue; // cities carry no hint keys
       (coarseKeys.get(i) ?? coarseKeys.set(i, new Set()).get(i)!).add(key);
+      if (file.rows[i][6] !== 1) continue;
+      // A division answers to its name ("new south wales") and to keys the
+      // builder wrote with the country in front ("au nsw", "us tx", "au 02").
+      // Both forms name a region on their own; the numeric GeoNames codes do
+      // not, so they are left out.
+      const prefix = `${file.rows[i][1].toLowerCase()} `;
+      const bare = key.startsWith(prefix) ? key.slice(prefix.length) : key;
+      if (bare && !/^\d+$/.test(bare) && !regionKeys.has(bare)) regionKeys.set(bare, i);
     }
   }
   file.rows.forEach((r, i) => {
     if (r[6] === 2) countryRow.set(r[1], i);
     else if (r[6] === 1) admin1Row.set(`${r[1]}.${r[2]}`, i);
   });
-  cache = { file, coarseKeys, countryRow, admin1Row };
+  cache = { file, coarseKeys, countryRow, admin1Row, regionKeys };
   return cache;
 }
 
@@ -221,6 +244,59 @@ function best(candidates: number[]): number | undefined {
 const CODE_FORM = /^([A-Za-z]{2})[-_. ]([A-Za-z0-9]{1,4})$/;
 
 /**
+ * True when a token is too short, or too shouty, to trust to an alternate
+ * spelling. The dump gives a populated place every label anyone ever hung on
+ * it, airport codes included, so "ACT" answers to Waco and "TAS" to Tashkent.
+ * A token like that has to match a place's own name; a longer written-out
+ * name keeps every spelling the source data carries.
+ */
+function exactOnly(segment: string): boolean {
+  const s = segment.trim();
+  if (!s || /\s/.test(s)) return false; // a phrase, not a token
+  if (/[A-Za-z]/.test(s) && s === s.toUpperCase()) return true; // ACT, NSW, WA
+  return normaliseKey(s).length <= 4; // Yass, Waco, Vic
+}
+
+/** Rows answering to a key; under `exact`, only those whose own name it is. */
+function rowsNamed(key: string, exact: boolean): number[] {
+  const hits = rowsFor(key);
+  if (!exact) return hits;
+  const rows = load().file.rows;
+  return hits.filter((i) => normaliseKey(rows[i][0]) === key);
+}
+
+/**
+ * The state or territory a bare string names, if that is all it names.
+ *
+ * A card locates a human, and a human lives in a town — so "ACT", "NSW" and
+ * "Texas" are refused upstream with the name found here, rather than resolved
+ * to a centroid nobody chose. Three things are not regions in this sense: the
+ * deliberate division forms ("AU-ACT", "US-CA"), which say plainly what they
+ * mean; a country code, which is a country ("CA" is Canada, not California);
+ * and a name qualified by a hint ("Wa, Ghana"), which resolution can settle.
+ *
+ * Nor is a name a region when a substantial city answers to it: "Tokyo",
+ * "Victoria" and "New York" are the cities people mean, however many divisions
+ * share the spelling. A short or shouted token is held to the tighter test —
+ * the city has to own the name outright — because that is exactly where an
+ * airport code sits waiting ("WA" is Western Australia, not Wa in Ghana).
+ */
+export function regionNamed(input: string): string | undefined {
+  const raw = (input ?? '').trim();
+  if (!raw || raw.includes(',')) return undefined;
+  if (CODE_FORM.test(raw)) return undefined;
+  const g = load();
+  if (/^[A-Za-z]{2,3}$/.test(raw) && g.file.codes[raw.toUpperCase()] !== undefined) return undefined;
+  const key = normaliseKey(raw);
+  const region = g.regionKeys.get(key);
+  if (region === undefined) return undefined;
+  const city = rowsNamed(key, exactOnly(raw)).some(
+    (i) => g.file.rows[i][6] === 0 && g.file.rows[i][5] >= CITY_WINS_ABOVE,
+  );
+  return city ? undefined : g.file.rows[region][0];
+}
+
+/**
  * Resolve free text to one place, or undefined when nothing in the asset
  * answers to it. Street addresses are never resolved — callers check
  * looksLikeStreetAddress first and refuse the card.
@@ -250,11 +326,11 @@ export function resolvePlace(input: string): Place | undefined {
   // Whole string first ("New South Wales", "Sao Paulo"), then the leading
   // segment narrowed by whatever follows the comma.
   const whole = normaliseKey(raw);
-  const wholeHit = best(rowsFor(whole));
+  const wholeHit = best(rowsNamed(whole, exactOnly(raw)));
   if (wholeHit !== undefined && parts.length === 1) return toPlace(wholeHit);
 
   const [head, ...hints] = parts;
-  const candidates = rowsFor(head);
+  const candidates = rowsNamed(head, exactOnly(raw.split(',')[0]));
   if (candidates.length) {
     if (!hints.length) {
       const hit = best(candidates);
