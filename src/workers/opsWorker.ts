@@ -191,10 +191,24 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 // EventBridge daily/weekly ticks. Batched summons first, then
                 // the activity digest — each honours per-account frequency
                 // and the quiet default (nothing happened -> no email).
+                // Both halves run even if the other reports failures; a
+                // failure still rethrows afterwards so the job redelivers and
+                // the failed sends retry (dedupe keys protect the rest).
                 const cadence = body.cadence === 'weekly' ? 'weekly' : 'daily';
-                const summons = await runSummonsBatch(cfg, cadence);
-                const digests = await runDigestTick(cfg, cadence);
+                let summons: number | undefined, digests: number | undefined;
+                let failed: unknown;
+                try {
+                  summons = await runSummonsBatch(cfg, cadence);
+                } catch (e) {
+                  failed = e;
+                }
+                try {
+                  digests = await runDigestTick(cfg, cadence);
+                } catch (e) {
+                  failed ??= e;
+                }
                 log('email-digest-tick: done', { cadence, summons, digests });
+                if (failed) throw failed;
                 break;
               }
               case 'email-renewal-tick': {
