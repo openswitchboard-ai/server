@@ -84,8 +84,8 @@ export async function sellerOnboardingLink(
   const stripe = await getStripe();
   const link = await stripe.accountLinks.create({
     account: stripeAccountId,
-    refresh_url: `${cfg.counterOrigin}/counter/settlements/${settlementId}`,
-    return_url: `${cfg.counterOrigin}/counter/settlements/${settlementId}`,
+    refresh_url: `${cfg.counterOrigin}/settlements/${settlementId}`,
+    return_url: `${cfg.counterOrigin}/settlements/${settlementId}`,
     type: 'account_onboarding',
   });
   return link.url;
@@ -113,8 +113,8 @@ export async function createCheckoutForSettlement(
   const fee = feeMinorUnits(amountMinor, cfg.settlementFeePercent);
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
-    success_url: `${cfg.counterOrigin}/counter/settlements/${s.id}`,
-    cancel_url: `${cfg.counterOrigin}/counter/settlements/${s.id}`,
+    success_url: `${cfg.counterOrigin}/settlements/${s.id}`,
+    cancel_url: `${cfg.counterOrigin}/settlements/${s.id}`,
     line_items: [
       {
         quantity: 1,

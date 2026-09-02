@@ -95,7 +95,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(r.result.human_action).toContain(
       "Add the first name and area you'd share, on your approval page",
     );
-    expect(r.result.human_action).toMatch(/https:\/\/[^\s]+\/counter\/a\//);
+    expect(r.result.human_action).toMatch(/https:\/\/[^\s]+\/a\//);
     expect(r.result.docs_url).toContain('CONSENT_REQUIRED');
   });
 
@@ -206,8 +206,8 @@ d('stage-3 disclosure for accounts that came through registration', () => {
   it('the profile pages stay human-only: an agent bearer token is refused', async () => {
     const { COUNTER_URL } = await import('./helpers.js');
     for (const [method, path] of [
-      ['GET', '/counter/profile'],
-      ['POST', '/counter/profile'],
+      ['GET', '/profile'],
+      ['POST', '/profile'],
     ] as const) {
       const res = await fetch(`${COUNTER_URL}${path}`, {
         method,

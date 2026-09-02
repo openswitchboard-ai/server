@@ -49,7 +49,8 @@ import type { Config } from '../../src/config.js';
 
 const cfg = {
   envName: 'dev',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   publicOrigin: 'https://mcp.test',
 } as unknown as Config;
 
@@ -266,7 +267,7 @@ describe('opt_in on an empty profile', () => {
     expect(err).toBeInstanceOf(OsbError);
     expect(err.payload.code).toBe('CONSENT_REQUIRED');
     expect(err.payload.human_action).toContain(profile.SHARED_PROFILE_ACTION);
-    expect(err.payload.human_action).toContain('https://counter.test/counter/a/');
+    expect(err.payload.human_action).toContain('https://my.test/a/');
     // The error itself is a conformant protocol error.
     expect(validatePayload('error', err.payload).valid).toBe(true);
     expect(err.payload.human_action.length).toBeLessThanOrEqual(300);
@@ -321,7 +322,7 @@ describe('stage-3 fetch with both opt-ins recorded but a profile still empty', (
     expect(err).toBeInstanceOf(OsbError);
     expect(err.payload.code).toBe('CONSENT_REQUIRED');
     expect(err.payload.human_action).toContain(profile.SHARED_PROFILE_ACTION);
-    expect(err.payload.human_action).toContain('https://counter.test/counter/a/');
+    expect(err.payload.human_action).toContain('https://my.test/a/');
   });
 
   it('answers CONSENT_REQUIRED naming the other side when the CALLER is done', async () => {
@@ -450,7 +451,7 @@ describe('the pages that collect it', () => {
     collectProfile: { firstName: '', locality: '' },
     hasPasskey: false,
     elevated: false,
-    postPath: '/counter/approve',
+    postPath: '/approve',
   });
 
   it('asks for both fields on the approval page, in the same form as the decision', () => {
@@ -480,7 +481,7 @@ describe('the pages that collect it', () => {
       anomalies: [],
       hasPasskey: false,
       elevated: false,
-      postPath: '/counter/approve',
+      postPath: '/approve',
     });
     expect(plain).not.toContain('name="first_name"');
     expect(plain).not.toContain('What should we share?');
@@ -511,7 +512,7 @@ describe('the pages that collect it', () => {
       collectionWindows: [],
     };
     const empty = chome.dashboardPage(base);
-    expect(empty).toContain('/counter/profile');
+    expect(empty).toContain('/profile');
     expect(empty).toContain('Yours are empty');
     const filled = chome.dashboardPage({ ...base, sharedProfile: 'Ana, Fremantle' });
     expect(filled).toContain('Ana, Fremantle');

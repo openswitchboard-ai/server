@@ -36,8 +36,11 @@ import { writeConsentEvent } from '../crypto.js';
 export type SuggestionAppetite = 'keen' | 'occasional' | 'big-things-only' | 'never';
 
 export interface Arrangement {
-  /** How often the agent should check the switchboard, in the human's words. */
-  check_cadence?: string;
+  /** How often the agent should check the switchboard, in minutes. Minutes are
+   *  only the wire format: the human and their agent agree it in words
+   *  ("twice a day") and the agent writes the number (720). Absent means
+   *  check when asked and no more. */
+  check_every_minutes?: number;
   /** What earns an interruption there and then. */
   interrupt_for?: string[];
   /** What waits for a summary, and when that summary comes. */
@@ -64,8 +67,16 @@ export const INTERRUPT_ITEM_MAX = 80;
 export const INTERRUPT_MAX_ITEMS = 12;
 export const NOTES_MAX = 600;
 
+/** The cadence floor and ceiling, in minutes: no oftener than every half hour,
+ *  no rarer than once a week. */
+export const CHECK_EVERY_MINUTES_MIN = 30;
+export const CHECK_EVERY_MINUTES_MAX = 10080;
+/** One sentence, said the same way on the page and in the refusal. */
+export const CHECK_EVERY_MINUTES_HELP =
+  'No more often than every 30 minutes — a few times a day is plenty.';
+
 export const ARRANGEMENT_FIELDS = [
-  'check_cadence',
+  'check_every_minutes',
   'interrupt_for',
   'summarize',
   'suggestion_appetite',
@@ -151,7 +162,6 @@ export function validateArrangement(input: unknown): ArrangementValidation {
   const out: Arrangement = {};
 
   for (const [field, max, label] of [
-    ['check_cadence', SHORT_FIELD_MAX, 'How often to check'],
     ['summarize', SHORT_FIELD_MAX, 'What waits for a summary'],
     ['quiet_hours', SHORT_FIELD_MAX, 'Quiet hours'],
     ['notes', NOTES_MAX, 'Notes'],
@@ -159,6 +169,33 @@ export function validateArrangement(input: unknown): ArrangementValidation {
     const r = checkText(label, src[field], max);
     if (!r.ok) return r;
     if (r.value) (out as Record<string, unknown>)[field] = r.value;
+  }
+
+  if (
+    src.check_every_minutes !== undefined &&
+    src.check_every_minutes !== null &&
+    src.check_every_minutes !== ''
+  ) {
+    const m = Number(src.check_every_minutes);
+    if (!Number.isInteger(m)) {
+      return {
+        ok: false,
+        error: `How often to check is a whole number of minutes. ${CHECK_EVERY_MINUTES_HELP}`,
+      };
+    }
+    if (m < CHECK_EVERY_MINUTES_MIN) {
+      return {
+        ok: false,
+        error: `How often to check is a number of minutes. ${CHECK_EVERY_MINUTES_HELP}`,
+      };
+    }
+    if (m > CHECK_EVERY_MINUTES_MAX) {
+      return {
+        ok: false,
+        error: `How often to check runs past ${CHECK_EVERY_MINUTES_MAX} minutes, which is a week. Give a smaller number.`,
+      };
+    }
+    out.check_every_minutes = m;
   }
 
   if (src.interrupt_for !== undefined && src.interrupt_for !== null) {
@@ -272,10 +309,28 @@ const APPETITE_WORDS: Record<SuggestionAppetite, string> = {
   never: 'Never suggest anything on your own.',
 };
 
+/**
+ * A number of minutes said the way a person would say it. The stored value is
+ * always minutes; this is only how it reads back.
+ */
+export function cadenceInPlainWords(minutes: number): string {
+  if (minutes === 10080) return 'once a week';
+  if (minutes === 1440) return 'once a day';
+  if (minutes % 1440 === 0) return `every ${minutes / 1440} days`;
+  if (minutes === 60) return 'every hour';
+  if (minutes % 60 === 0 && minutes < 1440) return `every ${minutes / 60} hours`;
+  return `every ${minutes} minutes`;
+}
+
 /** One line per setting, in the plain words the human's page shows. */
 export function arrangementInPlainWords(a: Arrangement): { k: string; v: string }[] {
   const lines: { k: string; v: string }[] = [];
-  if (a.check_cadence) lines.push({ k: 'How often your agents check', v: a.check_cadence });
+  if (a.check_every_minutes !== undefined) {
+    lines.push({
+      k: 'How often your agents check',
+      v: cadenceInPlainWords(a.check_every_minutes),
+    });
+  }
   if (a.interrupt_for?.length) {
     lines.push({ k: 'Worth interrupting you for', v: a.interrupt_for.join('; ') });
   }
@@ -298,8 +353,10 @@ export function arrangementInPlainWords(a: Arrangement): { k: string; v: string 
 export function arrangementNote(a: Arrangement): { text: string; provenance: string } {
   return {
     text: isEmpty(a)
-      ? 'Your human has no standing arrangement on file yet. Settle one with them — how often you check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions — and save it with standing_arrangement so it outlives this session.'
-      : 'This is your human\'s standing arrangement, saved by them. Honour it before proposing anything, and update it with standing_arrangement whenever they tell you something new about how they want to be treated.',
+      ? `Your human has no standing arrangement on file yet. Settle one with them — how often you check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions — and save it with standing_arrangement so it outlives this session. Agree the cadence in words and write it down as check_every_minutes. ${CHECK_EVERY_MINUTES_HELP}`
+      : a.check_every_minutes === undefined
+        ? "This is your human's standing arrangement, saved by them. Honour it before proposing anything, and update it with standing_arrangement whenever they tell you something new about how they want to be treated. They have set no cadence, so check when they ask you to and no oftener."
+        : `This is your human's standing arrangement, saved by them. Honour it before proposing anything, and update it with standing_arrangement whenever they tell you something new about how they want to be treated. They asked you to check ${cadenceInPlainWords(a.check_every_minutes)}.`,
     provenance: 'switchboard-system',
   };
 }

@@ -141,7 +141,7 @@ d('0.E email daemon (live dev)', () => {
   }, 180_000);
 
   it('(b) frequency controls save through the counter and log consent', async () => {
-    const res = await counterFetch(jarA, '/counter/settings/frequency',
+    const res = await counterFetch(jarA, '/settings/frequency',
       form({ freq_matches: 'off', freq_digests: 'weekly' }));
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('Saved. Effective immediately.');
@@ -186,7 +186,7 @@ d('0.E email daemon (live dev)', () => {
   }, 180_000);
 
   it("(b) 'off' delivers nothing; transactional still sends", async () => {
-    const res = await counterFetch(jarA, '/counter/settings/frequency',
+    const res = await counterFetch(jarA, '/settings/frequency',
       form({ freq_matches: 'off', freq_digests: 'off' }));
     expect(res.status).toBe(200);
     // Fresh real activity for A, plus a FRESH daily sentinel account (E's
@@ -208,7 +208,7 @@ d('0.E email daemon (live dev)', () => {
 
     // Transactional verification sends regardless of 'off'.
     const before = (await sendsFor(accountA, 'verification')).length;
-    const login = await counterFetch(new Jar(), '/counter/login', form({ email: emailA }));
+    const login = await counterFetch(new Jar(), '/login', form({ email: emailA }));
     expect(login.status).toBe(200);
     await poll(async () => {
       const rows = await sendsFor(accountA, 'verification');
@@ -227,7 +227,7 @@ d('0.E email daemon (live dev)', () => {
       { name: 'a', value: accountId },
     ]);
     // A real transactional send to the bouncing address.
-    const res = await counterFetch(new Jar(), '/counter/login', form({ email }));
+    const res = await counterFetch(new Jar(), '/login', form({ email }));
     expect(res.status).toBe(200);
     const sentAt = Date.now();
     await poll(
@@ -252,7 +252,7 @@ d('0.E email daemon (live dev)', () => {
     const jar = new Jar();
     await counterLogin(jar, email);
     await ensurePin(jar);
-    const dash = await counterFetch(jar, '/counter');
+    const dash = await counterFetch(jar, '/');
     expect(dash.status).toBe(200);
     expect(await dash.text()).toContain('Email to you is bouncing');
   }, 300_000);
@@ -264,7 +264,7 @@ d('0.E email daemon (live dev)', () => {
       `UPDATE accounts SET email_complaint_suppressed_at = NULL WHERE id = :a::uuid`,
       [{ name: 'a', value: accountId }],
     );
-    const res = await counterFetch(new Jar(), '/counter/login', form({ email }));
+    const res = await counterFetch(new Jar(), '/login', form({ email }));
     expect(res.status).toBe(200);
     await poll(
       async () => {
@@ -314,7 +314,7 @@ d('0.E email daemon (live dev)', () => {
     // Sign the renew-all token exactly as the daemon does (dev observability:
     // the counter keys secret is readable by the harness).
     const sec = await secrets.send(
-      new GetSecretValueCommand({ SecretId: `osb/${ENV_NAME}/counter/keys` }),
+      new GetSecretValueCommand({ SecretId: `osb/${ENV_NAME}/keys` }),
     );
     const key = Buffer.from(JSON.parse(sec.SecretString!).link_hmac_key, 'hex');
     const payload = `${accountId}|renew-all|${Math.floor(Date.now() / 1000) + 3600}`;
@@ -322,7 +322,7 @@ d('0.E email daemon (live dev)', () => {
       .update(`email-token|${payload}`)
       .digest('base64url')}`;
 
-    const page = await counterFetch(new Jar(), `/counter/renew?t=${encodeURIComponent(token)}`);
+    const page = await counterFetch(new Jar(), `/renew?t=${encodeURIComponent(token)}`);
     expect(page.status).toBe(200);
     // 0.H copy cull: the page shows the category's human leaf label (this
     // synthetic category is not in the taxonomy, so the leaf segment renders)
@@ -332,7 +332,7 @@ d('0.E email daemon (live dev)', () => {
     expect(renewHtml).toContain(runId); // leaf label of intg-email.<runId>
     expect(renewHtml).toContain(`colour: teal-${runId}`);
     expect(renewHtml).not.toContain(CATEGORY);
-    const renew = await counterFetch(new Jar(), '/counter/renew', form({ t: token }));
+    const renew = await counterFetch(new Jar(), '/renew', form({ t: token }));
     expect(renew.status).toBe(200);
     expect(await renew.text()).toContain('renewed');
 

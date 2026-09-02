@@ -26,6 +26,7 @@ import {
 import {
   BASE_URL,
   COUNTER_URL,
+  LEGACY_COUNTER_URL,
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
@@ -240,12 +241,12 @@ d('integration gates against live deployment', () => {
 
     // 3. His approval page carries the attention item, linking to the edit
     //    page, and that page says why in plain words.
-    const dash = await counterFetch(bob.jar, '/counter');
+    const dash = await counterFetch(bob.jar, '/');
     expect(dash.status).toBe(200);
     const dashBody = await dash.text();
-    expect(dashBody).toContain(`/counter/ledger/${injId}/edit`);
+    expect(dashBody).toContain(`/ledger/${injId}/edit`);
     expect(dashBody).toContain('pass screening');
-    const edit = await counterFetch(bob.jar, `/counter/ledger/${injId}/edit`);
+    const edit = await counterFetch(bob.jar, `/ledger/${injId}/edit`);
     expect(edit.status).toBe(200);
     const editBody = await edit.text();
     expect(editBody).toContain('instruction aimed at an AI');
@@ -323,14 +324,14 @@ d('integration gates against live deployment', () => {
     expect(refused.isError).toBe(true);
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
     expect(refused.result.human_action).toContain('Your numbers come from you');
-    expect(refused.result.human_action).toContain(`/counter/matches/${mid}`);
+    expect(refused.result.human_action).toContain(`/matches/${mid}`);
 
     // Nothing was written: the refusal lands before any offer row exists.
     const empty = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
     expect(empty.result.offers).toHaveLength(0);
 
     // Dana types her own number on her own page, and it lands on Eli's side.
-    const page = await counterFetch(dana.jar, `/counter/matches/${mid}`);
+    const page = await counterFetch(dana.jar, `/matches/${mid}`);
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('Reply with your number');
     const sent = await humanOffer(dana.jar, mid, {
@@ -493,7 +494,7 @@ d('integration gates against live deployment', () => {
     expect(published.result.intent_id).toBeTruthy();
 
     // It is refused outright at the human-only pages.
-    const atCounter = await fetch(`${COUNTER_URL}/counter`, {
+    const atCounter = await fetch(`${COUNTER_URL}/`, {
       headers: { authorization: `Bearer ${token}` },
       redirect: 'manual',
     });
@@ -512,6 +513,44 @@ d('integration gates against live deployment', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
     expect(afterRevoke.status).toBe(401);
+  });
+
+  it('the read tools share one hourly ceiling, and the 61st call is RATE_LIMITED', async () => {
+    // Its own actor: spending a whole hourly budget would starve the others.
+    const greedy = await bootstrapActor('Greedy', 'Hobart');
+    for (let i = 0; i < 60; i++) {
+      const r = await mcpCall(greedy.accessToken, i % 2 ? 'list_intents' : 'check_matches', {});
+      expect(r.isError, `call ${i + 1}`).toBe(false);
+    }
+    const over = await mcpCall(greedy.accessToken, 'check_matches', {});
+    expect(over.isError).toBe(true);
+    expect(over.result.code).toBe('RATE_LIMITED');
+    expect(over.result.retry_after).toBeGreaterThan(0);
+    expect(over.result.retry_after).toBeLessThanOrEqual(3600);
+    // The ceiling is shared, so the other read tools are spent too.
+    const alsoOver = await mcpCall(greedy.accessToken, 'list_intents', {});
+    expect(alsoOver.result.code).toBe('RATE_LIMITED');
+    // Nothing on the write surface is touched by it.
+    const stillWrites = await mcpCall(greedy.accessToken, 'publish_intent', {
+      card: minimalWant({ attributes: { condition: 'fair' } }),
+    });
+    expect(stillWrites.result?.code).not.toBe('RATE_LIMITED');
+  }, 300_000);
+
+  it('the old /counter paths and the old hostname both 308 to where the page lives now', async () => {
+    const prefixed = await fetch(`${COUNTER_URL}/counter/ledger`, { redirect: 'manual' });
+    expect(prefixed.status).toBe(308);
+    expect(prefixed.headers.get('location')).toBe('/ledger');
+
+    const oldHost = await fetch(`${LEGACY_COUNTER_URL}/login`, { redirect: 'manual' });
+    expect(oldHost.status).toBe(308);
+    expect(oldHost.headers.get('location')).toBe(`${COUNTER_URL}/login`);
+
+    // An approval link emailed before the move carries both the old host and
+    // the old prefix, and still lands on the page it names.
+    const bothOld = await fetch(`${LEGACY_COUNTER_URL}/counter/ledger?x=1`, { redirect: 'manual' });
+    expect(bothOld.status).toBe(308);
+    expect(bothOld.headers.get('location')).toBe(`${COUNTER_URL}/ledger?x=1`);
   });
 
   it('rejects prohibited categories with CATEGORY_PROHIBITED', async () => {

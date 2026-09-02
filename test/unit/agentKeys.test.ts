@@ -4,7 +4,7 @@
  *
  * The invariant this suite exists to hold is a structural one: a key is an
  * AGENT credential and nothing more. It authenticates on the MCP path, it is
- * refused on every /counter route (where humans approve things), the kill
+ * refused on every human-page route (where humans approve things), the kill
  * switch reaches it, and revoking it kills it at once.
  *
  * The oauth_tokens table is stood in for by a small fake that honours the
@@ -36,7 +36,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -331,16 +332,16 @@ describe('agent keys reach the MCP surface and nothing else', () => {
   it('an agent key gets 403 on the approval pages, its own issuance route included', async () => {
     const { token } = await agentKeys.createAgentKey(ACCOUNT, 'the laptop agent');
     for (const [method, url] of [
-      ['GET', '/counter'],
-      ['GET', '/counter/agent-keys'],
-      ['POST', '/counter/agent-keys'],
-      ['POST', '/counter/agent-keys/revoke'],
-      ['POST', '/counter/approve'],
+      ['GET', '/'],
+      ['GET', '/agent-keys'],
+      ['POST', '/agent-keys'],
+      ['POST', '/agent-keys/revoke'],
+      ['POST', '/approve'],
     ] as const) {
       const res = await app.inject({
         method: method as any,
         url,
-        headers: { host: 'counter.test', authorization: `Bearer ${token}` },
+        headers: { host: 'my.test', authorization: `Bearer ${token}` },
       });
       expect(res.statusCode, `${method} ${url}`).toBe(403);
       expect(res.json().error, `${method} ${url}`).toBe('agent_credentials_rejected');
@@ -354,7 +355,7 @@ describe('issuance route: signed-in session plus a PIN ceremony', () => {
       method: 'POST',
       url,
       headers: {
-        host: 'counter.test',
+        host: 'my.test',
         'content-type': 'application/x-www-form-urlencoded',
         ...(cookie ? { cookie } : {}),
       },
@@ -362,7 +363,7 @@ describe('issuance route: signed-in session plus a PIN ceremony', () => {
     });
 
   it('refuses a caller with no session', async () => {
-    for (const url of ['/counter/agent-keys', '/counter/agent-keys/revoke']) {
+    for (const url of ['/agent-keys', '/agent-keys/revoke']) {
       const res = await post(url, { name: 'the laptop agent', pin: '246810' });
       expect(res.statusCode, url).toBe(401);
       expect(res.json().error).toBe('not_signed_in');
@@ -372,19 +373,19 @@ describe('issuance route: signed-in session plus a PIN ceremony', () => {
   it('the listing page sends a signed-out caller to sign in', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/counter/agent-keys',
-      headers: { host: 'counter.test' },
+      url: '/agent-keys',
+      headers: { host: 'my.test' },
     });
     expect(res.statusCode).toBe(303);
-    expect(res.headers.location).toBe('/counter/login');
+    expect(res.headers.location).toBe('/login');
   });
 
   it('the routes are part of the enumerated human-only route class', async () => {
     const { COUNTER_ROUTE_TABLE } = await import('../../src/counter/routes.js');
     const urls = COUNTER_ROUTE_TABLE.map((r) => `${r.method} ${r.url}`);
-    expect(urls).toContain('GET /counter/agent-keys');
-    expect(urls).toContain('POST /counter/agent-keys');
-    expect(urls).toContain('POST /counter/agent-keys/revoke');
+    expect(urls).toContain('GET /agent-keys');
+    expect(urls).toContain('POST /agent-keys');
+    expect(urls).toContain('POST /agent-keys/revoke');
   });
 });
 
@@ -433,7 +434,7 @@ describe('agent key pages: copy', () => {
   ];
 
   // The banned-phrase lint over these pages runs with every other counter
-  // page in counter.test.ts's copy-cull render suite. What is asserted here
+  // page in my.test.ts's copy-cull render suite. What is asserted here
   // is what the pages have to SAY.
 
   it('the new key is shown once, with a copy button', () => {
@@ -458,6 +459,6 @@ describe('agent key pages: copy', () => {
     expect(html).toContain('last used 2026-09-02');
     expect(html).toContain('lapses 2026-11-30');
     expect(html).toContain('never used yet');
-    expect(html).toContain('/counter/agent-keys/revoke');
+    expect(html).toContain('/agent-keys/revoke');
   });
 });

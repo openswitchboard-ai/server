@@ -1,6 +1,6 @@
 /**
  * Counter unit tests, including the STRUCTURAL route-isolation matrix:
- *  - an MCP bearer token is rejected (403) on EVERY registered /counter
+ *  - an MCP bearer token is rejected (403) on EVERY registered /
  *    route, enumerated from the live route table — before any DB access;
  *  - a counter session cookie is worthless on /mcp (401).
  */
@@ -19,7 +19,8 @@ const cfg: Config = {
   envName: 'dev',
   port: 0,
   publicOrigin: 'https://mcp.test',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   sesFrom: 'OpenSwitchboard <board@openswitchboard.ai>',
   sesReplyTo: 'info@openswitchboard.ai',
   sesConfigurationSet: 'unused',
@@ -55,38 +56,38 @@ describe('route isolation: agent credentials x counter routes', () => {
     expect(COUNTER_ROUTE_TABLE.length).toBeGreaterThanOrEqual(25);
     const urls = COUNTER_ROUTE_TABLE.map((r) => `${r.method} ${r.url}`);
     for (const must of [
-      'GET /counter',
-      'POST /counter/register',
-      'POST /counter/verify',
-      'POST /counter/pin/set',
-      'POST /counter/approve',
-      'GET /counter/ledger',
-      'POST /counter/kill',
-      'POST /counter/authorize',
-      'GET /counter/a/:token',
-      'GET /counter/profile',
-      'POST /counter/profile',
-      'GET /counter/arrangement',
-      'POST /counter/arrangement',
-      'POST /counter/arrangement/clear',
-      'GET /counter/approvals/settlement/:id',
-      'GET /counter/settlements/:id',
-      'POST /counter/settlements/:id/pay',
-      'POST /counter/settlements/:id/confirm',
-      'POST /counter/settlements/:id/dispute',
-      'POST /counter/settlements/:id/evidence/lock',
+      'GET /',
+      'POST /register',
+      'POST /verify',
+      'POST /pin/set',
+      'POST /approve',
+      'GET /ledger',
+      'POST /kill',
+      'POST /authorize',
+      'GET /a/:token',
+      'GET /profile',
+      'POST /profile',
+      'GET /arrangement',
+      'POST /arrangement',
+      'POST /arrangement/clear',
+      'GET /approvals/settlement/:id',
+      'GET /settlements/:id',
+      'POST /settlements/:id/pay',
+      'POST /settlements/:id/confirm',
+      'POST /settlements/:id/dispute',
+      'POST /settlements/:id/evidence/lock',
     ]) {
       expect(urls, `missing route ${must}`).toContain(must);
     }
   });
 
-  it('an MCP bearer token gets 403 on EVERY /counter route', async () => {
+  it('an MCP bearer token gets 403 on EVERY / route', async () => {
     for (const r of COUNTER_ROUTE_TABLE) {
       const res = await app.inject({
         method: r.method as any,
         url: fillParams(r.url),
         headers: {
-          host: 'counter.test',
+          host: 'my.test',
           authorization: 'Bearer osb_at_agent-token-should-never-work-here',
         },
       });
@@ -114,19 +115,72 @@ describe('route isolation: agent credentials x counter routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/mcp',
-      headers: { host: 'counter.test', 'content-type': 'application/json' },
+      headers: { host: 'my.test', 'content-type': 'application/json' },
       payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
     });
     expect(res.statusCode).toBe(404);
   });
 
-  it('/counter is not served on the MCP hostname', async () => {
+  it('the human pages are not served on the MCP hostname', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/counter',
+      url: '/ledger',
       headers: { host: 'mcp.test' },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('the MCP hostname answers its own root with the endpoint banner', async () => {
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'mcp.test' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('https://mcp.test/mcp');
+  });
+
+  it('an old /counter path on the MCP hostname is a 404, never a redirect', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/counter/ledger',
+      headers: { host: 'mcp.test' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('the move to the my.* hostname', () => {
+  it('an old /counter path 308s to the same page without the prefix', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/counter/ledger?card=7',
+      headers: { host: 'my.test' },
+    });
+    expect(res.statusCode).toBe(308);
+    expect(res.headers.location).toBe('/ledger?card=7');
+  });
+
+  it('bare /counter 308s to the root', async () => {
+    const res = await app.inject({ method: 'GET', url: '/counter', headers: { host: 'my.test' } });
+    expect(res.statusCode).toBe(308);
+    expect(res.headers.location).toBe('/');
+  });
+
+  it('the old hostname 308s to the new one, prefix and query intact', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/counter/a/sometoken?x=1',
+      headers: { host: 'counter.test' },
+    });
+    expect(res.statusCode).toBe(308);
+    expect(res.headers.location).toBe('https://my.test/a/sometoken?x=1');
+  });
+
+  it('the old hostname 308s a path that never had the prefix too', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/login',
+      headers: { host: 'counter.test' },
+    });
+    expect(res.statusCode).toBe(308);
+    expect(res.headers.location).toBe('https://my.test/login');
   });
 });
 
@@ -207,7 +261,7 @@ describe('counter pages: copy-cull render suite', () => {
     { name: 'register-email', html: cpages.registerEmailPage('Bad email.') },
     {
       name: 'code-entry',
-      html: cpages.codeEntryPage({ verificationId: 'v-1', action: '/counter/verify' }),
+      html: cpages.codeEntryPage({ verificationId: 'v-1', action: '/verify' }),
     },
     { name: 'pin-set', html: cpages.pinSetPage() },
     { name: 'passkey-offer', html: cpages.passkeyOfferPage() },
@@ -229,7 +283,7 @@ describe('counter pages: copy-cull render suite', () => {
         ],
         anomalies: ['3× your usual amount'],
         elevated: false,
-        postPath: '/counter/approve',
+        postPath: '/approve',
       }),
     },
     {
@@ -246,7 +300,7 @@ describe('counter pages: copy-cull render suite', () => {
         collectProfile: { firstName: '', locality: '' },
         hasPasskey: false,
         elevated: false,
-        postPath: '/counter/approve',
+        postPath: '/approve',
       }),
     },
     { name: 'shared-profile-empty', html: chome.sharedProfilePage({ firstName: '', locality: '' }) },
@@ -257,7 +311,7 @@ describe('counter pages: copy-cull render suite', () => {
         { notice: 'Saved. This is what a match sees once you both say yes.' },
       ),
     },
-    { name: 'oauth-authorize', html: cpages.authorizePage('Claude for Chores', '/counter/authorize', {}) },
+    { name: 'oauth-authorize', html: cpages.authorizePage('Claude for Chores', '/authorize', {}) },
     { name: 'registration-closed', html: cpages.registrationClosedPage() },
     {
       name: 'dashboard',
@@ -267,11 +321,11 @@ describe('counter pages: copy-cull render suite', () => {
         cardCounts: { total: 2, published: 1, pending: 1 },
         pendingApprovals: [
           {
-            href: '/counter/ledger/c-9/edit',
+            href: '/ledger/c-9/edit',
             label: `Your ${LABEL} card didn't pass screening — see why and fix it`,
             cta: 'See why and fix it',
           },
-          { href: '/counter/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
+          { href: '/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
         ],
         matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }],
         collectionWindows: [
@@ -391,7 +445,7 @@ describe('counter pages: copy-cull render suite', () => {
     it(`${p.name}: no "the counter", no raw slugs, passes the banned-phrase lint`, () => {
       const low = p.html.toLowerCase();
       // "the counter" and "your counter" are gone from every page. URLs are
-      // fine: route paths are "/counter/...", which never form the phrase.
+      // fine: route paths are "/...", which never form the phrase.
       expect(low).not.toContain('the counter');
       expect(low).not.toContain('your counter');
       // Raw category slugs never render — the label does.
@@ -415,7 +469,7 @@ describe('counter pages: copy-cull render suite', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
     // Dashboard: the attention item, its own button wording, the edit link.
     expect(byName['dashboard']).toContain(`Your ${LABEL} card didn&#39;t pass screening`);
-    expect(byName['dashboard']).toContain('/counter/ledger/c-9/edit');
+    expect(byName['dashboard']).toContain('/ledger/c-9/edit');
     expect(byName['dashboard']).toContain('See why and fix it');
     // Everything else on the dashboard keeps the decide-on-it wording.
     expect(byName['dashboard']).toContain('Review &amp; decide');
@@ -441,7 +495,7 @@ describe('counter pages: copy-cull render suite', () => {
 // challenge and read it back through the same UPDATE's RETURNING. PostgreSQL
 // (below 18, and dev/prod run 17) evaluates RETURNING against the NEW tuple,
 // so the statement handed back the NULL it had just written and every
-// /counter/passkey/verify answered 400 no_pending_challenge.
+// /passkey/verify answered 400 no_pending_challenge.
 //
 // The lifecycle itself is a property of the database, so it is proven for real
 // twice over: test/integration/gates.test.ts runs these exact statements

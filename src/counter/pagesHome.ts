@@ -3,6 +3,9 @@ import {
   SUGGESTION_APPETITES,
   arrangementInPlainWords,
   isEmpty as arrangementIsEmpty,
+  CHECK_EVERY_MINUTES_HELP,
+  CHECK_EVERY_MINUTES_MAX,
+  CHECK_EVERY_MINUTES_MIN,
   INTERRUPT_ITEM_MAX,
   NOTES_MAX,
   SHORT_FIELD_MAX,
@@ -41,13 +44,13 @@ ${
     : `<div class="note">Nothing is filled in yet. Until it is, a match can get to
 the point of swapping details and then stall there.</div>`
 }
-<form method="POST" action="/counter/profile">
+<form method="POST" action="/profile">
   ${sharedFieldsFieldset(v)}
   <button type="submit">Save</button>
 </form>
 <p class="small muted">A first name and a suburb is all this page wants. Keep phone numbers,
 addresses and links out of it — you can swap those in the channel once you have both agreed.</p>
-<a class="btn secondary" href="/counter">Back to your approval page</a>`);
+<a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -96,10 +99,13 @@ ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${plain}
 <h2>Change it</h2>
-<form method="POST" action="/counter/arrangement">
-  <label for="check_cadence">How often should your agents check?</label>
-  <input id="check_cadence" name="check_cadence" type="text" maxlength="${SHORT_FIELD_MAX}"
-    value="${esc(a.check_cadence ?? '')}" placeholder="twice a day">
+<form method="POST" action="/arrangement">
+  <label for="check_every_minutes">How often should your agents check? In minutes.</label>
+  <input id="check_every_minutes" name="check_every_minutes" type="number" inputmode="numeric"
+    min="${CHECK_EVERY_MINUTES_MIN}" max="${CHECK_EVERY_MINUTES_MAX}" step="1"
+    value="${esc(Number.isFinite(a.check_every_minutes as number) ? String(a.check_every_minutes) : '')}"
+    placeholder="720">
+  <p class="small muted">${esc(CHECK_EVERY_MINUTES_HELP)}</p>
   <label for="interrupt_for">What is worth interrupting you for? One per line.</label>
   <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my approval page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
   <label for="summarize">Everything else waits for&hellip;</label>
@@ -117,7 +123,7 @@ ${plain}
 ${
   arrangementIsEmpty(a)
     ? ''
-    : `<form method="POST" action="/counter/arrangement/clear">
+    : `<form method="POST" action="/arrangement/clear">
   <button type="submit" class="secondary">Clear the whole arrangement</button>
 </form>`
 }
@@ -127,7 +133,7 @@ each line stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
 <p class="small muted">One thing an arrangement can never do is approve
 something for you. Sharing your details, accepting an offer and confirming a
 payment come to this page every single time, whatever any agent has agreed.</p>
-<a class="btn secondary" href="/counter">Back to your approval page</a>`);
+<a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
 export interface PendingApprovalItem {
@@ -174,7 +180,7 @@ export function dashboardPage(v: DashboardView): string {
 <h2 style="margin-top:0">Everything is paused.</h2>
 <p class="small">The kill switch is ON: cards are excluded from matching and your
 agents' tokens are suspended. Turning back on needs your PIN.</p>
-<form method="POST" action="/counter/kill/off">
+<form method="POST" action="/kill/off">
   <label for="pin">PIN</label>
   <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" maxlength="12" required>
   <button type="submit">Turn everything back on</button>
@@ -183,7 +189,7 @@ agents' tokens are suspended. Turning back on needs your PIN.</p>
 <h2 style="margin-top:0">Kill switch</h2>
 <p class="small">One tap: every card paused, every agent token suspended,
 confirmation email sent. Un-pausing needs your PIN.</p>
-<form method="POST" action="/counter/kill">
+<form method="POST" action="/kill">
   <button type="submit" class="danger">Pause everything now</button>
 </form></div>`;
 
@@ -208,7 +214,7 @@ confirmation email sent. Un-pausing needs your PIN.</p>
 <span class="cat">${esc(w.category)}</span></div>
 <div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
  — window open until ${esc(w.until)}. Offers and interest keep arriving until then.</div>
-<form method="POST" action="/counter/collect/${esc(w.cardId)}/close">
+<form method="POST" action="/collect/${esc(w.cardId)}/close">
   <button type="submit" class="secondary">Close early &amp; choose now</button>
 </form></div>`,
         )
@@ -234,18 +240,18 @@ ${
 ${
   m.verdict
     ? ''
-    : `<form method="POST" action="/counter/verdict" style="display:inline">
+    : `<form method="POST" action="/verdict" style="display:inline">
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="good-call">
   <button type="submit" class="secondary">Good call</button>
 </form>
-<form method="POST" action="/counter/verdict" style="display:inline">
+<form method="POST" action="/verdict" style="display:inline">
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="not-for-me">
   <button type="submit" class="secondary">Not for me</button>
 </form>`
 }
-<a class="btn secondary" href="/counter/matches/${esc(m.matchId)}">Offers &amp; your number</a>
+<a class="btn secondary" href="/matches/${esc(m.matchId)}">Offers &amp; your number</a>
 </div>
 </div>`,
         )
@@ -256,7 +262,7 @@ ${
     ? `<div class="err"><strong>Email to you is bouncing.</strong>
 An email we sent to your address came back undeliverable, so all email is on
 hold. Re-verify your address to switch it back on.
-<form method="POST" action="/counter/reverify"><button type="submit">Re-verify my email</button></form></div>`
+<form method="POST" action="/reverify"><button type="submit">Re-verify my email</button></form></div>`
     : '';
 
   return layout('Your approval page', `
@@ -269,25 +275,25 @@ ${matchRows}
 <h2>Your ledger</h2>
 <p class="small muted">${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'}
  — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.</p>
-<a class="btn secondary" href="/counter/ledger">Open the ledger</a>
+<a class="btn secondary" href="/ledger">Open the ledger</a>
 <h2>What you share on a match</h2>
 <p class="small muted">${
     v.sharedProfile
       ? `A match that gets that far sees ${esc(v.sharedProfile)}.`
       : 'A match that gets that far sees a first name and a rough area. Yours are empty.'
   }</p>
-<a class="btn secondary" href="/counter/profile">What you share on a match</a>
+<a class="btn secondary" href="/profile">What you share on a match</a>
 <h2>How your agents behave</h2>
 <p class="small muted">${
     v.arrangementSummary
       ? `Every agent you connect is told: ${esc(v.arrangementSummary)}`
       : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
   }</p>
-<a class="btn secondary" href="/counter/arrangement">How your agents behave</a>
-<a class="btn secondary" href="/counter/agent-keys">Agent keys</a>
-<a class="btn secondary" href="/counter/settings">Settings</a>
+<a class="btn secondary" href="/arrangement">How your agents behave</a>
+<a class="btn secondary" href="/agent-keys">Agent keys</a>
+<a class="btn secondary" href="/settings">Settings</a>
 ${kill}
-<form method="POST" action="/counter/logout"><button class="secondary" type="submit">Sign out</button></form>`);
+<form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>`);
 }
 
 export interface LedgerCardView {
@@ -322,9 +328,9 @@ ${
   c.state === 'WITHDRAWN' || c.state === 'EXPIRED'
     ? ''
     : `<div class="row-actions">
-  <a class="btn secondary" href="/counter/ledger/${esc(c.id)}/edit">Edit</a>
-  <a class="btn secondary" href="/counter/ledger/${esc(c.id)}/numbers">Your numbers</a>
-  <form method="POST" action="/counter/ledger/${esc(c.id)}/withdraw"><button type="submit" class="secondary">Withdraw</button></form>
+  <a class="btn secondary" href="/ledger/${esc(c.id)}/edit">Edit</a>
+  <a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers</a>
+  <form method="POST" action="/ledger/${esc(c.id)}/withdraw"><button type="submit" class="secondary">Withdraw</button></form>
 </div>`
 }
 </div>`,
@@ -339,7 +345,7 @@ bands are shown to you only — never to a counterparty. Edits go back through
 screening; withdrawal is immediate. Every card starts on ${esc(MODE_NAMES.relay)}:
 ${esc(MODE_EXPLANATIONS.relay)}</p>
 ${rows}
-<a class="btn secondary" href="/counter">Back</a>`);
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 export interface CardEditView {
@@ -384,7 +390,7 @@ ${rejection}
 <p class="small muted">Saving sends the card back through screening before it
 returns to the network.</p>
 ${errBox(error)}
-<form method="POST" action="/counter/ledger/${esc(c.id)}/edit">
+<form method="POST" action="/ledger/${esc(c.id)}/edit">
   <label for="attributes">Attributes (JSON)</label>
   <textarea id="attributes" name="attributes">${esc(c.attributesJson)}</textarea>
   ${
@@ -413,8 +419,8 @@ may only be SHORTER than the default ${c.collectWindowDefault})</label>
   <input id="ttl_days" name="ttl_days" type="number" min="1" max="365" value="${esc(String(c.ttlDays))}">
   <button type="submit">Save &amp; re-screen</button>
 </form>
-<a class="btn secondary" href="/counter/ledger/${esc(c.id)}/numbers">Your numbers on this card</a>
-<a class="btn secondary" href="/counter/ledger">Cancel</a>`);
+<a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers on this card</a>
+<a class="btn secondary" href="/ledger">Cancel</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +470,7 @@ agent presents and advises; it never invents a price of its own.</p>
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${current}
-<form method="POST" action="/counter/ledger/${esc(v.id)}/numbers">
+<form method="POST" action="/ledger/${esc(v.id)}/numbers">
   <h2>How this card negotiates</h2>
   ${modeRadio('relay')}
   ${modeRadio('mandate')}
@@ -484,7 +490,7 @@ ${current}
 </form>
 ${
   v.mandate
-    ? `<form method="POST" action="/counter/ledger/${esc(v.id)}/numbers/clear">
+    ? `<form method="POST" action="/ledger/${esc(v.id)}/numbers/clear">
   <button type="submit" class="secondary">Clear my numbers and go back to Pass on</button>
 </form>`
     : ''
@@ -492,7 +498,7 @@ ${
 <p class="small muted">Whichever way this is set, accepting an offer still
 comes to you here, with your PIN. Auto-negotiate lets your agent put figures on
 the table between the two you wrote; it never agrees anything.</p>
-<a class="btn secondary" href="/counter/ledger/${esc(v.id)}/edit">Back to the card</a>`);
+<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to the card</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -559,8 +565,8 @@ ${
     : `<p class="note">${esc(v.canOfferBlockedBecause ?? 'Offers are not open on this match yet.')}</p>`
 }
 <p class="small muted">${esc(MODE_NAMES[v.mode])} — ${esc(MODE_EXPLANATIONS[v.mode])}</p>
-<a class="btn secondary" href="/counter/ledger/${esc(v.cardId)}/numbers">Your numbers on this card</a>
-<a class="btn secondary" href="/counter">Back to your approval page</a>`);
+<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your numbers on this card</a>
+<a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
 export interface EmailSettingsView {
@@ -589,13 +595,13 @@ export function settingsPage(v: EmailSettingsView, notice?: string): string {
     ? `<div class="err">You marked one of our emails as spam, so everything
 except sign-in codes, approvals and security notices is on hold. Changing the
 dials below does nothing while the hold is on.
-<form method="POST" action="/counter/settings/email-resume">
+<form method="POST" action="/settings/email-resume">
   <button type="submit" class="secondary">Start emailing me again</button>
 </form></div>`
     : '';
   const unreachable = v.emailUnreachable
     ? `<div class="err">Email to your address is bouncing — all email is on
-hold. Re-verify from the <a href="/counter">front page</a>.</div>`
+hold. Re-verify from the <a href="/">front page</a>.</div>`
     : '';
   return layout('Settings', `
 <h1>Settings.</h1>
@@ -605,7 +611,7 @@ ${unreachable}${complaint}
 <p class="small muted">How often the switchboard may email you. Sign-in codes,
 approval requests and security notices always send.
 Changes apply immediately and land in your consent log.</p>
-<form method="POST" action="/counter/settings/frequency">
+<form method="POST" action="/settings/frequency">
   <label for="freq_matches">Match summons</label>
   ${freqSelect('freq_matches', v.freqMatches)}
   <label for="freq_digests">Activity digest &amp; renewals</label>
@@ -615,12 +621,12 @@ Changes apply immediately and land in your consent log.</p>
 <h2>Blind mode</h2>
 <p class="small muted">When on, every email we send you becomes a content-free
 pointer — "something needs your decision" — with all detail kept here.</p>
-<form method="POST" action="/counter/settings/blind-mode">
+<form method="POST" action="/settings/blind-mode">
   <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
 </form>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}.</p>
-<a class="btn secondary" href="/counter">Back</a>`);
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -652,7 +658,7 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
 <span class="badge state">KEY</span><span class="cat">${esc(k.name)}</span></div>
 <div class="kv">made ${esc(k.created)} · ${k.lastUsed ? `last used ${esc(k.lastUsed)}` : 'never used yet'} · lapses ${esc(k.expires)}</div>
 <div class="row-actions">
-<form method="POST" action="/counter/agent-keys/revoke">
+<form method="POST" action="/agent-keys/revoke">
   <input type="hidden" name="key_id" value="${esc(k.keyId)}">
   <button type="submit" class="secondary">Revoke</button>
 </form></div></div>`,
@@ -668,7 +674,7 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
   const createForm = v.atLimit
     ? `<p class="muted small">You are holding as many keys as we allow at once.
 Revoke one you have finished with to make room.</p>`
-    : `<form method="POST" action="/counter/agent-keys">
+    : `<form method="POST" action="/agent-keys">
   <label for="name">What is this key for?</label>
   <input id="name" name="name" type="text" maxlength="60" required placeholder="the laptop agent">
   ${pinBlock}
@@ -691,7 +697,7 @@ switch stops them dead along with everything else.</p>
 ${rows}
 <h2>Make a new one</h2>
 ${createForm}
-<a class="btn secondary" href="/counter">Back</a>`);
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 /** The one and only sighting of the plaintext key. */
@@ -707,7 +713,7 @@ if it gets away from you, revoke it and make another.</p>
 <div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
 <p class="small muted">It lapses on ${esc(v.expires)}. Revoke it any time from
 your keys page.</p>
-<a class="btn secondary" href="/counter/agent-keys">Back to my keys</a>
+<a class="btn secondary" href="/agent-keys">Back to my keys</a>
 <script>
 document.getElementById('copybtn').addEventListener('click', async () => {
   try {
@@ -746,11 +752,11 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
 <p>Cards lapse on their own — that rule keeps every want and have honest.
 These are your open cards. One tap restarts each card's own clock.</p>
 ${rows}
-<form method="POST" action="/counter/renew">
+<form method="POST" action="/renew">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Still true — keep them all</button>
 </form>
-<a class="btn secondary" href="/counter/ledger">Review one by one instead</a>`);
+<a class="btn secondary" href="/ledger">Review one by one instead</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -761,12 +767,12 @@ export function unsubPage(token: string): string {
 <h1>Fewer emails.</h1>
 <p>This switches off match summons and activity digests. Sign-in codes,
 approval requests and security notices keep sending.</p>
-<form method="POST" action="/counter/email/unsub">
+<form method="POST" action="/email/unsub">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Unsubscribe me</button>
 </form>
 <p class="small muted">You can turn anything back on any time in
-<a href="/counter/settings">settings</a>.</p>`);
+<a href="/settings">settings</a>.</p>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -779,7 +785,7 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 <p>We sent a fresh code to your address. Enter it here and email switches back
 on. If it never arrives, the address itself is the problem — your mailbox is
 full, or the address no longer exists.</p>
-<form method="POST" action="/counter/reverify/verify">
+<form method="POST" action="/reverify/verify">
   <input type="hidden" name="verification_id" value="${esc(verificationId)}">
   <label for="code">Code</label>
   <input id="code" name="code" class="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>

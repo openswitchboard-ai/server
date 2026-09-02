@@ -47,7 +47,8 @@ import type { Config } from '../../src/config.js';
 
 const cfg = {
   envName: 'dev',
-  counterOrigin: 'https://counter.test',
+  counterOrigin: 'https://my.test',
+  legacyCounterHosts: ['counter.test'],
   publicOrigin: 'https://mcp.test',
 } as unknown as Config;
 
@@ -74,6 +75,9 @@ function fakePool() {
         world.updatedAt = new Date('2026-09-02T04:00:00.000Z');
         return rows([]);
       }
+      // The read ceiling is checked before the sweep runs; this world never
+      // gets near it.
+      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       // No matches, no cards: the sweep is empty and the arrangement is the
       // only thing it has to say.
       return rows([]);
@@ -88,7 +92,7 @@ beforeEach(() => {
 });
 
 const FULL: arrangement.Arrangement = {
-  check_cadence: 'twice a day',
+  check_every_minutes: 720,
   interrupt_for: ['a new match', 'a message on a match we are talking on'],
   summarize: 'a round-up on Sunday evening',
   suggestion_appetite: 'occasional',
@@ -101,7 +105,6 @@ describe('validateArrangement: the shape', () => {
   it('accepts the whole object and trims every field', () => {
     const r = arrangement.validateArrangement({
       ...FULL,
-      check_cadence: '  twice a day  ',
       interrupt_for: [' a new match ', 'a message on a match we are talking on'],
     });
     expect(r).toEqual({ ok: true, value: FULL });
@@ -117,7 +120,7 @@ describe('validateArrangement: the shape', () => {
 
   it('drops blank fields rather than storing empty strings', () => {
     const r = arrangement.validateArrangement({
-      check_cadence: '   ',
+      check_every_minutes: '',
       interrupt_for: ['', '  '],
       notes: 'once a week is plenty',
     });
@@ -125,7 +128,7 @@ describe('validateArrangement: the shape', () => {
   });
 
   it('refuses a field that is not part of an arrangement', () => {
-    const r = arrangement.validateArrangement({ check_cadence: 'daily', email: 'a@b.com' });
+    const r = arrangement.validateArrangement({ check_every_minutes: 720, email: 'a@b.com' });
     expect(r).toMatchObject({ ok: false });
     if (!r.ok) expect(r.error).toContain('email');
   });
@@ -157,7 +160,7 @@ describe('validateArrangement: the caps', () => {
   it('holds each short field to its own ceiling', () => {
     const at = 'x'.repeat(arrangement.SHORT_FIELD_MAX);
     const past = 'x'.repeat(arrangement.SHORT_FIELD_MAX + 1);
-    for (const field of ['check_cadence', 'summarize', 'quiet_hours']) {
+    for (const field of ['summarize', 'quiet_hours']) {
       expect(arrangement.validateArrangement({ [field]: at }), field).toMatchObject({ ok: true });
       expect(arrangement.validateArrangement({ [field]: past }), field).toMatchObject({ ok: false });
     }
@@ -182,11 +185,14 @@ describe('validateArrangement: the caps', () => {
   it('holds the whole object to 2000 characters', () => {
     expect(arrangement.ARRANGEMENT_TOTAL_MAX).toBe(2000);
     const big = {
-      notes: 'y'.repeat(arrangement.NOTES_MAX),
+      // The total is measured on the stored JSON, so a character that has to
+      // be escaped costs two. Quotes are allowed in an arrangement and this is
+      // the only way to sit inside every field cap and still be too big.
+      notes: '"'.repeat(arrangement.NOTES_MAX),
       interrupt_for: Array.from({ length: arrangement.INTERRUPT_MAX_ITEMS }, () =>
         'z'.repeat(arrangement.INTERRUPT_ITEM_MAX),
       ),
-      check_cadence: 'a'.repeat(arrangement.SHORT_FIELD_MAX),
+      check_every_minutes: 720,
       summarize: 'b'.repeat(arrangement.SHORT_FIELD_MAX),
       quiet_hours: 'c'.repeat(arrangement.SHORT_FIELD_MAX),
     };
@@ -201,7 +207,7 @@ describe('validateArrangement: the caps', () => {
 describe('validateArrangement: nothing shaped like a way to reach someone', () => {
   it('turns away emails, phones and web addresses in every field', () => {
     for (const bad of [
-      { check_cadence: 'ping ana@example.com twice a day' },
+      { summarize: 'ping ana@example.com twice a day' },
       { summarize: 'send it to https://example.com/inbox' },
       { quiet_hours: 'call 0412 345 678 outside these' },
       { notes: 'reach me on +61 400 000 000' },
@@ -217,8 +223,8 @@ describe('validateArrangement: nothing shaped like a way to reach someone', () =
     for (const good of [
       { quiet_hours: '22:00 to 07:00' },
       { quiet_hours: 'after 9pm and before 7am' },
-      { check_cadence: 'every 6 hours' },
-      { check_cadence: '3 times a day, weekdays' },
+      { check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MIN },
+      { check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MAX },
       { summarize: 'Sunday 18:00' },
       { notes: 'I travel a lot; timezone AEST' },
     ]) {
@@ -260,7 +266,7 @@ describe('storage', () => {
       cleared: false,
     });
     expect(event.fields.sort()).toEqual(
-      ['check_cadence', 'interrupt_for', 'notes', 'quiet_hours', 'suggestion_appetite', 'summarize'],
+      ['check_every_minutes', 'interrupt_for', 'notes', 'quiet_hours', 'suggestion_appetite', 'summarize'],
     );
     // Not one word of what the arrangement actually says reaches the log.
     const serialised = JSON.stringify(event);
@@ -290,6 +296,77 @@ describe('storage', () => {
 });
 
 // ---------------------------------------------------------------------------
+describe('how often to check is a number of minutes, with a floor', () => {
+  it('takes a whole number between the floor and a week', () => {
+    for (const m of [30, 31, 120, 720, 1440, 10080]) {
+      expect(arrangement.validateArrangement({ check_every_minutes: m }), String(m)).toEqual({
+        ok: true,
+        value: { check_every_minutes: m },
+      });
+    }
+  });
+
+  it('refuses anything oftener than every 30 minutes, and names the floor', () => {
+    for (const m of [1, 5, 29]) {
+      const r = arrangement.validateArrangement({ check_every_minutes: m });
+      expect(r, String(m)).toMatchObject({ ok: false });
+      if (!r.ok) expect(r.error).toContain('No more often than every 30 minutes');
+    }
+  });
+
+  it('refuses a fraction and anything past a week', () => {
+    for (const bad of [45.5, 10081, 'often']) {
+      expect(
+        arrangement.validateArrangement({ check_every_minutes: bad }),
+        String(bad),
+      ).toMatchObject({ ok: false });
+    }
+  });
+
+  it('says a number of minutes back the way a person would say it', () => {
+    expect(arrangement.cadenceInPlainWords(30)).toBe('every 30 minutes');
+    expect(arrangement.cadenceInPlainWords(60)).toBe('every hour');
+    expect(arrangement.cadenceInPlainWords(120)).toBe('every 2 hours');
+    expect(arrangement.cadenceInPlainWords(90)).toBe('every 90 minutes');
+    expect(arrangement.cadenceInPlainWords(1440)).toBe('once a day');
+    expect(arrangement.cadenceInPlainWords(2880)).toBe('every 2 days');
+    expect(arrangement.cadenceInPlainWords(10080)).toBe('once a week');
+  });
+
+  it('the tool description and schema say minutes and say the floor', () => {
+    const t = TOOLS.find((x) => x.name === 'standing_arrangement')!;
+    const field = t.inputSchema.properties.arrangement.properties.check_every_minutes;
+    expect(field.type).toBe('integer');
+    expect(field.minimum).toBe(30);
+    expect(field.maximum).toBe(10080);
+    expect(field.description).toMatch(/minutes/i);
+    expect(field.description).toMatch(/30/);
+    expect(t.description).toMatch(/30-minute floor/i);
+  });
+
+  it('the page offers a minutes box and the same sentence the server refuses with', () => {
+    const page = home.arrangementPage({ check_every_minutes: 720 });
+    expect(page).toContain('name="check_every_minutes"');
+    expect(page).toContain('type="number"');
+    expect(page).toContain('min="30"');
+    expect(page).toContain('max="10080"');
+    expect(page).toContain('No more often than every 30 minutes');
+    expect(page).toContain('a few times a day is plenty');
+  });
+
+  it('the sweep note tells the agent the cadence its human asked for', () => {
+    expect(arrangement.arrangementNote({ check_every_minutes: 720 }).text).toContain(
+      'every 12 hours',
+    );
+    expect(arrangement.arrangementNote({ notes: 'x' }).text).toMatch(/no cadence/i);
+  });
+
+  it('the manual says the cadence is minutes with a 30-minute floor', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('check_every_minutes');
+    expect(SERVER_INSTRUCTIONS).toMatch(/more often than every 30 minutes/i);
+  });
+});
+
 describe('the standing_arrangement tool', () => {
   const call = (args: any) => dispatchTool(cfg, ANA, 'standing_arrangement', args);
   const body = (r: any) => r.structuredContent;
@@ -320,13 +397,22 @@ describe('the standing_arrangement tool', () => {
 
   it('a second set overwrites rather than merges', async () => {
     await call({ action: 'set', arrangement: FULL });
-    await call({ action: 'set', arrangement: { check_cadence: 'once a week' } });
-    expect(body(await call({ action: 'get' })).arrangement).toEqual({ check_cadence: 'once a week' });
+    await call({ action: 'set', arrangement: { check_every_minutes: 10080 } });
+    expect(body(await call({ action: 'get' })).arrangement).toEqual({ check_every_minutes: 10080 });
   });
 
   it('refuses a bad arrangement without writing anything', async () => {
     const r: any = await call({ action: 'set', arrangement: { notes: 'ring me on 0412 345 678' } });
     expect(r.isError).toBe(true);
+    expect(vi.mocked(writeConsentEvent)).not.toHaveBeenCalled();
+    expect(await arrangement.readArrangement(ANA)).toEqual({});
+  });
+
+  it('a set below the floor is refused, and the refusal names the floor', async () => {
+    const r: any = await call({ action: 'set', arrangement: { check_every_minutes: 5 } });
+    expect(r.isError).toBe(true);
+    const said = JSON.parse(r.content[0].text).message;
+    expect(said).toContain('No more often than every 30 minutes');
     expect(vi.mocked(writeConsentEvent)).not.toHaveBeenCalled();
     expect(await arrangement.readArrangement(ANA)).toEqual({});
   });
@@ -366,7 +452,7 @@ describe('the page the human reads it on', () => {
   it('says it back in plain words', () => {
     const page = home.arrangementPage(FULL, { updated: '2026-09-02 04:00 UTC' });
     expect(page).toContain('How your agents behave');
-    expect(page).toContain('twice a day');
+    expect(page).toContain('every 12 hours');
     expect(page).toContain('a new match');
     expect(page).toContain('Mention something now and then');
     expect(page).toContain('Last changed 2026-09-02 04:00 UTC');
@@ -375,14 +461,14 @@ describe('the page the human reads it on', () => {
   it('says when nothing is set, and offers no clear control then', () => {
     const empty = home.arrangementPage({});
     expect(empty).toContain('Nothing is set yet');
-    expect(empty).not.toContain('/counter/arrangement/clear');
-    expect(home.arrangementPage(FULL)).toContain('/counter/arrangement/clear');
+    expect(empty).not.toContain('/arrangement/clear');
+    expect(home.arrangementPage(FULL)).toContain('/arrangement/clear');
   });
 
   it('carries every setting into the edit form, one interruption per line', () => {
     const page = home.arrangementPage(FULL);
     for (const name of [
-      'check_cadence',
+      'check_every_minutes',
       'interrupt_for',
       'summarize',
       'quiet_hours',
@@ -416,7 +502,7 @@ describe('the page the human reads it on', () => {
       collectionWindows: [],
     };
     const empty = home.dashboardPage(base);
-    expect(empty).toContain('/counter/arrangement');
+    expect(empty).toContain('/arrangement');
     expect(empty).toContain('Nothing is set yet');
     const filled = home.dashboardPage({
       ...base,

@@ -72,8 +72,8 @@ export interface EmailAccountContext {
 
 export function baseFooterLinks(cfg: Config): FooterLinks {
   return {
-    settingsUrl: `${cfg.counterOrigin}/counter/settings`,
-    ledgerUrl: `${cfg.counterOrigin}/counter/ledger`,
+    settingsUrl: `${cfg.counterOrigin}/settings`,
+    ledgerUrl: `${cfg.counterOrigin}/ledger`,
   };
 }
 
@@ -90,7 +90,7 @@ export async function emailAccountContext(
   const a = r.rows[0];
   if (!a) throw new Error(`emailAccountContext: no account ${accountId}`);
   const links = baseFooterLinks(cfg);
-  links.unsubUrl = `${cfg.counterOrigin}/counter/email/unsub?t=${encodeURIComponent(
+  links.unsubUrl = `${cfg.counterOrigin}/email/unsub?t=${encodeURIComponent(
     signEmailToken(accountId, 'unsubscribe'),
   )}`;
   return {
@@ -173,7 +173,7 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   const headers: { Name: string; Value: string }[] = [];
   if (input.accountId) {
     const unsubToken = signEmailToken(input.accountId, 'unsubscribe');
-    const unsubUrl = `${cfg.counterOrigin}/counter/email/unsub?t=${encodeURIComponent(unsubToken)}`;
+    const unsubUrl = `${cfg.counterOrigin}/email/unsub?t=${encodeURIComponent(unsubToken)}`;
     headers.push(
       {
         Name: 'List-Unsubscribe',
