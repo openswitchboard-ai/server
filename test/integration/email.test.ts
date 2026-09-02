@@ -317,7 +317,8 @@ d('0.E email daemon (live dev)', () => {
     // Sign the renew-all token exactly as the daemon does (dev observability:
     // the counter keys secret is readable by the harness).
     const sec = await secrets.send(
-      new GetSecretValueCommand({ SecretId: `osb/${ENV_NAME}/keys` }),
+      // The counter keys secret (core-stack.ts): osb/<env>/counter/keys.
+      new GetSecretValueCommand({ SecretId: `osb/${ENV_NAME}/counter/keys` }),
     );
     const key = Buffer.from(JSON.parse(sec.SecretString!).link_hmac_key, 'hex');
     const payload = `${accountId}|renew-all|${Math.floor(Date.now() / 1000) + 3600}`;

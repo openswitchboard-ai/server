@@ -532,20 +532,52 @@ export function minimalHave(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * list_intents shares the per-account hourly read ceiling (60/h) with the
+ * other read tools, so waits are budgeted: 5s between polls, ONE poller per
+ * account. When an account holds several cards, wait for them together with
+ * waitForCardStates — N concurrent single-card waits on one token burn the
+ * ceiling N times as fast, and a blown ceiling fails every later read for
+ * the rest of the hour.
+ */
+export async function waitForCardStates(
+  token: string,
+  intentIds: string[],
+  want: string[],
+  timeoutMs = 120_000,
+): Promise<Record<string, string>> {
+  const pending = new Set(intentIds);
+  const reached: Record<string, string> = {};
+  return poll(
+    async () => {
+      const r = await mcpCall(token, 'list_intents', {});
+      if (!r.result?.intents) {
+        // RATE_LIMITED (blown read ceiling) or another error envelope:
+        // continuing to poll hides the cause — fail loudly with it.
+        throw new Error(
+          `list_intents failed while waiting for card state: ${JSON.stringify(r.error ?? r).slice(0, 300)}`,
+        );
+      }
+      for (const i of r.result.intents) {
+        if (pending.has(i.intent_id) && want.includes(i.state)) {
+          pending.delete(i.intent_id);
+          reached[i.intent_id] = i.state as string;
+        }
+      }
+      return pending.size === 0 ? reached : undefined;
+    },
+    `cards [${[...pending].join(', ')}] to reach ${want.join('|')}`,
+    timeoutMs,
+    5_000,
+  );
+}
+
 export async function waitForCardState(
   token: string,
   intentId: string,
   want: string[],
   timeoutMs = 120_000,
 ): Promise<string> {
-  return poll(
-    async () => {
-      const r = await mcpCall(token, 'list_intents', {});
-      const item = r.result.intents.find((i: any) => i.intent_id === intentId);
-      if (item && want.includes(item.state)) return item.state as string;
-      return undefined;
-    },
-    `card ${intentId} to reach ${want.join('|')}`,
-    timeoutMs,
-  );
+  const reached = await waitForCardStates(token, [intentId], want, timeoutMs);
+  return reached[intentId];
 }
