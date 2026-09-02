@@ -11,6 +11,10 @@
  *      reason on the OWNER's card only and nowhere near the counterparty
  *  (d) no agent-reachable accept state other than awaiting-human
  *  (e) quota exceeded -> QUOTA_EXCEEDED
+ *  (g) the numbers come from the human: Pass on refuses an agent's figure and
+ *      the human sends theirs from their own page; Auto-negotiate lets the
+ *      agent move inside the box and refuses it outside, naming the edge to
+ *      that agent alone
  * plus: OAuth 2.1 flow, screening accept path, TTL/queue plumbing via ops.
  */
 import { randomBytes } from 'node:crypto';
@@ -269,7 +273,7 @@ d('integration gates against live deployment', () => {
   // match, because the per-match offer rail (3 a day a side) is deliberately
   // tight and this walks a whole negotiation.
   // -------------------------------------------------------------------------
-  it('GATE (f): Pass on refuses an agent figure; the human sends theirs from their page', async () => {
+  it('GATE (g): Pass on refuses an agent figure; the human sends theirs from their page', async () => {
     const [dana, eli] = await Promise.all([
       bootstrapActor('Dana', 'Cottesloe'),
       bootstrapActor('Eli', 'Claremont'),
