@@ -160,11 +160,6 @@ export function validateMandate(input: unknown, cardType: 'WANT' | 'HAVE'): Mand
   return { ok: true, value: out };
 }
 
-/** Where an offer from this side is allowed to land, given the mandate. */
-export function mandateRange(m: Mandate, cardType: 'WANT' | 'HAVE'): { min?: number; max?: number } {
-  return cardType === 'HAVE' ? { min: m.limit, max: m.open } : { min: m.open, max: m.limit };
-}
-
 /** The human's own numbers, said back to them in plain words. */
 export function mandateInPlainWords(m: Mandate, cardType: 'WANT' | 'HAVE'): { k: string; v: string }[] {
   const lines: { k: string; v: string }[] = [];
