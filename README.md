@@ -45,11 +45,11 @@ The core switchboard service (phase 0.C). One container, three concerns:
   is unavailable, cards simply stay `PENDING_SCREENING` (SQS redelivery →
   DLQ), never published unscreened.
 
-## The counter (phase 0.D)
+## The human pages (phase 0.D)
 
-`/counter/*` — served on its own hostname (`counter-dev.openswitchboard.ai`
-dev, `counter.openswitchboard.ai` prod; same ALB/service, SNI cert, host
-separation enforced in-app) — is the ONE human-facing surface: registration
+Served from the root of their own hostname (`my-dev.openswitchboard.ai` dev,
+`my.openswitchboard.ai` prod; same ALB/service, SNI cert, host separation
+enforced in-app) — the ONE human-facing surface: registration
 (email code → PIN → optional passkey → 18+ + consent, WORM-logged),
 login (email code or passkey), approval pages for stage-3 disclosure and
 offer acceptance (three facts big; anomalies louder), the ledger
@@ -57,9 +57,16 @@ offer acceptance (three facts big; anomalies louder), the ledger
 cards and suspends every agent token; un-pause needs login + PIN), and the
 blind-mode toggle (stored now, consumed by 0.E).
 
+They used to live at `/counter/*` on `counter[-dev].openswitchboard.ai`.
+Both old names still answer, with a 308 to the same path on the matching
+`my.*` host, and an old `/counter` path 308s to the same path without the
+prefix — so an approval link emailed before the move still lands on the page
+it names. The internals keep the old name: `src/counter/`, `COUNTER_ORIGIN`,
+`osb/<env>/counter/keys`.
+
 **Structural isolation** (unit- and live-tested in both directions): every
-`/counter` route sits behind a guard that hard-403s any request carrying an
-`Authorization` header, so an MCP bearer token is useless at the counter;
+human-page route sits behind a guard that hard-403s any request carrying an
+`Authorization` header, so an MCP bearer token is useless there;
 counter auth is a host-only `osb_counter` session cookie (HttpOnly, Secure,
 SameSite=Lax) that `/mcp` never reads. The PIN (argon2id at rest, 5 tries
 then lockout with backoff) and passkeys (WebAuthn, RP ID = counter host)
@@ -70,12 +77,12 @@ never transit the agent path.
 `osb/<env>/counter/keys`); the DB stores only the token hash.
 
 The `/oauth/authorize` endpoint on the MCP host now only validates the
-request and 302s the human to `/counter/authorize`; the 0.C access-code
-login page is gone. **Prod keeps registration CLOSED**: `/counter/register`
+request and 302s the human to `/authorize` on the human host; the 0.C
+access-code login page is gone. **Prod keeps registration CLOSED**: `/register`
 and `/oauth/authorize` render "registration opens at launch" — no bypass,
 and the ops worker still refuses `create-account` in prod. The dev operator
 bootstrap CLI (`npm run bootstrap-account`) remains for test accounts; those
-accounts sign in to the counter with email codes like everyone else.
+accounts sign in on the human pages with email codes like everyone else.
 
 ### SES sandbox (until production access lands)
 
