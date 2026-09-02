@@ -171,6 +171,10 @@ async function build(): Promise<void> {
     admin1ById.set(a.geonameId, a);
   }
   // Subdivision abbreviations (ACT, NSW, CA, ...) from the alternate-names dump.
+  // These earn their keep twice: they resolve "AU-ACT", and the resolver reads
+  // them back out of the finished index as the list of region words it refuses
+  // to place (see regionNamed in src/geo/gazetteer.ts). Dropping them would
+  // quietly let "ACT" through again.
   let abbrHits = 0;
   await forEachLine(join(dir, 'alternateNamesV2.txt'), (l) => {
     const f = l.split('\t');
