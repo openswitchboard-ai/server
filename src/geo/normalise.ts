@@ -21,7 +21,7 @@
  */
 import { OsbError } from '../protocol.js';
 import { decodeGeohash, encodeGeohash, isGeohash } from './geohash.js';
-import { looksLikeStreetAddress, resolvePlace } from './gazetteer.js';
+import { looksLikeStreetAddress, regionNamed, resolvePlace } from './gazetteer.js';
 
 /** Reach assumed for a bucket the gazetteer cannot place. A card that names
  *  an area takes the width of that area instead. */
@@ -70,6 +70,23 @@ const NAME_A_PLACE =
   'Name a suburb, city or region (for example "Canberra" or "AU-ACT"). Locations here are areas, never street addresses.';
 
 /**
+ * A state or territory is not a place a human lives in. The switchboard says
+ * which one it heard and asks for a town inside it, rather than guessing a
+ * point: an agent that means the whole territory can still say so plainly, in
+ * the "AU-ACT" form.
+ */
+const namesARegion = (place: string, region: string) =>
+  `'${place}' is ${region}, a state or territory — name a town or city in it (or "AU-ACT" form for the whole territory).`;
+
+/** Refuse a bare region name before anything tries to place it. */
+function refuseRegion(text: string): void {
+  const region = regionNamed(text);
+  if (region) {
+    throw new OsbError('LOCATION_UNRESOLVED', { human_action: namesARegion(text, region) });
+  }
+}
+
+/**
  * Resolve a card's geo into stored columns. Throws a machine-readable
  * LOCATION_UNRESOLVED when the text is a street address or names nothing the
  * gazetteer knows.
@@ -92,6 +109,7 @@ export function normaliseGeo(geo: any): NormalisedGeo {
         human_action: `'${place}' reads like a street address. ${NAME_A_PLACE}`,
       });
     }
+    refuseRegion(place);
     const hit = resolvePlace(place);
     if (!hit) {
       throw new OsbError('LOCATION_UNRESOLVED', {
@@ -121,7 +139,9 @@ export function normaliseGeo(geo: any): NormalisedGeo {
   }
 
   // An invented bucket ("canberra", "AU-ACT", "AU"): the gazetteer gets a
-  // turn, and what it finds becomes the card's place and canonical cell.
+  // turn, and what it finds becomes the card's place and canonical cell. A
+  // bucket that names a bare region is refused the way a place would be.
+  refuseRegion(bucket!);
   const hit = resolvePlace(bucket!);
   if (hit) {
     const radius = clampRadius(geo.radius_km, hit.reach_km);

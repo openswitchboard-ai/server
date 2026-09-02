@@ -9,6 +9,7 @@ import {
   gazetteerSource,
   looksLikeStreetAddress,
   normaliseKey,
+  regionNamed,
   resolvePlace,
 } from '../../src/geo/gazetteer.js';
 import { MAX_RADIUS_KM, geoOf, normaliseGeo } from '../../src/geo/normalise.js';
@@ -108,6 +109,50 @@ describe('gazetteer', () => {
     expect(resolvePlace('   ')).toBeUndefined();
   });
 
+  it('a short or shouted token has to match a place name outright', () => {
+    // The incident: GeoNames hangs airport codes off populated places, so
+    // "ACT" answered to Waco, Texas and "TAS" to Tashkent. A card reading
+    // "ACT" went to a geohash cell 14,000 km from Canberra.
+    expect(resolvePlace('ACT')).toBeUndefined();
+    expect(resolvePlace('TAS')).toBeUndefined();
+    expect(resolvePlace('QLD')).toBeUndefined();
+    // Real short names still resolve, by their own name.
+    const yass = resolvePlace('Yass')!;
+    expect(yass.country).toBe('AU');
+    expect(haversineKm(yass, { lat: -34.8404, lon: 148.9099 })).toBeLessThan(5);
+    expect(resolvePlace('Waco')!.country).toBe('US');
+    expect(resolvePlace('Oslo')!.country).toBe('NO');
+    // A written-out name keeps every spelling the source data carries.
+    expect(resolvePlace('Cracow')!.name).toBe(resolvePlace('Krakow')!.name);
+  });
+
+  it('names the state or territory behind a bare region string', () => {
+    expect(regionNamed('ACT')).toBe('Australian Capital Territory');
+    expect(regionNamed('NSW')).toBe('New South Wales');
+    expect(regionNamed('WA')).toBe('Western Australia');
+    expect(regionNamed('Texas')).toBe('Texas');
+    expect(regionNamed('New South Wales')).toBe('New South Wales');
+    // Not regions: real places, the deliberate division forms, a country
+    // code, and a name a hint can settle.
+    for (const s of [
+      'Canberra',
+      'Fremantle',
+      'Waco',
+      'Yass',
+      'Tokyo',
+      'Victoria',
+      'AU-ACT',
+      'US-CA',
+      'AU',
+      'CA',
+      'Australia',
+      'Perth, WA',
+      'Wa, Ghana',
+    ]) {
+      expect(regionNamed(s), s).toBeUndefined();
+    }
+  });
+
   it('recognises a street address', () => {
     for (const s of [
       '12 Smith St',
@@ -189,6 +234,41 @@ describe('card location normalisation', () => {
     const e = err(() => normaliseGeo({ place: 'Nowhereville' }));
     expect(e.payload.code).toBe('LOCATION_UNRESOLVED');
     expect(e.payload.human_action).toMatch(/nearest city|region/i);
+  });
+
+  it('refuses a state or territory, and says to name a town inside it', () => {
+    for (const [place, region] of [
+      ['ACT', 'Australian Capital Territory'],
+      ['NSW', 'New South Wales'],
+      ['WA', 'Western Australia'],
+      ['Texas', 'Texas'],
+      ['New South Wales', 'New South Wales'],
+    ] as [string, string][]) {
+      const e = err(() => normaliseGeo({ place, radius_km: 25 }));
+      expect(e.payload.code, place).toBe('LOCATION_UNRESOLVED');
+      expect(e.payload.human_action, place).toMatch(/state or territory/i);
+      expect(e.payload.human_action, place).toContain(region);
+      expect(e.payload.human_action!.length, place).toBeLessThanOrEqual(300);
+    }
+    // A bucket carrying the same shorthand is refused the same way.
+    expect(err(() => normaliseGeo({ bucket: 'ACT' })).payload.human_action).toMatch(
+      /state or territory/i,
+    );
+  });
+
+  it('the towns inside those regions still place exactly where they are', () => {
+    for (const [place, lat, lon] of [
+      ['Canberra', -35.2835, 149.1281],
+      ['Fremantle', -32.0563, 115.7456],
+      ['Waco', 31.5493, -97.1467],
+      ['Yass', -34.8404, 148.9099],
+    ] as [string, number, number][]) {
+      const n = normaliseGeo({ place, radius_km: 25 });
+      expect(haversineKm({ lat: n.lat!, lon: n.lon! }, { lat, lon }), place).toBeLessThan(5);
+    }
+    // The incident, in one line: "ACT" must never land in the Waco cell.
+    expect(normaliseGeo({ place: 'Waco' }).geo.bucket).toBe('9vdg');
+    expect(() => normaliseGeo({ place: 'ACT' })).toThrow();
   });
 
   it('refuses a geo with nothing to centre on', () => {
