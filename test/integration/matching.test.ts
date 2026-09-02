@@ -34,6 +34,7 @@ import {
   sendOp,
   setAutoNegotiate,
   waitForCardState,
+  waitForCardStates,
 } from './helpers.js';
 
 const RUN = process.env.RUN_INTEGRATION === '1';
@@ -221,7 +222,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     );
 
     // ---- wait for screening + embedding + publication -------------------
-    const waits: Promise<string>[] = [
+    const waits: Promise<unknown>[] = [
       waitForCardState(alice.accessToken, aliceWant, ['PUBLISHED']),
       waitForCardState(bob.accessToken, bobHave, ['PUBLISHED']),
       waitForCardState(carol.accessToken, carolWant, ['PUBLISHED']),
@@ -231,10 +232,12 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       waitForCardState(hank.accessToken, hankHave, ['PUBLISHED']),
       ...buyers.map((b, i) => waitForCardState(b.accessToken, buyerWants[i], ['PUBLISHED'])),
       waitForCardState(ivy.accessToken, ivyHave, ['PUBLISHED']),
-      ...kIds.slice(0, 9).map((id, i) =>
-        waitForCardState(kAccounts[i < 5 ? 0 : 1].accessToken, id, ['PUBLISHED'])),
-      ...kIds.slice(9).map((id, i) =>
-        waitForCardState(kAccounts[i < 5 ? 2 : 3].accessToken, id, ['PUBLISHED'])),
+      // One poller per account (kAccounts hold 5 cards each): parallel
+      // single-card waits on one token burn the shared hourly read ceiling.
+      waitForCardStates(kAccounts[0].accessToken, kIds.slice(0, 5), ['PUBLISHED']),
+      waitForCardStates(kAccounts[1].accessToken, kIds.slice(5, 9), ['PUBLISHED']),
+      waitForCardStates(kAccounts[2].accessToken, kIds.slice(9, 14), ['PUBLISHED']),
+      waitForCardStates(kAccounts[3].accessToken, kIds.slice(14), ['PUBLISHED']),
       ...fillerCardIds.map((id, i) =>
         waitForCardState(fillers[i].accessToken, id, ['PUBLISHED'])),
     ];
