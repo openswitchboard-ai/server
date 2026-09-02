@@ -32,6 +32,7 @@ import {
   mcpCall,
   poll,
   sendOp,
+  setAutoNegotiate,
   waitForCardState,
 } from './helpers.js';
 
@@ -411,6 +412,13 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
         await mcpCall(b.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
         await mcpCall(hank.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
       }),
+    );
+
+    // Every card starts on "Pass on", where an agent may not name a figure.
+    // Each buyer's human writes a ceiling on their own card first — which is
+    // what a real person would have to do before their agent could bid.
+    await Promise.all(
+      buyers.map((b, i) => setAutoNegotiate(b.jar, buyerWants[i], { limit: 1000 })),
     );
 
     // CONCURRENCY: all three buyers fire offers in parallel during the window.
