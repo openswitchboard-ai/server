@@ -300,6 +300,11 @@ export interface LedgerCardView {
   id: string;
   type: 'WANT' | 'HAVE';
   category: string;
+  /** Where the card sits and how far it reaches, in one line: "Canberra,
+   *  Australian Capital Territory, Australia · matching within 150 km". The
+   *  point of showing it is that only the person who lives there can tell
+   *  when it is wrong. */
+  location?: string;
   state: string;
   status: string;
   expiresAt: string;
@@ -322,6 +327,7 @@ export function ledgerPage(cards: LedgerCardView[], notice?: string): string {
   <span class="badge state">${esc(c.state)}${c.status === 'latent' ? ' · paused' : ''}</span>
 </div>
 ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
+${c.location ? `<div class="kv">${esc(c.location)}</div>` : ''}
 <div class="kv">${c.priceBand ? `private band ${esc(c.priceBand)} · ` : ''}${c.ask ? `ask ${esc(c.ask)} · ` : ''}until ${esc(c.expiresAt)}</div>
 <div class="kv">${esc(c.matchSummary)} · negotiating: ${esc(MODE_NAMES[c.mode])}</div>
 ${
