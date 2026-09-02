@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import {
   decodeGeohash,
@@ -503,6 +505,42 @@ describe('distance matching', () => {
     const unplaced = geoOf({ geo: { bucket: 'g_a3f1', radius_km: 25 }, geo_lat: null, geo_lon: null });
     expect(unplaced.lat).toBeNull();
     expect(unplaced.radius_km).toBe(25);
+  });
+});
+
+describe('every name the asset carries', () => {
+  /** Every lookup key in the bundled asset — the whole corpus of names an
+   *  agent could plausibly send. */
+  const everyKey = (): string[] => {
+    const path = process.env.OSB_GAZETTEER_PATH ?? 'data/gazetteer.json.gz';
+    return Object.keys(JSON.parse(gunzipSync(readFileSync(path)).toString('utf8')).index);
+  };
+
+  it('either places a name or refuses it with something an agent can act on', () => {
+    // The whole corpus through the publish path's location gate. Two things
+    // have to hold for every one of a quarter of a million names: nothing
+    // escapes as a bare error (which would be a 500 on a card someone tried
+    // to post), and an ambiguity refusal never offers one candidate, which
+    // would be a choice with nothing to choose.
+    const keys = everyKey();
+    expect(keys.length).toBeGreaterThan(100_000);
+    const broke: string[] = [];
+    let placed = 0;
+    let refused = 0;
+    for (const key of keys) {
+      const candidates = ambiguousPlaces(key);
+      if (candidates && candidates.length < 2) broke.push(`one candidate: ${key}`);
+      try {
+        normaliseGeo({ place: key, radius_km: 25 });
+        placed++;
+      } catch (e: any) {
+        if (e?.payload?.code) refused++;
+        else broke.push(`${key}: ${e?.message}`);
+      }
+    }
+    expect(broke.slice(0, 10)).toEqual([]);
+    expect(placed).toBeGreaterThan(0);
+    expect(refused).toBeGreaterThan(0);
   });
 });
 
