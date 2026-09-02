@@ -341,6 +341,7 @@ describe('counter pages: copy-cull render suite', () => {
           id: 'c-1',
           type: 'WANT',
           category: LABEL,
+          location: 'Canberra, Australian Capital Territory, Australia · matching within 150 km',
           state: 'PUBLISHED',
           status: 'active',
           expiresAt: '2026-10-01',
@@ -457,6 +458,14 @@ describe('counter pages: copy-cull render suite', () => {
       expect(lintEmailCopy(p.html)).toEqual([]);
     });
   }
+
+  it('the ledger shows where each card sits and how far it reaches', () => {
+    // A card in the wrong place is only visible to the person who lives in
+    // the right one, so the resolved location goes on their own page.
+    const ledger = Object.fromEntries(allPages().map((p) => [p.name, p.html])).ledger;
+    expect(ledger).toContain('Canberra, Australian Capital Territory, Australia');
+    expect(ledger).toContain('matching within 150 km');
+  });
 
   it('pages given a category label show it', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));

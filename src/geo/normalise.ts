@@ -21,7 +21,15 @@
  */
 import { OsbError } from '../protocol.js';
 import { decodeGeohash, encodeGeohash, isGeohash } from './geohash.js';
-import { looksLikeStreetAddress, regionNamed, resolvePlace } from './gazetteer.js';
+import {
+  ambiguousPlaces,
+  countryNamed,
+  describePlace,
+  looksLikeStreetAddress,
+  qualifyPlace,
+  regionNamed,
+  resolvePlace,
+} from './gazetteer.js';
 
 /** Reach assumed for a bucket the gazetteer cannot place. A card that names
  *  an area takes the width of that area instead. */
@@ -37,7 +45,7 @@ export interface NormalisedGeo {
   lon: number | null;
   radius_km: number;
   /** What the gazetteer matched, when it matched something. */
-  resolved?: { name: string; country: string; kind: string };
+  resolved?: { name: string; country: string; kind: string; display: string };
 }
 
 /** A stored card row, seen as the matching engine's geo input. */
@@ -59,6 +67,22 @@ export function geoOf(row: {
   };
 }
 
+/**
+ * How a stored card's location reads on its owner's approval page: the place
+ * written out in full, so someone who knows the area can see at a glance that
+ * the card is where they meant it to be. A place the gazetteer no longer
+ * answers to keeps its own string, and a card carrying only a bucket shows
+ * the bucket.
+ */
+export function describeStoredGeo(geo: any): string {
+  const place = typeof geo?.place === 'string' ? geo.place.trim() : '';
+  if (place) {
+    const hit = resolvePlace(place);
+    return hit ? describePlace(hit) : place;
+  }
+  return typeof geo?.bucket === 'string' ? geo.bucket : '';
+}
+
 function clampRadius(km: number | undefined, fallback: number): number {
   const v = km ?? fallback;
   return Math.max(0.1, Math.min(MAX_RADIUS_KM, v));
@@ -78,12 +102,71 @@ const NAME_A_PLACE =
 const namesARegion = (place: string, region: string) =>
   `'${place}' is ${region}, a state or territory — name a town or city in it (or "AU-ACT" form for the whole territory).`;
 
+/**
+ * A country is wider still. "AU" put a card on the centroid of Australia,
+ * 476 km from the city it meant, and said nothing about it. So the
+ * switchboard names the country it heard and asks for a town inside it.
+ */
+const namesACountry = (place: string, country: string) =>
+  `'${place}' is ${country}, a whole country — name the town or city your human is near.`;
+
+const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+/**
+ * Several real cities answer to some names. Picking the biggest of them and
+ * saying nothing is how a Perth card crosses an ocean, so the switchboard
+ * hands back the candidates, written out, and the agent asks its human which
+ * one. The message carries as many as fit under the protocol's 300-character
+ * ceiling; the full list rides in `candidates`.
+ */
+function namesSeveralPlaces(place: string, displays: string[]): string {
+  const head = `'${clip(place, 40)}' names more than one place. Ask your human which, then post it in full:`;
+  let msg = head;
+  for (const d of displays) {
+    const next = `${msg} ${d};`;
+    if (next.length > 299) break;
+    msg = next;
+  }
+  return msg === head ? `${head} ${clip(displays[0], 60)}.` : `${msg.slice(0, -1)}.`;
+}
+
 /** Refuse a bare region name before anything tries to place it. */
 function refuseRegion(text: string): void {
   const region = regionNamed(text);
   if (region) {
     throw new OsbError('LOCATION_UNRESOLVED', { human_action: namesARegion(text, region) });
   }
+}
+
+/** Refuse a bare country name or country code, the same way. */
+function refuseCountry(text: string): void {
+  const country = countryNamed(text);
+  if (country) {
+    throw new OsbError('LOCATION_UNRESOLVED', {
+      human_action: namesACountry(clip(text, 60), country),
+    });
+  }
+}
+
+/** Refuse a name several cities answer to, and say which they are. */
+function refuseAmbiguous(text: string): void {
+  const places = ambiguousPlaces(text);
+  if (!places) return;
+  const candidates = places.map(qualifyPlace);
+  throw new OsbError('LOCATION_AMBIGUOUS', {
+    human_action: namesSeveralPlaces(
+      text,
+      candidates.map((c) => c.display),
+    ),
+    candidates,
+  });
+}
+
+/** Every gate a free-text location passes before anything places it. */
+function refuseUnplaceable(text: string): void {
+  refuseRegion(text);
+  refuseCountry(text);
+  refuseAmbiguous(text);
 }
 
 /**
@@ -109,7 +192,7 @@ export function normaliseGeo(geo: any): NormalisedGeo {
         human_action: `'${place}' reads like a street address. ${NAME_A_PLACE}`,
       });
     }
-    refuseRegion(place);
+    refuseUnplaceable(place);
     const hit = resolvePlace(place);
     if (!hit) {
       throw new OsbError('LOCATION_UNRESOLVED', {
@@ -122,7 +205,12 @@ export function normaliseGeo(geo: any): NormalisedGeo {
       lat: hit.lat,
       lon: hit.lon,
       radius_km: radius,
-      resolved: { name: hit.name, country: hit.country, kind: hit.kind },
+      resolved: {
+        name: hit.name,
+        country: hit.country,
+        kind: hit.kind,
+        display: describePlace(hit),
+      },
     };
   }
 
@@ -140,8 +228,8 @@ export function normaliseGeo(geo: any): NormalisedGeo {
 
   // An invented bucket ("canberra", "AU-ACT", "AU"): the gazetteer gets a
   // turn, and what it finds becomes the card's place and canonical cell. A
-  // bucket that names a bare region is refused the way a place would be.
-  refuseRegion(bucket!);
+  // bucket too wide or too shared to place is refused the way a place would be.
+  refuseUnplaceable(bucket!);
   const hit = resolvePlace(bucket!);
   if (hit) {
     const radius = clampRadius(geo.radius_km, hit.reach_km);
@@ -150,7 +238,12 @@ export function normaliseGeo(geo: any): NormalisedGeo {
       lat: hit.lat,
       lon: hit.lon,
       radius_km: radius,
-      resolved: { name: hit.name, country: hit.country, kind: hit.kind },
+      resolved: {
+        name: hit.name,
+        country: hit.country,
+        kind: hit.kind,
+        display: describePlace(hit),
+      },
     };
   }
 

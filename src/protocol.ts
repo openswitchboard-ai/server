@@ -94,7 +94,16 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   | 'RATE_LIMITED_OFFERS'
   | 'SETTLEMENT_UNAVAILABLE'
-  | 'LOCATION_UNRESOLVED';
+  | 'LOCATION_UNRESOLVED'
+  | 'LOCATION_AMBIGUOUS';
+
+/** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */
+export interface ErrorCandidate {
+  /** "Perth, Scotland, GB" — what an agent puts to its human. */
+  display: string;
+  /** "Perth, Scotland" — what goes back in the card's geo.place. */
+  place: string;
+}
 
 export interface ProtocolError {
   schema_version: string;
@@ -103,6 +112,8 @@ export interface ProtocolError {
   retry_after?: number;
   /** Up to three open taxonomy categories nearest a refused one. */
   suggestions?: string[];
+  /** Up to five places a bare name could have meant, largest first. */
+  candidates?: ErrorCandidate[];
   docs_url: string;
 }
 
@@ -110,7 +121,12 @@ export class OsbError extends Error {
   readonly payload: ProtocolError;
   constructor(
     code: ErrorCode,
-    opts: { human_action?: string; retry_after?: number; suggestions?: string[] } = {},
+    opts: {
+      human_action?: string;
+      retry_after?: number;
+      suggestions?: string[];
+      candidates?: ErrorCandidate[];
+    } = {},
   ) {
     super(code);
     this.payload = assertOutbound('error', {
@@ -119,6 +135,7 @@ export class OsbError extends Error {
       ...(opts.human_action ? { human_action: opts.human_action } : {}),
       ...(opts.retry_after !== undefined ? { retry_after: opts.retry_after } : {}),
       ...(opts.suggestions?.length ? { suggestions: opts.suggestions.slice(0, 3) } : {}),
+      ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     });
   }

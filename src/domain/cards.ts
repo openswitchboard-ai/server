@@ -12,9 +12,28 @@ import {
 } from '../protocol.js';
 import { categoryDenied, categoryStatus } from '../denylist.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
-import { normaliseGeo } from '../geo/normalise.js';
+import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords } from './screening.js';
 import type { Config } from '../config.js';
+
+/**
+ * What a publish or an amend answers with. `location_resolved` is the
+ * switchboard saying out loud where it put the card — "Canberra, Australian
+ * Capital Territory, Australia", matching within 25 km. The agent folds that
+ * into what it tells its human, and a location that landed somewhere
+ * unintended is caught by the one person who would know.
+ */
+export interface PublishResult {
+  intent_id: string;
+  state: string;
+  location_resolved?: { display: string; radius_km: number };
+}
+
+function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
+  return geo.resolved
+    ? { location_resolved: { display: geo.resolved.display, radius_km: geo.radius_km } }
+    : {};
+}
 
 export interface CardRow {
   id: string;
@@ -66,7 +85,7 @@ export async function publishIntent(
   cfg: Config,
   accountId: string,
   card: any,
-): Promise<{ intent_id: string; state: string }> {
+): Promise<PublishResult> {
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
     throw Object.assign(new Error(`invalid intent card: ${v.reasons.join('; ')}`), {
@@ -138,7 +157,7 @@ export async function publishIntent(
       MessageBody: JSON.stringify({ kind: 'screen-card', card_id: id }),
     }),
   );
-  return { intent_id: id, state: 'PENDING_SCREENING' };
+  return { intent_id: id, state: 'PENDING_SCREENING', ...locationEcho(geo) };
 }
 
 export async function getCard(id: string): Promise<CardRow | undefined> {
@@ -212,7 +231,7 @@ export async function amendIntent(
   accountId: string,
   intentId: string,
   patch: any,
-): Promise<{ intent_id: string; state: string }> {
+): Promise<PublishResult> {
   const card = assertOwnUsableCard(await getCard(intentId), accountId);
   if (card.lifecycle_state === 'WITHDRAWN') {
     throw Object.assign(new Error('intent is withdrawn'), { notFound: true });
@@ -296,7 +315,13 @@ export async function amendIntent(
       MessageBody: JSON.stringify({ kind: 'screen-card', card_id: intentId }),
     }),
   );
-  return { intent_id: intentId, state: 'PENDING_SCREENING' };
+  // The echo rides on an amend that moved the card, which is also the call an
+  // agent makes when its human says the place is wrong.
+  return {
+    intent_id: intentId,
+    state: 'PENDING_SCREENING',
+    ...('geo' in (patch ?? {}) ? locationEcho(geo) : {}),
+  };
 }
 
 export async function withdrawIntent(
