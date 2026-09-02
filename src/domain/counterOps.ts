@@ -266,6 +266,8 @@ export interface LedgerCard {
   collect_window_minutes?: number | null;
   /** The stored screening verdict (cards.screening). Owner-only, by row. */
   screening?: any;
+  /** Who writes this card's negotiating figures. 'relay' unless switched. */
+  negotiation_mode: 'relay' | 'mandate';
 }
 
 /** Per-card collection-window override; may only SHORTEN the default. */
@@ -316,6 +318,7 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     matchCount: row.match_count,
     collect_window_minutes: row.collect_window_minutes,
     screening: row.screening,
+    negotiation_mode: row.negotiation_mode === 'mandate' ? 'mandate' : 'relay',
   }));
 }
 
@@ -432,6 +435,61 @@ export async function openCollectionWindows(accountId: string): Promise<OpenWind
      WHERE c.account_id = $1 AND c.collect_until > now() AND c.collect_closed_at IS NULL
      ORDER BY c.collect_until ASC`,
     [accountId],
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------------------
+// 1.E: the offers on one match, for the human whose match it is. This is the
+// owner's own view of a negotiation — both sides' figures, and which of their
+// own they typed themselves — so it is read straight from the rows rather than
+// through the counterparty-facing serializer.
+// ---------------------------------------------------------------------------
+
+export interface MatchOfferRow {
+  id: string;
+  amount: string;
+  ccy: string;
+  state: string;
+  expiry: Date;
+  proposer_account: string;
+  authored_by: 'human' | 'agent';
+  message: any;
+}
+
+export interface MatchForHuman {
+  match_id: string;
+  category: string;
+  stage: number;
+  state: string;
+  card_id: string;
+  card_type: 'WANT' | 'HAVE';
+  negotiation_mode: 'relay' | 'mandate';
+}
+
+/** The match, from the side of the human asking — or nothing if it is not theirs. */
+export async function matchForHuman(
+  accountId: string,
+  matchId: string,
+): Promise<MatchForHuman | undefined> {
+  const r = await getPool().query(
+    `SELECT m.id AS match_id, m.category, m.stage, m.state,
+            c.id AS card_id, c.type AS card_type, c.negotiation_mode
+     FROM matches m
+     JOIN cards c ON c.id = CASE WHEN m.account_want = $1 THEN m.card_want ELSE m.card_have END
+     WHERE m.id = $2 AND (m.account_want = $1 OR m.account_have = $1)`,
+    [accountId, matchId],
+  );
+  const row = r.rows[0];
+  if (!row) return undefined;
+  return { ...row, negotiation_mode: row.negotiation_mode === 'mandate' ? 'mandate' : 'relay' };
+}
+
+export async function offersOnMatch(matchId: string): Promise<MatchOfferRow[]> {
+  const r = await getPool().query(
+    `SELECT id, amount, ccy, state, expiry, proposer_account, authored_by, message
+     FROM offers WHERE match_id = $1 ORDER BY created_at ASC LIMIT 50`,
+    [matchId],
   );
   return r.rows;
 }

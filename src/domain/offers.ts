@@ -2,6 +2,14 @@ import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, openCollectionWindow, ownCardId, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
+import {
+  checkAgainstMandate,
+  noMandateRefusal,
+  outsideMandateRefusal,
+  readNegotiation,
+  readNegotiationMode,
+  relayRefusal,
+} from './negotiation.js';
 import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -15,6 +23,9 @@ export interface OfferRow {
   expiry: Date;
   state: 'proposed' | 'awaiting-human' | 'accepted-by-human' | 'declined' | 'withdrawn';
   message: any;
+  /** 'human' when typed on an approval page, 'agent' when sent from inside a
+   *  mandate. Own-side bookkeeping: the offer schema has no slot for it. */
+  authored_by?: 'human' | 'agent';
 }
 
 async function loadOffer(offerId: string): Promise<OfferRow> {
@@ -41,11 +52,35 @@ export function serializeOffer(o: OfferRow) {
   return assertReasonless(assertOutbound('offer', payload));
 }
 
+/** This side's own offer amounts on a match, oldest first (withdrawn aside). */
+async function ownOfferAmounts(accountId: string, matchId: string): Promise<number[]> {
+  const r = await getPool().query(
+    `SELECT amount FROM offers
+     WHERE match_id = $1 AND proposer_account = $2 AND state <> 'withdrawn'
+     ORDER BY created_at ASC`,
+    [matchId, accountId],
+  );
+  return r.rows.map((x: any) => Number(x.amount));
+}
+
+/**
+ * Put a figure on the table.
+ *
+ * `author` is the whole of the new rule. A figure authored by the human — typed
+ * on their own approval page — goes straight through, because the point of the
+ * page is that they wrote it. A figure an agent wants to send has to get past
+ * the card's negotiation mode first: refused outright in relay ("Pass on"), and
+ * in mandate ("Auto-negotiate") allowed only inside the box the human drew.
+ * Everything after that gate — stage, rates, ladder detection — is unchanged
+ * and applies to both.
+ */
 export async function proposeOffer(
   cfg: Config,
   accountId: string,
   input: { match_id: string; amount: number; ccy: string; expiry: string; message?: string },
+  opts: { author?: 'agent' | 'human' } = {},
 ) {
+  const author = opts.author ?? 'agent';
   const m = await getMatch(input.match_id);
   if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
   sideOf(m, accountId);
@@ -55,6 +90,9 @@ export async function proposeOffer(
       human_action: 'Offers open at stage 2, after both sides express interest.',
     });
   }
+  if (author === 'agent') {
+    await assertAgentMayPropose(cfg, accountId, m.id, ownCardId(m, accountId), input);
+  }
   await checkOfferRate(accountId, cfg.quotas);
   // Anti-probing: max 3 offers per side per match per rolling 24h.
   await checkPerMatchOfferRate(accountId, input.match_id);
@@ -62,12 +100,51 @@ export async function proposeOffer(
     ? { text: input.message.slice(0, 2000), provenance: 'counterparty-untrusted' }
     : null;
   const r = await getPool().query(
-    `INSERT INTO offers (match_id, proposer_account, amount, ccy, expiry, message)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [input.match_id, accountId, input.amount, input.ccy, input.expiry, message ? JSON.stringify(message) : null],
+    `INSERT INTO offers (match_id, proposer_account, amount, ccy, expiry, message, authored_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [
+      input.match_id,
+      accountId,
+      input.amount,
+      input.ccy,
+      input.expiry,
+      message ? JSON.stringify(message) : null,
+      author,
+    ],
   );
   await detectLadderProbing(accountId, input.match_id);
   return serializeOffer(r.rows[0]);
+}
+
+/**
+ * The gate an agent's own figure has to pass. Throws CONSENT_REQUIRED carrying
+ * the human's own link; the reason names the boundary, and the only reader is
+ * the agent of the human who set it.
+ */
+async function assertAgentMayPropose(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+  cardId: string,
+  input: { amount: number; ccy: string },
+): Promise<void> {
+  // The mode is read first, and on its own: a card on Pass on is refused
+  // without the mandate ever being decrypted, so a refusal costs no audit line
+  // and tells an agent nothing about numbers it may not act on.
+  if ((await readNegotiationMode(accountId, cardId)) === 'relay') throw relayRefusal(cfg, matchId);
+  const neg = await readNegotiation(accountId, cardId, {
+    purpose: 'mandate-offer-check',
+    refs: { match_id: matchId },
+  });
+  if (!neg.mandate) throw noMandateRefusal(cfg, cardId);
+  const priorAmounts = await ownOfferAmounts(accountId, matchId);
+  const check = checkAgainstMandate(neg.mandate, neg.cardType, {
+    amount: input.amount,
+    ccy: input.ccy,
+    priorAmounts,
+    isOpening: priorAmounts.length === 0,
+  });
+  if (!check.ok) throw outsideMandateRefusal(cfg, cardId, check.reason);
 }
 
 /**

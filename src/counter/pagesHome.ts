@@ -8,7 +8,14 @@ import {
   SHORT_FIELD_MAX,
   type Arrangement,
 } from '../domain/arrangement.js';
-import { esc, errBox, layout, sharedFieldsFieldset } from './pages.js';
+import {
+  MODE_EXPLANATIONS,
+  MODE_NAMES,
+  mandateInPlainWords,
+  type Mandate,
+  type NegotiationMode,
+} from '../domain/negotiation.js';
+import { counterOfferForm, esc, errBox, layout, sharedFieldsFieldset } from './pages.js';
 
 /**
  * What you share on a match. Two boxes, viewable and changeable whenever the
@@ -221,8 +228,13 @@ pairing — no reason is ever sent to the other side.</p>` +
 ${
   m.verdict
     ? `<div class="kv">Your call: <strong>${esc(m.verdict)}</strong></div>`
-    : `<div class="row-actions">
-<form method="POST" action="/counter/verdict" style="display:inline">
+    : ''
+}
+<div class="row-actions">
+${
+  m.verdict
+    ? ''
+    : `<form method="POST" action="/counter/verdict" style="display:inline">
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="good-call">
   <button type="submit" class="secondary">Good call</button>
@@ -231,8 +243,10 @@ ${
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="not-for-me">
   <button type="submit" class="secondary">Not for me</button>
-</form></div>`
+</form>`
 }
+<a class="btn secondary" href="/counter/matches/${esc(m.matchId)}">Offers &amp; your number</a>
+</div>
 </div>`,
         )
         .join('')
@@ -287,6 +301,8 @@ export interface LedgerCardView {
   ask?: string;
   matchSummary: string;
   attributes?: string;
+  /** Who writes this card's negotiating figures. Defaults to Pass on. */
+  mode: NegotiationMode;
 }
 
 export function ledgerPage(cards: LedgerCardView[], notice?: string): string {
@@ -301,12 +317,13 @@ export function ledgerPage(cards: LedgerCardView[], notice?: string): string {
 </div>
 ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
 <div class="kv">${c.priceBand ? `private band ${esc(c.priceBand)} · ` : ''}${c.ask ? `ask ${esc(c.ask)} · ` : ''}until ${esc(c.expiresAt)}</div>
-<div class="kv">${esc(c.matchSummary)}</div>
+<div class="kv">${esc(c.matchSummary)} · negotiating: ${esc(MODE_NAMES[c.mode])}</div>
 ${
   c.state === 'WITHDRAWN' || c.state === 'EXPIRED'
     ? ''
     : `<div class="row-actions">
   <a class="btn secondary" href="/counter/ledger/${esc(c.id)}/edit">Edit</a>
+  <a class="btn secondary" href="/counter/ledger/${esc(c.id)}/numbers">Your numbers</a>
   <form method="POST" action="/counter/ledger/${esc(c.id)}/withdraw"><button type="submit" class="secondary">Withdraw</button></form>
 </div>`
 }
@@ -319,7 +336,8 @@ ${
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 <p class="small muted">Every card your agent has posted for you. Private price
 bands are shown to you only — never to a counterparty. Edits go back through
-screening; withdrawal is immediate.</p>
+screening; withdrawal is immediate. Every card starts on ${esc(MODE_NAMES.relay)}:
+${esc(MODE_EXPLANATIONS.relay)}</p>
 ${rows}
 <a class="btn secondary" href="/counter">Back</a>`);
 }
@@ -395,7 +413,150 @@ may only be SHORTER than the default ${c.collectWindowDefault})</label>
   <input id="ttl_days" name="ttl_days" type="number" min="1" max="365" value="${esc(String(c.ttlDays))}">
   <button type="submit">Save &amp; re-screen</button>
 </form>
+<a class="btn secondary" href="/counter/ledger/${esc(c.id)}/numbers">Your numbers on this card</a>
 <a class="btn secondary" href="/counter/ledger">Cancel</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// Your numbers (1.E). Who writes the figures this card negotiates with. Both
+// modes and every number on this page are set here and nowhere else — no agent
+// surface can read or change either, which is what makes "the numbers are
+// yours" a fact about the software rather than a promise about behaviour.
+// ---------------------------------------------------------------------------
+
+export interface CardNumbersView {
+  id: string;
+  type: 'WANT' | 'HAVE';
+  category: string;
+  mode: NegotiationMode;
+  mandate?: Mandate;
+  /** Re-rendered form values after a rejected submission. */
+  form?: { open?: string; limit?: string; step?: string; ccy?: string };
+}
+
+export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: string): string {
+  const f = v.form ?? {
+    open: v.mandate?.open != null ? String(v.mandate.open) : '',
+    limit: v.mandate?.limit != null ? String(v.mandate.limit) : '',
+    step: v.mandate?.step != null ? String(v.mandate.step) : '',
+    ccy: v.mandate?.ccy ?? '',
+  };
+  const selling = v.type === 'HAVE';
+  const current = v.mandate
+    ? `<div class="facts">${mandateInPlainWords(v.mandate, v.type)
+        .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v">${esc(l.v)}</div></div>`)
+        .join('')}</div>`
+    : '';
+  const modeRadio = (m: NegotiationMode) =>
+    `<label class="modeopt" for="mode_${m}">
+  <input id="mode_${m}" name="mode" type="radio" value="${m}"${v.mode === m ? ' checked' : ''}>
+  <strong>${esc(MODE_NAMES[m])}</strong>
+  <span class="small muted">${esc(MODE_EXPLANATIONS[m])}</span>
+</label>`;
+  return layout('Your numbers', `
+<h1>Your numbers on this card.</h1>
+<div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
+  <span class="badge ${selling ? 'have' : 'want'}">${esc(v.type)}</span>
+  <span class="cat">${esc(v.category)}</span>
+</div>
+<p>Every figure this card carries into a negotiation is one you wrote. Your
+agent presents and advises; it never invents a price of its own.</p>
+${errBox(error)}
+${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${current}
+<form method="POST" action="/counter/ledger/${esc(v.id)}/numbers">
+  <h2>How this card negotiates</h2>
+  ${modeRadio('relay')}
+  ${modeRadio('mandate')}
+  <h2>Your numbers</h2>
+  <p class="small muted">These are needed for Auto-negotiate and are kept
+  private the same way your band is: your agent works inside them, and the
+  other side is never told any of it.</p>
+  <label for="open">Open at (optional)</label>
+  <input id="open" name="open" type="number" step="0.01" min="0" value="${esc(f.open ?? '')}" placeholder="amount">
+  <label for="limit">${selling ? 'Take no less than' : 'Pay no more than'}</label>
+  <input id="limit" name="limit" type="number" step="0.01" min="0" value="${esc(f.limit ?? '')}" placeholder="amount">
+  <label for="step">Move in steps of at least (optional)</label>
+  <input id="step" name="step" type="number" step="0.01" min="0" value="${esc(f.step ?? '')}" placeholder="amount">
+  <label for="ccy">Currency</label>
+  <input id="ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(f.ccy ?? '')}" placeholder="AUD">
+  <button type="submit">Save</button>
+</form>
+${
+  v.mandate
+    ? `<form method="POST" action="/counter/ledger/${esc(v.id)}/numbers/clear">
+  <button type="submit" class="secondary">Clear my numbers and go back to Pass on</button>
+</form>`
+    : ''
+}
+<p class="small muted">Whichever way this is set, accepting an offer still
+comes to you here, with your PIN. Auto-negotiate lets your agent put figures on
+the table between the two you wrote; it never agrees anything.</p>
+<a class="btn secondary" href="/counter/ledger/${esc(v.id)}/edit">Back to the card</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// Offers on one match: the whole run of figures, and the box where this person
+// types the next one. In Pass on this is where their side's numbers come from.
+// ---------------------------------------------------------------------------
+
+export interface MatchOfferItem {
+  amount: string;
+  mine: boolean;
+  state: string;
+  authoredByMe?: 'human' | 'agent';
+  note?: string;
+  expires: string;
+}
+
+export interface MatchOffersView {
+  matchId: string;
+  cardId: string;
+  category: string;
+  type: 'WANT' | 'HAVE';
+  mode: NegotiationMode;
+  offers: MatchOfferItem[];
+  /** False when the match is not at a stage where offers are open. */
+  canOffer: boolean;
+  canOfferBlockedBecause?: string;
+  form?: { amount?: string; ccy?: string; note?: string };
+}
+
+export function matchOffersPage(v: MatchOffersView, error?: string, notice?: string): string {
+  const rows = v.offers.length
+    ? v.offers
+        .map(
+          (o) => `<div class="card-row"><div class="top">
+<span class="badge ${o.mine ? 'have' : 'want'}">${o.mine ? 'YOURS' : 'THEIRS'}</span>
+<span class="badge state">${esc(o.state)}</span></div>
+<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${esc(o.expires)}${
+            o.mine && o.authoredByMe
+              ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
+              : ''
+          }</div>
+${o.note ? `<div class="kv">“${esc(o.note)}”</div>` : ''}
+</div>`,
+        )
+        .join('')
+    : `<p class="muted">No figures on the table yet.</p>`;
+  return layout('Offers on this match', `
+<h1>Offers on this match.</h1>
+<div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
+  <span class="badge ${v.type === 'HAVE' ? 'have' : 'want'}">${esc(v.type)}</span>
+  <span class="cat">${esc(v.category)}</span>
+  <span class="badge state">${esc(MODE_NAMES[v.mode])}</span>
+</div>
+${errBox(error)}
+${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${rows}
+${
+  v.canOffer
+    ? counterOfferForm(v.matchId, { ccy: v.form?.ccy, amount: v.form?.amount, note: v.form?.note })
+    : `<p class="note">${esc(v.canOfferBlockedBecause ?? 'Offers are not open on this match yet.')}</p>`
+}
+<p class="small muted">${esc(MODE_NAMES[v.mode])} — ${esc(MODE_EXPLANATIONS[v.mode])}</p>
+<a class="btn secondary" href="/counter/ledger/${esc(v.cardId)}/numbers">Your numbers on this card</a>
+<a class="btn secondary" href="/counter">Back to your approval page</a>`);
 }
 
 export interface EmailSettingsView {

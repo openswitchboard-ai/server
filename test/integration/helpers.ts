@@ -149,6 +149,54 @@ export async function createAgentKey(
   return { token, keyId };
 }
 
+/**
+ * Switch one card to "Auto-negotiate" and write the numbers, exactly as its
+ * human would on their own page.
+ *
+ * Every card lands on "Pass on", where an agent may not author a figure at all,
+ * so any harness that drives respond(propose_offer) has to come through here
+ * first. That is the point of the feature rather than an obstacle to it: the
+ * suite has to do what a person would do.
+ */
+export async function setAutoNegotiate(
+  jar: Jar,
+  cardId: string,
+  numbers: { open?: number; limit: number; step?: number; ccy?: string },
+): Promise<void> {
+  const res = await counterFetch(
+    jar,
+    `/counter/ledger/${cardId}/numbers`,
+    form({
+      mode: 'mandate',
+      ...(numbers.open !== undefined ? { open: String(numbers.open) } : {}),
+      limit: String(numbers.limit),
+      ...(numbers.step !== undefined ? { step: String(numbers.step) } : {}),
+      ccy: numbers.ccy ?? 'AUD',
+    }),
+  );
+  if (res.status !== 200) {
+    throw new Error(`setting the card's numbers failed: ${res.status} ${await res.text()}`);
+  }
+}
+
+/** Type a figure on the human's own page and send it as their side's offer. */
+export async function humanOffer(
+  jar: Jar,
+  matchId: string,
+  o: { amount: number; ccy?: string; note?: string; goodFor?: 3 | 7 | 14 },
+): Promise<Response> {
+  return counterFetch(
+    jar,
+    `/counter/matches/${matchId}/offer`,
+    form({
+      amount: String(o.amount),
+      ccy: o.ccy ?? 'AUD',
+      ...(o.note ? { note: o.note } : {}),
+      good_for: String(o.goodFor ?? 7),
+    }),
+  );
+}
+
 /** Revoke an agent key from the approval page. */
 export async function revokeAgentKey(jar: Jar, keyId: string): Promise<void> {
   const res = await counterFetch(jar, '/counter/agent-keys/revoke', form({ key_id: keyId }));

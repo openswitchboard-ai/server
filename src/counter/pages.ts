@@ -4,6 +4,7 @@
  * (data), light + dark both designed. Patch the octopus appears small and
  * tasteful in the header.
  */
+import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 
 export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) =>
@@ -295,6 +296,41 @@ export interface ApprovalView {
   hasPasskey: boolean;
   elevated: boolean;
   postPath: string; // decision endpoint
+  /** Set on an offer approval: the match to reply on, and the offer's currency.
+   *  Answering with a figure of your own is a third door out of this page,
+   *  beside approve and decline, and it needs no PIN because it binds nothing. */
+  counterOffer?: { matchId: string; ccy: string };
+}
+
+/**
+ * Reply with your own number. This control is where a human's side of a
+ * negotiation comes from on a card set to Pass on, and it is deliberately
+ * lighter than approving: a proposal binds nothing, so a signed-in session is
+ * enough, while accepting one still asks for a PIN or a passkey.
+ */
+export function counterOfferForm(
+  matchId: string,
+  opts: { ccy?: string; amount?: string; note?: string; heading?: string } = {},
+): string {
+  return `<h2>${esc(opts.heading ?? 'Reply with your number')}</h2>
+<p class="small muted">What you type here goes to the other side as your offer.
+It binds nothing — either of you can still say no — and accepting anything
+still comes back to this page.</p>
+<form method="POST" action="/counter/matches/${esc(matchId)}/offer">
+  <label for="amount">Your number</label>
+  <input id="amount" name="amount" type="number" step="0.01" min="0" required value="${esc(opts.amount ?? '')}" placeholder="amount">
+  <label for="ccy">Currency</label>
+  <input id="ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" required value="${esc(opts.ccy ?? 'AUD')}">
+  <label for="note">A line to go with it (optional)</label>
+  <input id="note" name="note" type="text" maxlength="${MANDATE_NOTE_MAX}" value="${esc(opts.note ?? '')}" placeholder="about the terms — no contact details">
+  <label for="good_for">Good for</label>
+  <select id="good_for" name="good_for">
+    <option value="3">3 days</option>
+    <option value="7" selected>7 days</option>
+    <option value="14">14 days</option>
+  </select>
+  <button type="submit">Send this number</button>
+</form>`;
 }
 
 /** The two boxes that make up everything a match ever sees about a person. */
@@ -346,6 +382,14 @@ ${errBox(error)}
   <button type="submit" name="decision" value="approve" class="approve">Approve</button>
   <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Decline — nothing ${{ 'offer-accept': 'is accepted', 'stage3-disclosure': 'is shared', 'settlement-approve': 'is paid' }[v.action]}</button>
 </form>
+${
+  v.counterOffer
+    ? counterOfferForm(v.counterOffer.matchId, {
+        ccy: v.counterOffer.ccy,
+        heading: 'Or reply with a number of your own',
+      })
+    : ''
+}
 ${passkeyBtn}
 <p class="small muted">Approve needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Decline shares nothing and carries no reason.</p>
 ${v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
