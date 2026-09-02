@@ -1,7 +1,7 @@
 /**
  * Send the [SAMPLE] set for visual review:
  *   AWS_PROFILE=openswitchboard npx tsx scripts/send-samples.ts \
- *     [--to lockytaylor@hotmail.com] [--env dev]
+ *     --to you@example.com [--env dev]
  * Sends every sample template through SES with the env's configuration set,
  * the production From/reply-to and the RFC 8058 headers (sample token), each
  * subject prefixed "[SAMPLE]". Recipient must be sandbox-verified until
@@ -17,7 +17,8 @@ function arg(name: string, fallback: string): string {
 }
 
 async function main() {
-  const to = arg('to', 'lockytaylor@hotmail.com');
+  const to = arg('to', '');
+  if (!to) throw new Error('--to <address> is required (a mailbox you control)');
   const envName = arg('env', 'dev');
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const ssm = new SSMClient({ region });

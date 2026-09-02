@@ -2,6 +2,11 @@
   "name": "@openswitchboard/server",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openswitchboard-ai/server.git"
+  },
   "description": "OpenSwitchboard core switchboard service: MCP endpoint, OAuth 2.1, domain core, screening pipeline.",
   "type": "module",
   "engines": {

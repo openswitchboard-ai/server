@@ -1,5 +1,5 @@
 /**
- * Banned-phrase lint for outgoing email copy (Lachlan's standing VOICE
+ * Banned-phrase lint for outgoing email copy (the project's standing VOICE
  * rules). Antithesis constructions are banned outright; the render suite
  * runs every template's HTML + text through this, and send.ts asserts it in
  * dev so a template regression can never quietly ship marketing voice.

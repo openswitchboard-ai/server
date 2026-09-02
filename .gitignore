@@ -2,6 +2,14 @@ node_modules/
 dist/
 *.log
 .env
+.env.*
+!.env.example
 test-results/
 playwright-report/
 e2e-screenshots/
+# Agent worktrees and local agent config. These hold full copies of the repo
+# and must never be committed.
+.claude/
+cdk.out/
+*.pem
+*.key
