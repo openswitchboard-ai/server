@@ -7,14 +7,19 @@
  * One says "Canberra", the other says "AU-ACT" — two strings that could never
  * be equal — and the pair still meets.
  *
- * Also proves, against the real service, that a street address and a name the
- * gazetteer cannot place are both refused with LOCATION_UNRESOLVED.
+ * Also proves, against the real service, what the switchboard will not guess
+ * at: a street address, a name the gazetteer cannot place, a bare state and a
+ * bare country all come back as LOCATION_UNRESOLVED, and a name several
+ * cities answer to comes back as LOCATION_AMBIGUOUS with the candidates
+ * spelled out. What it does place, it says out loud — in the publish
+ * response, and on the ledger page its owner reads.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
+  counterFetch,
   dbExec,
   mcpCall,
   poll,
@@ -130,6 +135,56 @@ d('one city, two spellings, one match', () => {
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
     expect(r.result.human_action).toMatch(/state or territory/i);
     expect(r.result.human_action).toContain('Australian Capital Territory');
+  });
+
+  it('refuses a bare country, and names the country it heard', async () => {
+    // The second incident: a card posted as "AU" sat on the centroid of the
+    // continent, 476 km from the city it belonged to.
+    const r = await mcpCall(alice.accessToken, 'publish_intent', {
+      card: card('WANT', 'AU'),
+    });
+    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
+    expect(r.result.human_action).toMatch(/whole country/i);
+    expect(r.result.human_action).toContain('Australia');
+  });
+
+  it('refuses a name several cities answer to, and lists them', async () => {
+    const r = await mcpCall(alice.accessToken, 'publish_intent', {
+      card: card('WANT', 'Perth'),
+    });
+    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_AMBIGUOUS');
+    const displays = (r.result.candidates ?? []).map((c: any) => c.display);
+    expect(displays, JSON.stringify(r.result)).toContain('Perth, Western Australia, AU');
+    expect(displays, JSON.stringify(r.result)).toContain('Perth, Scotland, GB');
+
+    // The candidate's own string is what the agent reposts with, and the card
+    // lands where that one is.
+    const chosen = (r.result.candidates as any[]).find((c) => c.display.endsWith('GB'));
+    const again = await mcpCall(alice.accessToken, 'publish_intent', {
+      card: card('WANT', chosen.place),
+    });
+    expect(again.isError, JSON.stringify(again.result)).toBe(false);
+    expect(again.result.location_resolved.display).toContain('Scotland');
+  });
+
+  it('says where it put the card, and shows the same place on the ledger', async () => {
+    const r = await mcpCall(alice.accessToken, 'publish_intent', {
+      card: card('WANT', 'Canberra'),
+    });
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
+    expect(r.result.location_resolved, JSON.stringify(r.result)).toBeTruthy();
+    expect(r.result.location_resolved.display).toContain('Australian Capital Territory');
+    expect(r.result.location_resolved.radius_km).toBeGreaterThan(0);
+
+    // The same place, written out, on the page where the person who lives
+    // there would notice it was wrong.
+    const page = await counterFetch(alice.jar, '/ledger');
+    expect(page.status).toBe(200);
+    const body = await page.text();
+    expect(body).toContain('Canberra, Australian Capital Territory, Australia');
+    expect(body).toMatch(/matching within \d+ km/);
   });
 
   it('refuses a street address, and a name nothing answers to', async () => {

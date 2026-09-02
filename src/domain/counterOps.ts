@@ -6,6 +6,7 @@
 import { getPool } from '../db.js';
 import { decryptFields, encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
 import { emailHash, getAccount } from './accounts.js';
+import { describeStoredGeo } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
 /** Create a 'pending' account at email-verification time (counter registration). */
@@ -253,6 +254,10 @@ export interface LedgerCard {
   id: string;
   type: 'WANT' | 'HAVE';
   category: string;
+  /** Where the switchboard put this card, written out in full. */
+  location: string;
+  /** How far the card reaches, in km. */
+  radius_km: number;
   lifecycle_state: string;
   protocol_status: string;
   attributes: any;
@@ -307,6 +312,8 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     id: row.id,
     type: row.type,
     category: row.category,
+    location: describeStoredGeo(row.geo),
+    radius_km: Number(row.geo_radius_km ?? row.geo?.radius_km ?? 0),
     lifecycle_state: row.lifecycle_state,
     protocol_status: row.protocol_status,
     attributes: row.attributes,

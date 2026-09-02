@@ -27,11 +27,17 @@
  *     Regions still resolve in their deliberate forms ("AU-ACT", "New South
  *     Wales, Australia"), which is where a card that really means the whole
  *     territory says so.
+ *   - a bare country or country code — "Australia", "AU", "US". `countryNamed`
+ *     names them the same way. A card posted as "AU" used to sit on the
+ *     continent's centroid, 476 km from the town it belonged to.
  *   - a short or shouted token that only ever matched an alternate spelling.
  *     The dump hangs airport codes off populated places — Waco carries "ACT",
  *     Tashkent carries "TAS" — so a card reading "ACT" once landed in Texas.
  *     A token of four characters or fewer, or one written in capitals, now has
  *     to match a place's own name.
+ *   - a bare name that several cities answer to, unless one of them plainly
+ *     owns it. `ambiguousPlaces` lists the candidates so the caller can put
+ *     them to a human instead of picking the biggest and saying nothing.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -294,6 +300,142 @@ export function regionNamed(input: string): string | undefined {
     (i) => g.file.rows[i][6] === 0 && g.file.rows[i][5] >= CITY_WINS_ABOVE,
   );
   return city ? undefined : g.file.rows[region][0];
+}
+
+/**
+ * The country a bare string names, if that is all it names.
+ *
+ * A country is an area nobody lives in the middle of. "AU" resolved to the
+ * centroid of Australia, 476 km from the city the card meant, and said
+ * nothing about it — so a bare country name or code is refused upstream with
+ * the name found here, the way a bare state is. The deliberate forms are
+ * untouched: "AU-ACT" is a division, and a comma settles the rest.
+ *
+ * A country whose name a substantial city owns is that city: "Singapore",
+ * "Luxembourg" and "Monaco" are where people actually live.
+ */
+export function countryNamed(input: string): string | undefined {
+  const raw = (input ?? '').trim();
+  if (!raw || raw.includes(',')) return undefined;
+  if (CODE_FORM.test(raw)) return undefined;
+  const g = load();
+  const key = normaliseKey(raw);
+  let row: number | undefined;
+  if (/^[A-Za-z]{2,3}$/.test(raw)) row = g.file.codes[raw.toUpperCase()];
+  if (row === undefined) {
+    row = rowsFor(key).find(
+      (i) => g.file.rows[i][6] === 2 && normaliseKey(g.file.rows[i][0]) === key,
+    );
+  }
+  if (row === undefined) return undefined;
+  const city = rowsNamed(key, exactOnly(raw)).some(
+    (i) => g.file.rows[i][6] === 0 && g.file.rows[i][5] >= CITY_WINS_ABOVE,
+  );
+  return city ? undefined : g.file.rows[row][0];
+}
+
+// ---------------------------------------------------------------------------
+// Homonyms. "Perth", "Richmond", "Springfield" name several real cities, and
+// resolving to the biggest of them silently is how a card crosses an ocean
+// without anyone noticing.
+// ---------------------------------------------------------------------------
+
+/** How far ahead of every rival a candidate has to be to answer for the name
+ *  on its own. Paris is eighty times the size of its nearest namesake. */
+const DOMINANCE = 10;
+/** A namesake this size is a town in its own right, and somewhere a person
+ *  could well have meant, however big the leader is. Perth in Scotland has
+ *  47,000 people and is a real answer to "Perth"; Paris in Texas has 25,000
+ *  and is not what anyone typing the bare word means. */
+const RIVAL_MATTERS_ABOVE = 40_000;
+
+/** Cities whose own name is exactly this key — the places that genuinely
+ *  share the spelling, with alternate names and larger names left out. */
+function sharedNameCities(key: string): number[] {
+  const rows = load().file.rows;
+  return rowsFor(key).filter((i) => rows[i][6] === 0 && normaliseKey(rows[i][0]) === key);
+}
+
+/** A place written for a human, with the exact input that selects it. */
+export interface PlaceChoice {
+  /** "Perth, Scotland, GB" */
+  display: string;
+  /** "Perth, Scotland" — what goes back in the card's geo.place. */
+  place: string;
+}
+
+function admin1Name(country: string, admin1: string): string | undefined {
+  if (!admin1) return undefined;
+  const g = load();
+  const i = g.admin1Row.get(`${country}.${admin1}`);
+  return i === undefined ? undefined : g.file.rows[i][0];
+}
+
+function countryName(country: string): string | undefined {
+  const g = load();
+  const i = g.countryRow.get(country);
+  return i === undefined ? undefined : g.file.rows[i][0];
+}
+
+/** The place written out in full: "Canberra, Australian Capital Territory,
+ *  Australia". This is what the switchboard reads back to the human whose
+ *  card it just placed, so a wrong location is catchable by the one person
+ *  who knows the area. */
+export function describePlace(p: Place): string {
+  const parts = [p.name];
+  const region = p.kind === 'city' ? admin1Name(p.country, p.admin1) : undefined;
+  if (region && region !== p.name) parts.push(region);
+  const country = countryName(p.country);
+  if (country && country !== p.name) parts.push(country);
+  return parts.join(', ');
+}
+
+/** One candidate, qualified enough to be picked and to resolve back here. */
+export function qualifyPlace(p: Place): PlaceChoice {
+  const region = p.kind === 'city' ? admin1Name(p.country, p.admin1) : undefined;
+  const place =
+    region && region !== p.name
+      ? `${p.name}, ${region}`
+      : `${p.name}, ${countryName(p.country) ?? p.country}`;
+  return { display: `${place}, ${p.country}`, place };
+}
+
+/**
+ * The places a bare name could have meant, when no single one owns it.
+ *
+ * Returns undefined when the name is not in question — one city answers to
+ * it, or a comma or a code already settles it, or one candidate is both ten
+ * times the size of every rival and leaves no rival that is a town in its own
+ * right. Otherwise: the candidates, largest first, one per qualified name, at
+ * most five, for the caller to put to a human.
+ */
+export function ambiguousPlaces(input: string): Place[] | undefined {
+  const raw = (input ?? '').trim();
+  if (!raw || raw.includes(',')) return undefined;
+  if (CODE_FORM.test(raw)) return undefined;
+  const g = load();
+  if (/^[A-Za-z]{2,3}$/.test(raw) && g.file.codes[raw.toUpperCase()] !== undefined) return undefined;
+  const rows = g.file.rows;
+  const cities = sharedNameCities(normaliseKey(raw)).sort((a, b) => rows[b][5] - rows[a][5]);
+  if (cities.length < 2) return undefined;
+  const [top, ...rest] = cities;
+  const owns =
+    rows[top][5] > 0 &&
+    rest.every((i) => rows[i][5] < RIVAL_MATTERS_ABOVE && rows[top][5] >= rows[i][5] * DOMINANCE);
+  if (owns) return undefined;
+  // Two towns in one division would offer the same qualified form, and the
+  // smaller of them could never be picked by it. Keep the larger.
+  const seen = new Set<string>();
+  const out: Place[] = [];
+  for (const i of cities) {
+    const p = toPlace(i);
+    const { display } = qualifyPlace(p);
+    if (seen.has(display)) continue;
+    seen.add(display);
+    out.push(p);
+    if (out.length === 5) break;
+  }
+  return out;
 }
 
 /**
