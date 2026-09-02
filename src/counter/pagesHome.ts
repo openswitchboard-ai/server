@@ -534,7 +534,11 @@ export function matchOffersPage(v: MatchOffersView, error?: string, notice?: str
               ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
               : ''
           }</div>
-${o.note ? `<div class="kv">“${esc(o.note)}”</div>` : ''}
+${
+            o.note
+              ? `<div class="kv">${o.mine ? 'Your line:' : 'Their words:'} “${esc(o.note)}”</div>`
+              : ''
+          }
 </div>`,
         )
         .join('')
