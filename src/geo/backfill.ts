@@ -37,10 +37,15 @@ export interface BackfillCursor {
 }
 
 export interface BackfillOutcome {
-  /** Cards that gained a centre point in this pass. */
+  /** Cards that gained a centre point or a country in this pass. */
   placed: string[];
   /** Cards whose bucket answers to nothing in the gazetteer. */
   unplaced: number;
+  /** Cards already placed that have no country to gain: a bare geohash cell
+   *  is a point on the globe and not a named place, so nothing knows which
+   *  country it is in. They keep radius behaviour, and the sweep leaves them
+   *  alone rather than rewriting the same row on every pass. */
+  countryless: number;
   /** Cards whose location the current rules would refuse outright. */
   refused: number;
   /** Pass this back to continue; null when the sweep is done. */
@@ -53,7 +58,7 @@ export async function backfillCardGeo(
   batch = BACKFILL_BATCH,
 ): Promise<BackfillOutcome> {
   const rows = await getPool().query(
-    `SELECT id, geo, created_at FROM cards
+    `SELECT id, geo, geo_lat, created_at FROM cards
       WHERE (geo_lat IS NULL OR geo_country IS NULL)
         AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
       ORDER BY created_at, id LIMIT $1`,
@@ -63,13 +68,14 @@ export async function backfillCardGeo(
   const outcome: BackfillOutcome = {
     placed: [],
     unplaced: 0,
+    countryless: 0,
     refused: 0,
     next:
       rows.rowCount === batch && last
         ? { created_at: new Date(last.created_at).toISOString(), id: last.id }
         : null,
   };
-  for (const row of rows.rows as { id: string; geo: any }[]) {
+  for (const row of rows.rows as { id: string; geo: any; geo_lat: number | null }[]) {
     let normalised;
     try {
       normalised = normaliseGeo(row.geo);
@@ -85,6 +91,13 @@ export async function backfillCardGeo(
     }
     if (normalised.lat == null) {
       outcome.unplaced++;
+      continue;
+    }
+    // Already placed, and the gazetteer has no country to add: writing the
+    // row again would change nothing and hand the matcher work it has already
+    // done, every pass, forever.
+    if (row.geo_lat != null && normalised.country == null) {
+      outcome.countryless++;
       continue;
     }
     await getPool().query(
