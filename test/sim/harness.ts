@@ -144,14 +144,11 @@ export class Harness {
     score = 0.87,
   ): Promise<string> {
     await sendOp({ op: 'create-match', card_want: wantId, card_have: haveId, score });
-    const id = await poll(
-      async () => {
-        const r = await this.mcp(wantActor.accessToken, 'check_matches', { intent_id: wantId });
-        return r.result?.matches?.[0]?.match_id as string | undefined;
-      },
-      `match ${wantActor.label}×${haveActor.label} to appear`,
-      120_000,
-    );
+    // Observe the match through the DB, not check_matches: match observation
+    // must not depend on the want actor's shared 60/h read ceiling (a scenario
+    // or red-team probe may already have spent it), and the row is the source
+    // of truth either way.
+    const id = await this.waitForLiveMatch(wantId, haveId, 120_000);
     this.matches.push({ token: wantActor.accessToken, id });
     return id;
   }
