@@ -187,6 +187,11 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .empty { color:var(--muted); font-size:var(--t-sm); border:1px dashed var(--line);
   border-radius:var(--r); padding:var(--s4); margin:var(--s3) 0; }
 
+/* ---- Past connections: finished, filed away, kept for retrieval ---- */
+.past-connections { border-top:1px solid var(--line); margin:var(--s5) 0 0; padding-top:var(--s4); }
+.small-head { font-family:var(--sans); font-weight:700; font-size:var(--t-md); margin:0 0 var(--s2); }
+.card-row.past { background:transparent; border-style:dashed; opacity:.85; }
+
 /* ---- Quiet navigation, below the decisions ---- */
 .navlist { border-top:1px solid var(--line); margin:var(--s5) 0 0; }
 .navlist a { display:block; border-bottom:1px solid var(--line); padding:var(--s3) 0;

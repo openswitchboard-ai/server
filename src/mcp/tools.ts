@@ -127,7 +127,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every card starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only a card they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone), send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart).',
+      'Respond to a match or an offer. Actions: express_interest (stage 1->2), opt_in (record your human\'s stage-3 opt-in — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every card starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only a card they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone), send_to_human (park an offer as awaiting-human — the only accept-direction action an agent has; acceptance itself happens in your human\'s own interface), decline_offer, withdraw_offer, list_offers, verdict (one-tap match-quality feedback from your human: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your card\'s collection window early so you can proceed with a chosen counterpart), archive (file a finished connection away once the two humans have taken it off the switchboard — swapped numbers, joined the club: it sets an open match to the archived state, tears down the live channel, and keeps the connection record retrievable through check_matches; a party only, idempotent).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -145,6 +145,7 @@ export const TOOLS: ToolDef[] = [
             'list_offers',
             'verdict',
             'close_collection',
+            'archive',
           ],
         },
         verdict: {
@@ -590,6 +591,10 @@ export async function dispatchTool(
           case 'close_collection': {
             const r = await matches.closeCollection(match_id, accountId, 'agent');
             return ok({ match_id, collection_closed: r.closed });
+          }
+          case 'archive': {
+            const r = await matches.archiveMatch(match_id, accountId, 'agent-attested');
+            return ok({ match_id, state: r.state, already_archived: r.already });
           }
           default:
             return invalidInput(`unknown action '${action}'`);
