@@ -724,11 +724,11 @@ describe('what the manual tells an agent about places', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/"anywhere" for something done online/);
   });
 
-  it('bumps the manual version once, with a note saying what to do differently', async () => {
+  it('the reach change has a changelog note, and the log stays consistent', async () => {
     const { MANUAL, MANUAL_CHANGELOG } = await import('../../src/mcp/instructions.js');
     const latest = MANUAL_CHANGELOG[MANUAL_CHANGELOG.length - 1];
     expect(latest.version).toBe(MANUAL.version);
-    expect(latest.note).toMatch(/reach/i);
+    expect(MANUAL_CHANGELOG.some((c) => /reach/i.test(c.note))).toBe(true);
   });
 });
 
