@@ -358,7 +358,7 @@ describe('how often to check is a number of minutes, with a floor', () => {
     expect(arrangement.arrangementNote({ check_every_minutes: 720 }).text).toContain(
       'every 12 hours',
     );
-    expect(arrangement.arrangementNote({ notes: 'x' }).text).toMatch(/no cadence/i);
+    expect(arrangement.arrangementNote({ notes: 'x' }).text).toMatch(/no checking cadence/i);
   });
 
   it('reads as the human\'s reflected settings, not a command from the system', () => {
@@ -445,7 +445,7 @@ describe('every check_matches sweep carries it', () => {
   it('says so when there is none yet, so a fresh agent knows to ask', async () => {
     const r: any = await dispatchTool(cfg, ANA, 'check_matches', {});
     expect(r.structuredContent.arrangement).toEqual({});
-    expect(r.structuredContent.arrangement_note.text).toMatch(/no standing arrangement/i);
+    expect(r.structuredContent.arrangement_note.text).toMatch(/has not saved any standing preferences|no standing preferences/i);
   });
 
   it('a second agent on a fresh connection reads back what the first one saved', async () => {
