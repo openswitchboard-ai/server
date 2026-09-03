@@ -37,6 +37,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 }));
 
 import { encryptField, writeConsentEvent } from '../../src/crypto.js';
+import { sqs } from '../../src/aws.js';
 import * as db from '../../src/db.js';
 import * as matches from '../../src/domain/matches.js';
 import * as profile from '../../src/domain/profile.js';
@@ -401,6 +402,58 @@ describe('stage-3 fetch once both profiles are filled', () => {
     const mutual: any = await matches.getStagePayload(cfg, ANA, MATCH, 3);
     expect(validatePayload('match.mutual', mutual).valid).toBe(true);
     expect(mutual.counterparty.first_name).toBe('Beppe');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The "your move" progression nudge: when one side opts in and the other has
+// not, the ball is now in the far human's court, and a passive human would
+// otherwise never learn it. New-match is summoned elsewhere; this covers the
+// later step. Best-effort and idempotent.
+// ---------------------------------------------------------------------------
+describe('the "your move" nudge on a one-sided opt-in', () => {
+  const opsCfg = { ...cfg, opsQueueUrl: 'https://ops.test/queue' } as unknown as Config;
+
+  beforeEach(() => {
+    world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
+    world.accounts[BEPPE] = { first_name: 'Beppe', locality: 'Trastevere' };
+    world.optins = new Set();
+    world.stage = 2;
+    vi.spyOn(sqs, 'send').mockReset().mockResolvedValue({} as any);
+  });
+
+  const yourMoves = () =>
+    vi
+      .mocked(sqs.send)
+      .mock.calls.map((c: any[]) => {
+        try {
+          return JSON.parse(c[0].input.MessageBody);
+        } catch {
+          return {};
+        }
+      })
+      .filter((b: any) => b.op === 'your-move-notify');
+
+  it('enqueues a nudge to the counterparty when only one side has opted in', async () => {
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    expect(r.both).toBe(false);
+    const moves = yourMoves();
+    expect(moves).toHaveLength(1);
+    expect(moves[0]).toMatchObject({ match_id: MATCH, account_id: BEPPE }); // the far side
+  });
+
+  it('sends no "your move" once the second opt-in makes it mutual', async () => {
+    await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    vi.mocked(sqs.send).mockClear();
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, BEPPE, 'agent-attested');
+    expect(r.both).toBe(true);
+    expect(yourMoves()).toHaveLength(0); // the ball is with nobody now — both are in
+  });
+
+  it('does not fail the opt-in when the enqueue throws', async () => {
+    vi.mocked(sqs.send).mockRejectedValueOnce(new Error('sqs down'));
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    expect(r.both).toBe(false); // the opt-in itself still went through
   });
 });
 

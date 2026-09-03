@@ -11,6 +11,7 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
   renderApproval,
+  renderChannelWaiting,
   renderDigest,
   renderKillSwitch,
   renderRenewal,
@@ -20,6 +21,7 @@ import {
   renderSettlementUpdate,
   renderSummons,
   renderVerification,
+  renderYourMove,
   type EmailContent,
   type FooterLinks,
 } from '../../src/email/templates.js';
@@ -96,6 +98,43 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       blind: true,
       content: renderSummons(
         { count: 1, categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'channel-waiting',
+      blind: false,
+      content: renderChannelWaiting(
+        { categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'channel-waiting-no-label',
+      blind: false,
+      content: renderChannelWaiting({ blind: false, counterUrl: `${COUNTER}/` }, links),
+    },
+    {
+      name: 'channel-waiting-blind',
+      blind: true,
+      content: renderChannelWaiting(
+        { categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'your-move',
+      blind: false,
+      content: renderYourMove(
+        { categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'your-move-blind',
+      blind: true,
+      content: renderYourMove(
+        { categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
         links,
       ),
     },

@@ -22,9 +22,11 @@ import { getPool } from '../db.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
 import { accountEmail } from '../domain/counterOps.js';
 import {
+  renderChannelWaiting,
   renderDigest,
   renderRenewal,
   renderSummons,
+  renderYourMove,
   type DigestItem,
   type RenewalCardItem,
 } from './templates.js';
@@ -110,6 +112,81 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
     }
   }
   tickFailure('match-notify', failures);
+}
+
+// ---------------------------------------------------------------------------
+// Waiting-message nudge (ops op 'channel-nudge', enqueued by channel_send via
+// domain/channelNotify.ts). Tells the recipient's human that a message is
+// sitting uncollected on an open conversation, so the exchange does not stall.
+// The throttle upstream decides WHETHER to enqueue; this only renders and
+// sends. It respects the same suppression sendEmail enforces, and stays quiet
+// for an account that has turned match mail off entirely. The nudge's own
+// timestamp keys the dedupe, so a redelivered ops job coalesces while a later
+// re-armed nudge (a fresh unread state) sends on its own.
+// ---------------------------------------------------------------------------
+export async function sendChannelWaitingNudge(
+  cfg: Config,
+  args: { matchId: string; channelId: string; recipientAccount: string; notifiedAt: string },
+): Promise<void> {
+  const r = await getPool().query(`SELECT category FROM matches WHERE id = $1`, [args.matchId]);
+  const m = r.rows[0];
+  if (!m) return; // match vanished — nothing to say
+  const ctx = await emailAccountContext(cfg, args.recipientAccount);
+  if (ctx.freqMatches === 'off') return; // opted out of switchboard match mail
+  const to = await accountEmail(args.recipientAccount, 'channel-waiting');
+  if (!to) return;
+  await sendEmail(cfg, {
+    to,
+    accountId: args.recipientAccount,
+    template: 'channel-waiting',
+    kind: 'bulk',
+    dedupeKey: `channel-waiting:${args.channelId}:${args.recipientAccount}:${args.notifiedAt}`,
+    content: renderChannelWaiting(
+      {
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        blind: ctx.blind,
+        counterUrl: `${cfg.counterOrigin}/`,
+      },
+      ctx.links,
+    ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// "Your move" nudge (ops op 'your-move-notify', enqueued when one side records
+// a stage-3 opt-in and the other side has not). New-match is already summoned
+// by notifyMatchCreated; this covers the later progression, where the ball
+// passes to a human who would otherwise never learn it is their turn. One nudge
+// per match per recipient (the dedupe key carries no timestamp), and quiet for
+// an account that has turned match mail off.
+// ---------------------------------------------------------------------------
+export async function notifyYourMove(
+  cfg: Config,
+  matchId: string,
+  recipientAccount: string,
+): Promise<void> {
+  const r = await getPool().query(`SELECT category FROM matches WHERE id = $1`, [matchId]);
+  const m = r.rows[0];
+  if (!m) return;
+  const ctx = await emailAccountContext(cfg, recipientAccount);
+  if (ctx.freqMatches === 'off') return;
+  const to = await accountEmail(recipientAccount, 'your-move');
+  if (!to) return;
+  await sendEmail(cfg, {
+    to,
+    accountId: recipientAccount,
+    template: 'your-move',
+    kind: 'bulk',
+    dedupeKey: `your-move:${matchId}:${recipientAccount}`,
+    content: renderYourMove(
+      {
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        blind: ctx.blind,
+        counterUrl: `${cfg.counterOrigin}/`,
+      },
+      ctx.links,
+    ),
+  });
 }
 
 // ---------------------------------------------------------------------------
