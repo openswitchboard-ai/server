@@ -31,6 +31,13 @@ export function startMatchingWorker(cfg: Config, log: (msg: string, extra?: any)
               if (outcome) {
                 log('matcher: card processed', {
                   card_id: body.card_id,
+                  // How many cards passed the prefilter (counted to a cap),
+                  // against how many of them the engine actually scored. A
+                  // pool of 0 or 1 explains a run that found nothing; a pool
+                  // pinned at the cap while evaluated stays at 50 is the
+                  // starvation shape - the category is fuller than the limit.
+                  candidate_pool: outcome.candidatePool,
+                  candidate_pool_capped: outcome.candidatePoolCapped,
                   evaluated: outcome.evaluated,
                   matches: outcome.matchesCreated.length,
                   near_misses: outcome.nearMisses,
