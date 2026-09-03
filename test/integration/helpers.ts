@@ -1,5 +1,4 @@
 import { createHash, randomBytes, scryptSync } from 'node:crypto';
-import { afterAll } from 'vitest';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
@@ -10,7 +9,6 @@ export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://my-dev.opensw
 export const LEGACY_COUNTER_URL =
   process.env.OSB_LEGACY_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
 export const ENV_NAME = process.env.OSB_TEST_ENV ?? 'dev';
-const RUN_INTEGRATION = process.env.RUN_INTEGRATION === '1';
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
 const ssm = new SSMClient({ region });
@@ -507,9 +505,12 @@ export async function mcpCall(
 // uses - and publishes them with the shortest TTL the protocol allows so that
 // a run which dies mid-flight still clears itself within a day.
 //
-// The hook is registered from module scope, which vitest attaches to the file
-// currently being collected: importing these helpers is what opts a suite in,
-// so no suite can forget.
+// The hook is registered from module scope, which the runner attaches to the
+// file currently being loaded: importing these helpers is what opts a suite
+// in, so no suite can forget. Two runners load this file - vitest for the
+// integration suites, Playwright for the counter journey - and neither will
+// tolerate the other's package being imported inside its process, so each is
+// tried in turn and whichever answers gets the hook.
 // ---------------------------------------------------------------------------
 const publishedCards = new Map<string, Set<string>>();
 
@@ -530,10 +531,22 @@ export async function withdrawPublishedCards(): Promise<number> {
     }
   }
   publishedCards.clear();
+  console.log(`board teardown: withdrew ${taken} fixture cards`);
   return taken;
 }
 
-if (RUN_INTEGRATION) afterAll(withdrawPublishedCards, 300_000);
+for (const register of [
+  async () => (await import('vitest')).afterAll(withdrawPublishedCards, 300_000),
+  async () => (await import('@playwright/test')).test.afterAll(withdrawPublishedCards),
+]) {
+  try {
+    await register();
+    break;
+  } catch {
+    // Not this runner (or not a runner at all - a script importing these
+    // helpers gets no hook, and takes its own cards down).
+  }
+}
 
 export async function mcpRpc(token: string, method: string, params: any): Promise<any> {
   const res = await fetch(`${BASE_URL}/mcp`, {
