@@ -1,7 +1,9 @@
 /**
  * Placement of cards written before 0.3.0, and of the country code that came
- * later. Idempotent: a card is touched once, because placing it fills the very
- * columns the sweep selects on.
+ * later. Idempotent: a card is WRITTEN once, because placing it fills the very
+ * columns the sweep selects on. The rows a sweep can do nothing for — an
+ * unplaceable bucket, a bare cell with no country — are read again on every
+ * pass and left exactly as they are.
  *
  * Every card whose centre point is still unknown goes back through the same
  * normalisation the publish path runs. A geohash bucket decodes to the centre
