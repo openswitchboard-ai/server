@@ -253,6 +253,18 @@ export interface TestActor {
   jar: Jar;
 }
 
+/**
+ * How long to wait for an account the ops queue is making.
+ *
+ * That queue is shared and strictly ordered per batch, and it carries a
+ * summons for every match the engine makes. Since the engine started finding
+ * the matches the fixture city was seeded to have, a create-account can sit
+ * behind hundreds of them. Waiting longer costs nothing when the queue is
+ * quiet, and a suite that gives up here fails on the queue rather than on
+ * anything it set out to prove.
+ */
+export const OPS_ACCOUNT_WAIT_MS = 300_000;
+
 /** Bootstrap a dev account via the internal ops queue, then run the full
  * OAuth 2.1 flow (DCR + counter login/consent + PKCE) against live dev. */
 export async function bootstrapActor(firstName: string, locality: string): Promise<TestActor> {
@@ -267,9 +279,6 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
     locality,
     login_code_hash: hash,
   });
-  // The ops queue is shared and strictly ordered per batch: a burst of
-  // match-notify sends can sit in front of this create-account for well over a
-  // minute. Waiting longer costs nothing when the queue is quiet.
   const accountId = await poll(
     async () => {
       const rows = await dbExec('SELECT id FROM accounts WHERE email_hash = :h', [
@@ -278,7 +287,7 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
       return rows[0]?.[0] as string | undefined;
     },
     `account ${email} to exist`,
-    180_000,
+    OPS_ACCOUNT_WAIT_MS,
   );
   const jar = new Jar();
   await counterLogin(jar, email);
