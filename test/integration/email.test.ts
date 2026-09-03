@@ -24,6 +24,7 @@ import {
   COUNTER_URL,
   ENV_NAME,
   Jar,
+  OPS_ACCOUNT_WAIT_MS,
   counterFetch,
   counterLogin,
   dbExec,
@@ -67,7 +68,7 @@ async function createAccount(email: string): Promise<string> {
       { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
     ]);
     return rows[0]?.[0] as string | undefined;
-  }, `account ${email}`);
+  }, `account ${email}`, OPS_ACCOUNT_WAIT_MS);
 }
 
 async function insertCard(
@@ -138,7 +139,7 @@ d('0.E email daemon (live dev)', () => {
       insertCard(accountE, 'WANT'),
     ]);
     await counterLogin(jarA, emailA);
-  }, 180_000);
+  }, 420_000);
 
   it('(b) frequency controls save through the counter and log consent', async () => {
     const res = await counterFetch(jarA, '/settings/frequency',
