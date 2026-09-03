@@ -361,9 +361,23 @@ d('integration gates against live deployment', () => {
     expect(empty.result.offers).toHaveLength(0);
 
     // Dana types her own number on her own page, and it lands on Eli's side.
+    // The figure her agent was refused for is waiting in the box: it was
+    // carried here from the refusal rather than said to her twice.
     const page = await counterFetch(dana.jar, `/matches/${mid}`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('Reply with your number');
+    const matchPage = await page.text();
+    expect(matchPage).toContain('Reply with your number');
+    expect(matchPage).toContain('Your agent brought this number from you');
+    expect(matchPage).toContain('value="500"');
+    // A figure never travels in a URL.
+    expect(matchPage).not.toMatch(/(href|action)="[^"]*500/);
+    // The card's own numbers page carries it too, pointed at the match.
+    const numbers = await counterFetch(dana.jar, `/ledger/${dw.result.intent_id}/numbers`);
+    expect(numbers.status).toBe(200);
+    const numbersPage = await numbers.text();
+    expect(numbersPage).toContain('Your agent brought this number from you');
+    expect(numbersPage).toContain(`/matches/${mid}`);
+
     const sent = await humanOffer(dana.jar, mid, {
       amount: 505,
       note: 'Cash, and I can collect this weekend.',
@@ -374,6 +388,9 @@ d('integration gates against live deployment', () => {
     expect(hers).toBeTruthy();
     expect(hers.state).toBe('proposed');
     expect(hers.message.text).toContain('collect this weekend');
+    // Sending a figure answers the question the carried one was asking.
+    const after = await counterFetch(dana.jar, `/matches/${mid}`);
+    expect(await after.text()).not.toContain('Your agent brought this number from you');
     // Her page, her numbers: nothing about how her card negotiates crosses.
     expect(eliSees.raw).not.toContain('mandate');
     expect(eliSees.raw).not.toContain('negotiation_mode');

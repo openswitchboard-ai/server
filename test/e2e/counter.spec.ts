@@ -150,7 +150,19 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
 
+  // The dashboard opens on what is waiting, with the quiet navigation under
+  // it — the order is the whole point of the page.
   await expect(page.getByRole('heading', { name: 'Waiting for you' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your switchboard' })).toBeVisible();
+  await expect(page.getByText('Nothing is waiting for you.')).toBeVisible();
+  // Patch is on the page, and he is a real image served with a year of cache.
+  await expect(page.locator('header.site img.patch')).toBeVisible();
+  const patch = await page.request.get(`${COUNTER_URL}/assets/patch.png`);
+  expect(patch.status()).toBe(200);
+  expect(patch.headers()['content-type']).toContain('image/png');
+  expect(patch.headers()['cache-control']).toContain('immutable');
+  const favicon = await page.request.get(`${COUNTER_URL}/assets/favicon.png`);
+  expect(favicon.status()).toBe(200);
   await shot(page, '07-dashboard');
 
   const rows = await dbExec('SELECT id, status FROM accounts WHERE email_hash = :h', [
