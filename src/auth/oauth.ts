@@ -23,6 +23,13 @@ export interface AuthContext {
   /** null for an agent key: the human issued it, so no OAuth client owns it. */
   clientId: string | null;
   scope: string;
+  /** sha256 of the presented token: the row this session's state lives on. */
+  tokenHash: string;
+  /**
+   * The agent-manual version this session was handed at initialize. null when
+   * the session has never sent one — see migrations/014_manual_version.sql.
+   */
+  manualVersion: number | null;
 }
 
 /** Prefix of an OAuth access token minted by the token endpoint. */
@@ -47,8 +54,10 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
   if (!kind) return undefined;
   // NOT suspended: the counter's kill switch suspends (reversibly) every
   // agent token on the account, agent keys included.
+  // manual_version rides along on this SELECT so the check_matches sweep can
+  // tell a stale session what has changed without a query of its own.
   const r = await getPool().query(
-    `SELECT account_id, client_id, scope FROM oauth_tokens
+    `SELECT account_id, client_id, scope, manual_version FROM oauth_tokens
      WHERE token_hash = $1 AND kind = $2 AND NOT revoked AND NOT suspended
        AND expires_at > now()`,
     [sha256hex(token), kind],
@@ -68,7 +77,21 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
     accountId: r.rows[0].account_id,
     clientId: r.rows[0].client_id ?? null,
     scope: r.rows[0].scope,
+    tokenHash: sha256hex(token),
+    manualVersion: r.rows[0].manual_version ?? null,
   };
+}
+
+/**
+ * Stamp the manual version a session has been served. Called once at
+ * initialize, and again on the sweep that delivers a change — the only two
+ * moments a session's reading of the manual moves.
+ */
+export async function recordManualVersion(tokenHash: string, version: number): Promise<void> {
+  await getPool().query(`UPDATE oauth_tokens SET manual_version = $2 WHERE token_hash = $1`, [
+    tokenHash,
+    version,
+  ]);
 }
 
 export function unauthorized(cfg: Config, reply: FastifyReply): FastifyReply {
@@ -200,14 +223,22 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
   });
 
   // ---- Token endpoint ---------------------------------------------------------
-  const issueTokens = async (accountId: string, clientId: string, scope: string) => {
+  // manualVersion carries across a rotation: an hourly refresh is the same
+  // agent in the same session, and it does not send initialize again, so
+  // without this every refresh would look like a session that has read nothing.
+  const issueTokens = async (
+    accountId: string,
+    clientId: string,
+    scope: string,
+    manualVersion: number | null = null,
+  ) => {
     const access = `osb_at_${b64url(randomBytes(32))}`;
     const refresh = `osb_rt_${b64url(randomBytes(32))}`;
     await getPool().query(
-      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, expires_at)
-       VALUES ($1,'access',$3,$4,$5, now() + interval '${ACCESS_TTL_S} seconds'),
-              ($2,'refresh',$3,$4,$5, now() + interval '${REFRESH_TTL_S} seconds')`,
-      [sha256hex(access), sha256hex(refresh), accountId, clientId, scope],
+      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version, expires_at)
+       VALUES ($1,'access',$3,$4,$5,$6, now() + interval '${ACCESS_TTL_S} seconds'),
+              ($2,'refresh',$3,$4,$5,$6, now() + interval '${REFRESH_TTL_S} seconds')`,
+      [sha256hex(access), sha256hex(refresh), accountId, clientId, scope, manualVersion],
     );
     return {
       access_token: access,
@@ -262,7 +293,12 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       }
       // Rotate: revoke the old refresh token, issue a fresh pair.
       await getPool().query('UPDATE oauth_tokens SET revoked = true WHERE token_hash = $1', [hash]);
-      const tokens = await issueTokens(row.account_id, row.client_id, row.scope);
+      const tokens = await issueTokens(
+        row.account_id,
+        row.client_id,
+        row.scope,
+        row.manual_version ?? null,
+      );
       await getPool().query(
         `UPDATE oauth_tokens SET rotated_from = $1 WHERE token_hash = $2`,
         [hash, sha256hex(tokens.refresh_token)],

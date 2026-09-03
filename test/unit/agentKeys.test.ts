@@ -73,6 +73,8 @@ interface TokenRow {
   expires_at: Date;
   revoked: boolean;
   suspended: boolean;
+  /** The agent-manual version this session was last handed. */
+  manual_version: number | null;
 }
 
 let table: TokenRow[] = [];
@@ -82,7 +84,7 @@ const fakePool = {
   query: async (sql: string, params: any[] = []) => {
     const s = sql.replace(/\s+/g, ' ').trim();
 
-    if (s.startsWith('SELECT account_id, client_id, scope FROM oauth_tokens')) {
+    if (s.startsWith('SELECT account_id, client_id, scope, manual_version FROM oauth_tokens')) {
       const [hash, kind] = params;
       const row = table.find(
         (t) =>
@@ -97,6 +99,11 @@ const fakePool = {
     if (s.startsWith('UPDATE oauth_tokens SET last_used_at')) {
       const row = table.find((t) => t.token_hash === params[0]);
       if (row) row.last_used_at = new Date();
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
+    if (s.startsWith('UPDATE oauth_tokens SET manual_version')) {
+      const row = table.find((t) => t.token_hash === params[0]);
+      if (row) row.manual_version = params[1];
       return { rows: [], rowCount: row ? 1 : 0 };
     }
     if (s.startsWith('INSERT INTO oauth_tokens')) {
@@ -114,6 +121,7 @@ const fakePool = {
         expires_at: new Date(Date.now() + ttlDays * 86_400_000),
         revoked: false,
         suspended: false,
+        manual_version: null,
       };
       table.push(row);
       return { rows: [row], rowCount: 1 };
@@ -237,7 +245,13 @@ describe('agent key authentication: the round trip', () => {
   it('a fresh key resolves to its account through the same path as an access token', async () => {
     const { token } = await agentKeys.createAgentKey(ACCOUNT, 'the laptop agent');
     const auth = await authenticate(reqWith(token));
-    expect(auth).toEqual({ accountId: ACCOUNT, clientId: null, scope: 'switchboard' });
+    expect(auth).toEqual({
+      accountId: ACCOUNT,
+      clientId: null,
+      scope: 'switchboard',
+      tokenHash: sha256hex(token),
+      manualVersion: null,
+    });
   });
 
   it('stamps last_used_at, so an agent on a key counts as recently seen', async () => {

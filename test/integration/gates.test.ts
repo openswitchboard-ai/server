@@ -41,6 +41,7 @@ import {
   poll,
   revokeAgentKey,
   sendOp,
+  sha256hex,
   setAutoNegotiate,
   waitForCardState,
 } from './helpers.js';
@@ -120,6 +121,36 @@ d('integration gates against live deployment', () => {
     const publish = tools.result.tools.find((t: any) => t.name === 'publish_intent');
     expect(JSON.stringify(publish.inputSchema)).toContain('MATCHING INPUT ONLY');
   });
+
+  it('a session that has just connected is told nothing about the manual', async () => {
+    // Its own actor, so "just connected" is literal: a token that has never
+    // seen a sweep, on a service running the manual it is about to be handed.
+    const fresh = await bootstrapActor('Newcomer', 'Ballarat');
+    const init = await mcpRpc(fresh.accessToken, 'initialize', {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'osb-int', version: '0.0.1' },
+    });
+    // The manual it was handed says what a manual_update is, so a later one
+    // lands on an agent that knows what to do with it.
+    expect(init.result.instructions).toContain('manual_update');
+
+    // The handshake stamped the version onto this session's own token row.
+    const stamped = await dbExec(
+      `SELECT manual_version FROM oauth_tokens WHERE token_hash = :h AND kind = 'access'`,
+      [{ name: 'h', value: sha256hex(fresh.accessToken) }],
+    );
+    expect(Number(stamped[0][0])).toBeGreaterThanOrEqual(1);
+
+    // Versions match, so the sweep says nothing and the field is absent.
+    const sweep = await mcpCall(fresh.accessToken, 'check_matches', {});
+    expect(sweep.isError).toBe(false);
+    expect(sweep.result.manual_update).toBeUndefined();
+    expect(sweep.raw).not.toContain('manual_update');
+    // The sweep it does carry is unchanged.
+    expect(sweep.result).toHaveProperty('matches');
+    expect(sweep.result).toHaveProperty('arrangement_note');
+  }, 300_000);
 
   it('rejects unauthenticated MCP requests with resource metadata pointer', async () => {
     const res = await fetch(`${BASE_URL}/mcp`, {
