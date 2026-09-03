@@ -1,0 +1,11 @@
+-- Manual updates repeat for a day before being marked read (post-mortem of a
+-- live client whose half-hourly sweeps run in a background heartbeat context
+-- its chat sessions never see: the update was delivered once, to a transcript
+-- nobody keeps, and the agent that talks to the human never read it).
+--
+-- manual_notified_at marks the FIRST sweep that carried an update to this
+-- token. Every later sweep carries it again until 24 hours have passed, and
+-- only then is manual_version stamped forward. Contexts that share a token —
+-- heartbeats, chats, resumed sessions — all get a day's worth of chances to
+-- read the same note.
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS manual_notified_at timestamptz;

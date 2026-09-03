@@ -30,6 +30,7 @@ export interface AuthContext {
    * the session has never sent one — see migrations/014_manual_version.sql.
    */
   manualVersion: number | null;
+  manualNotifiedAt: Date | string | null;
 }
 
 /** Prefix of an OAuth access token minted by the token endpoint. */
@@ -57,7 +58,7 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
   // manual_version rides along on this SELECT so the check_matches sweep can
   // tell a stale session what has changed without a query of its own.
   const r = await getPool().query(
-    `SELECT account_id, client_id, scope, manual_version FROM oauth_tokens
+    `SELECT account_id, client_id, scope, manual_version, manual_notified_at FROM oauth_tokens
      WHERE token_hash = $1 AND kind = $2 AND NOT revoked AND NOT suspended
        AND expires_at > now()`,
     [sha256hex(token), kind],
@@ -79,6 +80,7 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
     scope: r.rows[0].scope,
     tokenHash: sha256hex(token),
     manualVersion: r.rows[0].manual_version ?? null,
+    manualNotifiedAt: r.rows[0].manual_notified_at ?? null,
   };
 }
 
@@ -88,10 +90,18 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
  * moments a session's reading of the manual moves.
  */
 export async function recordManualVersion(tokenHash: string, version: number): Promise<void> {
-  await getPool().query(`UPDATE oauth_tokens SET manual_version = $2 WHERE token_hash = $1`, [
-    tokenHash,
-    version,
-  ]);
+  await getPool().query(
+    `UPDATE oauth_tokens SET manual_version = $2, manual_notified_at = NULL WHERE token_hash = $1`,
+    [tokenHash, version],
+  );
+}
+
+/** Mark the first sweep that carried a manual update to this token. */
+export async function recordManualNotified(tokenHash: string): Promise<void> {
+  await getPool().query(
+    `UPDATE oauth_tokens SET manual_notified_at = now() WHERE token_hash = $1 AND manual_notified_at IS NULL`,
+    [tokenHash],
+  );
 }
 
 export function unauthorized(cfg: Config, reply: FastifyReply): FastifyReply {

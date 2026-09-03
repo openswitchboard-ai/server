@@ -32,6 +32,7 @@ function buildMcpServer(cfg: Config, auth: AuthContext): Server {
     return dispatchTool(cfg, auth.accountId, req.params.name, req.params.arguments ?? {}, {
       tokenHash: auth.tokenHash,
       manualVersion: auth.manualVersion,
+      manualNotifiedAt: auth.manualNotifiedAt,
     });
   });
   return server;
