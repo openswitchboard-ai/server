@@ -56,11 +56,16 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 
 import * as db from '../../src/db.js';
 import * as channel from '../../src/domain/channel.js';
+import { NUDGE_FLOOR_MINUTES } from '../../src/domain/channelNotify.js';
+import { sqs } from '../../src/aws.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { OsbError, validatePayload } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = { envName: 'dev', publicOrigin: 'https://mcp.test' } as unknown as Config;
+// A cfg that carries an ops queue, so channel_send tries the waiting-message
+// nudge. Tests that omit it exercise the transport with the nudge switched off.
+const nudgeCfg = { ...cfg, opsQueueUrl: 'https://ops.test/queue' } as unknown as Config;
 
 const MATCH = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const ANA = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb'; // WANT side
@@ -87,6 +92,8 @@ interface World {
   cards: Record<string, string>; // card id -> lifecycle_state
   messages: Msg[];
   rate: Map<string, number>; // `${channel}|${account}|${hour}` -> n
+  // `${channel}|${recipient}` -> the throttle row behind the waiting-message nudge.
+  notify: Map<string, { last_notified_at: Date; unread_notified: boolean }>;
   clockSkewMs: number;
 }
 
@@ -188,6 +195,32 @@ function run(sql: string, params: any[] = []) {
     world.messages = world.messages.filter((m) => m.expires_at.getTime() >= nowMs());
     return { rows: [], rowCount: before - world.messages.length };
   }
+  // The waiting-message nudge throttle: an atomic upsert whose two gates decide
+  // whether a nudge goes out, and a re-arm on collect.
+  if (/INSERT INTO channel_notify/.test(sql)) {
+    const key = `${params[0]}|${params[1]}`;
+    const floorMs = Number(params[2]) * 60_000;
+    const existing = world.notify.get(key);
+    const now = new Date(nowMs());
+    if (!existing) {
+      world.notify.set(key, { last_notified_at: now, unread_notified: true });
+      return rows([{ last_notified_at: now }]);
+    }
+    // ON CONFLICT DO UPDATE ... WHERE: both gates must be open — cleared unread
+    // AND past the floor — or nothing comes back and no nudge is sent.
+    if (!existing.unread_notified && existing.last_notified_at.getTime() <= nowMs() - floorMs) {
+      existing.last_notified_at = now;
+      existing.unread_notified = true;
+      return rows([{ last_notified_at: now }]);
+    }
+    return rows([]);
+  }
+  if (/UPDATE channel_notify SET unread_notified = false/.test(sql)) {
+    const key = `${params[0]}|${params[1]}`;
+    const existing = world.notify.get(key);
+    if (existing) existing.unread_notified = false;
+    return rows(existing ? [{}] : []);
+  }
   if (/DELETE FROM channel_send_rate/.test(sql)) {
     const before = world.rate.size;
     for (const key of [...world.rate.keys()]) {
@@ -214,13 +247,31 @@ beforeEach(() => {
     cards: { 'card-w': 'PUBLISHED', 'card-h': 'PUBLISHED' },
     messages: [],
     rate: new Map(),
+    notify: new Map(),
     clockSkewMs: 0,
   };
   vi.spyOn(db, 'getPool').mockReturnValue({
     query: async (sql: string, params: any[] = []) => run(sql, params),
     connect: async () => client,
   } as any);
+  // The nudge enqueue is a no-op that records the ops message; each test reads
+  // it back through nudges(). Reset per test.
+  vi.spyOn(sqs, 'send').mockReset().mockResolvedValue({} as any);
 });
+
+/** The channel-nudge ops messages enqueued so far, newest last. */
+function nudges(): any[] {
+  return vi
+    .mocked(sqs.send)
+    .mock.calls.map((c: any[]) => {
+      try {
+        return JSON.parse(c[0].input.MessageBody);
+      } catch {
+        return {};
+      }
+    })
+    .filter((b: any) => b.op === 'channel-nudge');
+}
 
 // ---------------------------------------------------------------------------
 // Who can reach a channel
@@ -468,6 +519,78 @@ describe('expiry sweep', () => {
     );
     const ttlCase = worker.slice(worker.indexOf("case 'ttl-expiry'"), worker.indexOf("case 'create-account'"));
     expect(ttlCase).toContain('sweepExpiredChannelMessages');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The waiting-message nudge, and its throttle
+// ---------------------------------------------------------------------------
+describe('the waiting-message nudge', () => {
+  it('nudges the recipient once when a message lands on an empty inbox', async () => {
+    await channel.sendMessage(ANA, MATCH, 'are you around this week?', nudgeCfg);
+    const n = nudges();
+    expect(n).toHaveLength(1);
+    expect(n[0]).toMatchObject({
+      op: 'channel-nudge',
+      match_id: MATCH,
+      channel_id: CHANNEL,
+      recipient_account: BEPPE, // the OTHER side, never the sender
+    });
+    expect(typeof n[0].notified_at).toBe('string');
+  });
+
+  it('does not nudge again while the first message is still unread', async () => {
+    await channel.sendMessage(ANA, MATCH, 'first', nudgeCfg);
+    await channel.sendMessage(ANA, MATCH, 'and a second', nudgeCfg);
+    await channel.sendMessage(ANA, MATCH, 'and a third', nudgeCfg);
+    // One nudge per "you have unread mail here" state — never one per line.
+    expect(nudges()).toHaveLength(1);
+    expect(world.messages).toHaveLength(3); // the messages themselves all landed
+  });
+
+  it('re-arms one nudge after the recipient collects and the floor passes', async () => {
+    await channel.sendMessage(ANA, MATCH, 'first', nudgeCfg);
+    expect(nudges()).toHaveLength(1);
+    // The recipient catches up: unread falls to zero and the row re-arms.
+    await channel.receiveMessages(BEPPE, MATCH);
+    // Past the throttle floor, the next arrival to an empty inbox nudges again.
+    world.clockSkewMs = (NUDGE_FLOOR_MINUTES + 1) * 60_000;
+    await channel.sendMessage(ANA, MATCH, 'you there?', nudgeCfg);
+    const n = nudges();
+    expect(n).toHaveLength(2);
+    // The re-armed nudge carries a fresh timestamp, so its email is not deduped
+    // against the first.
+    expect(n[1].notified_at).not.toBe(n[0].notified_at);
+  });
+
+  it('stays quiet on a rapid back-and-forth even as the recipient keeps reading', async () => {
+    // A turn-by-turn exchange where the recipient collects between each line:
+    // the floor holds it to the single opening nudge rather than one per line.
+    await channel.sendMessage(ANA, MATCH, 'line 1', nudgeCfg);
+    for (let i = 2; i <= 5; i++) {
+      await channel.receiveMessages(BEPPE, MATCH); // recipient reads, re-arming unread
+      await channel.sendMessage(ANA, MATCH, `line ${i}`, nudgeCfg); // still inside the floor
+    }
+    expect(nudges()).toHaveLength(1);
+  });
+
+  it('never nudges the sender back, only the far side', async () => {
+    await channel.sendMessage(ANA, MATCH, 'hi', nudgeCfg);
+    await channel.sendMessage(BEPPE, MATCH, 'hello', nudgeCfg);
+    expect(nudges().map((n) => n.recipient_account)).toEqual([BEPPE, ANA]);
+  });
+
+  it('leaves the send untouched when the nudge enqueue fails', async () => {
+    vi.mocked(sqs.send).mockRejectedValueOnce(new Error('sqs unreachable'));
+    const ack = await channel.sendMessage(ANA, MATCH, 'this must still send', nudgeCfg);
+    expect(ack.message_id).toBeTruthy();
+    expect(world.messages).toHaveLength(1); // the message landed despite the failed nudge
+  });
+
+  it('does nothing when channel_send is called without a cfg', async () => {
+    await channel.sendMessage(ANA, MATCH, 'no cfg, no nudge');
+    expect(nudges()).toHaveLength(0);
+    expect(world.notify.size).toBe(0); // the throttle row is never even touched
   });
 });
 
