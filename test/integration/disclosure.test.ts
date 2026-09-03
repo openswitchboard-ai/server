@@ -178,6 +178,10 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     const ok = await mcpCall(beppe.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
     expect(ok.isError).toBe(false);
     expect(ok.result.both_recorded).toBe(true);
+    // respond drives the flow with the word, not a stage integer: both opted
+    // in, so the next move is to talk.
+    expect(ok.result.stage_unlocked).toBeUndefined();
+    expect(ok.result.next).toBe('ready_to_talk');
     expect(await optinCount(matchId)).toBe(2);
   });
 
@@ -201,6 +205,9 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     const entry = all.result.matches.find((m: any) => m.match_id === matchId);
     expect(entry.mutual.counterparty.first_name).toBe('Beppe');
     expect(entry.mutual_blocked).toBeUndefined();
+    // The entry speaks in the action word, never a stage integer.
+    expect(entry.stage_unlocked).toBeUndefined();
+    expect(entry.next).toBe('ready_to_talk');
   });
 
   it('the profile pages stay human-only: an agent bearer token is refused', async () => {
