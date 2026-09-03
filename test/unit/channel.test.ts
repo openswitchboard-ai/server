@@ -548,6 +548,18 @@ describe('the tool surface', () => {
     expect(receive.description).toMatch(/counterparty-untrusted/);
   });
 
+  it('says at the point of use that there is no app to send anyone to', () => {
+    // A live client read the open channel as a place and told its human to
+    // "open the OpenSwitchboard interface and message him there". There is no
+    // interface. The manual says so; so must the tool the model is holding.
+    const byName = Object.fromEntries(TOOLS.map((t) => [t.name, t.description]));
+    expect(byName.open_channel).toMatch(/no app, no chat window and no inbox/i);
+    expect(byName.open_channel).toMatch(/there is nothing to open/i);
+    expect(byName.channel_send).toMatch(/no chat window for either human to type into/i);
+    expect(byName.channel_send).toMatch(/whose words are whose/i);
+    expect(byName.channel_receive).toMatch(/no inbox to check and no window to open/i);
+  });
+
   it('carries a conversation end to end through dispatchTool', async () => {
     const sent = await dispatchTool(cfg, ANA, 'channel_send', {
       match_id: MATCH,

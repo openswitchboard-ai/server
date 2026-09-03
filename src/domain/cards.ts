@@ -18,10 +18,12 @@ import type { Config } from '../config.js';
 
 /**
  * What a publish or an amend answers with. `location_resolved` is the
- * switchboard saying out loud where it put the card — "Canberra, Australian
- * Capital Territory, Australia", matching within 25 km. The agent folds that
- * into what it tells its human, and a location that landed somewhere
- * unintended is caught by the one person who would know.
+ * switchboard saying out loud where it put the card and how far it reaches —
+ * "Canberra, Australian Capital Territory, Australia — matching within 25 km",
+ * or "— reaching all of Australia", or "— reaching anywhere". The agent folds
+ * that into what it tells its human, and a card that landed somewhere
+ * unintended, or that reaches further than its owner meant, is caught by the
+ * one person who would know.
  */
 export interface PublishResult {
   intent_id: string;
@@ -45,6 +47,7 @@ export interface CardRow {
   geo_lat: number | null;
   geo_lon: number | null;
   geo_radius_km: number | null;
+  geo_country: string | null;
   attributes: any;
   ask: any;
   urgency: string;
@@ -123,9 +126,9 @@ export async function publishIntent(
 
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
-                        geo_radius_km, attributes, ask, urgency, visibility, protocol_status,
-                        price_enc, ttl_days, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$6,$7,$8,$9,$10,$11,$12::int,
+                        geo_radius_km, geo_country, attributes, ask, urgency, visibility,
+                        protocol_status, price_enc, ttl_days, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              now() + make_interval(days => $12::int))
      RETURNING id`,
     [
@@ -144,6 +147,7 @@ export async function publishIntent(
       geo.lat,
       geo.lon,
       geo.radius_km,
+      geo.country,
     ],
   );
   const id = r.rows[0].id as string;
@@ -285,7 +289,7 @@ export async function amendIntent(
       : card.price_enc;
 
   await getPool().query(
-    `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11,
+    `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
         attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
         renewal_notified_at = NULL,
@@ -303,6 +307,7 @@ export async function amendIntent(
       geo.lat,
       geo.lon,
       geo.radius_km,
+      geo.country,
     ],
   );
   await getPool().query('INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)', [

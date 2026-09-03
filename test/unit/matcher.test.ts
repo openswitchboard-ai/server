@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CREATE_THRESHOLD,
   NEAR_MISS_FLOOR,
+  REACH_GEO_CLOSENESS,
   WEIGHTS,
   categoryCloseness,
   categoryCompatible,
@@ -154,6 +155,49 @@ describe('score blend + decision', () => {
       geoB: { bucket: 'qd66' },
     });
     expect(cat).toMatchObject({ hardRulesPass: false, failed: 'category', score: 0 });
+  });
+  it('a nationwide pair passes the geo rule and scores below an adjacent one', () => {
+    // Canberra and Perth: 3,100 km, and a real match when both sides said
+    // they would post it. It should not score as though they were neighbours.
+    const canberra = {
+      bucket: 'r3dp',
+      lat: -35.2835,
+      lon: 149.1281,
+      radius_km: 25,
+      reach: 'country' as const,
+      country: 'AU',
+    };
+    const perth = {
+      bucket: 'qd66',
+      lat: -31.9522,
+      lon: 115.8614,
+      radius_km: 25,
+      reach: 'country' as const,
+      country: 'AU',
+    };
+    const same = {
+      semantic: 0.97,
+      categoryA: 'goods.electronics.laptop',
+      categoryB: 'goods.electronics.laptop',
+      wantBand: { band: { max: 750 }, ccy: 'AUD' },
+      haveBand: { band: { min: 400 }, ccy: 'AUD' },
+    };
+    const nationwide = evaluatePair({ ...same, geoA: canberra, geoB: perth });
+    const adjacent = evaluatePair({ ...same, geoA: canberra, geoB: { ...canberra } });
+    expect(nationwide.hardRulesPass).toBe(true);
+    expect(nationwide.score).toBeLessThan(adjacent.score);
+    expect(nationwide.score - adjacent.score).toBeCloseTo(
+      WEIGHTS.geo * (REACH_GEO_CLOSENESS - 1),
+      6,
+    );
+    // The same two places with the reach unstated are still too far apart.
+    expect(
+      evaluatePair({
+        ...same,
+        geoA: { ...canberra, reach: 'radius' as const },
+        geoB: { ...perth, reach: 'radius' as const },
+      }),
+    ).toMatchObject({ hardRulesPass: false, failed: 'geo' });
   });
   it('decision bands: match / near-miss / discard, with personal bumps', () => {
     expect(decide(0.8, 0, 0)).toBe('match');

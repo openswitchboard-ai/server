@@ -10,8 +10,11 @@
  *                              -0.15 per ancestor/descendant step, floor 0.4)
  *         + 0.15 * geo        (1.0 at the same centre point, decaying linearly
  *                              with distance over the two cards' combined
- *                              radii; buckets with no resolved centre point
- *                              fall back to the pre-0.3.0 string comparison)
+ *                              radii; a flat 0.6 for a pair that meets on a
+ *                              declared reach — a whole country, or anywhere —
+ *                              rather than on distance; buckets with no
+ *                              resolved centre point fall back to the
+ *                              pre-0.3.0 string comparison)
  *         + 0.10 * price      (fit of WANT ceiling over HAVE reserve floor;
  *                              neutral 0.6 when either side declared no band)
  *
@@ -32,7 +35,10 @@
  *   - opposite types (WANT vs HAVE), different accounts, no mute either way;
  *   - both PUBLISHED, unexpired (TTL), not paused by a kill switch;
  *   - category-tree compatibility (equal, ancestor, or descendant);
- *   - geo: centre points within the sum of the two radii;
+ *   - geo: each side's reach covers where the other side is — two radius cards
+ *     when their centre points are within the sum of the two radii, a
+ *     'country' card over any card in the same country, an 'anywhere' card
+ *     over everything, and the test runs both ways;
  *   - price-band intersection: WANT ceiling >= HAVE reserve floor, computed
  *     on decrypted bands server-side only - bands NEVER leave the engine;
  *   - urgency routing: a card with urgency='today' only matches counterparties
@@ -126,15 +132,31 @@ export function categoryCloseness(a: string, b: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Geo. Since 0.3.0 every card that names a locality carries a centre point,
-// resolved server-side (see geo/normalise.ts). Two cards meet when the
-// great-circle distance between their centres is within the sum of their
-// radii, so "Canberra" and "AU-ACT" — once two unequal strings — now overlap.
+// Geo. A card answers two questions, and they are not the same one.
 //
-// A card whose bucket answers to nothing in the gazetteer has no centre
-// point. Those fall back to the pre-0.3.0 comparison: same bucket, or one
-// bucket a prefix of the other. That path exists for cards written before
-// the change and for run-scoped test islands.
+// WHERE IT IS. Since 0.3.0 every card that names a locality carries a centre
+// point, resolved server-side (see geo/normalise.ts), so "Canberra" and
+// "AU-ACT" — once two unequal strings — now sit on the same spot. A card whose
+// bucket answers to nothing in the gazetteer has no centre point; those fall
+// back to the pre-0.3.0 comparison (same bucket, or one bucket a prefix of the
+// other), for cards written before the change and for run-scoped test islands.
+//
+// HOW FAR ITS OWNER WILL GO. The reach: 'radius' (within radius_km, which is
+// all a card could ever say before), 'country' (anywhere in the place's own
+// country — something they would post), or 'anywhere' (no limit at all —
+// something done online). Until reach existed, a laptop someone would send to
+// any address in the country had to choose between an honest town and an
+// honest distance, and could not have both.
+//
+// THE RULE: each side's reach has to cover where the other side is. Two
+// radius cards meet exactly as they always did, on the sum of their radii. A
+// 'country' card covers any card whose place resolved to the same country; an
+// 'anywhere' card covers every card. Because the test runs both ways, a
+// nationwide HAVE in Canberra meets a WANT in Perth only when that WANT
+// reaches nationwide too — the person collecting has to be as willing to cross
+// the distance as the person sending. A card the switchboard could not place
+// carries no country code, so 'country' has nothing to reach across and falls
+// back to the radius the card already has.
 //
 // Distance is APPROXIMATE by design — location on the switchboard is an area,
 // never a point, so neither is the answer.
@@ -145,6 +167,19 @@ import { decodeGeohash, haversineKm, isGeohash } from '../geo/geohash.js';
 /** Radius assumed for a card that carries a centre point but no radius. */
 export const DEFAULT_GEO_RADIUS_KM = 25;
 
+/**
+ * Geo contribution for a pair that meets on a declared reach rather than on
+ * distance. Flat and moderate on purpose: a nationwide card meeting one 3,000
+ * km away is a real match and should not be scored as though the two were
+ * adjacent suburbs. A pair that ALSO happens to be within radius keeps its
+ * distance score, so declaring a wider reach never costs a card its local
+ * matches.
+ */
+export const REACH_GEO_CLOSENESS = 0.6;
+
+/** How far a card's owner will meet the other side. Absent means 'radius'. */
+export type GeoReach = 'radius' | 'country' | 'anywhere';
+
 export interface GeoBucket {
   bucket: string;
   place?: string;
@@ -152,6 +187,10 @@ export interface GeoBucket {
   /** Resolved centre point; null/undefined for an unresolved bucket. */
   lat?: number | null;
   lon?: number | null;
+  /** Absent on a card written before reach existed: that card meant 'radius'. */
+  reach?: GeoReach | null;
+  /** ISO 3166-1 alpha-2 of the resolved place; null when nothing placed it. */
+  country?: string | null;
 }
 
 interface GeoEval {
@@ -166,7 +205,15 @@ function centre(g: GeoBucket): { lat: number; lon: number } | undefined {
   return undefined;
 }
 
-export function evaluateGeo(a: GeoBucket, b: GeoBucket): GeoEval {
+export function reachOf(g: GeoBucket): GeoReach {
+  return g.reach === 'country' || g.reach === 'anywhere' ? g.reach : 'radius';
+}
+
+/**
+ * Distance against the sum of the two radii — the whole of the rule before
+ * reach existed, and still the whole of it for two radius cards.
+ */
+function evaluateByDistance(a: GeoBucket, b: GeoBucket): GeoEval {
   const ca = centre(a);
   const cb = centre(b);
   if (ca && cb) {
@@ -190,6 +237,32 @@ export function evaluateGeo(a: GeoBucket, b: GeoBucket): GeoEval {
     return { compatible: true, closeness: 0.8 };
   }
   return { compatible: false, closeness: 0 };
+}
+
+/** Does `self`'s reach cover where `other` sits? */
+function reaches(self: GeoBucket, other: GeoBucket): boolean {
+  switch (reachOf(self)) {
+    case 'anywhere':
+      return true;
+    case 'country':
+      // No country code on either side means nothing to compare, so the card
+      // keeps the behaviour it had before it said anything about reach.
+      if (!self.country || !other.country) return evaluateByDistance(self, other).compatible;
+      return self.country === other.country;
+    default:
+      return evaluateByDistance(self, other).compatible;
+  }
+}
+
+export function evaluateGeo(a: GeoBucket, b: GeoBucket): GeoEval {
+  // Two radius cards: unchanged, down to the score.
+  if (reachOf(a) === 'radius' && reachOf(b) === 'radius') return evaluateByDistance(a, b);
+  if (!reaches(a, b) || !reaches(b, a)) return { compatible: false, closeness: 0 };
+  const byDistance = evaluateByDistance(a, b);
+  return {
+    compatible: true,
+    closeness: Math.max(REACH_GEO_CLOSENESS, byDistance.compatible ? byDistance.closeness : 0),
+  };
 }
 
 // ---------------------------------------------------------------------------

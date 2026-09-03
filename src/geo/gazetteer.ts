@@ -377,6 +377,15 @@ function countryName(country: string): string | undefined {
   return i === undefined ? undefined : g.file.rows[i][0];
 }
 
+/**
+ * The country's written-out name for an ISO 3166-1 alpha-2 code: "AU" ->
+ * "Australia". A card that reaches its whole country says so on its owner's
+ * page and in the publish echo, and a code is not something to read out.
+ */
+export function countryNameOf(code: string | null | undefined): string | undefined {
+  return code ? countryName(code) : undefined;
+}
+
 /** The place written out in full: "Canberra, Australian Capital Territory,
  *  Australia". This is what the switchboard reads back to the human whose
  *  card it just placed, so a wrong location is catchable by the one person
