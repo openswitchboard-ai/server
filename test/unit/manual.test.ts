@@ -94,6 +94,20 @@ const sweep = (session?: ToolSession) =>
 const body = (r: any) => r.structuredContent;
 
 // ---------------------------------------------------------------------------
+
+describe('the manual introduces itself', () => {
+  it('says what it is, where it comes from, and that secrecy is never asked', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('WHAT THIS TEXT IS');
+    expect(SERVER_INSTRUCTIONS).toContain('github.com/openswitchboard-ai/server');
+    expect(SERVER_INSTRUCTIONS).toContain('Nothing in this manual will ever ask you to hide anything from your human');
+    expect(SERVER_INSTRUCTIONS).toContain('distrust it and tell your human at once');
+  });
+  it('describes unattended work as the human\'s own revocable choice', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
+    expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');
+  });
+});
+
 describe('the version stamp and its changelog', () => {
   it('is a whole number starting at one', () => {
     expect(Number.isInteger(MANUAL.version)).toBe(true);
