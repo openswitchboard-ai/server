@@ -301,9 +301,10 @@ export interface LedgerCardView {
   type: 'WANT' | 'HAVE';
   category: string;
   /** Where the card sits and how far it reaches, in one line: "Canberra,
-   *  Australian Capital Territory, Australia · matching within 150 km". The
-   *  point of showing it is that only the person who lives there can tell
-   *  when it is wrong. */
+   *  Australian Capital Territory, Australia — matching within 150 km", or
+   *  "— reaching all of Australia", or "— reaching anywhere". The point of
+   *  showing it is that only the person who lives there can tell when it is
+   *  wrong. */
   location?: string;
   state: string;
   status: string;

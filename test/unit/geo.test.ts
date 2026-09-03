@@ -18,8 +18,15 @@ import {
   regionNamed,
   resolvePlace,
 } from '../../src/geo/gazetteer.js';
-import { MAX_RADIUS_KM, describeStoredGeo, geoOf, normaliseGeo } from '../../src/geo/normalise.js';
-import { evaluateGeo, evaluatePair } from '../../src/domain/matchRules.js';
+import {
+  MAX_RADIUS_KM,
+  describeReach,
+  describeStoredGeo,
+  describeStoredReach,
+  geoOf,
+  normaliseGeo,
+} from '../../src/geo/normalise.js';
+import { REACH_GEO_CLOSENESS, evaluateGeo, evaluatePair } from '../../src/domain/matchRules.js';
 import { OsbError } from '../../src/protocol.js';
 
 describe('geohash cells', () => {
@@ -373,9 +380,9 @@ describe('card location normalisation', () => {
     expect(normaliseGeo({ place: 'Paris', radius_km: 25 }).resolved!.country).toBe('FR');
   });
 
-  it('says out loud where it put the card', () => {
+  it('says out loud where it put the card, and how far it reaches', () => {
     expect(normaliseGeo({ place: 'Canberra', radius_km: 150 }).resolved!.display).toBe(
-      'Canberra, Australian Capital Territory, Australia',
+      'Canberra, Australian Capital Territory, Australia — matching within 150 km',
     );
     expect(normaliseGeo({ bucket: 'canberra' }).resolved!.display).toContain(
       'Australian Capital Territory',
@@ -501,10 +508,164 @@ describe('distance matching', () => {
       radius_km: 25,
       lat: -35.2835,
       lon: 149.1281,
+      reach: 'radius',
+      country: null,
     });
     const unplaced = geoOf({ geo: { bucket: 'g_a3f1', radius_km: 25 }, geo_lat: null, geo_lon: null });
     expect(unplaced.lat).toBeNull();
     expect(unplaced.radius_km).toBe(25);
+  });
+
+  it('carries the stored reach and country into the matching input', () => {
+    const g = geoOf({
+      geo: { place: 'Canberra', bucket: 'r3dp', radius_km: 25, reach: 'country' },
+      geo_lat: -35.2835,
+      geo_lon: 149.1281,
+      geo_radius_km: 25,
+      geo_country: 'AU',
+    });
+    expect(g.reach).toBe('country');
+    expect(g.country).toBe('AU');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reach. Where a card is and how far its owner will go are two questions, and
+// until this existed a card could only answer the first.
+// ---------------------------------------------------------------------------
+describe('reach', () => {
+  /** A card as the matching engine sees it, from its own resolved place. */
+  const card = (place: string, reach?: 'country' | 'anywhere', radius_km = 25) => {
+    const n = normaliseGeo({ place, radius_km, ...(reach ? { reach } : {}) });
+    return {
+      bucket: n.geo.bucket,
+      lat: n.lat,
+      lon: n.lon,
+      radius_km: n.radius_km,
+      reach: n.reach,
+      country: n.country,
+    };
+  };
+
+  it('resolves a place and keeps the country it landed in', () => {
+    const n = normaliseGeo({ place: 'Canberra', reach: 'country', radius_km: 25 });
+    expect(n.country).toBe('AU');
+    expect(n.reach).toBe('country');
+    // The reach is stored on the card; the place is still a real town.
+    expect(n.geo).toEqual({
+      place: 'Canberra',
+      bucket: 'r3dp',
+      radius_km: 25,
+      reach: 'country',
+    });
+  });
+
+  it('leaves the stored geo alone when the reach is the default', () => {
+    // Every card written before reach existed meant this, so it has to look
+    // exactly like one.
+    expect(normaliseGeo({ place: 'Canberra', reach: 'radius', radius_km: 25 }).geo).toEqual({
+      place: 'Canberra',
+      bucket: 'r3dp',
+      radius_km: 25,
+    });
+    expect(normaliseGeo({ place: 'Canberra', radius_km: 25 }).reach).toBe('radius');
+  });
+
+  it('a nationwide pair meets across a country, and stops at its border', () => {
+    // Canberra to Perth is about 3,100 km: no radius reaches it.
+    const canberra = card('Canberra', 'country');
+    const perth = card('Perth, Western Australia', 'country');
+    const auckland = card('Auckland', 'country');
+    expect(evaluateGeo(canberra, perth).compatible).toBe(true);
+    expect(evaluateGeo(canberra, auckland).compatible).toBe(false);
+    // And the radius pair those same two places make is still refused.
+    expect(evaluateGeo(card('Canberra'), card('Perth, Western Australia')).compatible).toBe(false);
+  });
+
+  it('both sides have to reach: nationwide alone is not enough', () => {
+    // The person collecting has to be as willing to cross the distance as
+    // the person sending, or nobody is going anywhere.
+    const nationwide = card('Canberra', 'country');
+    const local = card('Perth, Western Australia');
+    expect(evaluateGeo(nationwide, local).compatible).toBe(false);
+    expect(evaluateGeo(local, nationwide).compatible).toBe(false);
+  });
+
+  it('anywhere meets anywhere, across countries', () => {
+    const canberra = card('Canberra', 'anywhere');
+    const auckland = card('Auckland', 'anywhere');
+    const glasgow = card('Glasgow', 'anywhere');
+    expect(evaluateGeo(canberra, auckland).compatible).toBe(true);
+    expect(evaluateGeo(canberra, glasgow).compatible).toBe(true);
+    // Anywhere covers a nationwide card only when it is in that country too.
+    expect(evaluateGeo(canberra, card('Perth, Western Australia', 'country')).compatible).toBe(true);
+    expect(evaluateGeo(canberra, card('Auckland', 'country')).compatible).toBe(false);
+  });
+
+  it('scores a reach match flat and moderate, not as though it were adjacent', () => {
+    const far = evaluateGeo(card('Canberra', 'country'), card('Perth, Western Australia', 'country'));
+    expect(far.closeness).toBe(REACH_GEO_CLOSENESS);
+    expect(far.closeness).toBeLessThan(
+      evaluateGeo(card('Canberra'), card('Canberra')).closeness,
+    );
+    // A pair that is ALSO close keeps its distance score: saying you would
+    // post it should never cost you the neighbour who would walk over.
+    const near = evaluateGeo(card('Canberra', 'country'), card('Canberra', 'country'));
+    expect(near.closeness).toBe(1);
+  });
+
+  it('a card the switchboard could not place keeps radius behaviour', () => {
+    // No country code, so there is no country to reach across.
+    const unplaced = { bucket: 'g_a3f1', radius_km: 25, reach: 'country' as const, country: null };
+    expect(evaluateGeo(unplaced, { ...unplaced }).compatible).toBe(true);
+    expect(
+      evaluateGeo(unplaced, { bucket: 'g_b7c2', radius_km: 25, reach: 'country' as const, country: null })
+        .compatible,
+    ).toBe(false);
+    // Against a placed card it is still the string comparison that decides.
+    expect(evaluateGeo(unplaced, card('Canberra', 'country')).compatible).toBe(false);
+  });
+
+  it('reads the reach back in plain words, all three ways', () => {
+    expect(normaliseGeo({ place: 'Canberra', reach: 'country' }).resolved!.display).toBe(
+      'Canberra, Australian Capital Territory, Australia — reaching all of Australia',
+    );
+    expect(normaliseGeo({ place: 'Canberra', reach: 'anywhere' }).resolved!.display).toBe(
+      'Canberra, Australian Capital Territory, Australia — reaching anywhere',
+    );
+    expect(normaliseGeo({ place: 'Canberra', radius_km: 25 }).resolved!.display).toBe(
+      'Canberra, Australian Capital Territory, Australia — matching within 25 km',
+    );
+  });
+
+  it('reads a stored card back the same way, for the ledger', () => {
+    expect(describeStoredReach({ place: 'Canberra', reach: 'country' }, 'AU', 25)).toBe(
+      'reaching all of Australia',
+    );
+    expect(describeStoredReach({ place: 'Canberra', reach: 'anywhere' }, 'AU', 25)).toBe(
+      'reaching anywhere',
+    );
+    expect(describeStoredReach({ place: 'Canberra' }, 'AU', 150)).toBe('matching within 150 km');
+    // A card whose country was never worked out still says something true.
+    expect(describeReach('country', 25, null)).toBe('reaching its whole country');
+  });
+
+  it('tells an agent that names a country where reach lives', () => {
+    const e = err(() => normaliseGeo({ place: 'Australia' }));
+    expect(e.payload.code).toBe('LOCATION_UNRESOLVED');
+    expect(e.payload.human_action).toMatch(/whole country/);
+    expect(e.payload.human_action).toMatch(/reach to "country"/);
+    // The refusal itself stands: a country is still not a place to put a card.
+    expect(e.payload.human_action).toMatch(/name the town or city/);
+  });
+
+  it('keeps that refusal inside the protocol ceiling for every country', () => {
+    // The message carries a place name and a country name, and the protocol
+    // caps human_action at 300 characters.
+    for (const place of ['Australia', 'United States', 'Q'.repeat(80), 'AU', 'GB']) {
+      const e = err(() => normaliseGeo({ place }));
+      expect(e.payload.human_action!.length, place).toBeLessThanOrEqual(300);
+    }
   });
 });
 
@@ -553,6 +714,22 @@ describe('what the manual tells an agent about places', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/say if that's wrong/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/amend the card there and then/i);
   });
+
+  it('teaches place and reach as two different things, with the translation', async () => {
+    const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
+    expect(SERVER_INSTRUCTIONS).toContain('geo.reach');
+    expect(SERVER_INSTRUCTIONS).toMatch(/the card lives where the thing lives/i);
+    // The sentence an agent actually has to translate.
+    expect(SERVER_INSTRUCTIONS).toMatch(/I'll post it anywhere in Australia/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/"anywhere" for something done online/);
+  });
+
+  it('bumps the manual version once, with a note saying what to do differently', async () => {
+    const { MANUAL, MANUAL_CHANGELOG } = await import('../../src/mcp/instructions.js');
+    const latest = MANUAL_CHANGELOG[MANUAL_CHANGELOG.length - 1];
+    expect(latest.version).toBe(MANUAL.version);
+    expect(latest.note).toMatch(/reach/i);
+  });
 });
 
 describe('the geo tool schema agents actually see', () => {
@@ -560,9 +737,12 @@ describe('the geo tool schema agents actually see', () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     const geo = publish.inputSchema.properties.card.properties.geo;
-    expect(Object.keys(geo.properties).sort()).toEqual(['bucket', 'place', 'radius_km']);
+    expect(Object.keys(geo.properties).sort()).toEqual(['bucket', 'place', 'radius_km', 'reach']);
     expect(geo.description).toMatch(/suburb, city or region/);
+    expect(geo.properties.reach.enum).toEqual(['radius', 'country', 'anywhere']);
     expect(publish.description).toMatch(/nearest suburb, city or region/);
+    // The distinction the field exists for, at the point the model acts on it.
+    expect(publish.description).toMatch(/never "Australia" in `place`/);
     // anyOf cannot be expressed by constrained-decoding grammar compilers; the
     // server validates every card against the full schema regardless.
     const blob = JSON.stringify(publish.inputSchema);

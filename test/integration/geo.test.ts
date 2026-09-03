@@ -137,9 +137,11 @@ d('one city, two spellings, one match', () => {
     expect(r.result.human_action).toContain('Australian Capital Territory');
   });
 
-  it('refuses a bare country, and names the country it heard', async () => {
+  it('refuses a bare country, names it, and says where nationwide lives', async () => {
     // The second incident: a card posted as "AU" sat on the centroid of the
-    // continent, 476 km from the city it belonged to.
+    // continent, 476 km from the city it belonged to. An agent writing "AU"
+    // usually means a card that REACHES Australia, so the refusal now names
+    // the field that says so.
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
       card: card('WANT', 'AU'),
     });
@@ -147,6 +149,7 @@ d('one city, two spellings, one match', () => {
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
     expect(r.result.human_action).toMatch(/whole country/i);
     expect(r.result.human_action).toContain('Australia');
+    expect(r.result.human_action).toMatch(/reach to "country"/);
   });
 
   it('refuses a name several cities answer to, and lists them', async () => {
@@ -187,6 +190,22 @@ d('one city, two spellings, one match', () => {
     expect(body).toMatch(/matching within \d+ km/);
   });
 
+  it('says the reach back, in the same words, for all three forms', async () => {
+    for (const [geo, expected] of [
+      [{ place: 'Canberra', reach: 'country' }, 'reaching all of Australia'],
+      [{ place: 'Canberra', reach: 'anywhere' }, 'reaching anywhere'],
+      [{ place: 'Canberra', radius_km: 25 }, 'matching within 25 km'],
+    ] as [any, string][]) {
+      const r = await mcpCall(alice.accessToken, 'publish_intent', {
+        card: { ...card('WANT', 'Canberra'), geo },
+      });
+      expect(r.isError, JSON.stringify(r.result)).toBe(false);
+      expect(r.result.location_resolved.display, JSON.stringify(r.result)).toBe(
+        `Canberra, Australian Capital Territory, Australia — ${expected}`,
+      );
+    }
+  });
+
   it('refuses a street address, and a name nothing answers to', async () => {
     // A leading street number never gets past the protocol schema itself.
     const numbered = await mcpCall(alice.accessToken, 'publish_intent', {
@@ -207,5 +226,123 @@ d('one city, two spellings, one match', () => {
       expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
       expect(r.result.human_action).toMatch(hint);
     }
+  });
+});
+
+/**
+ * Reach, against the live service. Canberra to Perth is about 3,100 km — no
+ * radius the protocol allows gets anywhere near it, and before reach existed
+ * this pair could not have met however willing both people were. Both cards
+ * still name a real town; what changed is that both say they would cross the
+ * country for it.
+ */
+d('a card that reaches a whole country', () => {
+  let seller: TestActor; // Canberra, posts anywhere in Australia
+  let buyer: TestActor; // Perth, happy to have it posted
+  let nationwideHave: string;
+  let farWant: string;
+
+  const laptop = (type: 'WANT' | 'HAVE', geo: any) => ({
+    schema_version: SCHEMA_VERSION,
+    type,
+    category: 'goods.electronics.laptop',
+    geo,
+    attributes: { brand: 'apple', model: 'macbook air', condition: 'good' },
+  });
+
+  beforeAll(async () => {
+    [seller, buyer] = await Promise.all([
+      bootstrapActor('Sam', 'Canberra'),
+      bootstrapActor('Pia', 'Perth'),
+    ]);
+    const h = await mcpCall(seller.accessToken, 'publish_intent', {
+      card: laptop('HAVE', { place: 'Canberra', reach: 'country' }),
+    });
+    expect(h.isError, JSON.stringify(h.result)).toBe(false);
+    expect(h.result.location_resolved.display).toBe(
+      'Canberra, Australian Capital Territory, Australia — reaching all of Australia',
+    );
+    nationwideHave = h.result.intent_id;
+
+    // A modest radius, because Pia is not driving anywhere — and a reach that
+    // says she will take it in the post.
+    const w = await mcpCall(buyer.accessToken, 'publish_intent', {
+      card: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25, reach: 'country' }),
+    });
+    expect(w.isError, JSON.stringify(w.result)).toBe(false);
+    expect(w.result.location_resolved.display).toContain('reaching all of Australia');
+    farWant = w.result.intent_id;
+
+    await Promise.all([
+      waitForCardState(seller.accessToken, nationwideHave, ['PUBLISHED']),
+      waitForCardState(buyer.accessToken, farWant, ['PUBLISHED']),
+    ]);
+  });
+
+  it('stores the reach on the card and the country it resolved to', async () => {
+    const rows = await dbExec(
+      `SELECT id::text, geo::text, geo_country, geo_radius_km::text
+         FROM cards WHERE id IN (:h::uuid, :w::uuid)`,
+      [
+        { name: 'h', value: nationwideHave },
+        { name: 'w', value: farWant },
+      ],
+    );
+    expect(rows).toHaveLength(2);
+    for (const [, geo, country] of rows) {
+      expect(JSON.parse(String(geo)).reach, geo).toBe('country');
+      expect(country).toBe('AU');
+    }
+  });
+
+  it('the pair meets across the country', async () => {
+    const matchId = await poll(
+      async () => {
+        const rows = await dbExec(
+          `SELECT id::text FROM matches WHERE card_want = :w::uuid AND card_have = :h::uuid`,
+          [
+            { name: 'w', value: farWant },
+            { name: 'h', value: nationwideHave },
+          ],
+        );
+        return (rows[0]?.[0] as string) ?? undefined;
+      },
+      'a match between the Canberra nationwide HAVE and the Perth WANT',
+      180_000,
+    );
+    const r = await mcpCall(buyer.accessToken, 'check_matches', {});
+    const ours = (r.result.matches ?? []).find((m: any) => m.match_id === matchId);
+    expect(ours, JSON.stringify(r.result)).toBeTruthy();
+    expect(ours.signal.category).toBe('goods.electronics.laptop');
+  });
+
+  it('the same two places, without the reach, stay apart', async () => {
+    // The control: nothing about the distance changed, only what the two
+    // people said they would do about it.
+    const local = await mcpCall(buyer.accessToken, 'publish_intent', {
+      card: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25 }),
+    });
+    expect(local.isError, JSON.stringify(local.result)).toBe(false);
+    const localWant = local.result.intent_id;
+    await waitForCardState(buyer.accessToken, localWant, ['PUBLISHED']);
+    // Give the matcher the same window the designed pair got, then assert the
+    // absence: a radius WANT is not covered by anyone's nationwide reach.
+    await new Promise((r) => setTimeout(r, 20_000));
+    const rows = await dbExec(
+      `SELECT id::text FROM matches WHERE card_want = :w::uuid AND card_have = :h::uuid`,
+      [
+        { name: 'w', value: localWant },
+        { name: 'h', value: nationwideHave },
+      ],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('the ledger says where the card is and how far it goes', async () => {
+    const page = await counterFetch(seller.jar, '/ledger');
+    expect(page.status).toBe(200);
+    const body = await page.text();
+    expect(body).toContain('Canberra, Australian Capital Territory, Australia');
+    expect(body).toContain('reaching all of Australia');
   });
 });

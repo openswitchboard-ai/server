@@ -341,13 +341,23 @@ describe('counter pages: copy-cull render suite', () => {
           id: 'c-1',
           type: 'WANT',
           category: LABEL,
-          location: 'Canberra, Australian Capital Territory, Australia · matching within 150 km',
+          location: 'Canberra, Australian Capital Territory, Australia — matching within 150 km',
           state: 'PUBLISHED',
           status: 'active',
           expiresAt: '2026-10-01',
           priceBand: '0–800 AUD',
           matchSummary: 'no matches yet',
           attributes: 'condition: good',
+        },
+        {
+          id: 'c-2',
+          type: 'HAVE',
+          category: LABEL,
+          location: 'Canberra, Australian Capital Territory, Australia — reaching all of Australia',
+          state: 'PUBLISHED',
+          status: 'active',
+          expiresAt: '2026-10-01',
+          matchSummary: 'no matches yet',
         },
       ], 'Withdrawn — effective immediately.'),
     },
@@ -465,6 +475,9 @@ describe('counter pages: copy-cull render suite', () => {
     const ledger = Object.fromEntries(allPages().map((p) => [p.name, p.html])).ledger;
     expect(ledger).toContain('Canberra, Australian Capital Territory, Australia');
     expect(ledger).toContain('matching within 150 km');
+    // A card that reaches a whole country says so in the same line, in the
+    // same words: a radius would be a lie about it.
+    expect(ledger).toContain('reaching all of Australia');
   });
 
   it('pages given a category label show it', () => {

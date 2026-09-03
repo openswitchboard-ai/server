@@ -6,7 +6,7 @@
 import { getPool } from '../db.js';
 import { decryptFields, encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
 import { emailHash, getAccount } from './accounts.js';
-import { describeStoredGeo } from '../geo/normalise.js';
+import { describeStoredGeo, describeStoredReach } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
 /** Create a 'pending' account at email-verification time (counter registration). */
@@ -256,8 +256,11 @@ export interface LedgerCard {
   category: string;
   /** Where the switchboard put this card, written out in full. */
   location: string;
-  /** How far the card reaches, in km. */
+  /** How far the card reaches, in km. Only meaningful on a radius reach. */
   radius_km: number;
+  /** How far this card's owner will meet someone, in plain words: "matching
+   *  within 25 km", "reaching all of Australia", "reaching anywhere". */
+  reach_line: string;
   lifecycle_state: string;
   protocol_status: string;
   attributes: any;
@@ -314,6 +317,11 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     category: row.category,
     location: describeStoredGeo(row.geo),
     radius_km: Number(row.geo_radius_km ?? row.geo?.radius_km ?? 0),
+    reach_line: describeStoredReach(
+      row.geo,
+      row.geo_country,
+      Number(row.geo_radius_km ?? row.geo?.radius_km ?? 0),
+    ),
     lifecycle_state: row.lifecycle_state,
     protocol_status: row.protocol_status,
     attributes: row.attributes,

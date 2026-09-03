@@ -1154,9 +1154,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       id: c.id,
       type: c.type,
       category: categoryLeafLabel(c.category),
-      location: c.location
-        ? `${c.location}${c.radius_km ? ` · matching within ${Math.round(c.radius_km)} km` : ''}`
-        : undefined,
+      // Where the card is, then how far it reaches — the two things only the
+      // person who lives there can tell are wrong.
+      location: c.location ? `${c.location} — ${c.reach_line}` : undefined,
       state: c.lifecycle_state,
       status: c.protocol_status,
       expiresAt: new Date(c.expires_at).toISOString().slice(0, 10),
