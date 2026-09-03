@@ -113,6 +113,7 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 log('backfill-geo: pass done', {
                   placed: r.placed.length,
                   unplaced: r.unplaced,
+                  countryless: r.countryless,
                   refused: r.refused,
                   more: !!r.next,
                 });
