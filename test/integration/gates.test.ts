@@ -123,10 +123,9 @@ d('integration gates against live deployment', () => {
   });
 
   it('a session that has just connected is told nothing about the manual', async () => {
-    // Its own actor, so "just connected" is literal: a token that has never
-    // seen a sweep, on a service running the manual it is about to be handed.
-    const fresh = await bootstrapActor('Newcomer', 'Ballarat');
-    const init = await mcpRpc(fresh.accessToken, 'initialize', {
+    // initialize is where the manual is served, so it is also where a session
+    // starts counting. Reconnecting puts this token on the current version.
+    const init = await mcpRpc(alice.accessToken, 'initialize', {
       protocolVersion: '2025-03-26',
       capabilities: {},
       clientInfo: { name: 'osb-int', version: '0.0.1' },
@@ -138,12 +137,12 @@ d('integration gates against live deployment', () => {
     // The handshake stamped the version onto this session's own token row.
     const stamped = await dbExec(
       `SELECT manual_version FROM oauth_tokens WHERE token_hash = :h AND kind = 'access'`,
-      [{ name: 'h', value: sha256hex(fresh.accessToken) }],
+      [{ name: 'h', value: sha256hex(alice.accessToken) }],
     );
     expect(Number(stamped[0][0])).toBeGreaterThanOrEqual(1);
 
     // Versions match, so the sweep says nothing and the field is absent.
-    const sweep = await mcpCall(fresh.accessToken, 'check_matches', {});
+    const sweep = await mcpCall(alice.accessToken, 'check_matches', {});
     expect(sweep.isError).toBe(false);
     expect(sweep.result.manual_update).toBeUndefined();
     expect(sweep.raw).not.toContain('manual_update');
