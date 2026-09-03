@@ -122,7 +122,11 @@ async function main(): Promise<number> {
     // ---- scenarios ------------------------------------------------------
     // Rotate which actors each scenario leads with, so no single account's
     // shared 60/h read ceiling is exhausted before the run finishes.
-    for (const [i, s] of SCENARIOS.entries()) {
+    // SIM_SKIP_SCENARIOS=1 leaves each account's whole 10/day publish budget to
+    // fuzz — useful for a fuzz-focused pass on a small (per-IP-capped) pool,
+    // where the scenarios would otherwise spend most of the publish quota first.
+    const skipScenarios = process.env.SIM_SKIP_SCENARIOS === '1';
+    for (const [i, s] of (skipScenarios ? [] : SCENARIOS).entries()) {
       group(`scenario: ${s.name}`);
       if (h.actors.length < s.minActors) {
         log(`skipped — needs ${s.minActors} actors, pool has ${h.actors.length}`);
@@ -146,24 +150,34 @@ async function main(): Promise<number> {
       groupEnd();
     }
 
-    // ---- red team -------------------------------------------------------
-    group('red-team driver');
-    try {
-      redTeam = await runRedTeam(h, check, h.actors);
-    } catch (e) {
-      log(`red-team driver threw: ${String(e)}`);
-    } finally {
-      await h.reclaimCards();
-    }
-    groupEnd();
-
     // ---- fuzz -----------------------------------------------------------
+    // Runs BEFORE the red-team: the red-team's R4 exhausts an actor's 60/h read
+    // ceiling, and although fuzz observes the matcher through the DB (off that
+    // ceiling), its ladder walk is agent-facing — keeping fuzz first means a
+    // clean pool for it, so a compatible-but-no-match is never confused with a
+    // rate-limited read.
     if (fuzzRounds > 0) {
       group(`fuzz mode (seed ${seed}, ${fuzzRounds} rounds)`);
       try {
         fuzzOutcome = await runFuzz(h, check, { seed, rounds: fuzzRounds });
       } catch (e) {
         log(`fuzz threw: ${String(e)}`);
+      } finally {
+        await h.reclaimCards();
+      }
+      groupEnd();
+    }
+
+    // ---- red team -------------------------------------------------------
+    // SIM_SKIP_REDTEAM=1 pairs with SIM_SKIP_SCENARIOS for a fuzz-only pass.
+    if (process.env.SIM_SKIP_REDTEAM === '1') {
+      log('red-team driver skipped (SIM_SKIP_REDTEAM=1)');
+    } else {
+      group('red-team driver');
+      try {
+        redTeam = await runRedTeam(h, check, h.actors);
+      } catch (e) {
+        log(`red-team driver threw: ${String(e)}`);
       } finally {
         await h.reclaimCards();
       }
@@ -202,9 +216,27 @@ async function main(): Promise<number> {
   }
   log('');
   if (fuzzOutcome) {
-    log(`Fuzz: seed=${fuzzOutcome.seed} rounds=${fuzzOutcome.rounds} matches=${fuzzOutcome.matchesFormed} channels=${fuzzOutcome.channelsOpened} rate_limited=${fuzzOutcome.rateLimited}`);
+    const f = fuzzOutcome;
+    log(`Fuzz (live matcher): seed=${f.seed} rounds=${f.rounds}`);
+    log(`  compatible-and-matched:        ${f.compatibleMatched}`);
+    log(`  compatible-but-NO-match:       ${f.compatibleNoMatch}${f.compatibleNoMatch ? '  <-- FINDING' : ''}`);
+    log(`  incompatible-and-unmatched:    ${f.incompatibleUnmatched}`);
+    log(`  incompatible-but-MATCHED:      ${f.incompatibleMatched}${f.incompatibleMatched ? '  <-- FINDING (false match)' : ''}`);
+    log(`  skipped (quota/screening/rl):  ${f.skipped}   channels opened: ${f.channelsOpened}   rate_limited: ${f.rateLimited}`);
+    for (const fd of f.findings) {
+      if (fd.kind === 'compatible-no-match') {
+        log(`  FINDING compatible-but-NO-match (seed ${fd.seed}, round ${fd.round}):`);
+        log(`    category=${fd.category}  want=${fd.wantId} have=${fd.haveId}`);
+        log(`    want  bucket=${fd.want.bucket} band=${fd.want.band} reach=${fd.want.reach} radius=${fd.want.radius_km}km`);
+        log(`    have  bucket=${fd.have.bucket} band=${fd.have.band} reach=${fd.have.reach} radius=${fd.have.radius_km}km`);
+      } else {
+        log(`  FINDING incompatible-but-MATCHED / FALSE MATCH (seed ${fd.seed}, round ${fd.round}, broke=${fd.reason}):`);
+        log(`    match_id=${fd.matchId}  want=${fd.category} ${fd.wantId}  have=${fd.have.category} ${fd.haveId}`);
+        log(`    want bucket=${fd.want.bucket} reach=${fd.want.reach}  have bucket=${fd.have.bucket} reach=${fd.have.reach}`);
+      }
+    }
     if (fuzzOutcome.firstViolationRepro) {
-      log(`  first violation repro — seed ${fuzzOutcome.firstViolationRepro.seed}, call sequence:`);
+      log(`  first invariant-violation repro — seed ${fuzzOutcome.firstViolationRepro.seed}, call sequence:`);
       for (const s of fuzzOutcome.firstViolationRepro.sequence) log(`    ${s}`);
     }
     log('');
@@ -229,7 +261,10 @@ async function main(): Promise<number> {
   const redTeamGotThrough = redTeam.some((r) => !r.refused);
   const invariantBroke = violations.length > 0;
   const dirtyBoard = residueAfter > 0;
-  const ok = !scenarioFailed && !redTeamGotThrough && !invariantBroke && !dirtyBoard;
+  // A compatible pair the matcher never paired, or an incompatible pair it
+  // paired anyway, is a real matcher bug — fail the run.
+  const matcherBug = !!fuzzOutcome && (fuzzOutcome.compatibleNoMatch > 0 || fuzzOutcome.incompatibleMatched > 0);
+  const ok = !scenarioFailed && !redTeamGotThrough && !invariantBroke && !dirtyBoard && !matcherBug;
   log(ok ? 'RESULT: PASS' : 'RESULT: FAIL (see findings above)');
   return ok ? 0 : 1;
 }
