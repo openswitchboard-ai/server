@@ -268,6 +268,17 @@ function candidateWhere(source: {
  * attribute can move a card up this list (no paid ranking) - with the card's
  * age as the tie-break, newest first, so a pile of identical embeddings
  * cannot shadow a fresher counterpart by whatever order the heap hands back.
+ *
+ * ONE THING TO WATCH. A filtered query ordered by vector distance can be
+ * answered two ways: an exact sort over the filtered rows (what the planner
+ * chooses today, in milliseconds, because the prefilter leaves so few), or an
+ * approximate walk of the HNSW index with the filter applied to what it finds
+ * — and the second can hand back fewer rows than the limit, or none at all,
+ * with no error. If the board grows enough for the planner to switch, the
+ * lever is pgvector 0.8's `hnsw.iterative_scan` (with `hnsw.ef_search` at
+ * least the limit), set for the transaction this query runs in. The pool
+ * count below is how anyone would notice: a healthy pool beside an evaluated
+ * count of zero is that failure, and nothing else looks like it.
  */
 async function retrieveCandidates(source: {
   id: string;
