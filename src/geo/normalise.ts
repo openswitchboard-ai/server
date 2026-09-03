@@ -48,7 +48,7 @@ import {
   type Place,
 } from './gazetteer.js';
 
-/** Reach assumed for a bucket the gazetteer cannot place. A card that names
+/** Radius assumed for a bucket the gazetteer cannot place. A card that names
  *  an area takes the width of that area instead. */
 export const DEFAULT_RADIUS_KM = 25;
 /** Ceiling from the protocol schema. */
