@@ -28,7 +28,9 @@ import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
 import { getCard } from './cards.js';
 import { getMatch, sideOf, type MatchRow } from './matches.js';
+import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
+import type { Config } from '../config.js';
 
 /** A message is capped at the length the protocol's channelBody allows. */
 export const MAX_MESSAGE_CHARS = 4000;
@@ -136,6 +138,7 @@ export async function sendMessage(
   accountId: string,
   matchId: string,
   text: unknown,
+  cfg?: Config,
 ): Promise<{ channel_id: string; message_id: string; sent_at: string }> {
   if (typeof text !== 'string' || text.trim().length === 0) {
     throw Object.assign(new Error('channel_send requires text to carry'), { validation: ['text'] });
@@ -191,6 +194,17 @@ export async function sendMessage(
       direction: 'accepted',
       count: 1,
     });
+    // Best-effort: nudge the recipient's human that a message is waiting, once
+    // per unread state and no more than the floor allows (domain/channelNotify.
+    // ts). It runs only after the message is safely committed, and it can never
+    // fail the send — the helper swallows its own errors.
+    if (cfg) {
+      await notifyChannelMessageWaiting(cfg, {
+        channelId: ch.channelId,
+        matchId,
+        recipientAccount: ch.counterpartyAccount,
+      });
+    }
     return {
       channel_id: ch.channelId,
       message_id: r.rows[0].id as string,
@@ -264,6 +278,12 @@ export async function receiveMessages(
       direction: 'collected',
       count: collected,
     });
+    // The recipient has caught up: re-arm the waiting-message nudge so the next
+    // arrival to an empty inbox can prompt them again. Best-effort, and only
+    // once unread has actually fallen to zero.
+    if (!rest.rowCount) {
+      await rearmChannelNudge(ch.channelId, accountId);
+    }
     return { messages, more_waiting: !!rest.rowCount };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});

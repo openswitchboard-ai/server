@@ -13,9 +13,11 @@ import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
 import {
   notifyMatchCreated,
+  notifyYourMove,
   runDigestTick,
   runRenewalTick,
   runSummonsBatch,
+  sendChannelWaitingNudge,
 } from '../email/digestEngine.js';
 import type { Config } from '../config.js';
 
@@ -186,6 +188,26 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 // the matcher / the dev create-match op). Idempotent via the
                 // summons:{match}:{account} dedupe key.
                 await notifyMatchCreated(cfg, body.match_id);
+                break;
+              }
+              case 'channel-nudge': {
+                // A message is waiting on an open conversation; tell the
+                // recipient's human so the exchange does not stall. Enqueued by
+                // channel_send (domain/channelNotify.ts), which also throttles;
+                // idempotent via the channel-waiting dedupe key.
+                await sendChannelWaitingNudge(cfg, {
+                  matchId: body.match_id,
+                  channelId: body.channel_id,
+                  recipientAccount: body.recipient_account,
+                  notifiedAt: body.notified_at,
+                });
+                break;
+              }
+              case 'your-move-notify': {
+                // The counterparty opted in and it is now this human's turn to
+                // reciprocate. Enqueued by recordStage3OptIn; idempotent via
+                // the your-move:{match}:{account} dedupe key.
+                await notifyYourMove(cfg, body.match_id, body.account_id);
                 break;
               }
               case 'email-digest-tick': {

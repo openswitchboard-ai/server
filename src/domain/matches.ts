@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { SendMessageCommand } from '@aws-sdk/client-sqs';
+import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
@@ -330,6 +332,28 @@ export async function recordStage3OptIn(
     await getPool().query(`UPDATE matches SET stage = 3, updated_at = now() WHERE id = $1`, [
       matchId,
     ]);
+  }
+  // "Your move": this side has opted in and the other has not, so the ball is
+  // now in the counterparty's court. New-match is already summoned; a passive
+  // human would otherwise never learn the progression reached them. Best-effort
+  // and idempotent (your-move:{match}:{account} dedupe), so it never fails the
+  // opt-in and a repeat opt-in raises no second email.
+  if (n < 2 && cfg.opsQueueUrl) {
+    try {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: cfg.opsQueueUrl,
+          MessageBody: JSON.stringify({
+            op: 'your-move-notify',
+            match_id: matchId,
+            account_id: counterpartyOf(m, accountId),
+          }),
+        }),
+      );
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error(`your-move-notify: enqueue failed (opt-in unaffected): ${e?.message ?? e}`);
+    }
   }
   const updated = (await getMatch(matchId))!;
   return { match: updated, both: n >= 2 };
