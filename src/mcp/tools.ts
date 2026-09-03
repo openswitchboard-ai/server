@@ -485,7 +485,7 @@ export async function dispatchTool(
       case 'open_channel':
         return ok(await matches.openChannel(args?.match_id, accountId));
       case 'channel_send':
-        return ok(await channel.sendMessage(accountId, args?.match_id, args?.text));
+        return ok(await channel.sendMessage(accountId, args?.match_id, args?.text, cfg));
       case 'channel_receive':
         return ok(await channel.receiveMessages(accountId, args?.match_id));
       case 'standing_arrangement': {
