@@ -1,0 +1,19 @@
+-- A session remembers which manual it was handed
+--
+-- The agent manual (src/mcp/instructions.ts) is served once, in the MCP
+-- initialize handshake. Edit it and every agent already on the wire keeps
+-- reading the old one until it reconnects, which for a long-lived assistant
+-- may be never.
+--
+-- The MCP transport here is stateless — any Fargate task serves any request —
+-- so there is no session object to hang this on. The bearer token IS the
+-- session: one row per credential, already read on every authenticated
+-- request, already carrying that session's revoke and expiry semantics. So
+-- the manual version lives beside them, and the sweep gets its comparison for
+-- free out of the SELECT authenticate() already runs.
+--
+-- Nullable on purpose. A NULL means the token has never sent an initialize
+-- under the versioned manual, so there is no telling which manual that session
+-- read; the first sweep stamps it with the current version and says nothing,
+-- and it tracks from there.
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS manual_version integer;
