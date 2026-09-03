@@ -348,14 +348,51 @@ export async function declineMatch(matchId: string, accountId: string): Promise<
 
 export async function buildSignal(m: MatchRow, accountId: string) {
   const side = sideOf(m, accountId);
+  // No score crosses to the agent. The switchboard already decided the match
+  // was worth sending, so the number is never needed to act — and a number an
+  // agent never receives is a number it can never read out to its human. Score
+  // stays in the DB and the internal matcher logs; it is stripped here, at the
+  // agent boundary, and the outbound schema (no `score` slot) makes that
+  // structural rather than advisory.
   return assertOutbound('match.signal', {
     schema_version: SCHEMA_VERSION,
     kind: 'match.signal' as const,
     match_id: m.id,
-    score: Math.max(0, Math.min(1, m.score)),
     category: m.category,
     counterparty_type: side === 'want' ? ('HAVE' as const) : ('WANT' as const),
   });
+}
+
+/**
+ * What the agent can do next on a match, as a word rather than a level. This
+ * is the agent-facing replacement for the raw stage integer: it is derived
+ * from the same interest / stage / channel state the flow already turns on, so
+ * the word plus the match_id is enough to drive the next tool call, and no
+ * stage number is ever handed across the boundary to be read out.
+ *
+ *   show_interest        a fresh signal; this side has not expressed interest
+ *   awaiting_other_side  this side is interested, waiting on the other side
+ *   details_unlocked     both sides interested — attributes are on the entry
+ *   awaiting_your_human  a stage-3 opt-in / approval sits with the human
+ *   ready_to_talk        both opted in; open the channel (or it is already open)
+ *
+ * `awaiting_your_human` is not reachable from the row state alone — it is set
+ * by checkMatches when a reveal is genuinely waiting on the human's own page.
+ */
+export type NextAction =
+  | 'show_interest'
+  | 'awaiting_other_side'
+  | 'details_unlocked'
+  | 'awaiting_your_human'
+  | 'ready_to_talk';
+
+export function nextAction(m: MatchRow, accountId: string): NextAction {
+  const iMine = sideOf(m, accountId) === 'want' ? m.interest_want : m.interest_have;
+  if (m.channel_id) return 'ready_to_talk'; // stage 4 — channel open
+  if (m.stage >= 3) return 'ready_to_talk'; // both opted in — open the channel
+  if (m.stage >= 2) return 'details_unlocked'; // mutual interest — attributes present
+  if (iMine) return 'awaiting_other_side'; // this side keen, waiting on them
+  return 'show_interest'; // fresh signal
 }
 
 export async function buildAttributes(m: MatchRow, accountId: string) {
@@ -549,17 +586,25 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     const entry: any = {
       match_id: m.id,
       state: 'open',
-      stage_unlocked: m.stage,
+      // A word for what the agent can do now, not a stage number to read out.
+      next: nextAction(m, accountId),
       signal: await buildSignal(m, accountId),
     };
     // Collection-window info is shown ONLY to the holder (the side whose OWN
     // card is contested). A rival's view carries no trace of the contest.
     const w = await openCollectionWindow(ownCardId(m, accountId));
     if (w) {
+      // No bare UTC close time crosses to the agent — a raw timestamp was
+      // being read out verbatim. The close time stays in the DB and on the
+      // human's own dashboard; the agent gets the count it can act on plus a
+      // human-voiced note, the way the switchboard would say it.
       entry.collection = {
         collecting: true,
-        until: new Date(w.until).toISOString(),
         interested_parties: w.interestedParties,
+        note: {
+          text: 'Interest is still arriving on your card. Review what has come in, and when your human is ready to choose someone, close the window — or let it lapse on its own.',
+          provenance: 'switchboard-system',
+        },
       };
     }
     // A match that has reached stage 4 names its channel here, so an agent
@@ -576,7 +621,12 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // A stage-3 reveal that is only waiting on someone's first name and
         // area is worth saying out loud, so the agent can relay the one thing
         // its human has to do.
-        if (e.payload.code === 'CONSENT_REQUIRED') entry.mutual_blocked = e.payload;
+        if (e.payload.code === 'CONSENT_REQUIRED') {
+          entry.mutual_blocked = e.payload;
+          // The one thing left is on the human's own page (their first name and
+          // area), so the word for this match is that it waits on the human.
+          entry.next = 'awaiting_your_human';
+        }
       }
     }
     out.push(entry);
