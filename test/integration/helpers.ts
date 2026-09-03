@@ -267,12 +267,19 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
     locality,
     login_code_hash: hash,
   });
-  const accountId = await poll(async () => {
-    const rows = await dbExec('SELECT id FROM accounts WHERE email_hash = :h', [
-      { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
-    ]);
-    return rows[0]?.[0] as string | undefined;
-  }, `account ${email} to exist`);
+  // The ops queue is shared and strictly ordered per batch: a burst of
+  // match-notify sends can sit in front of this create-account for well over a
+  // minute. Waiting longer costs nothing when the queue is quiet.
+  const accountId = await poll(
+    async () => {
+      const rows = await dbExec('SELECT id FROM accounts WHERE email_hash = :h', [
+        { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
+      ]);
+      return rows[0]?.[0] as string | undefined;
+    },
+    `account ${email} to exist`,
+    180_000,
+  );
   const jar = new Jar();
   await counterLogin(jar, email);
   const pin = await ensurePin(jar);
