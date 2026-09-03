@@ -348,6 +348,25 @@ export interface RejectedCard {
   screening: any;
 }
 
+/**
+ * Cards whose clock runs out within the week. The renewal email says this too,
+ * and a person who never opens email should still meet it on their own page —
+ * a card lapsing is the one thing on the dashboard nobody else can act on.
+ */
+export async function cardsLapsingSoon(
+  accountId: string,
+): Promise<{ count: number; soonest: string } | undefined> {
+  const r = await getPool().query(
+    `SELECT count(*)::int AS n, min(expires_at) AS soonest FROM cards
+     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED'
+       AND expires_at > now() AND expires_at <= now() + interval '7 days'`,
+    [accountId],
+  );
+  const row = r.rows[0];
+  if (!row?.n) return undefined;
+  return { count: row.n, soonest: new Date(row.soonest).toISOString().slice(0, 10) };
+}
+
 export async function screeningRejectedCards(accountId: string): Promise<RejectedCard[]> {
   const r = await getPool().query(
     `SELECT id, category, screening FROM cards

@@ -10,6 +10,7 @@ import {
   readNegotiationMode,
   relayRefusal,
 } from './negotiation.js';
+import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -113,6 +114,9 @@ export async function proposeOffer(
     ],
   );
   await detectLadderProbing(accountId, input.match_id);
+  // A figure is on the table now, so anything this side's agent parked for
+  // the human to check has been answered.
+  await clearOfferDrafts(accountId, input.match_id);
   return serializeOffer(r.rows[0]);
 }
 
@@ -126,12 +130,26 @@ async function assertAgentMayPropose(
   accountId: string,
   matchId: string,
   cardId: string,
-  input: { amount: number; ccy: string },
+  input: { amount: number; ccy: string; message?: string },
 ): Promise<void> {
   // The mode is read first, and on its own: a card on Pass on is refused
   // without the mandate ever being decrypted, so a refusal costs no audit line
   // and tells an agent nothing about numbers it may not act on.
-  if ((await readNegotiationMode(accountId, cardId)) === 'relay') throw relayRefusal(cfg, matchId);
+  if ((await readNegotiationMode(accountId, cardId)) === 'relay') {
+    // The refusal stands whatever happens next; parking the figure the agent
+    // was carrying is a courtesy to its human, so a failure to park it must
+    // never turn a clean refusal into a 500.
+    try {
+      await saveOfferDraft(accountId, matchId, {
+        amount: input.amount,
+        ccy: input.ccy,
+        ...(input.message ? { note: input.message } : {}),
+      });
+    } catch {
+      // The human still gets their link; the box simply opens empty.
+    }
+    throw relayRefusal(cfg, matchId);
+  }
   const neg = await readNegotiation(accountId, cardId, {
     purpose: 'mandate-offer-check',
     refs: { match_id: matchId },
