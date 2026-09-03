@@ -16,6 +16,7 @@
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
+  FIXTURE_TTL_DAYS,
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
@@ -40,6 +41,7 @@ const card = (type: 'WANT' | 'HAVE', place: string) => ({
   category: 'goods.bicycle.mountain',
   geo: { place, radius_km: 25 },
   attributes: { condition: 'good', frame_size: 'L' },
+  ttl_days: FIXTURE_TTL_DAYS,
 });
 
 d('one city, two spellings, one match', () => {
@@ -100,6 +102,11 @@ d('one city, two spellings, one match', () => {
   });
 
   it('the pair meets, and both sides get the stage-1 signal', async () => {
+    // The poll is budgeted for three minutes, because the matcher waits behind
+    // whatever the shared dev queues are carrying. The test's own timeout has
+    // to be longer than its poll, or the failure it reports is a stopwatch
+    // rather than the thing the test is about (it was 120s against a 180s
+    // poll, and the poll never got to say what it had not found).
     const matchId = await poll(
       async () => {
         const rows = await dbExec(
@@ -122,7 +129,7 @@ d('one city, two spellings, one match', () => {
       expect(ours.signal.category).toBe('goods.bicycle.mountain');
       expect(ours.signal.score).toBeGreaterThanOrEqual(0.75);
     }
-  });
+  }, 240_000);
 
   it('refuses a bare state or territory, and says to name a town in it', async () => {
     // A card posted as "ACT" once resolved to Waco, Texas, on an airport code
@@ -251,6 +258,7 @@ d('a card that reaches a whole country', () => {
     category: 'goods.electronics.laptop',
     geo,
     attributes: { brand: 'apple', model: 'macbook air', condition: 'good' },
+    ttl_days: FIXTURE_TTL_DAYS,
   });
 
   beforeAll(async () => {
@@ -320,7 +328,7 @@ d('a card that reaches a whole country', () => {
     const ours = (r.result.matches ?? []).find((m: any) => m.match_id === matchId);
     expect(ours, JSON.stringify(r.result)).toBeTruthy();
     expect(ours.signal.category).toBe('goods.electronics.laptop');
-  });
+  }, 240_000);
 
   it('the same two places, without the reach, stay apart', async () => {
     // The control: nothing about the distance changed, only what the two
