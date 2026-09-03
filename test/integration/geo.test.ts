@@ -203,6 +203,9 @@ d('one city, two spellings, one match', () => {
       expect(r.result.location_resolved.display, JSON.stringify(r.result)).toBe(
         `Canberra, Australian Capital Territory, Australia — ${expected}`,
       );
+      // Three cards for one assertion would eat the open-intent quota, and
+      // the echo is all this test wanted.
+      await mcpCall(alice.accessToken, 'withdraw_intent', { intent_id: r.result.intent_id });
     }
   });
 
@@ -277,7 +280,10 @@ d('a card that reaches a whole country', () => {
       waitForCardState(seller.accessToken, nationwideHave, ['PUBLISHED']),
       waitForCardState(buyer.accessToken, farWant, ['PUBLISHED']),
     ]);
-  });
+    // Two accounts and two cards, behind whatever the suite above left on the
+    // shared ops queue — the match notices from the first pair take their turn
+    // in front of these. The default hook window is not enough for that.
+  }, 300_000);
 
   it('stores the reach on the card and the country it resolved to', async () => {
     const rows = await dbExec(
