@@ -84,7 +84,7 @@ const fakePool = {
   query: async (sql: string, params: any[] = []) => {
     const s = sql.replace(/\s+/g, ' ').trim();
 
-    if (s.startsWith('SELECT account_id, client_id, scope, manual_version FROM oauth_tokens')) {
+    if (s.startsWith('SELECT account_id, client_id, scope, manual_version, manual_notified_at FROM oauth_tokens')) {
       const [hash, kind] = params;
       const row = table.find(
         (t) =>
@@ -251,6 +251,7 @@ describe('agent key authentication: the round trip', () => {
       scope: 'switchboard',
       tokenHash: sha256hex(token),
       manualVersion: null,
+      manualNotifiedAt: null,
     });
   });
 

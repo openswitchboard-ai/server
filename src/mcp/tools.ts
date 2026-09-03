@@ -3,7 +3,7 @@
  * Schemas from @openswitchboard/schema (bundled self-contained). Tool errors
  * use the protocol's machine-readable error shape.
  */
-import { recordManualVersion } from '../auth/oauth.js';
+import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import * as arrangement from '../domain/arrangement.js';
@@ -364,6 +364,8 @@ export interface ToolSession {
   tokenHash: string;
   /** The manual version served at initialize; null if this session never sent one. */
   manualVersion: number | null;
+  /** When a sweep first carried a pending update to this token; null if none pending. */
+  manualNotifiedAt: Date | string | null;
 }
 
 /**
@@ -386,10 +388,27 @@ async function manualUpdateFor(session: ToolSession): Promise<string | undefined
   }
   const update = manualUpdateSince(seen);
   if (!update) return undefined;
-  session.manualVersion = MANUAL.version;
-  await recordManualVersion(session.tokenHash, MANUAL.version);
+  // Deliver on every sweep for a day before stamping the version forward. A
+  // client may sweep from a background context its chat sessions never see —
+  // one delivery to a transcript nobody keeps teaches nobody. A day of
+  // repeats gives every context sharing this token a chance to read it.
+  const first = session.manualNotifiedAt;
+  const firstMs = first ? new Date(first).getTime() : NaN;
+  if (!first) {
+    session.manualNotifiedAt = new Date();
+    await recordManualNotified(session.tokenHash).catch(() => {});
+  } else if (Number.isFinite(firstMs) && Date.now() - firstMs > MANUAL_REPEAT_WINDOW_MS) {
+    session.manualVersion = MANUAL.version;
+    session.manualNotifiedAt = null;
+    await recordManualVersion(session.tokenHash, MANUAL.version);
+    return undefined;
+  }
   return update;
 }
+
+/** How long a pending manual update keeps riding every sweep before it is
+ *  considered read. */
+export const MANUAL_REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export async function dispatchTool(
   cfg: Config,
