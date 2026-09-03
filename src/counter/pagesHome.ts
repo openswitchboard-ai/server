@@ -1,4 +1,12 @@
-/** Counter pages: dashboard, ledger, card edit, settings. */
+/**
+ * Counter pages: dashboard, ledger, card edit, settings.
+ *
+ * Same shape as pages.ts — ask, act, detail — and the same visual system. The
+ * dashboard is the one page that is a list rather than a decision, so it is
+ * ordered by what it is asking of the person: everything waiting on them at
+ * the top as tappable cards, then quiet navigation to the things they go and
+ * look at when they feel like it.
+ */
 import {
   SUGGESTION_APPETITES,
   arrangementInPlainWords,
@@ -18,7 +26,16 @@ import {
   type Mandate,
   type NegotiationMode,
 } from '../domain/negotiation.js';
-import { counterOfferForm, esc, errBox, layout, sharedFieldsFieldset } from './pages.js';
+import {
+  counterOfferForm,
+  esc,
+  errBox,
+  foldedDetail,
+  layout,
+  sharedFieldsFieldset,
+  DRAFT_LINE,
+  type OfferDraftView,
+} from './pages.js';
 
 /**
  * What you share on a match. Two boxes, viewable and changeable whenever the
@@ -33,9 +50,8 @@ export function sharedProfilePage(
   const filled = v.firstName && v.locality;
   return layout('What you share on a match', `
 <h1>What you share on a match.</h1>
-<p>When you and someone else have both said yes, you each see a first name and
-a rough area. That is the whole of what crosses — your email, your cards and
-your prices stay on your side.</p>
+<p class="lead">When you and someone else have both said yes, you each see a
+first name and a rough area.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${
@@ -48,8 +64,9 @@ the point of swapping details and then stall there.</div>`
   ${sharedFieldsFieldset(v)}
   <button type="submit">Save</button>
 </form>
-<p class="small muted">A first name and a suburb is all this page wants. Keep phone numbers,
-addresses and links out of it — you can swap those in the channel once you have both agreed.</p>
+<p class="small muted">That is the whole of what crosses — your email, your cards
+and your prices stay on your side. Keep phone numbers, addresses and links out
+of these two boxes; you can swap those in the channel once you have both agreed.</p>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
@@ -91,10 +108,8 @@ out with you again from scratch every time it starts up.</div>`;
 
   return layout('How your agents behave', `
 <h1>How your agents behave.</h1>
-<p>This is the standing arrangement your agents work to. Every agent you
-connect is handed it each time it checks the switchboard, so an agent that has
-never met you still knows how often to check, what to wake you for, and when to
-leave you alone. Change it here and every one of them picks the change up.</p>
+<p class="lead">This is the standing arrangement your agents work to. Change it
+here and every one of them picks the change up.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${plain}
@@ -105,7 +120,7 @@ ${plain}
     min="${CHECK_EVERY_MINUTES_MIN}" max="${CHECK_EVERY_MINUTES_MAX}" step="1"
     value="${esc(Number.isFinite(a.check_every_minutes as number) ? String(a.check_every_minutes) : '')}"
     placeholder="720">
-  <p class="small muted">${esc(CHECK_EVERY_MINUTES_HELP)}</p>
+  <p class="field-help">${esc(CHECK_EVERY_MINUTES_HELP)}</p>
   <label for="interrupt_for">What is worth interrupting you for? One per line.</label>
   <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my approval page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
   <label for="summarize">Everything else waits for&hellip;</label>
@@ -120,6 +135,18 @@ ${plain}
   <textarea id="notes" name="notes" maxlength="${NOTES_MAX}">${esc(a.notes ?? '')}</textarea>
   <button type="submit">Save</button>
 </form>
+${foldedDetail(
+  'What an arrangement can and cannot do',
+  `<p class="small">Every agent you connect is handed this each time it checks the
+switchboard, so an agent that has never met you still knows how often to check,
+what to wake you for, and when to leave you alone.</p>
+<p class="small">Preferences only, please: how you want to be treated, and never
+who you are. Emails, phone numbers and web addresses are turned away, and each
+line stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
+<p class="small">One thing an arrangement can never do is approve something for
+you. Sharing your details, accepting an offer and confirming a payment come to
+this page every single time, whatever any agent has agreed.</p>`,
+)}
 ${
   arrangementIsEmpty(a)
     ? ''
@@ -127,12 +154,6 @@ ${
   <button type="submit" class="secondary">Clear the whole arrangement</button>
 </form>`
 }
-<p class="small muted">Preferences only, please: how you want to be treated,
-never who you are. Emails, phone numbers and web addresses are turned away, and
-each line stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
-<p class="small muted">One thing an arrangement can never do is approve
-something for you. Sharing your details, accepting an offer and confirming a
-payment come to this page every single time, whatever any agent has agreed.</p>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
@@ -172,12 +193,14 @@ export interface DashboardView {
   pendingApprovals: PendingApprovalItem[];
   matches: DashboardMatchItem[];
   collectionWindows: DashboardWindowItem[];
+  /** Cards whose clock runs out within the week, if any do. */
+  lapsingSoon?: { count: number; soonest: string };
 }
 
 export function dashboardPage(v: DashboardView): string {
   const kill = v.killSwitchOn
     ? `<div class="kill">
-<h2 style="margin-top:0">Everything is paused.</h2>
+<h2>Everything is paused.</h2>
 <p class="small">The kill switch is ON: cards are excluded from matching and your
 agents' tokens are suspended. Turning back on needs your PIN.</p>
 <form method="POST" action="/kill/off">
@@ -186,30 +209,29 @@ agents' tokens are suspended. Turning back on needs your PIN.</p>
   <button type="submit">Turn everything back on</button>
 </form></div>`
     : `<div class="kill">
-<h2 style="margin-top:0">Kill switch</h2>
+<h2>Kill switch</h2>
 <p class="small">One tap: every card paused, every agent token suspended,
 confirmation email sent. Un-pausing needs your PIN.</p>
 <form method="POST" action="/kill">
   <button type="submit" class="danger">Pause everything now</button>
 </form></div>`;
 
-  const approvals = v.pendingApprovals.length
-    ? v.pendingApprovals
-        .map(
-          (a) => `<div class="card-row"><div class="top">
-<span class="badge match">WAITING FOR YOU</span></div>
-<div class="kv">${esc(a.label)}${a.amount ? ` — <strong>${esc(a.amount)}</strong>` : ''}</div>
-<div class="row-actions"><a class="btn" href="${esc(a.href)}">${esc(a.cta ?? 'Review & decide')}</a></div></div>`,
-        )
-        .join('')
-    : `<p class="muted small">Nothing is waiting for you.</p>`;
+  // 1. Decisions. Whole card is the tap target; the wording of the button
+  //    stays on the card so the person knows what they are opening.
+  const approvals = v.pendingApprovals
+    .map(
+      (a) => `<a class="todo urgent" href="${esc(a.href)}">
+<span class="badge match">WAITING FOR YOU</span>
+<div class="what">${esc(a.label)}</div>
+${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
+<div class="go">${esc(a.cta ?? 'Review & decide')}</div></a>`,
+    )
+    .join('');
 
-  // Collection windows: HOLDER-only view. Rivals' pages never render this.
-  const windows = v.collectionWindows.length
-    ? `<h2>Collecting interest</h2>` +
-      v.collectionWindows
-        .map(
-          (w) => `<div class="card-row"><div class="top">
+  // 2. Windows on a clock. HOLDER-only: rivals' pages never render this.
+  const windows = v.collectionWindows
+    .map(
+      (w) => `<div class="card-row"><div class="top">
 <span class="badge ${w.type === 'WANT' ? 'want' : 'have'}">${esc(w.type)}</span>
 <span class="cat">${esc(w.category)}</span></div>
 <div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
@@ -217,14 +239,23 @@ confirmation email sent. Un-pausing needs your PIN.</p>
 <form method="POST" action="/collect/${esc(w.cardId)}/close">
   <button type="submit" class="secondary">Close early &amp; choose now</button>
 </form></div>`,
-        )
-        .join('')
+    )
+    .join('');
+
+  // 3. Cards whose clock is nearly out.
+  const renewals = v.lapsingSoon?.count
+    ? `<a class="todo" href="/ledger">
+<span class="badge state">LAPSING</span>
+<div class="what">${v.lapsingSoon.count} card${v.lapsingSoon.count === 1 ? '' : 's'} of yours
+${v.lapsingSoon.count === 1 ? 'runs' : 'run'} out by ${esc(v.lapsingSoon.soonest)}</div>
+<div class="go">Check they are still true</div></a>`
     : '';
 
+  // 4. One-tap match feedback. Light, and last: nothing is blocked on it.
   const matchRows = v.matches.length
-    ? `<h2>Your matches</h2><p class="small muted">Was the switchboard right to
-introduce this? One tap tunes your matching. "Not for me" also mutes the
-pairing — no reason is ever sent to the other side.</p>` +
+    ? `<h3>Was the switchboard right?</h3>
+<p class="small muted">One tap tunes your matching. "Not for me" also mutes the
+pairing, and no reason is ever sent to the other side.</p>` +
       v.matches
         .map(
           (m) => `<div class="card-row"><div class="top">
@@ -240,12 +271,12 @@ ${
 ${
   m.verdict
     ? ''
-    : `<form method="POST" action="/verdict" style="display:inline">
+    : `<form method="POST" action="/verdict">
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="good-call">
   <button type="submit" class="secondary">Good call</button>
 </form>
-<form method="POST" action="/verdict" style="display:inline">
+<form method="POST" action="/verdict">
   <input type="hidden" name="match_id" value="${esc(m.matchId)}">
   <input type="hidden" name="verdict" value="not-for-me">
   <button type="submit" class="secondary">Not for me</button>
@@ -258,6 +289,9 @@ ${
         .join('')
     : '';
 
+  const nothingWaiting =
+    !v.pendingApprovals.length && !v.collectionWindows.length && !renewals && !v.matches.length;
+
   const emailBanner = v.emailUnreachable
     ? `<div class="err"><strong>Email to you is bouncing.</strong>
 An email we sent to your address came back undeliverable, so all email is on
@@ -265,33 +299,34 @@ hold. Re-verify your address to switch it back on.
 <form method="POST" action="/reverify"><button type="submit">Re-verify my email</button></form></div>`
     : '';
 
-  return layout('Your approval page', `
-<h1>${v.firstName ? `G'day${esc(v.firstName ? ', ' + v.firstName : '')}.` : 'Your approval page.'}</h1>
-${emailBanner}
-<h2>Waiting for you</h2>
-${approvals}
-${windows}
-${matchRows}
-<h2>Your ledger</h2>
-<p class="small muted">${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'}
- — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.</p>
-<a class="btn secondary" href="/ledger">Open the ledger</a>
-<h2>What you share on a match</h2>
-<p class="small muted">${
+  const cards = `${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'} — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.`;
+  const nav = `<div class="navlist">
+<a href="/ledger"><span class="nav-t">Your ledger</span><span class="nav-d">${esc(cards)}</span></a>
+<a href="/profile"><span class="nav-t">What you share on a match</span><span class="nav-d">${
     v.sharedProfile
       ? `A match that gets that far sees ${esc(v.sharedProfile)}.`
       : 'A match that gets that far sees a first name and a rough area. Yours are empty.'
-  }</p>
-<a class="btn secondary" href="/profile">What you share on a match</a>
-<h2>How your agents behave</h2>
-<p class="small muted">${
+  }</span></a>
+<a href="/arrangement"><span class="nav-t">How your agents behave</span><span class="nav-d">${
     v.arrangementSummary
       ? `Every agent you connect is told: ${esc(v.arrangementSummary)}`
       : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
-  }</p>
-<a class="btn secondary" href="/arrangement">How your agents behave</a>
-<a class="btn secondary" href="/agent-keys">Agent keys</a>
-<a class="btn secondary" href="/settings">Settings</a>
+  }</span></a>
+<a href="/agent-keys"><span class="nav-t">Agent keys</span><span class="nav-d">Long passwords for agents that cannot sign in through a browser.</span></a>
+<a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How often we may email you, and blind mode.</span></a>
+</div>`;
+
+  return layout('Your approval page', `
+<h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your approval page.'}</h1>
+${emailBanner}
+<h2>Waiting for you</h2>
+${nothingWaiting ? `<div class="empty">Nothing is waiting for you.</div>` : ''}
+${approvals}
+${renewals}
+${windows}
+${matchRows}
+<h2>Your switchboard</h2>
+${nav}
 ${kill}
 <form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>`);
 }
@@ -343,15 +378,19 @@ ${
 </div>`,
         )
         .join('')
-    : `<p class="muted">No cards yet. Your agent posts them; they all show up here.</p>`;
+    : `<div class="empty">No cards yet. Your agent posts them; they all show up here.</div>`;
   return layout('Ledger', `
 <h1>Your ledger.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
-<p class="small muted">Every card your agent has posted for you. Private price
-bands are shown to you only — never to a counterparty. Edits go back through
-screening; withdrawal is immediate. Every card starts on ${esc(MODE_NAMES.relay)}:
-${esc(MODE_EXPLANATIONS.relay)}</p>
 ${rows}
+${foldedDetail(
+  'How the ledger works',
+  `<p class="small">Every card your agent has posted for you. Private price bands
+are shown to you only and never to a counterparty. Edits go back through
+screening; withdrawal is immediate.</p>
+<p class="small">Every card starts on ${esc(MODE_NAMES.relay)}:
+${esc(MODE_EXPLANATIONS.relay)}</p>`,
+)}
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -389,13 +428,11 @@ ${c.screeningRejection.code ? `<p class="small muted" style="margin:.5rem 0 0">s
     : '';
   return layout('Edit card', `
 <h1>Edit this card.</h1>
-<div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
+<div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
   <span class="cat">${esc(c.category)}</span>
 </div>
 ${rejection}
-<p class="small muted">Saving sends the card back through screening before it
-returns to the network.</p>
 ${errBox(error)}
 <form method="POST" action="/ledger/${esc(c.id)}/edit">
   <label for="attributes">Attributes (JSON)</label>
@@ -410,22 +447,26 @@ ${errBox(error)}
   }
   <label for="band_min">Private band — ${c.type === 'WANT' ? 'up to' : 'no less than'} (never disclosed)</label>
   <input id="band_min" name="band_min" type="number" step="0.01" min="0" value="${esc(c.bandMin ?? '')}" placeholder="min">
-  <input id="band_max" name="band_max" type="number" step="0.01" min="0" value="${esc(c.bandMax ?? '')}" placeholder="max" style="margin-top:.5rem">
+  <label for="band_max">Private band — the other end</label>
+  <input id="band_max" name="band_max" type="number" step="0.01" min="0" value="${esc(c.bandMax ?? '')}" placeholder="max">
   <label for="band_ccy">Band currency</label>
   <input id="band_ccy" name="band_ccy" type="text" maxlength="3" pattern="[A-Z]{3}" value="${esc(c.bandCcy ?? '')}" placeholder="AUD">
   <label for="urgency">Urgency</label>
   <select id="urgency" name="urgency">${['none', 'days', 'today'].map((u) => opt(u, c.urgency)).join('')}</select>
-  <label for="collect_window">Collection window, minutes (optional — when several parties
-match this card at once, interest is collected this long before you choose;
-may only be SHORTER than the default ${c.collectWindowDefault})</label>
+  <label for="collect_window">Collection window, in minutes (optional)</label>
   <input id="collect_window" name="collect_window" type="number" min="1" max="${c.collectWindowDefault}"
    value="${esc(c.collectWindowMinutes ?? '')}" placeholder="${c.collectWindowDefault}">
+  <p class="field-help">When several parties match this card at once, interest is
+collected this long before you choose. It may only be SHORTER than the default
+${c.collectWindowDefault}.</p>
   <label for="status">Visibility</label>
   <select id="status" name="status">${opt('active', c.status)}${opt('latent', c.status)}</select>
   <label for="ttl_days">Days until expiry</label>
   <input id="ttl_days" name="ttl_days" type="number" min="1" max="365" value="${esc(String(c.ttlDays))}">
   <button type="submit">Save &amp; re-screen</button>
 </form>
+<p class="small muted">Saving sends the card back through screening before it
+returns to the network.</p>
 <a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers on this card</a>
 <a class="btn secondary" href="/ledger">Cancel</a>`);
 }
@@ -445,6 +486,9 @@ export interface CardNumbersView {
   mandate?: Mandate;
   /** Re-rendered form values after a rejected submission. */
   form?: { open?: string; limit?: string; step?: string; ccy?: string };
+  /** A figure this card's agent was refused for on Pass on, waiting to be sent
+   *  from the match it belongs to. */
+  draft?: OfferDraftView & { matchId: string };
 }
 
 export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: string): string {
@@ -460,6 +504,16 @@ export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: str
         .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v">${esc(l.v)}</div></div>`)
         .join('')}</div>`
     : '';
+  // A number the agent carried back sits at the top of this page, because a
+  // person who arrived from that refusal came here to deal with it.
+  const draft = v.draft
+    ? `<a class="todo urgent" href="/matches/${esc(v.draft.matchId)}">
+<span class="badge match">WAITING FOR YOU</span>
+<div class="what">${esc(DRAFT_LINE)}</div>
+<div class="figure">${esc(v.draft.amount)} ${esc(v.draft.ccy)}</div>
+${v.draft.note ? `<div class="kv">Your line: &ldquo;${esc(v.draft.note)}&rdquo;</div>` : ''}
+<div class="go">Check it and send</div></a>`
+    : '';
   const modeRadio = (m: NegotiationMode) =>
     `<label class="modeopt" for="mode_${m}">
   <input id="mode_${m}" name="mode" type="radio" value="${m}"${v.mode === m ? ' checked' : ''}>
@@ -468,14 +522,15 @@ export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: str
 </label>`;
   return layout('Your numbers', `
 <h1>Your numbers on this card.</h1>
-<div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
+<div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${selling ? 'have' : 'want'}">${esc(v.type)}</span>
   <span class="cat">${esc(v.category)}</span>
 </div>
-<p>Every figure this card carries into a negotiation is one you wrote. Your
-agent presents and advises; it never invents a price of its own.</p>
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${draft}
+<p class="lead">Every figure this card carries into a negotiation is one you
+wrote. Your agent presents and advises; it never invents a price of its own.</p>
 ${current}
 <form method="POST" action="/ledger/${esc(v.id)}/numbers">
   <h2>How this card negotiates</h2>
@@ -533,6 +588,9 @@ export interface MatchOffersView {
   canOffer: boolean;
   canOfferBlockedBecause?: string;
   form?: { amount?: string; ccy?: string; note?: string };
+  /** A figure this person's agent was refused for on Pass on, prefilled into
+   *  the box below so they can check it and send it. */
+  draft?: OfferDraftView;
 }
 
 export function matchOffersPage(v: MatchOffersView, error?: string, notice?: string): string {
@@ -555,22 +613,31 @@ ${
 </div>`,
         )
         .join('')
-    : `<p class="muted">No figures on the table yet.</p>`;
+    : `<div class="empty">No figures on the table yet.</div>`;
+  // A resubmitted form beats a draft: what the person just typed is newer than
+  // anything their agent left here.
+  const useDraft = !v.form && !!v.draft;
   return layout('Offers on this match', `
 <h1>Offers on this match.</h1>
-<div class="top" style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem">
+<div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${v.type === 'HAVE' ? 'have' : 'want'}">${esc(v.type)}</span>
   <span class="cat">${esc(v.category)}</span>
   <span class="badge state">${esc(MODE_NAMES[v.mode])}</span>
 </div>
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
-${rows}
 ${
   v.canOffer
-    ? counterOfferForm(v.matchId, { ccy: v.form?.ccy, amount: v.form?.amount, note: v.form?.note })
+    ? counterOfferForm(v.matchId, {
+        ccy: useDraft ? v.draft!.ccy : v.form?.ccy,
+        amount: useDraft ? v.draft!.amount : v.form?.amount,
+        note: useDraft ? v.draft!.note : v.form?.note,
+        draft: useDraft,
+      })
     : `<p class="note">${esc(v.canOfferBlockedBecause ?? 'Offers are not open on this match yet.')}</p>`
 }
+<h2>What has been offered</h2>
+${rows}
 <p class="small muted">${esc(MODE_NAMES[v.mode])} — ${esc(MODE_EXPLANATIONS[v.mode])}</p>
 <a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your numbers on this card</a>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
@@ -591,8 +658,8 @@ const FREQ_OPTIONS: { value: string; label: string }[] = [
   { value: 'off', label: 'Never' },
 ];
 
-function freqSelect(name: string, current: string): string {
-  return `<select name="${name}">${FREQ_OPTIONS.map(
+function freqSelect(id: string, name: string, current: string): string {
+  return `<select id="${id}" name="${name}">${FREQ_OPTIONS.map(
     (o) => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`,
   ).join('')}</select>`;
 }
@@ -615,24 +682,24 @@ hold. Re-verify from the <a href="/">front page</a>.</div>`
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
 <h2>Email frequency</h2>
-<p class="small muted">How often the switchboard may email you. Sign-in codes,
-approval requests and security notices always send.
-Changes apply immediately and land in your consent log.</p>
 <form method="POST" action="/settings/frequency">
   <label for="freq_matches">Match summons</label>
-  ${freqSelect('freq_matches', v.freqMatches)}
+  ${freqSelect('freq_matches', 'freq_matches', v.freqMatches)}
   <label for="freq_digests">Activity digest &amp; renewals</label>
-  ${freqSelect('freq_digests', v.freqDigests)}
+  ${freqSelect('freq_digests', 'freq_digests', v.freqDigests)}
   <button type="submit" class="secondary">Save frequency</button>
 </form>
+<p class="small muted">How often the switchboard may email you. Sign-in codes,
+approval requests and security notices always send. Changes apply immediately
+and land in your consent log.</p>
 <h2>Blind mode</h2>
-<p class="small muted">When on, every email we send you becomes a content-free
-pointer — "something needs your decision" — with all detail kept here.</p>
+<p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}. When on,
+every email we send you becomes a content-free pointer — "something needs your
+decision" — with all detail kept here.</p>
 <form method="POST" action="/settings/blind-mode">
   <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
 </form>
-<p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}.</p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -671,7 +738,7 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
 </form></div></div>`,
         )
         .join('')
-    : `<p class="muted small">You have no keys yet.</p>`;
+    : `<div class="empty">You have no keys yet.</div>`;
 
   const pinBlock = v.elevated
     ? `<input type="hidden" name="pin" value="">`
@@ -692,18 +759,21 @@ Revoke one you have finished with to make room.</p>`
 <h1>Agent keys.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${errBox(error)}
-<p>Most agents sign in through your browser the first time they call the
-switchboard. A few cannot do that. Give one of those a key instead: a long
-password it sends with every request.</p>
-<p class="small muted">Anyone holding a key can post cards and negotiate as your
-agent. It still cannot approve anything — approvals only ever happen here, on
-this page, with your PIN. Keep a key somewhere private, and revoke it the
-moment you have finished with it. Keys lapse after 90 days, and the kill
-switch stops them dead along with everything else.</p>
 <h2>Your keys</h2>
 ${rows}
 <h2>Make a new one</h2>
 ${createForm}
+${foldedDetail(
+  'What a key can do',
+  `<p class="small">Most agents sign in through your browser the first time they
+call the switchboard. A few cannot do that. Give one of those a key instead: a
+long password it sends with every request.</p>
+<p class="small">Anyone holding a key can post cards and negotiate as your
+agent. It still cannot approve anything — approvals only ever happen here, on
+this page, with your PIN. Keep a key somewhere private, and revoke it the
+moment you have finished with it. Keys lapse after 90 days, and the kill switch
+stops them dead along with everything else.</p>`,
+)}
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -711,11 +781,12 @@ ${createForm}
 export function agentKeyCreatedPage(v: { name: string; token: string; expires: string }): string {
   return layout('Your new agent key', `
 <h1>Here is your key.</h1>
-<p>Copy it now and paste it into your agent's configuration. This page is the
-only place it is ever shown — we keep a fingerprint of it and nothing more, so
-if it gets away from you, revoke it and make another.</p>
+<p class="lead">Copy it now and paste it into your agent's configuration. This
+page is the only place it is ever shown.</p>
 <div class="fact"><div class="k">${esc(v.name)}</div><div class="v" id="keybox">${esc(v.token)}</div></div>
 <button type="button" id="copybtn" class="approve">Copy the key</button>
+<p class="small muted">We keep a fingerprint of it and nothing more, so if it
+gets away from you, revoke it and make another.</p>
 <p class="small muted">Your agent sends it as a header:</p>
 <div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
 <p class="small muted">It lapses on ${esc(v.expires)}. Revoke it any time from
@@ -756,14 +827,16 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
     .join('');
   return layout('Still true?', `
 <h1>Still true?</h1>
-<p>Cards lapse on their own — that rule keeps every want and have honest.
-These are your open cards. One tap restarts each card's own clock.</p>
-${rows}
+<p class="lead">These are your open cards. One tap restarts each card's own clock.</p>
 <form method="POST" action="/renew">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Still true — keep them all</button>
 </form>
-<a class="btn secondary" href="/ledger">Review one by one instead</a>`);
+<a class="btn secondary" href="/ledger">Review one by one instead</a>
+<h2>What you have open</h2>
+${rows}
+<p class="small muted">Cards lapse on their own — that rule keeps every want and
+have honest.</p>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -772,8 +845,8 @@ ${rows}
 export function unsubPage(token: string): string {
   return layout('Unsubscribe', `
 <h1>Fewer emails.</h1>
-<p>This switches off match summons and activity digests. Sign-in codes,
-approval requests and security notices keep sending.</p>
+<p class="lead">This switches off match summons and activity digests. Sign-in
+codes, approval requests and security notices keep sending.</p>
 <form method="POST" action="/email/unsub">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Unsubscribe me</button>
@@ -789,13 +862,14 @@ export function reverifyCodePage(verificationId: string, error?: string): string
   return layout('Re-verify your email', `
 <h1>Check your inbox.</h1>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
-<p>We sent a fresh code to your address. Enter it here and email switches back
-on. If it never arrives, the address itself is the problem — your mailbox is
-full, or the address no longer exists.</p>
+<p class="lead">We sent a fresh code to your address. Enter it here and email
+switches back on.</p>
 <form method="POST" action="/reverify/verify">
   <input type="hidden" name="verification_id" value="${esc(verificationId)}">
   <label for="code">Code</label>
   <input id="code" name="code" class="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
   <button type="submit">Verify</button>
-</form>`);
+</form>
+<p class="small muted">If it never arrives, the address itself is the problem —
+your mailbox is full, or the address no longer exists.</p>`);
 }
