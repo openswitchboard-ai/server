@@ -1,6 +1,7 @@
 /**
- * Placement of cards written before 0.3.0. Idempotent: a card is touched
- * once, because placing it fills the very column the sweep selects on.
+ * Placement of cards written before 0.3.0, and of the country code that came
+ * later. Idempotent: a card is touched once, because placing it fills the very
+ * columns the sweep selects on.
  *
  * Every card whose centre point is still unknown goes back through the same
  * normalisation the publish path runs. A geohash bucket decodes to the centre
@@ -10,6 +11,12 @@
  * answers to keeps its string with no centre point, and meets only cards
  * carrying the same string — a compatibility shim for the cards that predate
  * this change, never a softened path for new ones.
+ *
+ * Cards placed before reach existed carry a centre point but no country code,
+ * and a card that cannot say which country it is in cannot reach one. They are
+ * swept the same way: the same normalisation, over the place the card already
+ * holds, and the country the gazetteer answers with is written beside it. A
+ * card the gazetteer cannot place gains nothing and keeps radius behaviour.
  *
  * The sweep is bounded so one run always finishes well inside the ops queue's
  * visibility window, and it pages forward on a cursor. Paging on a cursor
@@ -47,7 +54,7 @@ export async function backfillCardGeo(
 ): Promise<BackfillOutcome> {
   const rows = await getPool().query(
     `SELECT id, geo, created_at FROM cards
-      WHERE geo_lat IS NULL
+      WHERE (geo_lat IS NULL OR geo_country IS NULL)
         AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
       ORDER BY created_at, id LIMIT $1`,
     [batch, after?.created_at ?? null, after?.id ?? null],
@@ -82,9 +89,16 @@ export async function backfillCardGeo(
     }
     await getPool().query(
       `UPDATE cards SET geo = $2, geo_lat = $3, geo_lon = $4, geo_radius_km = $5,
-              updated_at = now()
+              geo_country = $6, updated_at = now()
        WHERE id = $1`,
-      [row.id, JSON.stringify(normalised.geo), normalised.lat, normalised.lon, normalised.radius_km],
+      [
+        row.id,
+        JSON.stringify(normalised.geo),
+        normalised.lat,
+        normalised.lon,
+        normalised.radius_km,
+        normalised.country,
+      ],
     );
     outcome.placed.push(row.id);
     log('backfill-geo: card placed', {
