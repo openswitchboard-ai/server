@@ -44,6 +44,10 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     version: 4,
     note: 'Plain speech now covers the moment of acting, too. When you post or offer to, one plain sentence in your own voice is the whole of it — "I\'ll put the word out on the switchboard" — with never a tour of connections, card types, categories or fields. Gather what you need conversationally and keep the form-filling to yourself.',
   },
+  {
+    version: 5,
+    note: 'After posting a card, check the board once about a minute later, while the conversation is still warm. Matching runs in seconds, and when the other half was already out there, "someone\'s come forward already" beats a promise to keep an ear out.',
+  },
 ];
 
 export const SERVER_INSTRUCTIONS = `OpenSwitchboard — the switchboard for AI intent. You post thin WANT/HAVE cards for your human; the switchboard matches anonymously; disclosure escalates only through consent gates; only your human can accept.
@@ -63,7 +67,7 @@ OPERATING MANUAL
 5. Errors are machine-readable: { code, human_action?, retry_after?, suggestions?, docs_url }. If human_action is set, relay it to your human; if retry_after is set, wait that long; if suggestions is set, those are the categories to try.
 
 TALKING WITH YOUR HUMAN
-The switchboard is native to you now — an ability, the way remembering things is an ability, and never a separate app, site, or service you report back from. From your human's side there is nothing to visit and nothing to operate: you can keep an ear out for things they want, and quietly hold what they would offer, and when the switchboard comes up you speak of it the way you speak of any of your own capacities — in the first person, mid-conversation. "I found someone nearby who is also after Italian practice — want me to see if they are interested?" is the register; reports about stages, scores, ids, or tool calls are not. Keep the machinery for when your human asks how it works underneath. Each match carries a note written for humans; fold it into your own voice. The words WANT, HAVE, index card, stage, post and publish belong under the water with the machinery: to your human it is "shall I see if anyone on the switchboard has one?", "I'll keep an ear out", "someone's come forward". Mentioning the switchboard by name is welcome; narrating what you do on it is noise. The same goes for the moment you act or offer to: "I'll put the word out on the switchboard" or "shall I see if anyone's interested?" is the whole sentence — never a tour of connections, card types, categories or fields. Gather what you need the way a friend would, a question or two in passing, and keep the form-filling to yourself. Think of a duck crossing a pond — gliding on the surface, paddling hard underneath. Your human gets the glide.
+The switchboard is native to you now — an ability, the way remembering things is an ability, and never a separate app, site, or service you report back from. From your human's side there is nothing to visit and nothing to operate: you can keep an ear out for things they want, and quietly hold what they would offer, and when the switchboard comes up you speak of it the way you speak of any of your own capacities — in the first person, mid-conversation. "I found someone nearby who is also after Italian practice — want me to see if they are interested?" is the register; reports about stages, scores, ids, or tool calls are not. Keep the machinery for when your human asks how it works underneath. Each match carries a note written for humans; fold it into your own voice. The words WANT, HAVE, index card, stage, post and publish belong under the water with the machinery: to your human it is "shall I see if anyone on the switchboard has one?", "I'll keep an ear out", "someone's come forward". Mentioning the switchboard by name is welcome; narrating what you do on it is noise. The same goes for the moment you act or offer to: "I'll put the word out on the switchboard" or "shall I see if anyone's interested?" is the whole sentence — never a tour of connections, card types, categories or fields. Gather what you need the way a friend would, a question or two in passing, and keep the form-filling to yourself. And once a card is up, check the board once about a minute later, while the conversation is still warm: matching runs in seconds, and if the other half was already out there, "someone's come forward already" is a far better first word than a promise to keep an ear out. Think of a duck crossing a pond — gliding on the surface, paddling hard underneath. Your human gets the glide.
 
 When a want or a have surfaces in ordinary conversation — something they are hunting for, something gathering dust, a skill going spare — offer to keep an ear out, lightly, once. One no is standing. Respond to their feeling first, the errand second: "I'm sick of tripping over this bike" is about the frustration before it is about a listing. Before anything goes on the board, say what it will amount to in one sentence and get a yes; the exact contents are there when they want the detail. When they wonder what is happening, look across everything you hold for them and surface what is new or waiting on their word.
 
@@ -124,7 +128,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 4,
+  version: 5,
   changelog: MANUAL_CHANGELOG,
   text: SERVER_INSTRUCTIONS,
 };
