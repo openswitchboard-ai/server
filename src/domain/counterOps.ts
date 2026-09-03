@@ -528,6 +528,71 @@ export async function offersOnMatch(matchId: string): Promise<MatchOfferRow[]> {
   return r.rows;
 }
 
+// ---------------------------------------------------------------------------
+// Past connections: matches this human filed away as finished. The row and its
+// stage-3 linkage stay after archiving, so this is the retrieval read for the
+// human's own page — the counterparty's disclosed first name and area (where
+// the two reached stage 3), the category, and the date it was filed.
+// ---------------------------------------------------------------------------
+
+export interface ArchivedConnection {
+  match_id: string;
+  category: string;
+  archived_at: Date | null;
+  reachedDisclosure: boolean;
+  counterparty?: { first_name: string; locality: string };
+}
+
+/** This human's archived (finished) connections, newest first, with retained
+ *  details. Reads the counterparty's disclosed name/area straight from the
+ *  envelope the same way the stage-3 builder does; a match that never reached
+ *  stage 3 comes back with the category and date alone. */
+export async function archivedConnections(accountId: string): Promise<ArchivedConnection[]> {
+  const r = await getPool().query(
+    `SELECT m.id AS match_id, m.category, m.stage, m.archived_at,
+            CASE WHEN m.account_want = $1 THEN m.account_have ELSE m.account_want END
+              AS counterparty_account
+     FROM matches m
+     WHERE (m.account_want = $1 OR m.account_have = $1) AND m.state = 'archived'
+     ORDER BY m.archived_at DESC NULLS LAST LIMIT 50`,
+    [accountId],
+  );
+  const out: ArchivedConnection[] = [];
+  for (const row of r.rows) {
+    const entry: ArchivedConnection = {
+      match_id: row.match_id,
+      category: row.category,
+      archived_at: row.archived_at,
+      reachedDisclosure: row.stage >= 3,
+    };
+    if (row.stage >= 3) {
+      const account = await getAccount(row.counterparty_account);
+      if (account?.first_name_enc && account?.locality_enc) {
+        try {
+          const fields = await decryptFields(
+            row.counterparty_account,
+            account.data_key_enc,
+            { first_name: account.first_name_enc, locality: account.locality_enc },
+            {
+              purpose: 'archived-connection-view',
+              actor: accountId,
+              refs: { match_id: row.match_id },
+            },
+          );
+          const first_name = fields.first_name.trim();
+          const locality = fields.locality.trim();
+          if (first_name && locality) entry.counterparty = { first_name, locality };
+        } catch {
+          // A profile since cleared leaves the record without the name; the
+          // category and date still recall the connection.
+        }
+      }
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
 /** Human decline of an offer at the counter. Carries NO reason, by design. */
 export async function declineOfferByHuman(offerId: string, accountId: string): Promise<void> {
   const r = await getPool().query(

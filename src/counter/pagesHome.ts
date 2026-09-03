@@ -352,7 +352,22 @@ export interface LedgerCardView {
   mode: NegotiationMode;
 }
 
-export function ledgerPage(cards: LedgerCardView[], notice?: string): string {
+/** A finished connection the human filed away — shown in a quiet "past
+ *  connections" area, distinct from the live cards above it. */
+export interface PastConnectionView {
+  /** Leaf label of the category, e.g. "book club". */
+  category: string;
+  /** "Alex, Franklin" where the two reached stage-3 disclosure; absent otherwise. */
+  who?: string;
+  /** When it was filed away, e.g. "2026-09-03". */
+  archivedOn?: string;
+}
+
+export function ledgerPage(
+  cards: LedgerCardView[],
+  notice?: string,
+  pastConnections: PastConnectionView[] = [],
+): string {
   const rows = cards.length
     ? cards
         .map(
@@ -379,10 +394,28 @@ ${
         )
         .join('')
     : `<div class="empty">No cards yet. Your agent posts them; they all show up here.</div>`;
+  const past = pastConnections.length
+    ? `<section class="past-connections">
+<h2 class="small-head">Past connections</h2>
+<p class="small">Connections you have filed away as finished. The record stays here so you can look one back up any time; the switchboard kept the first name and area they shared, what it was about, and the date. Anything you said to each other, and any number you swapped, lives in your own chat with your agent.</p>
+${pastConnections
+  .map(
+    (p) => `<div class="card-row past">
+<div class="top">
+  <span class="cat">${esc(p.category)}</span>
+  <span class="badge state">filed away</span>
+</div>
+<div class="kv">${p.who ? esc(p.who) : 'connected before details were shared'}${p.archivedOn ? ` · ${esc(p.archivedOn)}` : ''}</div>
+</div>`,
+  )
+  .join('')}
+</section>`
+    : '';
   return layout('Ledger', `
 <h1>Your ledger.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${rows}
+${past}
 ${foldedDetail(
   'How the ledger works',
   `<p class="small">Every card your agent has posted for you. Private price bands

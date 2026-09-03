@@ -35,7 +35,7 @@
     "@aws-sdk/client-ssm": "^3.700.0",
     "@aws-sdk/s3-request-presigner": "^3.1121.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@openswitchboard/schema": "github:openswitchboard-ai/schema",
+    "@openswitchboard/schema": "github:openswitchboard-ai/schema#feat/archive-state",
     "@simplewebauthn/server": "^13.3.3",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
