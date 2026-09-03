@@ -550,7 +550,9 @@ export async function dispatchTool(
         switch (action) {
           case 'express_interest': {
             const m = await matches.expressInterest(match_id, accountId);
-            return ok({ match_id, stage_unlocked: m.stage });
+            // The action word, not a stage number: details_unlocked when this
+            // made the interest mutual, awaiting_other_side while it has not.
+            return ok({ match_id, next: matches.nextAction(m, accountId) });
           }
           case 'opt_in': {
             const r = await matches.recordStage3OptIn(cfg, match_id, accountId, 'agent-attested');
@@ -558,7 +560,9 @@ export async function dispatchTool(
               match_id,
               optin_recorded: true,
               both_recorded: r.both,
-              stage_unlocked: r.match.stage,
+              // ready_to_talk once both humans have opted in; until then this
+              // side has done its part and waits on the other.
+              next: r.both ? 'ready_to_talk' : 'awaiting_other_side',
             });
           }
           case 'decline': {

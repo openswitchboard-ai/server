@@ -312,11 +312,16 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       const entry = r.result.matches.find((m: any) => m.match_id === abMatchId);
       expect(entry, `${who} sees the match`).toBeTruthy();
       expect(entry.signal.kind).toBe('match.signal');
-      expect(entry.signal.score).toBeGreaterThanOrEqual(0.75);
       expect(entry.signal.category).toBe('goods.electronics.camera');
-      // The signal is THIN: no attributes, no identity, no prices.
+      // No machine internals cross to the agent: no score, and a word for what
+      // to do next rather than a stage integer. Neither side has expressed
+      // interest yet, so this is a fresh signal.
+      expect(entry.signal.score).toBeUndefined();
+      expect(entry.stage_unlocked).toBeUndefined();
+      expect(entry.next).toBe('show_interest');
+      // The signal is THIN: no score, no attributes, no identity, no prices.
       expect(Object.keys(entry.signal).sort()).toEqual([
-        'category', 'counterparty_type', 'kind', 'match_id', 'schema_version', 'score',
+        'category', 'counterparty_type', 'kind', 'match_id', 'schema_version',
       ]);
     }
   });
@@ -382,8 +387,20 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
   });
 
   it('GATE (b): no price/band/budget/reserve anywhere in stage-1/2 payloads', async () => {
-    await mcpCall(alice.accessToken, 'respond', { match_id: abMatchId, action: 'express_interest' });
-    await mcpCall(bob.accessToken, 'respond', { match_id: abMatchId, action: 'express_interest' });
+    // respond drives the flow on the action word alone: alice expresses
+    // interest first (nobody else has), so she is left awaiting the other side;
+    // once bob matches it, the interest is mutual and the details unlock.
+    const aliceInterest = await mcpCall(alice.accessToken, 'respond', {
+      match_id: abMatchId,
+      action: 'express_interest',
+    });
+    expect(aliceInterest.result.stage_unlocked).toBeUndefined();
+    expect(aliceInterest.result.next).toBe('awaiting_other_side');
+    const bobInterest = await mcpCall(bob.accessToken, 'respond', {
+      match_id: abMatchId,
+      action: 'express_interest',
+    });
+    expect(bobInterest.result.next).toBe('details_unlocked');
     for (const [actor, who] of [
       [alice, 'alice'],
       [bob, 'bob'],
@@ -400,6 +417,11 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     // The deliberate ask IS disclosable at stage 2 (bob chose to state it).
     const aliceStage2 = await mcpCall(alice.accessToken, 'check_matches', { match_id: abMatchId, stage: 2 });
     expect(aliceStage2.result.ask).toEqual({ amount: 620, ccy: 'AUD' });
+    // The sweep entry now carries attributes and the details_unlocked word.
+    const aliceAll = await mcpCall(alice.accessToken, 'check_matches', {});
+    const abEntry = aliceAll.result.matches.find((m: any) => m.match_id === abMatchId);
+    expect(abEntry.next).toBe('details_unlocked');
+    expect(abEntry.attributes.kind).toBe('match.attributes');
   });
 
   it('GATE (d): collection window - holder sees all, rivals see nothing, early-close unlocks', async () => {

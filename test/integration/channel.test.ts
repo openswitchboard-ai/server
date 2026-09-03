@@ -164,6 +164,9 @@ d('a conversation carried across an open channel', () => {
   it('says how many messages are waiting without handing any over', async () => {
     const r = await mcpCall(ana.accessToken, 'check_matches', {});
     const entry = r.result.matches.find((m: any) => m.match_id === matchId);
+    // The channel is open, so the action word is ready_to_talk — no stage int.
+    expect(entry.stage_unlocked).toBeUndefined();
+    expect(entry.next).toBe('ready_to_talk');
     expect(entry.channel.channel_id).toBe(channelId);
     expect(entry.channel.messages_waiting).toBe(1);
     expect(entry.channel.note.provenance).toBe('switchboard-system');
