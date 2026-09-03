@@ -3,6 +3,8 @@
  * Schemas from @openswitchboard/schema (bundled self-contained). Tool errors
  * use the protocol's machine-readable error shape.
  */
+import { recordManualVersion } from '../auth/oauth.js';
+import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
@@ -356,11 +358,45 @@ function invalidInput(message: string): ToolResult {
 /** The read surface: cheap to call, easy to loop, so it shares one ceiling. */
 const READ_TOOLS = new Set(['check_matches', 'channel_receive', 'list_intents']);
 
+/** The calling session, as far as the tools need to know it. */
+export interface ToolSession {
+  /** sha256 of the bearer token: the row this session's manual version lives on. */
+  tokenHash: string;
+  /** The manual version served at initialize; null if this session never sent one. */
+  manualVersion: number | null;
+}
+
+/**
+ * What to tell this session about the manual, if anything, and the small write
+ * that stops it being told twice.
+ *
+ * The version came in on the row authenticate() already read, so the ordinary
+ * case — a session on the current manual — is one integer comparison and no
+ * database work at all. Only the sweep that actually delivers writes.
+ */
+async function manualUpdateFor(session: ToolSession): Promise<string | undefined> {
+  const seen = session.manualVersion;
+  if (seen === null) {
+    // No initialize under the versioned manual, so there is no telling what
+    // this session read. Start it where the manual is now and say nothing.
+    // Once per token, and never again.
+    session.manualVersion = MANUAL.version;
+    await recordManualVersion(session.tokenHash, MANUAL.version).catch(() => {});
+    return undefined;
+  }
+  const update = manualUpdateSince(seen);
+  if (!update) return undefined;
+  session.manualVersion = MANUAL.version;
+  await recordManualVersion(session.tokenHash, MANUAL.version);
+  return update;
+}
+
 export async function dispatchTool(
   cfg: Config,
   accountId: string,
   name: string,
   args: any,
+  session?: ToolSession,
 ): Promise<ToolResult> {
   try {
     // The three tools an unattended agent can call in a loop share one hourly
@@ -415,10 +451,15 @@ export async function dispatchTool(
           // human before, on a client that has just been installed, still
           // learns how they want to be treated on its first call.
           const standing = await arrangement.readArrangement(accountId);
+          // The manual rides the sweep too, and only when it has changed. An
+          // agent that read the manual at connect and never reconnects still
+          // hears about an edit, once, on its next check.
+          const manualUpdate = session ? await manualUpdateFor(session) : undefined;
           return ok({
             matches: withNotes,
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),
+            ...(manualUpdate ? { manual_update: manualUpdate } : {}),
           });
         }
       case 'open_channel':
