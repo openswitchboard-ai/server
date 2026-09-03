@@ -369,8 +369,9 @@ d('integration gates against live deployment', () => {
     expect(matchPage).toContain('Reply with your number');
     expect(matchPage).toContain('Your agent brought this number from you');
     expect(matchPage).toContain('value="500"');
-    // A figure never travels in a URL.
-    expect(matchPage).not.toMatch(/(href|action)="[^"]*500/);
+    // A figure never travels in a URL. Every link and form target of our own
+    // on this page is a bare path, so there is nowhere for a number to ride.
+    expect(matchPage).not.toMatch(/(href|action)="\/[^"]*\?/);
     // The card's own numbers page carries it too, pointed at the match.
     const numbers = await counterFetch(dana.jar, `/ledger/${dw.result.intent_id}/numbers`);
     expect(numbers.status).toBe(200);
