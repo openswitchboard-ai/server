@@ -23,7 +23,10 @@
     "bootstrap-account": "tsx scripts/bootstrap-account.ts",
     "ops": "tsx scripts/ops.ts",
     "test:e2e": "playwright test test/e2e/counter.spec.ts test/e2e/passkey.spec.ts",
-    "test:e2e:prod": "OSB_CHECK_PROD=1 playwright test test/e2e/prod.spec.ts"
+    "test:e2e:prod": "OSB_CHECK_PROD=1 playwright test test/e2e/prod.spec.ts",
+    "sim": "RUN_SIM=1 tsx test/sim/run.ts",
+    "sim:clean": "RUN_SIM=1 tsx test/sim/run.ts --clean",
+    "sim:typecheck": "tsc -p test/sim/tsconfig.json"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.700.0",

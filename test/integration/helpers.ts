@@ -631,7 +631,7 @@ export async function waitForCardStates(
         // RATE_LIMITED (blown read ceiling) or another error envelope:
         // continuing to poll hides the cause — fail loudly with it.
         throw new Error(
-          `list_intents failed while waiting for card state: ${JSON.stringify(r.error ?? r).slice(0, 300)}`,
+          `list_intents failed while waiting for card state: ${JSON.stringify(r.result ?? r).slice(0, 300)}`,
         );
       }
       for (const i of r.result.intents) {
