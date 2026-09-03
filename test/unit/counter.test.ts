@@ -232,6 +232,46 @@ describe('approval link signing', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Patch. The pages carry the real artwork rather than an emoji standing in for
+// him, so the bytes and the route that serves them are part of the contract.
+// ---------------------------------------------------------------------------
+describe('Patch, served from the pages that show him', () => {
+  const isPng = (b: Buffer) =>
+    b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+
+  it('the header mark and the tab icon are real PNGs, and small', async () => {
+    const { PATCH_HEADER_PNG, PATCH_FAVICON_PNG } = await import('../../src/counter/patchAsset.js');
+    for (const b of [PATCH_HEADER_PNG, PATCH_FAVICON_PNG]) {
+      expect(isPng(b)).toBe(true);
+      expect(b.length).toBeLessThan(8 * 1024);
+    }
+    // 126x96 for the header (a 63x48 box at 2x); 64x64 square for the tab.
+    expect([PATCH_HEADER_PNG.readUInt32BE(16), PATCH_HEADER_PNG.readUInt32BE(20)]).toEqual([126, 96]);
+    expect([PATCH_FAVICON_PNG.readUInt32BE(16), PATCH_FAVICON_PNG.readUInt32BE(20)]).toEqual([64, 64]);
+  });
+
+  it('both are served from the human hostname, cached for a year', async () => {
+    for (const url of ['/assets/patch.png', '/assets/favicon.png']) {
+      const res = await app.inject({ method: 'GET', url, headers: { host: 'my.test' } });
+      expect(res.statusCode, url).toBe(200);
+      expect(res.headers['content-type'], url).toContain('image/png');
+      expect(res.headers['cache-control'], url).toContain('max-age=31536000');
+      expect(res.headers['cache-control'], url).toContain('immutable');
+      expect(res.headers.etag, url).toBeTruthy();
+      expect(isPng(res.rawPayload), url).toBe(true);
+    }
+  });
+
+  it('every page points at him, and no page still shows the stand-in emoji', async () => {
+    const cp = await import('../../src/counter/pages.js');
+    const html = cp.landingPage();
+    expect(html).toContain('src="/assets/patch.png"');
+    expect(html).toContain('rel="icon" type="image/png" href="/assets/favicon.png"');
+    expect(html).not.toContain('🐙');
+  });
+});
+
 describe('consent statement', () => {
   it('is the exact agreed text', () => {
     expect(CONSENT_STATEMENT).toBe(
@@ -501,6 +541,65 @@ describe('counter pages: copy-cull render suite', () => {
     );
     expect(byName['card-edit-screening-rejected']).toContain('screening code: pii-in-card');
     expect(byName['card-edit']).not.toContain('screening code:');
+  });
+
+  it('the dashboard leads with what is waiting, and navigation comes after it', () => {
+    const html = Object.fromEntries(allPages().map((p) => [p.name, p.html])).dashboard;
+    const waiting = html.indexOf('<h2>Waiting for you</h2>');
+    const nav = html.indexOf('<h2>Your switchboard</h2>');
+    expect(waiting).toBeGreaterThan(-1);
+    expect(nav).toBeGreaterThan(waiting);
+    // The decisions are tappable cards, and the first of them is a decision
+    // rather than a link to a list.
+    expect(html.indexOf('class="todo urgent"')).toBeGreaterThan(waiting);
+    expect(html.indexOf('class="todo urgent"')).toBeLessThan(nav);
+    // Cards that need a decision come before the one-tap match feedback.
+    expect(html.indexOf('WAITING FOR YOU')).toBeLessThan(html.indexOf('Was the switchboard right?'));
+    // The quiet half is a list of links rather than a stack of buttons.
+    expect(html.indexOf('class="navlist"')).toBeGreaterThan(nav);
+    for (const href of ['/ledger', '/profile', '/arrangement', '/agent-keys', '/settings']) {
+      expect(html, href).toContain(`<a href="${href}"><span class="nav-t">`);
+    }
+    // The kill switch stays at the bottom, in its own frame.
+    expect(html.indexOf('class="kill"')).toBeGreaterThan(html.indexOf('class="navlist"'));
+  });
+
+  it('an empty dashboard says so rather than showing an empty heading', () => {
+    const html = chome.dashboardPage({
+      killSwitchOn: false,
+      cardCounts: { total: 0, published: 0, pending: 0 },
+      pendingApprovals: [],
+      matches: [],
+      collectionWindows: [],
+    });
+    expect(html).toContain('Nothing is waiting for you.');
+    expect(html).toContain('<h2>Waiting for you</h2>');
+  });
+
+  it('cards near the end of their clock are something waiting, with no figure in the link', () => {
+    const html = chome.dashboardPage({
+      killSwitchOn: false,
+      cardCounts: { total: 3, published: 3, pending: 0 },
+      pendingApprovals: [],
+      matches: [],
+      collectionWindows: [],
+      lapsingSoon: { count: 2, soonest: '2026-09-08' },
+    });
+    expect(html).toContain('2 cards of yours');
+    expect(html).toContain('2026-09-08');
+    expect(html).not.toContain('Nothing is waiting for you.');
+    expect(lintEmailCopy(html)).toEqual([]);
+  });
+
+  it('every page carries the same header and the signature footer line', () => {
+    for (const p of allPages()) {
+      expect(p.html, p.name).toContain('<header class="site">');
+      expect(p.html, p.name).toContain('src="/assets/patch.png"');
+      expect(p.html, p.name).toContain('Everything agents must never do, you do here.');
+      // Phone first: one column, and a viewport that does not let a page zoom
+      // its way out of a 375px screen.
+      expect(p.html, p.name).toContain('width=device-width, initial-scale=1');
+    }
   });
 
   it('card rows carry the attributes detail line that tells same-category cards apart', () => {

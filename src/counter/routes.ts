@@ -44,6 +44,11 @@ import {
 } from '../domain/matches.js';
 import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
 import {
+  draftToFields,
+  newestOfferDraft,
+  newestOfferDraftForCard,
+} from '../domain/offerDrafts.js';
+import {
   profileIsFilled,
   readSharedProfile,
   saveSharedProfile,
@@ -86,6 +91,7 @@ import { emailHash } from '../domain/accounts.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
+import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
 import type { Config } from '../config.js';
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -175,6 +181,27 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     };
 
     // ------------------------------------------------------------------
+    // Patch. The one image these pages carry, at the two sizes they use it:
+    // the header mark and the browser tab. Both are compiled into the build
+    // (see patchAsset.ts), so they are immutable for the life of a deploy and
+    // say so — a phone opening an approval link fetches each of them once.
+    // ------------------------------------------------------------------
+    const servePng = (reply: FastifyReply, bytes: Buffer, tag: string) =>
+      reply
+        .code(200)
+        .type('image/png')
+        .header('cache-control', 'public, max-age=31536000, immutable')
+        .header('etag', `"${tag}-${bytes.length}"`)
+        .send(bytes);
+
+    counter.get('/assets/patch.png', async (_req, reply) =>
+      servePng(reply, PATCH_HEADER_PNG, 'patch'),
+    );
+    counter.get('/assets/favicon.png', async (_req, reply) =>
+      servePng(reply, PATCH_FAVICON_PNG, 'favicon'),
+    );
+
+    // ------------------------------------------------------------------
     // Landing / dashboard.
     // ------------------------------------------------------------------
     counter.get('/', async (req, reply) => {
@@ -185,7 +212,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected] = await Promise.all([
+      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected, lapsingSoon] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
@@ -207,13 +234,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           [s.accountId],
         ),
         ops.screeningRejectedCards(s.accountId),
+        ops.cardsLapsingSoon(s.accountId),
       ]);
       const pendingApprovals = [
         // A card screening turned away is off the board until this person
         // changes it, so it sits at the top of what is waiting for them.
         ...rejected.map((c) => ({
           href: `/ledger/${c.id}/edit`,
-          label: `Your ${categoryLeafLabel(c.category)} card didn't pass screening — see why and fix it`,
+          // The card says what happened; the button below it says what to do,
+          // so the label no longer says both.
+          label: `Your ${categoryLeafLabel(c.category)} card didn't pass screening`,
           cta: 'See why and fix it',
         })),
         ...offers.map((o) => ({
@@ -256,6 +286,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           })(),
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
+          ...(lapsingSoon ? { lapsingSoon } : {}),
           pendingApprovals,
           matches: verdictable.map((m) => ({
             matchId: m.match_id,
@@ -602,6 +633,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const facts: { k: string; v: string }[] = [];
       let collectProfile: pages.ApprovalView['collectProfile'];
       let counterOffer: pages.ApprovalView['counterOffer'];
+      let draft: pages.ApprovalView['draft'];
       if (action === 'settlement-approve') {
         const s = await settlements.getSettlement(refId);
         if (!s) return { error: 'This settlement no longer exists.' };
@@ -649,8 +681,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           { k: 'For', v: categoryLeafLabel(o.category) },
           { k: 'Offer expires', v: new Date(o.expiry).toUTCString() },
         );
-        // The third door out of this page: answer with a figure of your own.
+        // The third door out of this page: answer with a figure of your own,
+        // opened on the number their agent already tried to send if it has one.
         counterOffer = { matchId: o.match_id, ccy: o.ccy };
+        const carried = await newestOfferDraft(accountId, o.match_id);
+        if (carried) draft = draftToFields(carried);
         const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
         if (amountAnomaly) anomalies.push(amountAnomaly.text);
         const cp = await newCounterpartyAnomaly(o.proposer_account, 'offer-accept');
@@ -687,6 +722,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         anomalies,
         collectProfile,
         counterOffer,
+        draft,
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: false,
         postPath: '/approve',
@@ -1300,12 +1336,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const c = cards.find((x) => x.id === cardId);
       if (!c) return undefined;
       const neg = await readNegotiation(accountId, cardId, { purpose: 'counter-numbers-view' });
+      // A figure this card's agent was refused for on Pass on sits at the top
+      // of the page the refusal points at.
+      const draft = await newestOfferDraftForCard(accountId, cardId);
       return {
         id: c.id,
         type: c.type,
         category: categoryLeafLabel(c.category),
         mode: neg.mode,
         mandate: neg.mandate,
+        ...(draft ? { draft: { ...draftToFields(draft), matchId: draft.matchId } } : {}),
       };
     };
 
@@ -1400,6 +1440,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const m = await ops.matchForHuman(accountId, matchId);
       if (!m) return undefined;
       const offers = await ops.offersOnMatch(matchId);
+      const draft = await newestOfferDraft(accountId, matchId);
       const blocked =
         m.state !== 'open'
           ? 'This match is closed, so no more figures can go across it.'
@@ -1414,6 +1455,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         mode: m.negotiation_mode,
         canOffer: !blocked,
         canOfferBlockedBecause: blocked,
+        ...(draft ? { draft: draftToFields(draft) } : {}),
         offers: offers.map((o) => ({
           amount: `${Number(o.amount)} ${o.ccy}`,
           mine: o.proposer_account === accountId,
