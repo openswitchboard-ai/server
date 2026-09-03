@@ -25,6 +25,7 @@
 import { randomBytes } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  FIXTURE_TTL_DAYS,
   SCHEMA_VERSION,
   TestActor,
   bootstrapActor,
@@ -61,6 +62,7 @@ const card = (
   type,
   category,
   geo: { bucket, radius_km: 25 },
+  ttl_days: FIXTURE_TTL_DAYS,
   ...extra,
 });
 

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, scryptSync } from 'node:crypto';
+import { afterAll } from 'vitest';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
@@ -9,6 +10,7 @@ export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://my-dev.opensw
 export const LEGACY_COUNTER_URL =
   process.env.OSB_LEGACY_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
 export const ENV_NAME = process.env.OSB_TEST_ENV ?? 'dev';
+const RUN_INTEGRATION = process.env.RUN_INTEGRATION === '1';
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
 const ssm = new SSMClient({ region });
@@ -487,8 +489,51 @@ export async function mcpCall(
   const result = payload.result;
   const isError = result?.isError === true;
   const text = result?.content?.[0]?.text;
-  return { raw, result: text ? JSON.parse(text) : result, isError };
+  const parsed = text ? JSON.parse(text) : result;
+  if (name === 'publish_intent' && !isError && parsed?.intent_id) {
+    const mine = publishedCards.get(token) ?? new Set<string>();
+    mine.add(parsed.intent_id as string);
+    publishedCards.set(token, mine);
+  }
+  return { raw, result: parsed, isError };
 }
+
+// ---------------------------------------------------------------------------
+// Board hygiene. Every card these suites publish lives on the shared dev
+// board until it expires, and the matcher reads that board: a few hundred
+// leftover fixture cards in one category is a pile that later runs have to
+// find their own counterpart inside. So the suite takes its cards back down
+// when it is done - through withdraw_intent, the same door a person's agent
+// uses - and publishes them with the shortest TTL the protocol allows so that
+// a run which dies mid-flight still clears itself within a day.
+//
+// The hook is registered from module scope, which vitest attaches to the file
+// currently being collected: importing these helpers is what opts a suite in,
+// so no suite can forget.
+// ---------------------------------------------------------------------------
+const publishedCards = new Map<string, Set<string>>();
+
+/** The TTL fixture cards get: one day, the protocol minimum. */
+export const FIXTURE_TTL_DAYS = 1;
+
+export async function withdrawPublishedCards(): Promise<number> {
+  let taken = 0;
+  for (const [token, ids] of publishedCards) {
+    for (const id of ids) {
+      try {
+        const r = await mcpCall(token, 'withdraw_intent', { intent_id: id });
+        if (!r.isError) taken++;
+      } catch {
+        // A card the suite already withdrew, or an account whose token has
+        // gone: teardown is best-effort and never fails a green run.
+      }
+    }
+  }
+  publishedCards.clear();
+  return taken;
+}
+
+if (RUN_INTEGRATION) afterAll(withdrawPublishedCards, 300_000);
 
 export async function mcpRpc(token: string, method: string, params: any): Promise<any> {
   const res = await fetch(`${BASE_URL}/mcp`, {
@@ -525,6 +570,7 @@ export function minimalWant(overrides: Record<string, unknown> = {}) {
     type: 'WANT',
     category: 'goods.bicycle.mountain',
     geo: { bucket: RUN_BUCKET, radius_km: 25 },
+    ttl_days: FIXTURE_TTL_DAYS,
     ...overrides,
   };
 }
@@ -535,6 +581,7 @@ export function minimalHave(overrides: Record<string, unknown> = {}) {
     type: 'HAVE',
     category: 'goods.bicycle.mountain',
     geo: { bucket: RUN_BUCKET, radius_km: 25 },
+    ttl_days: FIXTURE_TTL_DAYS,
     ...overrides,
   };
 }
