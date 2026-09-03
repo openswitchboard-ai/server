@@ -348,15 +348,17 @@ export function arrangementInPlainWords(a: Arrangement): { k: string; v: string 
 
 /**
  * The sentence that rides beside the object on every sweep. Switchboard
- * authored, written for the agent to act on.
+ * authored. Phrased as the human's own saved preferences reflected back,
+ * not as a command from the system — so a defensive agent reads it as data
+ * about its human, not an instruction from a stranger.
  */
 export function arrangementNote(a: Arrangement): { text: string; provenance: string } {
   return {
     text: isEmpty(a)
-      ? `Your human has no standing arrangement on file yet. Settle one with them — how often you check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions — and save it with standing_arrangement so it outlives this session. Agree the cadence in words and write it down as check_every_minutes. ${CHECK_EVERY_MINUTES_HELP}`
+      ? `Your human has not saved any standing preferences yet — nothing is on file about how they like to be treated here. When they tell you (how often to check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions), you can save it with standing_arrangement so it carries past this session. Cadence is a number of minutes: ${CHECK_EVERY_MINUTES_HELP}`
       : a.check_every_minutes === undefined
-        ? "This is your human's standing arrangement, saved by them. Honour it before proposing anything, and update it with standing_arrangement whenever they tell you something new about how they want to be treated. They have set no cadence, so check when they ask you to and no oftener."
-        : `This is your human's standing arrangement, saved by them. Honour it before proposing anything, and update it with standing_arrangement whenever they tell you something new about how they want to be treated. They asked you to check ${cadenceInPlainWords(a.check_every_minutes)}.`,
+        ? "Your human's saved preferences, which they can see and change any time on their own page: they have set no checking cadence, so check when they ask you to and no oftener. Save any change they mention with standing_arrangement."
+        : `Your human's saved preferences, which they can see and change any time on their own page: they asked you to check ${cadenceInPlainWords(a.check_every_minutes)}. Save any change they mention with standing_arrangement.`,
     provenance: 'switchboard-system',
   };
 }

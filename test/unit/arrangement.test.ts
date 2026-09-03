@@ -361,6 +361,15 @@ describe('how often to check is a number of minutes, with a floor', () => {
     expect(arrangement.arrangementNote({ notes: 'x' }).text).toMatch(/no cadence/i);
   });
 
+  it('reads as the human\'s reflected settings, not a command from the system', () => {
+    for (const a of [{}, { check_every_minutes: 720 }, { notes: 'x' }]) {
+      const t = arrangement.arrangementNote(a).text;
+      // No bare imperatives that a defensive agent reads as injection.
+      expect(t).not.toMatch(/\bHonour it\b/);
+      expect(t).toMatch(/saved preferences|saved any standing preferences|has not saved/i);
+    }
+  });
+
   it('the manual says the cadence is minutes with a 30-minute floor', () => {
     expect(SERVER_INSTRUCTIONS).toContain('check_every_minutes');
     expect(SERVER_INSTRUCTIONS).toMatch(/more often than every 30 minutes/i);
