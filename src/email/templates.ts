@@ -225,6 +225,75 @@ export function renderSummons(
 }
 
 // ---------------------------------------------------------------------------
+// (c2) Waiting-message nudge. The other side has sent something on an open
+// conversation and it is sitting uncollected; this tells the recipient's human
+// so the exchange does not stall with both sides waiting. Plain and warm, with
+// none of the machinery words (no "channel", "match", "card"): it is simply
+// their conversation. Non-blind may name the category the way a summons does;
+// blind is a pure pointer. Throttled upstream (domain/channelNotify.ts) so a
+// live back-and-forth never becomes one email per line.
+// ---------------------------------------------------------------------------
+export function renderChannelWaiting(
+  v: { categoryLabel?: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'You have a message waiting';
+  const line = v.blind
+    ? 'Someone has sent you a message. Open your assistant and it will read it to you.'
+    : v.categoryLabel
+      ? `Someone you got talking to about your ${esc(v.categoryLabel)} has sent you a message. Open your assistant and it will read it to you.`
+      : 'Someone you got talking to has sent you a message. Open your assistant and it will read it to you.';
+  const textLine = v.blind
+    ? 'Someone has sent you a message. Open your assistant and it will read it to you.'
+    : v.categoryLabel
+      ? `Someone you got talking to about your ${v.categoryLabel} has sent you a message. Open your assistant and it will read it to you.`
+      : 'Someone you got talking to has sent you a message. Open your assistant and it will read it to you.';
+  const html = shell(
+    h1('A message is waiting.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
+    f,
+    MATCH,
+  );
+  const text =
+    `A message is waiting.\n\n${textLine}\n\n` +
+    `Open OpenSwitchboard:\n${v.counterUrl}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c3) "Your move" nudge. The counterparty has stepped forward — opted in and
+// is ready to talk — and it is now this human's turn to reciprocate. New-match
+// is already summoned; this covers the later progression, where a passive human
+// would otherwise never learn the ball is in their court. Same plain register.
+// ---------------------------------------------------------------------------
+export function renderYourMove(
+  v: { categoryLabel?: string; blind: boolean; counterUrl: string },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'It is your turn';
+  const line = v.blind
+    ? 'Someone is ready to hear back from you. Open your assistant to take the next step.'
+    : v.categoryLabel
+      ? `Someone you matched with about your ${esc(v.categoryLabel)} is keen and ready to talk. Open your assistant to take the next step.`
+      : 'Someone you matched with is keen and ready to talk. Open your assistant to take the next step.';
+  const textLine = v.blind
+    ? 'Someone is ready to hear back from you. Open your assistant to take the next step.'
+    : v.categoryLabel
+      ? `Someone you matched with about your ${v.categoryLabel} is keen and ready to talk. Open your assistant to take the next step.`
+      : 'Someone you matched with is keen and ready to talk. Open your assistant to take the next step.';
+  const html = shell(
+    h1('It is your move.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
+    f,
+    MATCH,
+  );
+  const text =
+    `It is your move.\n\n${textLine}\n\n` +
+    `Open OpenSwitchboard:\n${v.counterUrl}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // (d) Activity digest. Items come from the digest engine: per open card cell,
 // counts of new opposite-side cards (cell already clears the k-anonymity
 // floor by construction — see domain/pulse.ts) and the card's own new

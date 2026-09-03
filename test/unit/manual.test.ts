@@ -143,10 +143,20 @@ describe('the manual introduces itself', () => {
     );
     expect(SERVER_INSTRUCTIONS).toMatch(/archive is plain enough to say out loud/i);
   });
-  it('carries the archive change as its latest changelog note', () => {
+  it('teaches keeping a conversation moving so neither side waits in silence', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('KEEP IT MOVING');
+    // Tell your human what happens next when you carry something across.
+    expect(SERVER_INSTRUCTIONS).toMatch(/when they next check in with their own assistant/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/watching for the reply/i);
+    // And bring it to them when the ball is in their court.
+    expect(SERVER_INSTRUCTIONS).toMatch(/when the ball is in your human's court/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/both sides quietly waiting on each other/i);
+  });
+
+  it('carries the keep-it-moving change as its latest changelog note', () => {
     const latest = MANUAL_CHANGELOG.find((c) => c.version === MANUAL.version);
-    expect(latest?.note).toMatch(/respond\(archive\)/);
-    expect(MANUAL.version).toBeGreaterThanOrEqual(8);
+    expect(latest?.note).toMatch(/whose turn it is/i);
+    expect(MANUAL.version).toBeGreaterThanOrEqual(9);
   });
 });
 

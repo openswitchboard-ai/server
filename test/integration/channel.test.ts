@@ -112,6 +112,53 @@ d('a conversation carried across an open channel', () => {
     expect(forBeppe.result.channel.channel_id).toBe(channelId);
   });
 
+  // The waiting-message nudge closes the conversational deadlock: a message
+  // that lands is otherwise carried in silence, and a passive recipient never
+  // learns it is there. channel_send enqueues one nudge for the recipient's
+  // human through the ops queue, which the ops worker turns into one email —
+  // and the throttle holds a rapid second message to no further nudge.
+  const channelWaitingSends = async (): Promise<any[][]> =>
+    dbExec(
+      `SELECT dedupe_key, status FROM email_sends
+       WHERE account_id = :a::uuid AND template = 'channel-waiting'
+       ORDER BY created_at`,
+      [{ name: 'a', value: beppe.accountId }],
+    );
+
+  it('nudges the waiting side once, and holds the throttle on a rapid second message', async () => {
+    // First message to beppe on an empty inbox: exactly one nudge is enqueued
+    // and the ops worker sends it (a simulator address, so SES accepts it).
+    const first = await mcpCall(ana.accessToken, 'channel_send', {
+      match_id: matchId,
+      text: 'Are you about this week?',
+    });
+    expect(first.isError).toBe(false);
+    const sends = await poll(
+      async () => {
+        const rows = await channelWaitingSends();
+        return rows.length >= 1 ? rows : undefined;
+      },
+      'the waiting-message nudge to be sent to the recipient',
+    );
+    expect(sends).toHaveLength(1);
+    expect(['sent', 'sandbox-rejected']).toContain(sends[0][1]);
+
+    // A rapid second message, still unread by beppe: the throttle suppresses a
+    // second nudge at send time, so no further ops job and no second email.
+    const second = await mcpCall(ana.accessToken, 'channel_send', {
+      match_id: matchId,
+      text: 'No rush at all.',
+    });
+    expect(second.isError).toBe(false);
+    await new Promise((r) => setTimeout(r, 4000)); // give the ops worker a beat
+    expect(await channelWaitingSends()).toHaveLength(1);
+
+    // Leave the channel as we found it, so the later collection tests start
+    // from an empty channel.
+    await mcpCall(beppe.accessToken, 'channel_receive', { match_id: matchId });
+    expect(await rowsOnChannel()).toBe(0);
+  });
+
   it('gives the channel a key of its own the moment it opens', async () => {
     const rows = await dbExec(
       'SELECT channel_key_enc IS NOT NULL FROM matches WHERE id = :m::uuid',
