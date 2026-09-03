@@ -32,8 +32,30 @@ const d = RUN ? describe : describe.skip;
 
 let alice: TestActor; // says "Canberra"
 let bob: TestActor; // says "AU-ACT"
+let seller: TestActor; // Canberra, posts anywhere in Australia
+let buyer: TestActor; // Perth, happy to have it posted
 let wantId: string;
 let haveId: string;
+
+/**
+ * Every account this file needs, made before the file publishes anything.
+ *
+ * Accounts are bootstrapped over the shared ops queue, and that queue also
+ * carries a summons for every match. A card posted in a real city meets
+ * whatever else is in that city, so a few publishes can put dozens of
+ * summonses in front of the next create-account and starve it. Asking for
+ * the accounts first costs nothing and takes them out of that race.
+ */
+if (RUN) {
+  beforeAll(async () => {
+    [alice, bob, seller, buyer] = await Promise.all([
+      bootstrapActor('Alice', 'Canberra'),
+      bootstrapActor('Bob', 'Canberra'),
+      bootstrapActor('Sam', 'Canberra'),
+      bootstrapActor('Pia', 'Perth'),
+    ]);
+  }, 300_000);
+}
 
 const card = (type: 'WANT' | 'HAVE', place: string) => ({
   schema_version: SCHEMA_VERSION,
@@ -46,10 +68,6 @@ const card = (type: 'WANT' | 'HAVE', place: string) => ({
 
 d('one city, two spellings, one match', () => {
   beforeAll(async () => {
-    [alice, bob] = await Promise.all([
-      bootstrapActor('Alice', 'Canberra'),
-      bootstrapActor('Bob', 'Canberra'),
-    ]);
     const w = await mcpCall(alice.accessToken, 'publish_intent', {
       card: card('WANT', 'Canberra'),
     });
@@ -247,8 +265,6 @@ d('one city, two spellings, one match', () => {
  * country for it.
  */
 d('a card that reaches a whole country', () => {
-  let seller: TestActor; // Canberra, posts anywhere in Australia
-  let buyer: TestActor; // Perth, happy to have it posted
   let nationwideHave: string;
   let farWant: string;
 
@@ -262,10 +278,6 @@ d('a card that reaches a whole country', () => {
   });
 
   beforeAll(async () => {
-    [seller, buyer] = await Promise.all([
-      bootstrapActor('Sam', 'Canberra'),
-      bootstrapActor('Pia', 'Perth'),
-    ]);
     const h = await mcpCall(seller.accessToken, 'publish_intent', {
       card: laptop('HAVE', { place: 'Canberra', reach: 'country' }),
     });
@@ -288,9 +300,9 @@ d('a card that reaches a whole country', () => {
       waitForCardState(seller.accessToken, nationwideHave, ['PUBLISHED']),
       waitForCardState(buyer.accessToken, farWant, ['PUBLISHED']),
     ]);
-    // Two accounts and two cards, behind whatever the suite above left on the
-    // shared ops queue — the match notices from the first pair take their turn
-    // in front of these. The default hook window is not enough for that.
+    // Two cards behind whatever the suite above left on the shared queues —
+    // the match notices from the first pair take their turn in front of
+    // these. The default hook window is not enough for that.
   }, 300_000);
 
   it('stores the reach on the card and the country it resolved to', async () => {
