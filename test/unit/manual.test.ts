@@ -44,6 +44,8 @@ const TOKEN_HASH = 'a'.repeat(64);
 
 /** Every manual_version write the sweep makes, in order. */
 let versionWrites: { tokenHash: string; version: number }[];
+/** Every manual_notified_at stamp the sweep makes. */
+let notifiedWrites: string[];
 
 function fakePool() {
   return {
@@ -51,6 +53,10 @@ function fakePool() {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
       if (/UPDATE oauth_tokens SET manual_version/.test(sql)) {
         versionWrites.push({ tokenHash: params[0], version: params[1] });
+        return rows([]);
+      }
+      if (/UPDATE oauth_tokens SET manual_notified_at/.test(sql)) {
+        notifiedWrites.push(params[0]);
         return rows([]);
       }
       // The read ceiling is checked before the sweep runs; this world never
@@ -80,6 +86,7 @@ function manualDouble(version: number): void {
 
 beforeEach(() => {
   versionWrites = [];
+    notifiedWrites = [];
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
 
@@ -165,17 +172,17 @@ describe('manualUpdateSince: what a stale session is told', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('the sweep carries it, once', () => {
+describe('the sweep carries it, for a day', () => {
   it('a fresh session hears nothing about the manual, and costs no write', async () => {
-    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: MANUAL.version };
+    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: MANUAL.version, manualNotifiedAt: null };
     const r = body(await sweep(session));
     expect(r.manual_update).toBeUndefined();
     expect(Object.keys(r)).toEqual(['matches', 'arrangement', 'arrangement_note']);
     expect(versionWrites).toEqual([]);
   });
 
-  it('bump the manual and the next sweep carries the note; the one after does not', async () => {
-    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1 };
+  it('bump the manual and every sweep carries the note for a day; then it stops', async () => {
+    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1, manualNotifiedAt: null };
     // Connected on version 1, nothing has changed yet.
     manualDouble(1);
     expect(body(await sweep(session)).manual_update).toBeUndefined();
@@ -186,28 +193,37 @@ describe('the sweep carries it, once', () => {
     const first = body(await sweep(session));
     expect(first.manual_update).toContain('what changed in version 2');
     expect(first.manual_update.startsWith(MANUAL_UPDATE_PREFIX)).toBe(true);
-    expect(versionWrites).toEqual([{ tokenHash: TOKEN_HASH, version: 2 }]);
+    expect(versionWrites).toEqual([]);
+    expect(notifiedWrites).toEqual([TOKEN_HASH]);
 
-    // Delivered. The session is current now, so it is left alone.
+    // Still inside the repeat window: the note rides again, with no new write.
     const second = body(await sweep(session));
-    expect(second.manual_update).toBeUndefined();
-    expect(versionWrites).toHaveLength(1);
+    expect(second.manual_update).toContain('what changed in version 2');
+    expect(notifiedWrites).toHaveLength(1);
+
+    // A day later the note is considered read, and the version stamps forward.
+    session.manualNotifiedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const third = body(await sweep(session));
+    expect(third.manual_update).toBeUndefined();
+    expect(versionWrites).toEqual([{ tokenHash: TOKEN_HASH, version: 2 }]);
+    expect(body(await sweep(session)).manual_update).toBeUndefined();
   });
 
-  it('a session further behind than the limit gets the whole manual, once', async () => {
-    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1 };
+  it('a session further behind than the limit gets the whole manual, for the same day', async () => {
+    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1, manualNotifiedAt: null };
     manualDouble(2 + MANUAL_CATCHUP_LIMIT);
     const first = body(await sweep(session));
     expect(first.manual_update.startsWith(MANUAL_REPLACEMENT_PREFIX)).toBe(true);
     expect(first.manual_update).toContain(MANUAL.text);
-    expect(versionWrites).toEqual([{ tokenHash: TOKEN_HASH, version: MANUAL.version }]);
+    expect(notifiedWrites).toEqual([TOKEN_HASH]);
 
+    session.manualNotifiedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
     expect(body(await sweep(session)).manual_update).toBeUndefined();
-    expect(versionWrites).toHaveLength(1);
+    expect(versionWrites).toEqual([{ tokenHash: TOKEN_HASH, version: MANUAL.version }]);
   });
 
   it('a session that never sent initialize is stamped quietly and tracks from there', async () => {
-    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: null };
+    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: null, manualNotifiedAt: null };
     manualDouble(4);
     const first = body(await sweep(session));
     expect(first.manual_update).toBeUndefined();
@@ -225,7 +241,7 @@ describe('the sweep carries it, once', () => {
   });
 
   it('no other tool delivers it', async () => {
-    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1 };
+    const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1, manualNotifiedAt: null };
     manualDouble(3);
     const r = body(await dispatchTool(cfg, ANA, 'list_intents', {}, session));
     expect(r.manual_update).toBeUndefined();
