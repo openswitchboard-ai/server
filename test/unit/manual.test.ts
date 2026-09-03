@@ -113,6 +113,41 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
     expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');
   });
+  it('teaches wrapping up a connection: notice, offer once, archive, retrieve', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('WRAPPING UP A CONNECTION');
+    // The one-time offer, in the plain human-facing voice ("archive" is fine
+    // to say; the system words are not).
+    expect(SERVER_INSTRUCTIONS).toContain(
+      'want me to archive it and keep the book club open for more people',
+    );
+    expect(SERVER_INSTRUCTIONS).toContain('respond(archive)');
+    // Honesty about what survives: the record stays; the conversation and the
+    // number live in the human's own chat.
+    expect(SERVER_INSTRUCTIONS).toMatch(/you hold on to who they got chatting with/i);
+    expect(SERVER_INSTRUCTIONS).toContain('the switchboard keeps neither');
+    // Later retrieval answers the "who was that again?" question, plainly.
+    expect(SERVER_INSTRUCTIONS).toContain('who was that book club person again?');
+  });
+  it('keeps archiving separate from the card, with both worked examples in plain voice', () => {
+    // Archiving never assumes the card's fate; the agent asks, and the two
+    // worked cases (book club stays up, bike gets taken down) are both present.
+    expect(SERVER_INSTRUCTIONS).toContain('withdraw_intent');
+    expect(SERVER_INSTRUCTIONS).toMatch(/never pull a card down/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/book club with room/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/bike[\s\S]{0,80}sell/i);
+    expect(SERVER_INSTRUCTIONS).toContain('keep the book club open for more people');
+  });
+  it('keeps the system words out of the human-facing voice, archive excepted', () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /words card, match, connection and listing are yours to think in and never theirs to hear/i,
+    );
+    expect(SERVER_INSTRUCTIONS).toMatch(/archive is plain enough to say out loud/i);
+  });
+  it('carries the archive change as its latest changelog note', () => {
+    const latest = MANUAL_CHANGELOG.find((c) => c.version === MANUAL.version);
+    expect(latest?.note).toMatch(/respond\(archive\)/);
+    expect(MANUAL.version).toBeGreaterThanOrEqual(8);
+  });
 });
 
 describe('the version stamp and its changelog', () => {
