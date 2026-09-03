@@ -439,6 +439,25 @@ export async function archiveMatch(
 // is structurally impossible on this path.
 // ---------------------------------------------------------------------------
 
+/** The newest offer from the OTHER side still awaiting this human, if any. An
+ *  offer is a deliberate disclosure, so its amount is safe to surface — unlike
+ *  a private price band, which never leaves the engine. */
+async function incomingOffer(
+  matchId: string,
+  accountId: string,
+): Promise<{ amount: number; ccy: string; message: string | null } | undefined> {
+  const r = await getPool().query(
+    `SELECT amount, ccy, message FROM offers
+     WHERE match_id = $1 AND proposer_account <> $2
+       AND state IN ('proposed', 'awaiting-human')
+     ORDER BY created_at DESC LIMIT 1`,
+    [matchId, accountId],
+  );
+  if (!r.rowCount) return undefined;
+  const o = r.rows[0];
+  return { amount: Number(o.amount), ccy: o.ccy as string, message: (o.message ?? null) as string | null };
+}
+
 export async function buildSignal(m: MatchRow, accountId: string) {
   const side = sideOf(m, accountId);
   // No score crosses to the agent. The switchboard already decided the match
@@ -732,6 +751,19 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     // messages are waiting is counted once for the whole sweep, in the tool
     // layer, alongside the sentence written for the human.
     if (m.stage >= 4 && m.channel_id) entry.channel = { channel_id: m.channel_id };
+    // A pending offer FROM the other side must reach this agent on its ordinary
+    // sweep — otherwise a routine "anything new?" misses a figure on the table.
+    // The amount is a deliberate disclosure (an offer is meant to be seen), so
+    // it crosses; the human note carries it in plain words for relay.
+    const incoming = await incomingOffer(m.id, accountId);
+    if (incoming) {
+      entry.offer = { amount: incoming.amount, ccy: incoming.ccy, message: incoming.message };
+      entry.next = 'awaiting_your_human';
+      entry.offer_note = {
+        text: `The other side has put ${incoming.amount} ${incoming.ccy} on the table${incoming.message ? ` — "${incoming.message}"` : ''}. Bring it to your human in their own words; only they decide what to do with it.`,
+        provenance: 'switchboard-system',
+      };
+    }
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
       try {
