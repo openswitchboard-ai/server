@@ -1207,7 +1207,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const cards = await ops.ledgerCards(cfg, s.accountId!);
-      return html(reply, home.ledgerPage(cards.map(cardToView)));
+      const archived = await ops.archivedConnections(s.accountId!);
+      const past = archived.map((a) => ({
+        category: categoryLeafLabel(a.category),
+        who: a.counterparty
+          ? `${a.counterparty.first_name}, ${a.counterparty.locality}`
+          : undefined,
+        archivedOn: a.archived_at
+          ? new Date(a.archived_at).toISOString().slice(0, 10)
+          : undefined,
+      }));
+      return html(reply, home.ledgerPage(cards.map(cardToView), undefined, past));
     });
 
     counter.get('/ledger/:id/edit', async (req, reply) => {

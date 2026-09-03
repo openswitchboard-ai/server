@@ -25,9 +25,12 @@ export interface MatchRow {
   stage: number;
   interest_want: boolean;
   interest_have: boolean;
-  state: 'open' | 'declined' | 'closed';
+  state: 'open' | 'declined' | 'closed' | 'archived';
   channel_id: string | null;
   opened_at: Date | null;
+  archived_at?: Date | null;
+  archived_by?: string | null;
+  archived_via?: string | null;
 }
 
 export async function getMatch(id: string): Promise<MatchRow | undefined> {
@@ -234,8 +237,10 @@ async function loadOpenMatchFor(matchId: string, accountId: string): Promise<Mat
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
-  if (m.state === 'declined' || m.state === 'closed') {
-    // A closed match discloses nothing further; declines carry no reason.
+  if (m.state === 'declined' || m.state === 'closed' || m.state === 'archived') {
+    // A closed match discloses nothing further; declines carry no reason; an
+    // archived match is a finished connection, so it accepts no further
+    // interest, opt-in or channel action (retrieval reads it separately).
     throw new OsbError('STAGE_LOCKED');
   }
   return m;
@@ -339,6 +344,70 @@ export async function declineMatch(matchId: string, accountId: string): Promise<
   );
 }
 
+/**
+ * Archive a finished connection. This is the SUCCESS close: two people matched,
+ * opted in, talked, and have taken it off the switchboard (swapped numbers,
+ * joined the book club). Only a party to the match may archive it, and only an
+ * OPEN match can be archived. The row and its disclosed-profile linkage STAY,
+ * so the connection record — the counterparty's disclosed first name and area,
+ * the category, the dates — is retrievable afterwards. What is torn down is the
+ * live channel: the state leaving 'open' is itself enough to make
+ * channel_send/receive refuse (loadOpenChannel gates on state === 'open'), and
+ * any uncollected message is expired here so the ordinary sweep clears it. The
+ * conversation and the phone number were never retained, so there is nothing of
+ * them to keep or to drop.
+ *
+ * Idempotent: archiving an already-archived match records nothing new and
+ * reports it as archived. A declined or closed match cannot be archived.
+ */
+export async function archiveMatch(
+  matchId: string,
+  accountId: string,
+  recordedVia: string,
+): Promise<{ match_id: string; state: 'archived'; already: boolean }> {
+  const m = await getMatch(matchId);
+  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  sideOf(m, accountId); // throws notFound when the caller is not a party
+  if (m.state === 'archived') {
+    return { match_id: matchId, state: 'archived', already: true };
+  }
+  if (m.state !== 'open') {
+    // Only a live, open connection can be filed away as finished. A declined or
+    // closed match went nowhere; there is nothing to archive.
+    throw new OsbError('STAGE_LOCKED', {
+      human_action: 'This match is not an open connection, so there is nothing to file away.',
+    });
+  }
+  const r = await getPool().query(
+    `UPDATE matches
+        SET state = 'archived', archived_at = now(), archived_by = $2,
+            archived_via = $3, updated_at = now()
+      WHERE id = $1 AND state = 'open'
+      RETURNING id`,
+    [matchId, accountId, recordedVia],
+  );
+  if (!r.rowCount) {
+    // Lost a race to another archive of the same match: treat as idempotent.
+    return { match_id: matchId, state: 'archived', already: true };
+  }
+  // WORM record of who filed it and when, the recorded_via shape the verdict
+  // and opt-in paths already use.
+  await writeConsentEvent({
+    event: 'match-archived',
+    match_id: matchId,
+    account_id: accountId,
+    recorded_via: recordedVia,
+  });
+  // Tear down the live channel's leftovers: the state change already stops new
+  // sends and collections; expiring any uncollected message hands it to the
+  // sweep instead of leaving it to sit out its 14-day TTL.
+  await getPool().query(
+    `UPDATE channel_messages SET expires_at = now() WHERE match_id = $1 AND expires_at > now()`,
+    [matchId],
+  );
+  return { match_id: matchId, state: 'archived', already: false };
+}
+
 // ---------------------------------------------------------------------------
 // Stage payload builders. Every payload is validated OUTBOUND against its
 // protocol schema before being returned (assertOutbound) — the disclosure
@@ -424,7 +493,11 @@ export async function buildMutual(
   accountId: string,
   ownProfile?: SharedProfile,
 ) {
-  if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
+  // Open matches disclose at stage 3; an archived match keeps disclosing the
+  // same stage-3 record so the connection stays retrievable after it is filed
+  // away ("you connected with Alex in Franklin about Italian"). Declined and
+  // closed matches disclose nothing.
+  if (m.state !== 'open' && m.state !== 'archived') throw new OsbError('STAGE_LOCKED');
   // HARD GATE: stage-3 data is NEVER returned without BOTH humans' recorded
   // opt-in tokens. The check queries consent_tokens directly — not the stage
   // column — so a bug elsewhere cannot open the gate.
@@ -579,6 +652,29 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       actor: accountId,
     }));
   for (const m of r.rows as MatchRow[]) {
+    if (m.state === 'archived') {
+      // A finished connection, kept retrievable. It is never an actionable or
+      // new signal — no `next`, no stage-1 signal — but it carries enough to
+      // recall it: the category, when it was filed, and, where the humans
+      // reached stage 3, the disclosed first name and area.
+      const entry: any = {
+        match_id: m.id,
+        state: 'archived',
+        category: m.category,
+        archived_at: m.archived_at ? new Date(m.archived_at).toISOString() : null,
+      };
+      if (m.stage >= 3) {
+        try {
+          entry.mutual = await buildMutual(cfg, m, accountId, await ownProfile());
+        } catch (e) {
+          // A disclosure that only ever needs a profile that is now gone stays
+          // silent here; the record itself is still returned.
+          if (!(e instanceof OsbError)) throw e;
+        }
+      }
+      out.push(entry);
+      continue;
+    }
     if (m.state !== 'open') {
       out.push({ match_id: m.id, state: m.state });
       continue;
