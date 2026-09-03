@@ -194,6 +194,42 @@ export class Harness {
     );
   }
 
+  /**
+   * Single-shot: is there a match row between these two cards, in EITHER
+   * direction? Returns the match id, or undefined. Non-throwing — the fuzz
+   * classifier decides whether a match here is expected (compatible) or a
+   * finding (a false match on an incompatible pair). DB-based, so it never
+   * touches an account's 60/h MCP read ceiling.
+   */
+  async matchBetween(wantId: string, haveId: string): Promise<string | undefined> {
+    const rows = await dbExec(
+      `SELECT id::text FROM matches
+        WHERE (card_want = :w::uuid AND card_have = :h::uuid)
+           OR (card_want = :h::uuid AND card_have = :w::uuid)`,
+      [
+        { name: 'w', value: wantId },
+        { name: 'h', value: haveId },
+      ],
+    );
+    return (rows[0]?.[0] as string) ?? undefined;
+  }
+
+  /**
+   * Wait up to `timeoutMs` for the LIVE matcher to pair these two cards (either
+   * direction), polling the DB. Returns the match id if it appears, or
+   * undefined on timeout — non-throwing, so the fuzz classifier can record a
+   * compatible-but-no-match FINDING rather than aborting the run.
+   */
+  async waitMatchDB(wantId: string, haveId: string, timeoutMs = 90_000): Promise<string | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const id = await this.matchBetween(wantId, haveId);
+      if (id) return id;
+      if (Date.now() > deadline) return undefined;
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+  }
+
   /** Assert (with a budget) that NO match ever forms between two cards. */
   async assertNoLiveMatch(wantId: string, haveId: string, settleMs = 20_000): Promise<void> {
     await new Promise((r) => setTimeout(r, settleMs));
