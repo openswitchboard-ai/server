@@ -134,13 +134,14 @@ export async function publishIntent(
     [
       accountId,
       card.schema_version,
-      card.type,
+      // The wire says looking_for/offering; the column keeps WANT/HAVE.
+      card.type === 'looking_for' ? 'WANT' : 'HAVE',
       card.category,
       JSON.stringify(geo.geo),
       JSON.stringify(card.attributes ?? {}),
       card.ask ? JSON.stringify(card.ask) : null,
       card.urgency ?? 'none',
-      card.visibility ?? 'anonymous-until-match',
+      'anonymous-until-match',
       card.status ?? 'active',
       priceEnc,
       ttl,
@@ -244,10 +245,12 @@ export async function amendIntent(
   const account = await getAccount(accountId);
   if (!account) throw new Error('account not found');
 
-  // Rebuild the full card, apply the patch, and re-validate as a whole card.
+  // Rebuild the full card in the wire's words (the protocol document admits
+  // only those), apply the patch, and re-validate as a whole card. Neither
+  // type nor visibility is amendable, so nothing translates back on write.
   const current: any = {
     schema_version: card.schema_version,
-    type: card.type,
+    type: card.type === 'WANT' ? 'looking_for' : 'offering',
     category: card.category,
     geo: card.geo,
     ...(card.attributes && Object.keys(card.attributes).length
@@ -255,7 +258,8 @@ export async function amendIntent(
       : {}),
     ...(card.ask ? { ask: card.ask } : {}),
     urgency: card.urgency,
-    visibility: card.visibility,
+    visibility:
+      card.visibility === 'anonymous-until-match' ? 'anonymous-until-introduced' : card.visibility,
     status: card.protocol_status,
     ttl_days: card.ttl_days,
   };
