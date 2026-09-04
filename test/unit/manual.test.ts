@@ -153,9 +153,11 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/both sides quietly waiting on each other/i);
   });
 
-  it('carries the keep-it-moving change as its latest changelog note', () => {
+  it('keeps the keep-it-moving change and carries a current latest note', () => {
+    // The keep-it-moving guidance stays in the log even as later versions land.
+    expect(MANUAL_CHANGELOG.some((c) => /whose turn it is/i.test(c.note))).toBe(true);
     const latest = MANUAL_CHANGELOG.find((c) => c.version === MANUAL.version);
-    expect(latest?.note).toMatch(/whose turn it is/i);
+    expect(latest).toBeDefined();
     expect(MANUAL.version).toBeGreaterThanOrEqual(9);
   });
 });

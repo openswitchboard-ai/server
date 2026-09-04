@@ -9,7 +9,6 @@ import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../proto
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
-import { categoryLeafLabel } from '../domain/matchRules.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
@@ -433,21 +432,10 @@ export async function dispatchTool(
           return ok(await matches.getStagePayload(cfg, accountId, args.match_id, args.stage));
         }
         {
-          const found = await matches.checkMatches(cfg, accountId, args?.intent_id);
-          // A ready-made sentence per stage-1 signal, so agents can relay the
-          // match in everyday words. Switchboard-authored; sits beside the
-          // protocol object rather than inside it.
-          const withNotes = found.map((m: any) =>
-            m?.kind === 'match.signal'
-              ? {
-                  ...m,
-                  note: {
-                    text: `Someone in the area is on the other side of your ${categoryLeafLabel(m.category)} card. Say the word to show interest; if they are keen too, you will each see a little more.`,
-                    provenance: 'switchboard-system',
-                  },
-                }
-              : m,
-          );
+          // checkMatches now builds each entry's ready human sentence itself, in
+          // one plain register per surfaced state, so nothing more is folded on
+          // here — the sweep is handed back as it comes.
+          const withNotes = await matches.checkMatches(cfg, accountId, args?.intent_id);
           // One count for the whole sweep tells a polling agent where there is
           // something to collect, so noticing a waiting message never depends
           // on remembering a second tool.
@@ -461,7 +449,7 @@ export async function dispatchTool(
             m.channel.messages_waiting = waiting;
             if (waiting > 0) {
               m.channel.note = {
-                text: `${waiting === 1 ? 'A message is' : `${waiting} messages are`} waiting from the person on the other side of this match. Collect ${waiting === 1 ? 'it' : 'them'} with channel_receive and pass ${waiting === 1 ? 'it' : 'them'} on — the switchboard lets go of a message once you have it.`,
+                text: `${waiting === 1 ? 'A message is' : `${waiting} messages are`} waiting from the person you have been talking to. Collect ${waiting === 1 ? 'it' : 'them'} and pass ${waiting === 1 ? 'it' : 'them'} straight on — the switchboard only holds a message until you have picked it up.`,
                 provenance: 'switchboard-system',
               };
             }

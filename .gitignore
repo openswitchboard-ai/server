@@ -7,6 +7,7 @@ dist/
 test-results/
 playwright-report/
 e2e-screenshots/
+realism-reports/
 # Agent worktrees and local agent config. These hold full copies of the repo
 # and must never be committed.
 .claude/
