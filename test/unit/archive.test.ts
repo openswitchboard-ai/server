@@ -13,8 +13,8 @@
  *  - IDEMPOTENT: archiving an already-archived match records nothing new and
  *    still reports it archived; a declined/closed match cannot be archived.
  *  - CHANNEL TORN DOWN: once archived, channel_send and channel_receive refuse
- *    (STAGE_LOCKED), and any uncollected message is expired for the sweep.
- *  - RETRIEVABLE (the whole point): check_matches returns the archived match
+ *    (NOT_UNLOCKED_YET), and any uncollected message is expired for the sweep.
+ *  - RETRIEVABLE (the whole point): check_in returns the archived introduction
  *    with state 'archived', its category, the archive date, and — where the
  *    two reached stage 3 — the disclosed mutual first name and area.
  *  - NOT ACTIONABLE: an archived match carries no `next` and no stage-1
@@ -38,7 +38,7 @@ import * as db from '../../src/db.js';
 import * as crypto from '../../src/crypto.js';
 import * as matches from '../../src/domain/matches.js';
 import * as channel from '../../src/domain/channel.js';
-import { OsbError, validatePayload } from '../../src/protocol.js';
+import { OsbError, validateOutbound } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = { envName: 'dev', publicOrigin: 'https://mcp.test' } as unknown as Config;
@@ -148,7 +148,7 @@ beforeEach(() => {
 describe('archiveMatch: filing a finished connection away', () => {
   it('sets an OPEN match to archived and records who and how', async () => {
     const r = await matches.archiveMatch(MATCH, ANA, 'agent-attested');
-    expect(r).toMatchObject({ match_id: MATCH, state: 'archived', already: false });
+    expect(r).toMatchObject({ intro_id: MATCH, state: 'archived', already: false });
     expect(world.state).toBe('archived');
     expect(world.archived_by).toBe(ANA);
     expect(world.archived_via).toBe('agent-attested');
@@ -188,32 +188,32 @@ describe('the channel is torn down once archived', () => {
   it('channel_send refuses on an archived match', async () => {
     await matches.archiveMatch(MATCH, ANA, 'agent-attested');
     await expect(channel.sendMessage(ANA, MATCH, 'still there?')).rejects.toMatchObject({
-      payload: { code: 'STAGE_LOCKED' },
+      payload: { code: 'NOT_UNLOCKED_YET' },
     });
   });
 
   it('channel_receive refuses on an archived match', async () => {
     await matches.archiveMatch(MATCH, ANA, 'agent-attested');
     await expect(channel.receiveMessages(ANA, MATCH)).rejects.toMatchObject({
-      payload: { code: 'STAGE_LOCKED' },
+      payload: { code: 'NOT_UNLOCKED_YET' },
     });
   });
 });
 
 describe('retrieval: an archived connection stays lookup-able', () => {
-  it('check_matches returns the archived match with its disclosed mutual details', async () => {
+  it('check_in returns the archived introduction with its disclosed mutual details', async () => {
     await matches.archiveMatch(MATCH, ANA, 'agent-attested');
     const out = await matches.checkMatches(cfg, ANA);
     expect(out).toHaveLength(1);
     const entry = out[0] as any;
     expect(entry.state).toBe('archived');
-    expect(entry.match_id).toBe(MATCH);
+    expect(entry.intro_id).toBe(MATCH);
     expect(entry.category).toBe('social.book-club');
     expect(typeof entry.archived_at).toBe('string');
     // The whole point: the disclosed first name and area come back so a human
     // can look up "you connected with Alex in Franklin".
     expect(entry.mutual.counterparty).toEqual({ first_name: 'Alex', locality: 'Franklin' });
-    expect(validatePayload('match.mutual', entry.mutual).valid).toBe(true);
+    expect(validateOutbound('intro.mutual', entry.mutual).valid).toBe(true);
     // The recall carries a ready, jargon-free sentence the agent leads with —
     // the first name and area, plainly, with no card/match/stage/score word.
     expect(entry.note.provenance).toBe('switchboard-system');

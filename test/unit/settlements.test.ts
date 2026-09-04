@@ -27,7 +27,7 @@ import { SETTLEMENT_TRANSITIONS } from '../../src/domain/settlements.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { buildApp } from '../../src/app.js';
 import { feeMinorUnits, toMinorUnits } from '../../src/stripe.js';
-import { validatePayload } from '../../src/protocol.js';
+import { validateOutbound, validatePayload } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 
 const baseCfg: Config = {
@@ -221,7 +221,7 @@ describe('settle tool', () => {
     const t = TOOLS.find((x) => x.name === 'settle');
     expect(t).toBeTruthy();
     expect(Object.keys(t!.inputSchema.properties)).toEqual(
-      expect.arrayContaining(['match_id', 'settlement_id', 'amount', 'ccy', 'description']),
+      expect.arrayContaining(['intro_id', 'settlement_id', 'amount', 'ccy', 'description']),
     );
     expect(t!.inputSchema.additionalProperties).toBe(false);
   });
@@ -235,7 +235,7 @@ describe('settle tool', () => {
     expect(r.isError).toBe(true);
     expect((r.structuredContent as any).code).toBe('SETTLEMENT_UNAVAILABLE');
     // The error payload itself validates against the protocol error schema.
-    expect(validatePayload('error', r.structuredContent).valid).toBe(true);
+    expect(validateOutbound('error', r.structuredContent).valid).toBe(true);
   });
 });
 
@@ -324,7 +324,7 @@ describe('settlement protocol payloads', () => {
       'evidence-locked', 'confirmed', 'disputed', 'released', 'refunded', 'declined',
     ]) {
       const out = settlements.serializeSettlement({ ...row, state });
-      expect(validatePayload('settlement', out).valid).toBe(true);
+      expect(validateOutbound('settlement', out).valid).toBe(true);
       expect((out as any).state).toBe(state);
     }
   });

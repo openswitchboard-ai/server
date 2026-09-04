@@ -37,7 +37,7 @@ export const SHARED_PROFILE_ACTION =
 
 /** Said to the side that has done its part and is waiting on the other one. */
 export const COUNTERPARTY_PROFILE_ACTION =
-  'The other side has not added the first name and area they share yet. This match opens up once they do.';
+  'The other side has not added the first name and area they share yet. This introduction opens up once they do.';
 
 export function profileIsFilled(p: SharedProfile): boolean {
   return p.firstName.trim().length > 0 && p.locality.trim().length >= LOCALITY_MIN;

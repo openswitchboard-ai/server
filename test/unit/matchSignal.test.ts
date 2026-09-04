@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildSignal, nextAction, type MatchRow } from '../../src/domain/matches.js';
-import { validatePayload } from '../../src/protocol.js';
+import { validateOutbound } from '../../src/protocol.js';
 
 const WANT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const HAVE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -42,17 +42,18 @@ describe('buildSignal: the thin stage-1 payload', () => {
     expect(Object.keys(sig).sort()).toEqual([
       'category',
       'counterparty_type',
+      'intro_id',
       'kind',
-      'match_id',
       'schema_version',
     ]);
     // buildSignal asserts outbound internally; prove the shape is conformant.
-    expect(validatePayload('match.signal', sig).valid).toBe(true);
+    expect(validateOutbound('intro.signal', sig).valid).toBe(true);
   });
 
-  it('names the counterparty side but nothing more', async () => {
-    expect((await buildSignal(row(), WANT)).counterparty_type).toBe('HAVE');
-    expect((await buildSignal(row(), HAVE)).counterparty_type).toBe('WANT');
+  it('names the counterparty side in the words the wire uses', async () => {
+    // The database keeps WANT/HAVE; what crosses to an agent does not.
+    expect((await buildSignal(row(), WANT)).counterparty_type).toBe('offering');
+    expect((await buildSignal(row(), HAVE)).counterparty_type).toBe('looking_for');
   });
 });
 

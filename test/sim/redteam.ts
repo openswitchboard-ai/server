@@ -5,7 +5,7 @@
  * MCP surface a real agent has — no privileged access.
  *
  * Probes (each asserts the refusal):
- *   R1  request stage-3 data before both opt-ins            -> STAGE_LOCKED
+ *   R1  request stage-3 data before both opt-ins            -> NOT_UNLOCKED_YET
  *   R2  accept an offer / disclosure via any MCP tool       -> no such capability
  *   R3  offer-ladder to probe a hidden price                -> RATE_LIMITED_OFFERS
  *   R4  hammer the read tools past 60/hr                     -> RATE_LIMITED + retry_after
@@ -64,13 +64,13 @@ export async function runRedTeam(
     h.waitCardDB(hId, ['PUBLISHED']),
   ]);
   const matchId = await h.createMatch(attacker, wId, victim, hId);
-  await h.mcp(attacker.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-  await h.mcp(victim.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+  await h.mcp(attacker.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+  await h.mcp(victim.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
   // R1: stage-3 before both opt-ins.
   try {
-    const r = await h.mcp(attacker.accessToken, 'check_matches', { match_id: matchId, stage: 3 });
-    record('R1', 'read stage-3 disclosure before both opt-ins', r.isError && r.result.code === 'STAGE_LOCKED',
+    const r = await h.mcp(attacker.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
+    record('R1', 'read stage-3 disclosure before both opt-ins', r.isError && r.result.code === 'NOT_UNLOCKED_YET',
       `code=${r.result?.code}`);
   } catch (e) { record('R1', 'read stage-3 disclosure before both opt-ins', false, String(e)); }
 
@@ -79,7 +79,7 @@ export async function runRedTeam(
   const acceptDetails: string[] = [];
   for (const action of ['accept', 'accept_offer', 'approve', 'accepted-by-human', 'confirm_deal', 'finalize']) {
     try {
-      const r = await h.mcp(attacker.accessToken, 'respond', { match_id: matchId, action });
+      const r = await h.mcp(attacker.accessToken, 'respond', { intro_id: matchId, action });
       if (!r.isError) { acceptRefused = false; acceptDetails.push(`${action} SUCCEEDED`); }
     } catch { /* thrown error is still a refusal */ }
   }
@@ -87,14 +87,14 @@ export async function runRedTeam(
 
   // R5: the counterparty price band is nowhere, on every read.
   let bandLeak = '';
-  for (const args of [{}, { match_id: matchId, stage: 2 }, { match_id: matchId, stage: 1 }]) {
+  for (const args of [{}, { intro_id: matchId, step: 'details' }, { intro_id: matchId, step: 'signal' }]) {
     try {
-      const r = await h.mcp(attacker.accessToken, 'check_matches', args);
-      check.sweep(r.raw, `R5 check_matches ${JSON.stringify(args)}`);
+      const r = await h.mcp(attacker.accessToken, 'check_in', args);
+      check.sweep(r.raw, `R5 check_in ${JSON.stringify(args)}`);
       if (/"(price|band|price_band|budget|reserve)"/.test(r.raw)) bandLeak = JSON.stringify(args);
     } catch { /* stage-locked reads are fine */ }
   }
-  const listOffers = await h.mcp(attacker.accessToken, 'respond', { match_id: matchId, action: 'list_offers' });
+  const listOffers = await h.mcp(attacker.accessToken, 'respond', { intro_id: matchId, action: 'list_offers' });
   check.sweep(listOffers.raw, 'R5 list_offers');
   if (/"(price|band|price_band|budget|reserve)"/.test(listOffers.raw)) bandLeak = 'list_offers';
   record('R5', "read the counterparty's price band through every read tool", bandLeak === '', bandLeak && `band visible via ${bandLeak}`);
@@ -106,7 +106,7 @@ export async function runRedTeam(
     const outcomes: string[] = [];
     for (const amount of [100, 110, 120, 130]) {
       const r = await h.mcp(attacker.accessToken, 'respond', {
-        match_id: matchId, action: 'propose_offer', offer: { amount, ccy: 'AUD', expiry },
+        intro_id: matchId, action: 'propose_offer', offer: { amount, ccy: 'AUD', expiry },
       });
       outcomes.push(r.isError ? (r.result.code ?? 'ERR') : 'ok');
     }
@@ -129,10 +129,10 @@ export async function runRedTeam(
   const strangerDetail: string[] = [];
   if (stranger !== attacker) {
     for (const action of ['archive', 'decline', 'express_interest']) {
-      const r = await h.mcp(stranger.accessToken, 'respond', { match_id: matchId, action });
+      const r = await h.mcp(stranger.accessToken, 'respond', { intro_id: matchId, action });
       if (!r.isError) { strangerRefused = false; strangerDetail.push(`${action} SUCCEEDED`); }
     }
-    const send = await h.mcp(stranger.accessToken, 'send_message', { match_id: matchId, text: 'hi' });
+    const send = await h.mcp(stranger.accessToken, 'send_message', { intro_id: matchId, text: 'hi' });
     if (!send.isError) { strangerRefused = false; strangerDetail.push('channel_send SUCCEEDED'); }
     const wd = await h.mcp(stranger.accessToken, 'withdraw_intent', { intent_id: wId });
     if (!wd.isError) { strangerRefused = false; strangerDetail.push('withdraw of foreign card SUCCEEDED'); }
@@ -148,7 +148,7 @@ export async function runRedTeam(
     try {
       let sawLimit = false; let retryAfter = 0; let calls = 0;
       for (let i = 0; i < 65 && !sawLimit; i++) {
-        const r = await h.mcp(greedy.accessToken, i % 2 ? 'list_intents' : 'check_matches', {});
+        const r = await h.mcp(greedy.accessToken, i % 2 ? 'list_intents' : 'check_in', {});
         calls++;
         if (r.isError && r.result.code === 'RATE_LIMITED') { sawLimit = true; retryAfter = r.result.retry_after; }
       }

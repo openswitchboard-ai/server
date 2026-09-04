@@ -31,18 +31,18 @@ export class Checker {
     this.add(scanForbidden(raw, where));
   }
 
-  /** A check_matches sweep: universal scan, plus per-entry ladder (I4) and
+  /** A check_in sweep: universal scan, plus per-entry ladder (I4) and
    *  identity-leak (I2). Identity is permitted only once a match is at
    *  ready_to_talk (both opted in) or is an archived record. */
   matchesView(res: McpResult, where: string): void {
     this.sweep(res.raw, where);
-    const entries: any[] = res.result?.matches ?? [];
+    const entries: any[] = res.result?.introductions ?? [];
     for (const e of entries) {
-      const v = this.ladder.observe(e.match_id, e.next, `${where} entry ${e.match_id}`);
+      const v = this.ladder.observe(e.intro_id, e.next, `${where} entry ${e.intro_id}`);
       if (v) this.add([v]);
       const identityAllowed = e.next === 'ready_to_talk' || e.state === 'archived';
       if (!identityAllowed) {
-        this.add(scanIdentityLeak(JSON.stringify(e), this.identityStrings, `${where} entry ${e.match_id}`));
+        this.add(scanIdentityLeak(JSON.stringify(e), this.identityStrings, `${where} entry ${e.intro_id}`));
       }
     }
   }

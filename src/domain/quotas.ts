@@ -38,7 +38,7 @@ export async function checkOfferRate(accountId: string, q: Quotas): Promise<void
 }
 
 /**
- * One ceiling shared by the read tools — check_matches, channel_receive and
+ * One ceiling shared by the read tools — check_in, channel_receive and
  * list_intents — of 60 calls per account per rolling hour, all three together.
  * Held in the database because prod runs several tasks: a per-process window
  * would be a per-process ceiling and the account would get one per replica.

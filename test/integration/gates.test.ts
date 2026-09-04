@@ -4,7 +4,7 @@
  *   AWS_PROFILE=openswitchboard npm run test:integration
  *
  * Proves, against the real service, DB, KMS, SQS and Bedrock:
- *  (a) stage-3 fetch without both opt-ins -> STAGE_LOCKED
+ *  (a) stage-3 fetch without both opt-ins -> NOT_UNLOCKED_YET
  *  (b) counterparty payloads never contain the price band (raw JSON assert)
  *  (c) seeded injection fixture -> SCREENING_REJECTED, and the human is told:
  *      dashboard item + edit-page reason + transactional email row, with the
@@ -90,8 +90,8 @@ d('integration gates against live deployment', () => {
     // Match creation is 0.F's job; in 0.C it is driven via the internal ops queue.
     await sendOp({ op: 'create-match', card_want: wantId, card_have: haveId, score: 0.87 });
     matchId = await poll(async () => {
-      const r = await mcpCall(alice.accessToken, 'check_matches', { intent_id: wantId });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(alice.accessToken, 'check_in', { intent_id: wantId });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
   }, 300_000);
 
@@ -109,7 +109,7 @@ d('integration gates against live deployment', () => {
       'amend_intent',
       'collect_messages',
       'send_message',
-      'check_matches',
+      'check_in',
       'list_intents',
       'open_conversation',
       'publish_intent',
@@ -142,7 +142,7 @@ d('integration gates against live deployment', () => {
     expect(Number(stamped[0][0])).toBeGreaterThanOrEqual(1);
 
     // Versions match, so the sweep says nothing and the field is absent.
-    const sweep = await mcpCall(alice.accessToken, 'check_matches', {});
+    const sweep = await mcpCall(alice.accessToken, 'check_in', {});
     expect(sweep.isError).toBe(false);
     expect(sweep.result.manual_update).toBeUndefined();
     expect(sweep.raw).not.toContain('manual_update');
@@ -161,42 +161,42 @@ d('integration gates against live deployment', () => {
     expect(res.headers.get('www-authenticate')).toContain('oauth-protected-resource');
   });
 
-  it('GATE (a): stage-3 fetch without both opt-ins returns STAGE_LOCKED', async () => {
+  it('GATE (a): stage-3 fetch without both opt-ins returns NOT_UNLOCKED_YET', async () => {
     // Unlock stage 2 first (both sides interested).
-    await mcpCall(alice.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(bob.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
     // No opt-ins recorded yet.
-    const locked0 = await mcpCall(alice.accessToken, 'check_matches', {
-      match_id: matchId,
-      stage: 3,
+    const locked0 = await mcpCall(alice.accessToken, 'check_in', {
+      intro_id: matchId,
+      step: 'names',
     });
     expect(locked0.isError).toBe(true);
-    expect(locked0.result.code).toBe('STAGE_LOCKED');
+    expect(locked0.result.code).toBe('NOT_UNLOCKED_YET');
 
     // ONE opt-in (alice) is still not enough.
-    const o1 = await mcpCall(alice.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
+    const o1 = await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     expect(o1.result.both_recorded).toBe(false);
-    const locked1 = await mcpCall(alice.accessToken, 'check_matches', {
-      match_id: matchId,
-      stage: 3,
+    const locked1 = await mcpCall(alice.accessToken, 'check_in', {
+      intro_id: matchId,
+      step: 'names',
     });
     expect(locked1.isError).toBe(true);
-    expect(locked1.result.code).toBe('STAGE_LOCKED');
+    expect(locked1.result.code).toBe('NOT_UNLOCKED_YET');
     // open_channel is equally locked.
-    const ch = await mcpCall(alice.accessToken, 'open_conversation', { match_id: matchId });
+    const ch = await mcpCall(alice.accessToken, 'open_conversation', { intro_id: matchId });
     expect(ch.isError).toBe(true);
-    expect(ch.result.code).toBe('STAGE_LOCKED');
+    expect(ch.result.code).toBe('NOT_UNLOCKED_YET');
 
     // Second opt-in (bob) opens stage 3 — with the schema-required attestation.
-    const o2 = await mcpCall(bob.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
+    const o2 = await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     expect(o2.result.both_recorded).toBe(true);
-    const mutual = await mcpCall(alice.accessToken, 'check_matches', {
-      match_id: matchId,
-      stage: 3,
+    const mutual = await mcpCall(alice.accessToken, 'check_in', {
+      intro_id: matchId,
+      step: 'names',
     });
     expect(mutual.isError).toBe(false);
-    expect(mutual.result.kind).toBe('match.mutual');
+    expect(mutual.result.kind).toBe('intro.mutual');
     expect(mutual.result.optin.both_recorded).toBe(true);
     expect(mutual.result.counterparty.first_name).toBe('Bob');
     expect(mutual.result.counterparty.locality).toBe('Subiaco');
@@ -209,10 +209,10 @@ d('integration gates against live deployment', () => {
       [alice.accessToken, 'alice'],
       [bob.accessToken, 'bob'],
     ] as const) {
-      const stage2 = await mcpCall(token, 'check_matches', { match_id: matchId, stage: 2 });
+      const stage2 = await mcpCall(token, 'check_in', { intro_id: matchId, step: 'details' });
       expect(stage2.isError).toBe(false);
-      expect(stage2.result.kind).toBe('match.attributes');
-      const all = await mcpCall(token, 'check_matches', {});
+      expect(stage2.result.kind).toBe('intro.attributes');
+      const all = await mcpCall(token, 'check_in', {});
       const forbiddenKeys = new Set(['price', 'band', 'price_band', 'budget', 'reserve']);
       const deepScan = (o: any, path = ''): string[] =>
         o && typeof o === 'object'
@@ -228,9 +228,9 @@ d('integration gates against live deployment', () => {
       }
     }
     // The deliberate ask IS disclosable — to the counterparty, from stage 2.
-    const aliceView = await mcpCall(alice.accessToken, 'check_matches', {
-      match_id: matchId,
-      stage: 2,
+    const aliceView = await mcpCall(alice.accessToken, 'check_in', {
+      intro_id: matchId,
+      step: 'details',
     });
     expect(aliceView.result.ask).toEqual({ amount: 620, ccy: 'AUD' });
   });
@@ -264,7 +264,7 @@ d('integration gates against live deployment', () => {
     expect(Object.keys(item.screening).sort()).toEqual(['at', 'reason', 'reason_code']);
 
     // 2. Alice, the counterparty, sees no trace of any of it on her matches.
-    const hers = await mcpCall(alice.accessToken, 'check_matches', {});
+    const hers = await mcpCall(alice.accessToken, 'check_in', {});
     const raw = JSON.stringify(hers.result);
     expect(raw).not.toContain('prompt-injection');
     expect(raw).not.toContain('reason_code');
@@ -339,15 +339,15 @@ d('integration gates against live deployment', () => {
       score: 0.86,
     });
     const mid = await poll(async () => {
-      const r = await mcpCall(dana.accessToken, 'check_matches', { intent_id: dw.result.intent_id });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(dana.accessToken, 'check_in', { intent_id: dw.result.intent_id });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'dana/eli match to appear');
-    await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
-    await mcpCall(eli.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
+    await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
+    await mcpCall(eli.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
 
     // Pass on is the default on a card nobody has touched.
     const refused = await mcpCall(dana.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'propose_offer',
       offer: { amount: 500, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
@@ -357,7 +357,7 @@ d('integration gates against live deployment', () => {
     expect(refused.result.human_action).toContain(`/matches/${mid}`);
 
     // Nothing was written: the refusal lands before any offer row exists.
-    const empty = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    const empty = await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
     expect(empty.result.offers).toHaveLength(0);
 
     // Dana types her own number on her own page, and it lands on Eli's side.
@@ -384,7 +384,7 @@ d('integration gates against live deployment', () => {
       note: 'Cash, and I can collect this weekend.',
     });
     expect(sent.status).toBe(200);
-    const eliSees = await mcpCall(eli.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    const eliSees = await mcpCall(eli.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
     const hers = eliSees.result.offers.find((o: any) => Number(o.amount) === 505);
     expect(hers).toBeTruthy();
     expect(hers.state).toBe('proposed');
@@ -407,7 +407,7 @@ d('integration gates against live deployment', () => {
     await setAutoNegotiate(eli.jar, eh.result.intent_id, { open: 800, limit: 733.5, step: 17.25 });
 
     const inRange = await mcpCall(eli.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'propose_offer',
       offer: { amount: 800, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
@@ -415,7 +415,7 @@ d('integration gates against live deployment', () => {
     expect(inRange.result.state).toBe('proposed');
 
     const outOfRange = await mcpCall(eli.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'propose_offer',
       offer: { amount: 400, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
@@ -424,7 +424,7 @@ d('integration gates against live deployment', () => {
     expect(outOfRange.result.human_action).toContain('733.5');
 
     // The boundary named to his own agent is named to nobody else.
-    const danaAgain = await mcpCall(dana.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    const danaAgain = await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
     expect(danaAgain.raw).not.toContain('733.5');
     expect(danaAgain.raw).not.toContain('17.25');
     expect(danaAgain.raw).not.toContain('"step"');
@@ -436,7 +436,7 @@ d('integration gates against live deployment', () => {
     // figure at all. A ceiling and nothing else: the amounts below are hers.
     await setAutoNegotiate(alice.jar, wantId, { limit: 700 });
     const offer = await mcpCall(alice.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'propose_offer',
       offer: {
         amount: 550,
@@ -452,7 +452,7 @@ d('integration gates against live deployment', () => {
     // Any invented accept-ish action is rejected by the tool schema/dispatch.
     for (const action of ['accept', 'accept_offer', 'accepted-by-human']) {
       const r = await mcpCall(bob.accessToken, 'respond', {
-        match_id: matchId,
+        intro_id: matchId,
         action,
         offer_id: offerId,
       });
@@ -461,7 +461,7 @@ d('integration gates against live deployment', () => {
 
     // The one accept-direction action an agent has: park for the human.
     const parked = await mcpCall(bob.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'send_to_human',
       offer_id: offerId,
     });
@@ -469,7 +469,7 @@ d('integration gates against live deployment', () => {
 
     // State is still awaiting-human — nothing an agent did could accept it.
     const list1 = await mcpCall(bob.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'list_offers',
     });
     expect(list1.result.offers.find((o: any) => o.offer_id === offerId).state).toBe(
@@ -489,7 +489,7 @@ d('integration gates against live deployment', () => {
     });
     const accepted = await poll(async () => {
       const l = await mcpCall(bob.accessToken, 'respond', {
-        match_id: matchId,
+        intro_id: matchId,
         action: 'list_offers',
       });
       const o = l.result.offers.find((x: any) => x.offer_id === offerId);
@@ -499,12 +499,12 @@ d('integration gates against live deployment', () => {
 
     // A decline never carries a reason — assert on raw JSON.
     const offer2 = await mcpCall(alice.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'propose_offer',
       offer: { amount: 500, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
     const declined = await mcpCall(bob.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'decline_offer',
       offer_id: offer2.result.offer_id,
     });
@@ -567,10 +567,10 @@ d('integration gates against live deployment', () => {
     // Its own actor: spending a whole hourly budget would starve the others.
     const greedy = await bootstrapActor('Greedy', 'Hobart');
     for (let i = 0; i < 60; i++) {
-      const r = await mcpCall(greedy.accessToken, i % 2 ? 'list_intents' : 'check_matches', {});
+      const r = await mcpCall(greedy.accessToken, i % 2 ? 'list_intents' : 'check_in', {});
       expect(r.isError, `call ${i + 1}`).toBe(false);
     }
-    const over = await mcpCall(greedy.accessToken, 'check_matches', {});
+    const over = await mcpCall(greedy.accessToken, 'check_in', {});
     expect(over.isError).toBe(true);
     expect(over.result.code).toBe('RATE_LIMITED');
     expect(over.result.retry_after).toBeGreaterThan(0);

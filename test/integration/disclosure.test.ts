@@ -75,12 +75,12 @@ d('stage-3 disclosure for accounts that came through registration', () => {
       score: 0.86,
     });
     matchId = await poll(async () => {
-      const r = await mcpCall(ana.accessToken, 'check_matches', { intent_id: w.result.intent_id });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(ana.accessToken, 'check_in', { intent_id: w.result.intent_id });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
 
-    await mcpCall(ana.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
   }, 300_000);
 
   it('a registered account starts with nothing on file', async () => {
@@ -89,7 +89,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
   });
 
   it('respond(opt_in) is refused with CONSENT_REQUIRED, the sentence and the link', async () => {
-    const r = await mcpCall(ana.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
+    const r = await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     expect(r.isError).toBe(true);
     expect(r.result.code).toBe('CONSENT_REQUIRED');
     expect(r.result.human_action).toContain(
@@ -105,7 +105,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
 
   it('an agent cannot supply the name itself — there is no tool argument for it', async () => {
     const r = await mcpCall(ana.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'opt_in',
       first_name: 'NotAna',
     } as any);
@@ -160,14 +160,14 @@ d('stage-3 disclosure for accounts that came through registration', () => {
   });
 
   it('stage 3 stays locked while only one side has opted in', async () => {
-    const locked = await mcpCall(ana.accessToken, 'check_matches', { match_id: matchId, stage: 3 });
+    const locked = await mcpCall(ana.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
     expect(locked.isError).toBe(true);
-    expect(locked.result.code).toBe('STAGE_LOCKED');
+    expect(locked.result.code).toBe('NOT_UNLOCKED_YET');
   });
 
   it('the second human fills their page, and their agent may then opt in', async () => {
     const refused = await mcpCall(beppe.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'opt_in',
     });
     expect(refused.isError).toBe(true);
@@ -175,7 +175,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
 
     expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(200);
 
-    const ok = await mcpCall(beppe.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
+    const ok = await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     expect(ok.isError).toBe(false);
     expect(ok.result.both_recorded).toBe(true);
     // respond drives the flow with the word, not a stage integer: both opted
@@ -186,23 +186,23 @@ d('stage-3 disclosure for accounts that came through registration', () => {
   });
 
   it('the stage-3 fetch now returns a conformant match.mutual to each side', async () => {
-    const toAna = await mcpCall(ana.accessToken, 'check_matches', { match_id: matchId, stage: 3 });
+    const toAna = await mcpCall(ana.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
     expect(toAna.isError).toBe(false);
-    expect(toAna.result.kind).toBe('match.mutual');
+    expect(toAna.result.kind).toBe('intro.mutual');
     expect(toAna.result.counterparty).toEqual({ first_name: 'Beppe', locality: 'Trastevere' });
     expect(toAna.result.optin.both_recorded).toBe(true);
 
-    const toBeppe = await mcpCall(beppe.accessToken, 'check_matches', {
-      match_id: matchId,
-      stage: 3,
+    const toBeppe = await mcpCall(beppe.accessToken, 'check_in', {
+      intro_id: matchId,
+      step: 'names',
     });
     expect(toBeppe.isError).toBe(false);
     expect(toBeppe.result.counterparty).toEqual({ first_name: 'Ana', locality: 'Fremantle' });
   });
 
   it('the sweep carries the mutual payload too, and flags nothing as blocked', async () => {
-    const all = await mcpCall(ana.accessToken, 'check_matches', {});
-    const entry = all.result.matches.find((m: any) => m.match_id === matchId);
+    const all = await mcpCall(ana.accessToken, 'check_in', {});
+    const entry = all.result.introductions.find((m: any) => m.intro_id === matchId);
     expect(entry.mutual.counterparty.first_name).toBe('Beppe');
     expect(entry.mutual_blocked).toBeUndefined();
     // The entry speaks in the action word, never a stage integer.

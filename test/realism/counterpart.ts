@@ -112,7 +112,8 @@ export class Counterpart {
     attributes?: Record<string, unknown>,
     opts: { reach?: string } = {},
   ): Promise<string> {
-    const type = nag.type === 'WANT' ? 'HAVE' : 'WANT';
+    // The row still says WANT/HAVE; what goes back over the wire does not.
+    const type = nag.type === 'WANT' ? 'offering' : 'looking_for';
     // Mirror HER attributes by default: identical projection keys/values keep the
     // semantic cosine high (a divergent attribute set once scored a compatible
     // guitar pair at 0.68 — a near-miss below the 0.75 match threshold).
@@ -147,7 +148,7 @@ export class Counterpart {
   }
 
   async expressInterest(matchId: string): Promise<McpResult> {
-    return this.mcp('respond', { match_id: matchId, action: 'express_interest' });
+    return this.mcp('respond', { intro_id: matchId, action: 'express_interest' });
   }
 
   /**
@@ -164,15 +165,15 @@ export class Counterpart {
   }
 
   async openChannel(matchId: string): Promise<McpResult> {
-    return this.mcp('open_conversation', { match_id: matchId });
+    return this.mcp('open_conversation', { intro_id: matchId });
   }
 
   async channelSend(matchId: string, text: string): Promise<McpResult> {
-    return this.mcp('send_message', { match_id: matchId, text });
+    return this.mcp('send_message', { intro_id: matchId, text });
   }
 
   async channelReceive(matchId: string): Promise<McpResult> {
-    return this.mcp('collect_messages', { match_id: matchId });
+    return this.mcp('collect_messages', { intro_id: matchId });
   }
 
   /** Switch the counterpart card to auto-negotiate, then propose an offer. */
@@ -184,14 +185,14 @@ export class Counterpart {
   ): Promise<McpResult> {
     await setAutoNegotiate(this.actor.jar, cpCardId, { open: amount, limit: amount, step: 10, ccy });
     return this.mcp('respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'propose_offer',
       offer: { amount, ccy, expiry: new Date(Date.now() + 3 * 86_400_000).toISOString() },
     });
   }
 
   async decline(matchId: string): Promise<McpResult> {
-    return this.mcp('respond', { match_id: matchId, action: 'decline' });
+    return this.mcp('respond', { intro_id: matchId, action: 'decline' });
   }
 
   /** Withdraw counterpart cards, archive tracked matches. Best-effort. */

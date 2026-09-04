@@ -16,7 +16,7 @@
  *    zero, a second collection comes back empty, and nobody can read it twice;
  *  - what comes back is a conformant channel.message labelled as the other
  *    side's words;
- *  - check_matches says how many messages are waiting without handing any of
+ *  - check_in says how many messages are waiting without handing any of
  *    them over;
  *  - the size cap holds.
  */
@@ -82,12 +82,12 @@ d('a conversation carried across an open channel', () => {
       score: 0.88,
     });
     matchId = await poll(async () => {
-      const r = await mcpCall(ana.accessToken, 'check_matches', { intent_id: w.result.intent_id });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(ana.accessToken, 'check_in', { intent_id: w.result.intent_id });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
 
-    await mcpCall(ana.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
     // Each human puts their first name and area on their own page, then their
     // agent may record the opt-in.
@@ -95,7 +95,7 @@ d('a conversation carried across an open channel', () => {
     expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(200);
     await approveDisclosure(ana.jar, matchId, ana.pin);
     const optin = await mcpCall(beppe.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'opt_in',
     });
     expect(optin.isError).toBe(false);
@@ -103,12 +103,12 @@ d('a conversation carried across an open channel', () => {
   }, 300_000);
 
   it('opens the channel for each side, on the same channel id', async () => {
-    const forAna = await mcpCall(ana.accessToken, 'open_conversation', { match_id: matchId });
+    const forAna = await mcpCall(ana.accessToken, 'open_conversation', { intro_id: matchId });
     expect(forAna.isError).toBe(false);
     expect(forAna.result.kind).toBe('conversation.open');
     channelId = forAna.result.conversation.conversation_id;
 
-    const forBeppe = await mcpCall(beppe.accessToken, 'open_conversation', { match_id: matchId });
+    const forBeppe = await mcpCall(beppe.accessToken, 'open_conversation', { intro_id: matchId });
     expect(forBeppe.result.conversation.conversation_id).toBe(channelId);
   });
 
@@ -129,7 +129,7 @@ d('a conversation carried across an open channel', () => {
     // First message to beppe on an empty inbox: exactly one nudge is enqueued
     // and the ops worker sends it (a simulator address, so SES accepts it).
     const first = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'Are you about this week?',
     });
     expect(first.isError).toBe(false);
@@ -146,7 +146,7 @@ d('a conversation carried across an open channel', () => {
     // A rapid second message, still unread by beppe: the throttle suppresses a
     // second nudge at send time, so no further ops job and no second email.
     const second = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'No rush at all.',
     });
     expect(second.isError).toBe(false);
@@ -155,7 +155,7 @@ d('a conversation carried across an open channel', () => {
 
     // Leave the channel as we found it, so the later collection tests start
     // from an empty channel.
-    await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
+    await mcpCall(beppe.accessToken, 'collect_messages', { intro_id: matchId });
     expect(await rowsOnChannel()).toBe(0);
   });
 
@@ -169,19 +169,19 @@ d('a conversation carried across an open channel', () => {
 
   it('turns away an account that is not one of the two', async () => {
     const send = await mcpCall(onlooker.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'hello?',
     });
     expect(send.isError).toBe(true);
     expect(JSON.stringify(send.result)).toContain('not found');
-    const receive = await mcpCall(onlooker.accessToken, 'collect_messages', { match_id: matchId });
+    const receive = await mcpCall(onlooker.accessToken, 'collect_messages', { intro_id: matchId });
     expect(receive.isError).toBe(true);
     expect(await rowsOnChannel()).toBe(0);
   });
 
   it('carries a message from each side', async () => {
     const fromAna = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'Is Saturday morning any good? I can come to you.',
     });
     expect(fromAna.isError).toBe(false);
@@ -189,7 +189,7 @@ d('a conversation carried across an open channel', () => {
     expect(fromAna.result.message_id).toMatch(/^[0-9a-f-]{36}$/);
 
     const fromBeppe = await mcpCall(beppe.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'Saturday works. I am near the markets, anywhere around there is fine.',
     });
     expect(fromBeppe.isError).toBe(false);
@@ -209,8 +209,8 @@ d('a conversation carried across an open channel', () => {
   });
 
   it('says how many messages are waiting without handing any over', async () => {
-    const r = await mcpCall(ana.accessToken, 'check_matches', {});
-    const entry = r.result.matches.find((m: any) => m.match_id === matchId);
+    const r = await mcpCall(ana.accessToken, 'check_in', {});
+    const entry = r.result.introductions.find((m: any) => m.intro_id === matchId);
     // The channel is open, so the action word is ready_to_talk — no stage int.
     expect(entry.stage_unlocked).toBeUndefined();
     expect(entry.next).toBe('ready_to_talk');
@@ -221,7 +221,7 @@ d('a conversation carried across an open channel', () => {
   });
 
   it('hands each side the other side words, labelled as such', async () => {
-    const toAna = await mcpCall(ana.accessToken, 'collect_messages', { match_id: matchId });
+    const toAna = await mcpCall(ana.accessToken, 'collect_messages', { intro_id: matchId });
     expect(toAna.isError).toBe(false);
     expect(toAna.result.messages).toHaveLength(1);
     const msg = toAna.result.messages[0];
@@ -232,7 +232,7 @@ d('a conversation carried across an open channel', () => {
     expect(validatePayload('conversation.message', msg).reasons.join('; ')).toBe('');
     expect(toAna.result.more_waiting).toBe(false);
 
-    const toBeppe = await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
+    const toBeppe = await mcpCall(beppe.accessToken, 'collect_messages', { intro_id: matchId });
     expect(toBeppe.result.messages[0].body.text).toContain('Saturday morning');
   });
 
@@ -241,31 +241,31 @@ d('a conversation carried across an open channel', () => {
   });
 
   it('cannot hand the same message over twice', async () => {
-    const again = await mcpCall(ana.accessToken, 'collect_messages', { match_id: matchId });
+    const again = await mcpCall(ana.accessToken, 'collect_messages', { intro_id: matchId });
     expect(again.isError).toBe(false);
     expect(again.result.messages).toEqual([]);
     expect(again.result.more_waiting).toBe(false);
 
-    const summary = await mcpCall(ana.accessToken, 'check_matches', {});
-    const entry = summary.result.matches.find((m: any) => m.match_id === matchId);
+    const summary = await mcpCall(ana.accessToken, 'check_in', {});
+    const entry = summary.result.introductions.find((m: any) => m.intro_id === matchId);
     expect(entry.conversation.messages_waiting).toBe(0);
     expect(entry.conversation.note).toBeUndefined();
   });
 
   it('carries a message at the ceiling and refuses one past it', async () => {
     const atCap = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'x'.repeat(4000),
     });
     expect(atCap.isError).toBe(false);
     const past = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'x'.repeat(4001),
     });
     expect(past.isError).toBe(true);
     // Exactly one row landed: the one at the ceiling.
     expect(await rowsOnChannel()).toBe(1);
-    await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
+    await mcpCall(beppe.accessToken, 'collect_messages', { intro_id: matchId });
     expect(await rowsOnChannel()).toBe(0);
   });
 

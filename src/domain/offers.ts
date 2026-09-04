@@ -40,7 +40,7 @@ export function serializeOffer(o: OfferRow) {
     schema_version: SCHEMA_VERSION,
     kind: 'offer' as const,
     offer_id: o.id,
-    match_id: o.match_id,
+    intro_id: o.match_id,
     amount: Number(o.amount),
     ccy: o.ccy,
     expiry: new Date(o.expiry).toISOString(),
@@ -83,12 +83,12 @@ export async function proposeOffer(
 ) {
   const author = opts.author ?? 'agent';
   const m = await getMatch(input.match_id);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
-  if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
+  if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
-    throw new OsbError('STAGE_LOCKED', {
-      human_action: 'Offers open at stage 2, after both sides express interest.',
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'Offers open once both sides have said they are interested.',
     });
   }
   if (author === 'agent') {
@@ -203,7 +203,7 @@ export async function agentOfferAction(
 ) {
   const o = await loadOffer(offerId);
   const m = await getMatch(o.match_id);
-  if (!m) throw new Error('match missing');
+  if (!m) throw new Error('introduction missing');
   const side = sideOf(m, accountId); // throws notFound if not a party
   void side;
   const isProposer = o.proposer_account === accountId;
@@ -211,7 +211,7 @@ export async function agentOfferAction(
   if (action === 'withdraw_offer') {
     if (!isProposer) throw Object.assign(new Error('only the proposer can withdraw'), { notFound: true });
     if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
-      throw new OsbError('STAGE_LOCKED');
+      throw new OsbError('NOT_UNLOCKED_YET');
     }
     const r = await getPool().query(
       `UPDATE offers SET state='withdrawn', updated_at=now() WHERE id=$1 RETURNING *`,
@@ -228,7 +228,7 @@ export async function agentOfferAction(
 
   if (action === 'decline_offer') {
     // Declines carry NO reason. The API accepts none and the schema forbids one.
-    if (o.state !== 'proposed' && o.state !== 'awaiting-human') throw new OsbError('STAGE_LOCKED');
+    if (o.state !== 'proposed' && o.state !== 'awaiting-human') throw new OsbError('NOT_UNLOCKED_YET');
     const r = await getPool().query(
       `UPDATE offers SET state='declined', updated_at=now() WHERE id=$1 RETURNING *`,
       [offerId],
@@ -237,8 +237,8 @@ export async function agentOfferAction(
   }
 
   // send_to_human: the sole agent-reachable "accept-direction" state.
-  if (o.state !== 'proposed') throw new OsbError('STAGE_LOCKED');
-  if (new Date(o.expiry) < new Date()) throw new OsbError('STAGE_LOCKED');
+  if (o.state !== 'proposed') throw new OsbError('NOT_UNLOCKED_YET');
+  if (new Date(o.expiry) < new Date()) throw new OsbError('NOT_UNLOCKED_YET');
   const r = await getPool().query(
     `UPDATE offers SET state='awaiting-human', updated_at=now() WHERE id=$1 RETURNING *`,
     [offerId],
@@ -256,7 +256,7 @@ async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
   const { sendApprovalEmail } = await import('../counter/email.js');
   const { accountEmail } = await import('./counterOps.js');
   const m = await getMatch(o.match_id);
-  if (!m) throw new Error('match missing');
+  if (!m) throw new Error('introduction missing');
   const humanAccount = o.proposer_account === m.account_want ? m.account_have : m.account_want;
   const { token, id: linkId } = await createApprovalLink({
     accountId: humanAccount,
@@ -303,7 +303,7 @@ export async function acceptOfferByHuman(
     throw new Error(`offer ${offerId} is '${o.state}', not awaiting-human`);
   }
   const m = await getMatch(o.match_id);
-  if (!m) throw new Error('match missing');
+  if (!m) throw new Error('introduction missing');
   const side = sideOf(m, humanAccountId);
   void side;
   if (o.proposer_account === humanAccountId) {
@@ -314,7 +314,7 @@ export async function acceptOfferByHuman(
   // lapse) first, then proceed with the chosen counterpart.
   const w = await openCollectionWindow(ownCardId(m, humanAccountId));
   if (w) {
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
         'Your collection window on this listing is still open. Close it early from your approval page (or let it lapse), then accept.',
       retry_after: Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000)),
@@ -341,7 +341,7 @@ export async function acceptOfferByHuman(
 
 export async function listOffers(accountId: string, matchId: string) {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
   const r = await getPool().query(
     `SELECT * FROM offers WHERE match_id = $1 ORDER BY created_at ASC`,

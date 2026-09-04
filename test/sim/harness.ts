@@ -144,7 +144,7 @@ export class Harness {
     score = 0.87,
   ): Promise<string> {
     await sendOp({ op: 'create-match', card_want: wantId, card_have: haveId, score });
-    // Observe the match through the DB, not check_matches: match observation
+    // Observe the match through the DB, not check_in: match observation
     // must not depend on the want actor's shared 60/h read ceiling (a scenario
     // or red-team probe may already have spent it), and the row is the source
     // of truth either way.
@@ -158,7 +158,7 @@ export class Harness {
    * NOT list_intents. Readiness polling over MCP would burn each account's
    * shared 60/h read ceiling — a whole run of it could starve the reads the
    * assertions actually need. The agent-visible state is still asserted
-   * separately, via check_matches, where it is the point.
+   * separately, via check_in, where it is the point.
    */
   async waitCardDB(intentId: string, states: string[], timeoutMs = 120_000): Promise<string> {
     return poll(
@@ -320,7 +320,7 @@ export class Harness {
     let matchesArchived = 0;
     for (const m of this.matches) {
       try {
-        const r = await this.mcp(m.token, 'respond', { match_id: m.id, action: 'archive' });
+        const r = await this.mcp(m.token, 'respond', { intro_id: m.id, action: 'archive' });
         if (!r.isError) matchesArchived++;
       } catch {
         /* best effort — a declined/foreign match cannot be archived, that is fine */

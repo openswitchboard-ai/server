@@ -6,7 +6,7 @@
  * human is handed to the NEXT agent, on a connection that shares nothing with
  * the first but the account behind it. So the harness sets an arrangement over
  * one access token, mints a second token through a fresh OAuth flow, and reads
- * the arrangement back off that connection's first check_matches sweep.
+ * the arrangement back off that connection's first check_in sweep.
  *
  * Also proved here against the real service: the validator refuses contact
  * details, the human's own page shows the arrangement in plain words and can
@@ -50,7 +50,7 @@ d('standing arrangement against live deployment', () => {
     const got = await mcpCall(ada.accessToken, 'standing_arrangement', { action: 'get' });
     expect(got.isError).toBe(false);
     expect(got.result.arrangement).toEqual({});
-    const sweep = await mcpCall(ada.accessToken, 'check_matches', {});
+    const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({});
     expect(sweep.result.arrangement_note.text).toMatch(/no standing arrangement/i);
   });
@@ -66,12 +66,12 @@ d('standing arrangement against live deployment', () => {
     expect(got.result.arrangement).toEqual(ARRANGEMENT);
   });
 
-  it('THE GUARANTEE: a second connection on a fresh token is handed it by check_matches', async () => {
+  it('THE GUARANTEE: a second connection on a fresh token is handed it by check_in', async () => {
     // A brand-new OAuth client, a brand-new token: nothing carries over from
     // the connection that saved the arrangement.
     const secondToken = await oauthFlow(ada.jar);
     expect(secondToken).not.toBe(ada.accessToken);
-    const sweep = await mcpCall(secondToken, 'check_matches', {});
+    const sweep = await mcpCall(secondToken, 'check_in', {});
     expect(sweep.isError).toBe(false);
     expect(sweep.result.arrangement).toEqual(ARRANGEMENT);
     expect(sweep.result.arrangement_note.provenance).toBe('switchboard-system');
@@ -118,7 +118,7 @@ d('standing arrangement against live deployment', () => {
       }),
     );
     expect(res.status).toBe(200);
-    const sweep = await mcpCall(ada.accessToken, 'check_matches', {});
+    const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({
       check_every_minutes: 10080,
       interrupt_for: ['a new match'],
@@ -155,7 +155,7 @@ d('standing arrangement against live deployment', () => {
   it('the human can clear it, and the agent is told to ask again', async () => {
     const res = await counterFetch(ada.jar, '/arrangement/clear', form({}));
     expect(res.status).toBe(200);
-    const sweep = await mcpCall(ada.accessToken, 'check_matches', {});
+    const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({});
     expect(sweep.result.arrangement_note.text).toMatch(/no standing arrangement/i);
   });

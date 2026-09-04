@@ -885,7 +885,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return reply.redirect(`/approvals/match/${encodeURIComponent(refId)}`, 303);
         }
         // Collection window still open on the holder's card: explain, don't 500.
-        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+        if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
             reply,
             pages.messagePage(
@@ -1086,7 +1086,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         const row = await settlements.confirmReceipt(settlements.counterAction(s.accountId!), found.row.id);
         await capturePaymentForSettlement(row);
       } catch (e) {
-        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+        if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
             reply,
             pages.messagePage('Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
@@ -1115,7 +1115,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         const row = await settlements.openDispute(settlements.counterAction(s.accountId!), found.row.id);
         await cancelPaymentForSettlement(row);
       } catch (e) {
-        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+        if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
             reply,
             pages.messagePage('Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
