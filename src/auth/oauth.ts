@@ -55,7 +55,7 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
   if (!kind) return undefined;
   // NOT suspended: the counter's kill switch suspends (reversibly) every
   // agent token on the account, agent keys included.
-  // manual_version rides along on this SELECT so the check_matches sweep can
+  // manual_version rides along on this SELECT so the check_in sweep can
   // tell a stale session what has changed without a query of its own.
   const r = await getPool().query(
     `SELECT account_id, client_id, scope, manual_version, manual_notified_at FROM oauth_tokens

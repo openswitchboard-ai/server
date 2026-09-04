@@ -57,7 +57,7 @@ export interface OpenChannel {
 }
 
 function channelLocked(human_action: string): OsbError {
-  return new OsbError('STAGE_LOCKED', { human_action });
+  return new OsbError('NOT_UNLOCKED_YET', { human_action });
 }
 
 /**
@@ -76,11 +76,11 @@ export async function loadOpenChannel(
   accountId: string,
 ): Promise<OpenChannel> {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   const side = sideOf(m, accountId); // throws notFound when the caller is not a party
   if (m.state !== 'open' || m.stage < 4 || !m.channel_id) {
     throw channelLocked(
-      'This match has no open conversation yet. Both humans opt in first, and then open_conversation opens it.',
+      'This introduction has no open conversation yet. Both humans give the go-ahead first, and then open_conversation opens it.',
     );
   }
   for (const cardId of [m.card_want, m.card_have]) {
@@ -297,7 +297,7 @@ export async function receiveMessages(
 
 /**
  * How many messages are waiting for an account on each of the given channels.
- * One query for a whole check_matches sweep, so a polling agent learns there
+ * One query for a whole check_in sweep, so a polling agent learns there
  * is something to collect without a second call.
  */
 export async function pendingCounts(

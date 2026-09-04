@@ -65,7 +65,9 @@ export function scanForbidden(raw: string, where: string): Violation[] {
     if (FORBIDDEN_MACHINE_KEYS.has(k)) {
       out.push({ invariant: 'I7', detail: `machine-internal key "${k}"`, where: `${where} at ${path}.${k}`, payload: raw.slice(0, 600) });
     }
-    // An integer `stage` field in OUTPUT is a leak (stage is an input arg only).
+    // An integer `stage` field in OUTPUT is a leak. Nothing an agent sends
+    // carries one either any more — an unlock is asked for by name, on `step`
+    // — so a number under this key can only have come from the inside.
     if (k === 'stage' && typeof value === 'number') {
       out.push({ invariant: 'I7', detail: 'integer stage in output', where: `${where} at ${path}.stage`, payload: raw.slice(0, 600) });
     }
@@ -143,7 +145,7 @@ export function scanDeclineReasonless(raw: string, where: string): Violation[] {
 export function scanArchivedEntry(entry: any, where: string): Violation[] {
   const out: Violation[] = [];
   if (!entry) {
-    out.push({ invariant: 'I6', detail: 'archived match not retrievable via check_matches', where });
+    out.push({ invariant: 'I6', detail: 'archived match not retrievable via check_in', where });
     return out;
   }
   if (entry.state !== 'archived') {
@@ -163,7 +165,7 @@ export const EXPECTED_TOOLS = [
   'amend_intent',
   'collect_messages',
   'send_message',
-  'check_matches',
+  'check_in',
   'list_intents',
   'open_conversation',
   'publish_intent',

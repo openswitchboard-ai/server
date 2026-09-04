@@ -139,7 +139,7 @@ export function serializeSettlement(s: SettlementRow) {
     schema_version: SCHEMA_VERSION,
     kind: 'settlement' as const,
     settlement_id: s.id,
-    match_id: s.match_id,
+    intro_id: s.match_id,
     amount: Number(s.amount),
     ccy: s.ccy,
     state: s.state,
@@ -184,7 +184,7 @@ async function applyTransition(
   if (!r.rows[0]) {
     const cur = await getSettlement(settlementId);
     if (!cur) throw Object.assign(new Error('settlement not found'), { notFound: true });
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: `This settlement is '${cur.state}'; that step does not apply now.`,
     });
   }
@@ -200,13 +200,13 @@ export async function proposeSettlement(
   input: { match_id: string; amount: number; ccy: string; description?: string },
 ): Promise<{ settlement: ReturnType<typeof serializeSettlement>; row: SettlementRow; match: MatchRow }> {
   const m = await getMatch(input.match_id);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
-  if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
+  if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 3) {
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
-        'Settlement opens at stage 3, after both humans opt in to mutual disclosure.',
+        'Settlement opens once both humans have shared their first names and can talk.',
     });
   }
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
@@ -224,8 +224,8 @@ export async function proposeSettlement(
     [input.match_id, TERMINAL_STATES],
   );
   if (live.rowCount) {
-    throw new OsbError('STAGE_LOCKED', {
-      human_action: 'A settlement is already under way on this match. Check its state first.',
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'A settlement is already under way on this introduction. Check its state first.',
     });
   }
   const description = input.description

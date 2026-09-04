@@ -2,7 +2,7 @@
  * The shared read ceiling.
  *
  * The defect this suite exists to hold shut: an agent that can wake itself has
- * no reason to stop calling. check_matches, collect_messages and list_intents
+ * no reason to stop calling. check_in, collect_messages and list_intents
  * are all cheap, all safe, and all answerable in a loop, so a well-meaning
  * scheduler can hammer the board for nothing. Sixty calls an hour per account,
  * the three of them together, is the whole rule; past it the agent is told to
@@ -103,11 +103,11 @@ describe('which tools it covers', () => {
     return r;
   };
 
-  it('is one budget across check_matches, collect_messages and list_intents', async () => {
+  it('is one budget across check_in, collect_messages and list_intents', async () => {
     // Twenty of each is sixty; the next call of any of them is refused.
     for (let i = 0; i < 20; i++) {
       await spend('list_intents');
-      await spend('check_matches');
+      await spend('check_in');
       await spend('collect_messages').catch(() => undefined);
     }
     const r: any = await dispatchTool(cfg, ANA, 'list_intents', {});

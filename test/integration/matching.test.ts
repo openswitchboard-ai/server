@@ -308,10 +308,10 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       [alice, 'alice'],
       [bob, 'bob'],
     ] as const) {
-      const r = await mcpCall(actor.accessToken, 'check_matches', {});
-      const entry = r.result.matches.find((m: any) => m.match_id === abMatchId);
+      const r = await mcpCall(actor.accessToken, 'check_in', {});
+      const entry = r.result.introductions.find((m: any) => m.intro_id === abMatchId);
       expect(entry, `${who} sees the match`).toBeTruthy();
-      expect(entry.signal.kind).toBe('match.signal');
+      expect(entry.signal.kind).toBe('intro.signal');
       expect(entry.signal.category).toBe('goods.electronics.camera');
       // No machine internals cross to the agent: no score, and a word for what
       // to do next rather than a stage integer. Neither side has expressed
@@ -321,7 +321,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       expect(entry.next).toBe('show_interest');
       // The signal is THIN: no score, no attributes, no identity, no prices.
       expect(Object.keys(entry.signal).sort()).toEqual([
-        'category', 'counterparty_type', 'kind', 'match_id', 'schema_version',
+        'category', 'counterparty_type', 'intro_id', 'kind', 'schema_version',
       ]);
     }
   });
@@ -391,13 +391,13 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     // interest first (nobody else has), so she is left awaiting the other side;
     // once bob matches it, the interest is mutual and the details unlock.
     const aliceInterest = await mcpCall(alice.accessToken, 'respond', {
-      match_id: abMatchId,
+      intro_id: abMatchId,
       action: 'express_interest',
     });
     expect(aliceInterest.result.stage_unlocked).toBeUndefined();
     expect(aliceInterest.result.next).toBe('awaiting_other_side');
     const bobInterest = await mcpCall(bob.accessToken, 'respond', {
-      match_id: abMatchId,
+      intro_id: abMatchId,
       action: 'express_interest',
     });
     expect(bobInterest.result.next).toBe('details_unlocked');
@@ -405,9 +405,9 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       [alice, 'alice'],
       [bob, 'bob'],
     ] as const) {
-      const stage1 = await mcpCall(actor.accessToken, 'check_matches', { match_id: abMatchId, stage: 1 });
-      const stage2 = await mcpCall(actor.accessToken, 'check_matches', { match_id: abMatchId, stage: 2 });
-      const all = await mcpCall(actor.accessToken, 'check_matches', {});
+      const stage1 = await mcpCall(actor.accessToken, 'check_in', { intro_id: abMatchId, step: 'signal' });
+      const stage2 = await mcpCall(actor.accessToken, 'check_in', { intro_id: abMatchId, step: 'details' });
+      const all = await mcpCall(actor.accessToken, 'check_in', {});
       expect(stage2.isError).toBe(false);
       for (const raw of [stage1.raw, stage2.raw, all.raw]) {
         expect(deepScanKeys(JSON.parse(raw)), `${who} deep scan`).toEqual([]);
@@ -415,13 +415,13 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       }
     }
     // The deliberate ask IS disclosable at stage 2 (bob chose to state it).
-    const aliceStage2 = await mcpCall(alice.accessToken, 'check_matches', { match_id: abMatchId, stage: 2 });
+    const aliceStage2 = await mcpCall(alice.accessToken, 'check_in', { intro_id: abMatchId, step: 'details' });
     expect(aliceStage2.result.ask).toEqual({ amount: 620, ccy: 'AUD' });
     // The sweep entry now carries attributes and the details_unlocked word.
-    const aliceAll = await mcpCall(alice.accessToken, 'check_matches', {});
-    const abEntry = aliceAll.result.matches.find((m: any) => m.match_id === abMatchId);
+    const aliceAll = await mcpCall(alice.accessToken, 'check_in', {});
+    const abEntry = aliceAll.result.introductions.find((m: any) => m.intro_id === abMatchId);
     expect(abEntry.next).toBe('details_unlocked');
-    expect(abEntry.attributes.kind).toBe('match.attributes');
+    expect(abEntry.attributes.kind).toBe('intro.attributes');
   });
 
   it('GATE (d): collection window - holder sees all, rivals see nothing, early-close unlocks', async () => {
@@ -436,8 +436,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     await Promise.all(
       buyers.map(async (b) => {
         const mid = hankMatchIds[b.accountId];
-        await mcpCall(b.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
-        await mcpCall(hank.accessToken, 'respond', { match_id: mid, action: 'express_interest' });
+        await mcpCall(b.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
+        await mcpCall(hank.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
       }),
     );
 
@@ -452,7 +452,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     const offers = await Promise.all(
       buyers.map((b, i) =>
         mcpCall(b.accessToken, 'respond', {
-          match_id: hankMatchIds[b.accountId],
+          intro_id: hankMatchIds[b.accountId],
           action: 'propose_offer',
           offer: {
             amount: 100 + i * 50,
@@ -465,15 +465,15 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     for (const o of offers) expect(o.isError, JSON.stringify(o.result)).toBe(false);
 
     // HOLDER view: all three matches, all offers, and the window itself.
-    const hankView = await mcpCall(hank.accessToken, 'check_matches', { intent_id: hankHave });
-    const hankOpen = hankView.result.matches.filter((m: any) => m.state === 'open');
+    const hankView = await mcpCall(hank.accessToken, 'check_in', { intent_id: hankHave });
+    const hankOpen = hankView.result.introductions.filter((m: any) => m.state === 'open');
     expect(hankOpen.length).toBeGreaterThanOrEqual(3);
     const withWindow = hankOpen.filter((m: any) => m.collection?.collecting === true);
     expect(withWindow.length).toBe(hankOpen.length);
     expect(withWindow[0].collection.interested_parties).toBeGreaterThanOrEqual(3);
     for (const b of buyers) {
       const l = await mcpCall(hank.accessToken, 'respond', {
-        match_id: hankMatchIds[b.accountId],
+        intro_id: hankMatchIds[b.accountId],
         action: 'list_offers',
       });
       expect(l.result.offers.length).toBeGreaterThanOrEqual(1);
@@ -481,16 +481,16 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
 
     // NON-HOLDER view: no rival signal of any kind (scarcity-theatre ban).
     for (const b of buyers) {
-      const view = await mcpCall(b.accessToken, 'check_matches', {});
+      const view = await mcpCall(b.accessToken, 'check_in', {});
       expect(view.raw).not.toMatch(/collect|interested|rival|window|compet|contest/i);
-      const mine = view.result.matches.filter(
-        (m: any) => m.match_id === hankMatchIds[b.accountId],
+      const mine = view.result.introductions.filter(
+        (m: any) => m.intro_id === hankMatchIds[b.accountId],
       );
       expect(mine).toHaveLength(1);
       // A rival's match is not even addressable.
       const other = buyers.find((x) => x.accountId !== b.accountId)!;
       const probe = await mcpCall(b.accessToken, 'respond', {
-        match_id: hankMatchIds[other.accountId],
+        intro_id: hankMatchIds[other.accountId],
         action: 'list_offers',
       });
       expect(probe.isError).toBe(true);
@@ -498,28 +498,28 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
 
     // HOLDER commit is locked while collecting...
     const locked = await mcpCall(hank.accessToken, 'respond', {
-      match_id: hankMatchIds[buyers[0].accountId],
+      intro_id: hankMatchIds[buyers[0].accountId],
       action: 'opt_in',
     });
     expect(locked.isError).toBe(true);
-    expect(locked.result.code).toBe('STAGE_LOCKED');
+    expect(locked.result.code).toBe('NOT_UNLOCKED_YET');
 
     // ...but a NON-holder buyer's own opt-in is not (their card is uncontested).
     const buyerOptIn = await mcpCall(buyers[1].accessToken, 'respond', {
-      match_id: hankMatchIds[buyers[1].accountId],
+      intro_id: hankMatchIds[buyers[1].accountId],
       action: 'opt_in',
     });
     expect(buyerOptIn.isError, JSON.stringify(buyerOptIn.result)).toBe(false);
 
     // Early-close by the holder, then proceeding works.
     const close = await mcpCall(hank.accessToken, 'respond', {
-      match_id: hankMatchIds[buyers[0].accountId],
+      intro_id: hankMatchIds[buyers[0].accountId],
       action: 'close_collection',
     });
     expect(close.isError).toBe(false);
     expect(close.result.collection_closed).toBe(true);
     const optIn = await mcpCall(hank.accessToken, 'respond', {
-      match_id: hankMatchIds[buyers[0].accountId],
+      intro_id: hankMatchIds[buyers[0].accountId],
       action: 'opt_in',
     });
     expect(optIn.isError, JSON.stringify(optIn.result)).toBe(false);
@@ -538,7 +538,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     // b1 already made one offer (100). Walk it up: 110, 120 - a ladder.
     for (const amount of [110, 120]) {
       const r = await mcpCall(b1.accessToken, 'respond', {
-        match_id: mid,
+        intro_id: mid,
         action: 'propose_offer',
         offer: { amount, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
       });
@@ -546,7 +546,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     }
     // 4th offer on the same match inside 24h: rate-limited.
     const fourth = await mcpCall(b1.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'propose_offer',
       offer: { amount: 130, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
@@ -565,11 +565,11 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
   it('GATE (e): declines are reasonless - input rejected, output scanned', async () => {
     const b2 = buyers[1];
     const mid = hankMatchIds[b2.accountId];
-    const l = await mcpCall(hank.accessToken, 'respond', { match_id: mid, action: 'list_offers' });
+    const l = await mcpCall(hank.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
     const offerId = l.result.offers[0].offer_id;
     // Attaching a reason to a decline is rejected outright.
     const withReason = await mcpCall(hank.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'decline_offer',
       offer_id: offerId,
       reason: 'too low',
@@ -577,7 +577,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     expect(withReason.isError).toBe(true);
     // A clean decline carries nothing but the state change.
     const declined = await mcpCall(hank.accessToken, 'respond', {
-      match_id: mid,
+      intro_id: mid,
       action: 'decline_offer',
       offer_id: offerId,
     });
@@ -589,7 +589,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
   it('VERDICT: good-call / not-for-me stored per human; not-for-me mutes + nudges threshold', async () => {
     // Hank: good call on the buyer[1] match.
     const good = await mcpCall(hank.accessToken, 'respond', {
-      match_id: hankMatchIds[buyers[1].accountId],
+      intro_id: hankMatchIds[buyers[1].accountId],
       action: 'verdict',
       verdict: 'good-call',
     });
@@ -602,7 +602,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       [{ name: 'id', value: b3.accountId }],
     );
     const notForMe = await mcpCall(b3.accessToken, 'respond', {
-      match_id: hankMatchIds[b3.accountId],
+      intro_id: hankMatchIds[b3.accountId],
       action: 'verdict',
       verdict: 'not-for-me',
     });
@@ -660,7 +660,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     );
     expect(Number(bad[0][0])).toBe(0);
     // Nothing in any agent-visible surface mentions near-misses.
-    const view = await mcpCall(alice.accessToken, 'check_matches', {});
+    const view = await mcpCall(alice.accessToken, 'check_in', {});
     expect(view.raw).not.toMatch(/near.?miss/i);
   });
 });

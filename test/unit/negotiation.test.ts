@@ -445,7 +445,7 @@ describe('Pass on: an agent may not author a figure at all', () => {
     world.stage = 1;
     await expect(
       offers.proposeOffer(cfg, BEPPE, anOffer(5000), { author: 'human' }),
-    ).rejects.toMatchObject({ payload: { code: 'STAGE_LOCKED' } });
+    ).rejects.toMatchObject({ payload: { code: 'NOT_UNLOCKED_YET' } });
     world.stage = 2;
     for (let i = 0; i < 3; i++) {
       await offers.proposeOffer(cfg, BEPPE, anOffer(5000 + i), { author: 'human' });

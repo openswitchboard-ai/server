@@ -43,7 +43,7 @@ export async function getMatch(id: string): Promise<MatchRow | undefined> {
 export function sideOf(m: MatchRow, accountId: string): 'want' | 'have' {
   if (m.account_want === accountId) return 'want';
   if (m.account_have === accountId) return 'have';
-  throw Object.assign(new Error('match not found'), { notFound: true });
+  throw Object.assign(new Error('introduction not found'), { notFound: true });
 }
 
 /**
@@ -119,12 +119,12 @@ export async function openCollectionWindow(cardId: string): Promise<CollectionWi
   return { cardId, until: r.rows[0].collect_until, interestedParties: r.rows[0].n };
 }
 
-/** Throws STAGE_LOCKED when the caller's own card is still collecting. */
+/** Throws NOT_UNLOCKED_YET when the caller's own card is still collecting. */
 async function assertNotCollecting(m: MatchRow, accountId: string): Promise<void> {
   const w = await openCollectionWindow(ownCardId(m, accountId));
   if (w) {
     const secs = Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000));
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
         'Your collection window is still open on this listing: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
       retry_after: secs,
@@ -152,7 +152,7 @@ export async function closeCollectionByCard(
 ): Promise<{ closed: boolean }> {
   const card = await getCard(cardId);
   if (!card || card.account_id !== accountId) {
-    throw Object.assign(new Error('card not found'), { notFound: true });
+    throw Object.assign(new Error('listing not found'), { notFound: true });
   }
   const r = await getPool().query(
     `UPDATE cards SET collect_closed_at = now(), updated_at = now()
@@ -187,9 +187,9 @@ export async function recordVerdict(
   accountId: string,
   verdict: 'good-call' | 'not-for-me',
   recordedVia: string,
-): Promise<{ match_id: string; verdict: string }> {
+): Promise<{ intro_id: string; verdict: string }> {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
   const pool = getPool();
   await pool.query(
@@ -222,7 +222,7 @@ export async function recordVerdict(
       [accountId, THRESHOLD_BUMP_STEP],
     );
   }
-  return { match_id: matchId, verdict };
+  return { intro_id: matchId, verdict };
 }
 
 /** Count of recorded stage-3 opt-ins for a match (0, 1, or 2 distinct humans). */
@@ -237,13 +237,13 @@ async function stage3OptinCount(matchId: string): Promise<number> {
 
 async function loadOpenMatchFor(matchId: string, accountId: string): Promise<MatchRow> {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
   if (m.state === 'declined' || m.state === 'closed' || m.state === 'archived') {
     // A closed match discloses nothing further; declines carry no reason; an
     // archived match is a finished connection, so it accepts no further
     // interest, opt-in or channel action (retrieval reads it separately).
-    throw new OsbError('STAGE_LOCKED');
+    throw new OsbError('NOT_UNLOCKED_YET');
   }
   return m;
 }
@@ -295,8 +295,8 @@ export async function recordStage3OptIn(
 ): Promise<{ match: MatchRow; both: boolean }> {
   const m = await loadOpenMatchFor(matchId, accountId);
   if (m.stage < 2) {
-    throw new OsbError('STAGE_LOCKED', {
-      human_action: 'Both sides must first express interest at stage 1.',
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'Both sides have to say they are interested before this opens.',
     });
   }
   // Collection window: while the caller's OWN card is contested and still
@@ -388,18 +388,18 @@ export async function archiveMatch(
   matchId: string,
   accountId: string,
   recordedVia: string,
-): Promise<{ match_id: string; state: 'archived'; already: boolean }> {
+): Promise<{ intro_id: string; state: 'archived'; already: boolean }> {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound when the caller is not a party
   if (m.state === 'archived') {
-    return { match_id: matchId, state: 'archived', already: true };
+    return { intro_id: matchId, state: 'archived', already: true };
   }
   if (m.state !== 'open') {
     // Only a live, open connection can be filed away as finished. A declined or
     // closed match went nowhere; there is nothing to archive.
-    throw new OsbError('STAGE_LOCKED', {
-      human_action: 'This match is not an open connection, so there is nothing to file away.',
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'This introduction is not an open connection, so there is nothing to file away.',
     });
   }
   const r = await getPool().query(
@@ -412,7 +412,7 @@ export async function archiveMatch(
   );
   if (!r.rowCount) {
     // Lost a race to another archive of the same match: treat as idempotent.
-    return { match_id: matchId, state: 'archived', already: true };
+    return { intro_id: matchId, state: 'archived', already: true };
   }
   // WORM record of who filed it and when, the recorded_via shape the verdict
   // and opt-in paths already use.
@@ -429,7 +429,7 @@ export async function archiveMatch(
     `UPDATE channel_messages SET expires_at = now() WHERE match_id = $1 AND expires_at > now()`,
     [matchId],
   );
-  return { match_id: matchId, state: 'archived', already: false };
+  return { intro_id: matchId, state: 'archived', already: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -466,12 +466,15 @@ export async function buildSignal(m: MatchRow, accountId: string) {
   // stays in the DB and the internal matcher logs; it is stripped here, at the
   // agent boundary, and the outbound schema (no `score` slot) makes that
   // structural rather than advisory.
-  return assertOutbound('match.signal', {
+  return assertOutbound('intro.signal', {
     schema_version: SCHEMA_VERSION,
-    kind: 'match.signal' as const,
-    match_id: m.id,
+    kind: 'intro.signal' as const,
+    intro_id: m.id,
     category: m.category,
-    counterparty_type: side === 'want' ? ('HAVE' as const) : ('WANT' as const),
+    // The side the other person is on, said in the words the wire uses: they
+    // are offering something, or they are looking for one. WANT/HAVE stay in
+    // the database and the matcher; they stop here.
+    counterparty_type: side === 'want' ? ('offering' as const) : ('looking_for' as const),
   });
 }
 
@@ -508,10 +511,10 @@ export function nextAction(m: MatchRow, accountId: string): NextAction {
 }
 
 export async function buildAttributes(m: MatchRow, accountId: string) {
-  if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
+  if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
-    throw new OsbError('STAGE_LOCKED', {
-      human_action: 'Stage 2 unlocks when both sides have expressed interest.',
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'The details open up once both sides have said they are interested.',
     });
   }
   const side = sideOf(m, accountId);
@@ -521,13 +524,13 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   if (card.lifecycle_state === 'EXPIRED') throw new OsbError('INTENT_EXPIRED');
   const payload: any = {
     schema_version: SCHEMA_VERSION,
-    kind: 'match.attributes' as const,
-    match_id: m.id,
+    kind: 'intro.attributes' as const,
+    intro_id: m.id,
     attributes: card.attributes ?? {},
   };
   // Only the deliberate, disclosable ask ever crosses — never the price band.
   if (card.type === 'HAVE' && card.ask) payload.ask = card.ask;
-  return assertOutbound('match.attributes', payload);
+  return assertOutbound('intro.attributes', payload);
 }
 
 export async function buildMutual(
@@ -540,15 +543,15 @@ export async function buildMutual(
   // same stage-3 record so the connection stays retrievable after it is filed
   // away ("you connected with Alex in Franklin about Italian"). Declined and
   // closed matches disclose nothing.
-  if (m.state !== 'open' && m.state !== 'archived') throw new OsbError('STAGE_LOCKED');
+  if (m.state !== 'open' && m.state !== 'archived') throw new OsbError('NOT_UNLOCKED_YET');
   // HARD GATE: stage-3 data is NEVER returned without BOTH humans' recorded
   // opt-in tokens. The check queries consent_tokens directly — not the stage
   // column — so a bug elsewhere cannot open the gate.
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
-        'Mutual disclosure needs both humans to opt in. Ask your human to approve stage-3 disclosure.',
+        'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
     });
   }
   const side = sideOf(m, accountId);
@@ -595,10 +598,10 @@ export async function buildMutual(
   if (!profileIsFilled({ firstName: counterparty.first_name, locality: counterparty.locality })) {
     throw counterpartyProfileConsentError();
   }
-  return assertOutbound('match.mutual', {
+  return assertOutbound('intro.mutual', {
     schema_version: SCHEMA_VERSION,
-    kind: 'match.mutual' as const,
-    match_id: m.id,
+    kind: 'intro.mutual' as const,
+    intro_id: m.id,
     counterparty,
     optin: {
       both_recorded: true as const,
@@ -612,7 +615,7 @@ export async function openChannel(matchId: string, accountId: string) {
   await assertNotCollecting(m, accountId); // holder commits only after the window
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
-    throw new OsbError('STAGE_LOCKED', {
+    throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: 'A conversation can open only after both humans opt in to mutual disclosure.',
     });
   }
@@ -636,14 +639,14 @@ export async function openChannel(matchId: string, accountId: string) {
   return assertOutbound('conversation.open', {
     schema_version: SCHEMA_VERSION,
     kind: 'conversation.open' as const,
-    match_id: m.id,
+    intro_id: m.id,
     conversation: { medium: 'in-app' as const, conversation_id: channelId },
     opened_at: new Date(openedAt!).toISOString(),
   });
 }
 
 /**
- * Fetch one specific stage payload for a match. Throws STAGE_LOCKED when the
+ * Fetch one specific stage payload for a match. Throws NOT_UNLOCKED_YET when the
  * requested stage is not unlocked for this pair (e.g. stage 3 without both
  * humans' opt-in tokens).
  */
@@ -654,20 +657,21 @@ export async function getStagePayload(
   stage: number,
 ) {
   const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('match not found'), { notFound: true });
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
   switch (stage) {
     case 1:
-      if (m.state !== 'open') throw new OsbError('STAGE_LOCKED');
+      if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
       return buildSignal(m, accountId);
     case 2:
       return buildAttributes(m, accountId);
     case 3:
       return buildMutual(cfg, m, accountId);
     default:
-      throw Object.assign(new Error(`stage must be 1, 2 or 3 (conversation.open via open_conversation)`), {
-        validation: ['stage'],
-      });
+      throw Object.assign(
+        new Error(`step must be 'signal', 'details' or 'names' (talking is open_conversation)`),
+        { validation: ['step'] },
+      );
   }
 }
 
@@ -685,10 +689,10 @@ const plainLeaf = (category: string) =>
 /** The ready sentence for a fresh stage-1 signal, warmed by which side the
  *  other person is on: they have what your human is after, or they are after
  *  what your human put up. No card/match/stage words reach the human. */
-function signalNote(category: string, counterpartyType: 'WANT' | 'HAVE'): { text: string; provenance: 'switchboard-system' } {
+function signalNote(category: string, counterpartyType: 'looking_for' | 'offering'): { text: string; provenance: 'switchboard-system' } {
   const thing = plainLeaf(category);
   const opening =
-    counterpartyType === 'HAVE'
+    counterpartyType === 'offering'
       ? `Someone nearby has ${thing} going that could be what you're after.`
       : `Someone nearby is looking for ${thing} like yours.`;
   return sbNote(`${opening} Say the word and I'll let them know you're keen; if they're keen too, you'll each learn a little more.`);
@@ -724,7 +728,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // recall it: the category, when it was filed, and, where the humans
       // reached stage 3, the disclosed first name and area.
       const entry: any = {
-        match_id: m.id,
+        intro_id: m.id,
         state: 'archived',
         category: m.category,
         archived_at: m.archived_at ? new Date(m.archived_at).toISOString() : null,
@@ -749,12 +753,12 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       continue;
     }
     if (m.state !== 'open') {
-      out.push({ match_id: m.id, state: m.state });
+      out.push({ intro_id: m.id, state: m.state });
       continue;
     }
     const signal = await buildSignal(m, accountId);
     const entry: any = {
-      match_id: m.id,
+      intro_id: m.id,
       state: 'open',
       // A word for what the agent can do now, in place of a stage number to
       // read out.

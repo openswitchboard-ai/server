@@ -69,7 +69,7 @@ async function approveOnCounter(actor: TestActor, settlementId: string): Promise
 
 async function proposeSettlement(): Promise<string> {
   const r = await mcpCall(buyer.accessToken, 'settle', {
-    match_id: matchId,
+    intro_id: matchId,
     amount: AMOUNT,
     ccy: 'AUD',
     description: 'Mountain bike as agreed, pickup this weekend.',
@@ -108,14 +108,14 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     await waitForCardState(seller.accessToken, h.result.intent_id, ['PUBLISHED']);
     await sendOp({ op: 'create-match', card_want: w.result.intent_id, card_have: h.result.intent_id, score: 0.9 });
     matchId = await poll(async () => {
-      const r = await mcpCall(buyer.accessToken, 'check_matches', { intent_id: w.result.intent_id });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(buyer.accessToken, 'check_in', { intent_id: w.result.intent_id });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
     // Reach stage 3 (both interests + both opt-ins).
-    await mcpCall(buyer.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(seller.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(buyer.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
-    await mcpCall(seller.accessToken, 'respond', { match_id: matchId, action: 'opt_in' });
+    await mcpCall(buyer.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(seller.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(buyer.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
+    await mcpCall(seller.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     // The seller's connected test account: created pre-verified through
     // Stripe's test-mode API and attached with the server's own envelope
     // encryption (production sellers use the hosted account-link flow).
@@ -124,7 +124,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
   }, 300_000);
 
   it('settle requires stage 3 and refuses a bad proposal shape', async () => {
-    const bad = await mcpCall(buyer.accessToken, 'settle', { match_id: matchId, amount: AMOUNT });
+    const bad = await mcpCall(buyer.accessToken, 'settle', { intro_id: matchId, amount: AMOUNT });
     expect(bad.isError).toBe(true); // amount without ccy
   });
 
@@ -235,7 +235,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
   }, 300_000);
 
   it('the settlement page renders for both humans', async () => {
-    const list = await mcpCall(buyer.accessToken, 'settle', { match_id: matchId });
+    const list = await mcpCall(buyer.accessToken, 'settle', { intro_id: matchId });
     expect(list.isError).toBe(false);
     const sid = list.result.settlements[0].settlement_id;
     for (const actor of [buyer, seller]) {
