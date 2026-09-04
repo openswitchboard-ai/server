@@ -214,6 +214,11 @@ describe('retrieval: an archived connection stays lookup-able', () => {
     // can look up "you connected with Alex in Franklin".
     expect(entry.mutual.counterparty).toEqual({ first_name: 'Alex', locality: 'Franklin' });
     expect(validatePayload('match.mutual', entry.mutual).valid).toBe(true);
+    // The recall carries a ready, jargon-free sentence the agent leads with —
+    // the first name and area, plainly, with no card/match/stage/score word.
+    expect(entry.note.provenance).toBe('switchboard-system');
+    expect(entry.note.text).toMatch(/got chatting with Alex over in Franklin about book club/i);
+    expect(entry.note.text).not.toMatch(/\b(card|match|stage|score|listing|channel|connection)\b/i);
   });
 
   it('an archived match is not an actionable signal — no next, no signal', async () => {

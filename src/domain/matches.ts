@@ -5,7 +5,7 @@ import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { getCard } from './cards.js';
-import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP } from './matchRules.js';
+import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP, categoryLeafLabel } from './matchRules.js';
 import {
   counterpartyProfileConsentError,
   profileIsFilled,
@@ -671,6 +671,29 @@ export async function getStagePayload(
   }
 }
 
+/** A switchboard-authored, human-facing sentence that rides beside a match
+ *  entry. The agent leads with this verbatim rather than inventing a noun for
+ *  the machinery — every one is written plain, warm and jargon-free. */
+const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
+
+/** The leaf category as a human would say it mid-sentence ("book club",
+ *  "bicycle"), for dropping into a ready sentence — hyphens and dots read as
+ *  spaces so nothing looks like a code. */
+const plainLeaf = (category: string) =>
+  categoryLeafLabel(category).toLowerCase().replace(/[-_.]+/g, ' ').trim();
+
+/** The ready sentence for a fresh stage-1 signal, warmed by which side the
+ *  other person is on: they have what your human is after, or they are after
+ *  what your human put up. No card/match/stage words reach the human. */
+function signalNote(category: string, counterpartyType: 'WANT' | 'HAVE'): { text: string; provenance: 'switchboard-system' } {
+  const thing = plainLeaf(category);
+  const opening =
+    counterpartyType === 'HAVE'
+      ? `Someone nearby has ${thing} going that could be what you're after.`
+      : `Someone nearby is looking for ${thing} like yours.`;
+  return sbNote(`${opening} Say the word and I'll let them know you're keen; if they're keen too, you'll each learn a little more.`);
+}
+
 /** All matches visible to an account, as stage-appropriate payloads. */
 export async function checkMatches(cfg: Config, accountId: string, intentId?: string) {
   const params: any[] = [accountId];
@@ -715,6 +738,13 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
           if (!(e instanceof OsbError)) throw e;
         }
       }
+      // A ready sentence to answer "who was that again?" from later — the first
+      // name and area if the two reached mutual disclosure, plainly, with no
+      // system words. This is the whole of what the agent relays on recall.
+      const c = entry.mutual?.counterparty;
+      entry.note = c
+        ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category)} a while back. The conversation and any number you swapped are here in our chat.`)
+        : sbNote(`You had ${plainLeaf(m.category)} sorted with someone a while back; it has since been filed away.`);
       out.push(entry);
       continue;
     }
@@ -722,12 +752,17 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       out.push({ match_id: m.id, state: m.state });
       continue;
     }
+    const signal = await buildSignal(m, accountId);
     const entry: any = {
       match_id: m.id,
       state: 'open',
-      // A word for what the agent can do now, not a stage number to read out.
+      // A word for what the agent can do now, in place of a stage number to
+      // read out.
       next: nextAction(m, accountId),
-      signal: await buildSignal(m, accountId),
+      signal,
+      // The ready human sentence for a fresh signal rides right here on the
+      // entry, so the agent leads with it instead of naming the machinery.
+      note: signalNote(m.category, signal.counterparty_type),
     };
     // Collection-window info is shown ONLY to the holder (the side whose OWN
     // card is contested). A rival's view carries no trace of the contest.
@@ -740,10 +775,9 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       entry.collection = {
         collecting: true,
         interested_parties: w.interestedParties,
-        note: {
-          text: 'Interest is still arriving on your card. Review what has come in, and when your human is ready to choose someone, close the window — or let it lapse on its own.',
-          provenance: 'switchboard-system',
-        },
+        note: sbNote(
+          'More people are still coming forward about what you put up. Take a look at who is interested, and when you are ready to pick someone, tell me — or leave it and it will settle on its own.',
+        ),
       };
     }
     // A match that has reached stage 4 names its channel here, so an agent
@@ -759,10 +793,9 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     if (incoming) {
       entry.offer = { amount: incoming.amount, ccy: incoming.ccy, message: incoming.message };
       entry.next = 'awaiting_your_human';
-      entry.offer_note = {
-        text: `The other side has put ${incoming.amount} ${incoming.ccy} on the table${incoming.message ? ` — "${incoming.message}"` : ''}. Bring it to your human in their own words; only they decide what to do with it.`,
-        provenance: 'switchboard-system',
-      };
+      entry.offer_note = sbNote(
+        `The person you have been talking to has offered ${incoming.amount} ${incoming.ccy}${incoming.message ? ` — "${incoming.message}"` : ''}. It is yours to weigh up; say the word and I will answer, and nothing is agreed until you say so.`,
+      );
     }
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
@@ -780,6 +813,35 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
           entry.next = 'awaiting_your_human';
         }
       }
+    }
+    // Give every surfaced state its own ready sentence, so the agent leads with
+    // the note rather than inventing a word for whose turn it is. The fresh
+    // signal already reads right; the later states get their own line here.
+    switch (entry.next) {
+      case 'awaiting_other_side':
+        entry.note = sbNote(
+          "You are keen and they know it — the next move is theirs. They will see it when they next check in with their assistant, and I will bring their reply straight to you.",
+        );
+        break;
+      case 'details_unlocked':
+        entry.note = sbNote(
+          "You are both keen. Here is a little more about what they have — take a look, and if you would like to go further, say the word and I will share your first name and rough area so the two of you can talk.",
+        );
+        break;
+      case 'awaiting_your_human':
+        // An offer waiting is its own sentence (offer_note); otherwise it is the
+        // one step left before the two can talk.
+        entry.note = entry.offer_note
+          ? entry.offer_note
+          : sbNote(
+              "You are both keen to talk. The last step is yours: give me the go-ahead and I will share your first name and rough area so the two of you can connect.",
+            );
+        break;
+      case 'ready_to_talk':
+        entry.note = sbNote(
+          "You are connected now — you can message each other through me whenever you like.",
+        );
+        break;
     }
     out.push(entry);
   }
