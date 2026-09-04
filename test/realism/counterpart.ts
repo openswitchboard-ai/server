@@ -164,15 +164,15 @@ export class Counterpart {
   }
 
   async openChannel(matchId: string): Promise<McpResult> {
-    return this.mcp('open_channel', { match_id: matchId });
+    return this.mcp('open_conversation', { match_id: matchId });
   }
 
   async channelSend(matchId: string, text: string): Promise<McpResult> {
-    return this.mcp('channel_send', { match_id: matchId, text });
+    return this.mcp('send_message', { match_id: matchId, text });
   }
 
   async channelReceive(matchId: string): Promise<McpResult> {
-    return this.mcp('channel_receive', { match_id: matchId });
+    return this.mcp('collect_messages', { match_id: matchId });
   }
 
   /** Switch the counterpart card to auto-negotiate, then propose an offer. */

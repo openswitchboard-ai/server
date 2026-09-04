@@ -712,13 +712,13 @@ describe('what the manual tells an agent about places', () => {
     expect(SERVER_INSTRUCTIONS).toContain('LOCATION_AMBIGUOUS');
     // The register: the place goes into what the agent says, in its own voice.
     expect(SERVER_INSTRUCTIONS).toMatch(/say if that's wrong/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/amend the card there and then/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/amend the listing there and then/i);
   });
 
   it('teaches place and reach as two different things, with the translation', async () => {
     const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
     expect(SERVER_INSTRUCTIONS).toContain('geo.reach');
-    expect(SERVER_INSTRUCTIONS).toMatch(/the card lives where the thing lives/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/the listing lives where the thing lives/i);
     // The sentence an agent actually has to translate.
     expect(SERVER_INSTRUCTIONS).toMatch(/I'll post it anywhere in Australia/);
     expect(SERVER_INSTRUCTIONS).toMatch(/"anywhere" for something done online/);
@@ -736,7 +736,7 @@ describe('the geo tool schema agents actually see', () => {
   it('offers place, keeps the cell, and stays grammar-friendly', async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
-    const geo = publish.inputSchema.properties.card.properties.geo;
+    const geo = publish.inputSchema.properties.listing.properties.geo;
     expect(Object.keys(geo.properties).sort()).toEqual(['bucket', 'place', 'radius_km', 'reach']);
     expect(geo.description).toMatch(/suburb, city or region/);
     expect(geo.properties.reach.enum).toEqual(['radius', 'country', 'anywhere']);
@@ -744,7 +744,7 @@ describe('the geo tool schema agents actually see', () => {
     // The distinction the field exists for, at the point the model acts on it.
     expect(publish.description).toMatch(/never "Australia" in `place`/);
     // anyOf cannot be expressed by constrained-decoding grammar compilers; the
-    // server validates every card against the full schema regardless.
+    // server validates every listing against the full schema regardless.
     const blob = JSON.stringify(publish.inputSchema);
     for (const k of ['$ref', '$defs', 'anyOf', 'oneOf', 'allOf', 'propertyNames', 'format']) {
       expect(blob, k).not.toContain(`"${k}"`);

@@ -16,8 +16,10 @@
  * are borderline: a friendly agent may reasonably say "opt in" to a human.
  *
  * ALLOWED (never flagged): "archive"/"archived" (an allowed word by design),
- * "switchboard", and plain human times a friend would say ("Saturday", "this
- * afternoon", "9am"). Only digit clock times (13:30) are a leak.
+ * "switchboard", "listing"/"listings" (approved by the human as plain speech,
+ * and the word the switchboard's own payloads and manual use), and plain human
+ * times a friend would say ("Saturday", "this afternoon", "9am"). Only digit
+ * clock times (13:30) are a leak.
  *
  * The linter is deliberately a blunt instrument that over-reports rather than
  * under-reports: every hit carries the offending substring so a human can
@@ -82,7 +84,9 @@ export const LEAK_RULES: LeakRule[] = [
   // --- the object nouns the human must never hear ---
   { label: 'card', severity: 'hard', re: /\b(index\s+)?cards?\b/gi },
   { label: 'intent', severity: 'hard', re: /\bintents?\b/gi },
-  { label: 'listing', severity: 'hard', re: /\blistings?\b/gi },
+  // "listing" used to sit here. The human approved it as plain speech — it is
+  // what the switchboard's own payloads and manual now call a thin post — so
+  // it is an ALLOWED word (see ALLOW_GUARDS) rather than a leak.
   {
     label: 'WANT-noun',
     severity: 'hard',
@@ -124,7 +128,12 @@ export const LEAK_RULES: LeakRule[] = [
     // "respond" and "settle" are ordinary English ("the moment they respond",
     // "settle in") and were dropped after they produced false positives against
     // real replies — the whole point of capturing substrings is to catch this.
-    re: /\b(check_matches|publish_intent|withdraw_intent|amend_intent|list_intents|open_channel|channel_send|channel_receive|express_interest|propose_offer|send_to_human|decline_offer|withdraw_offer|list_offers|close_collection|standing_arrangement)\b/g,
+    // The current names AND the ones they replaced: a stale agent still
+    // narrating open_channel is exactly as much of a leak as one narrating
+    // open_conversation. Every token here carries an underscore, so a
+    // \b-bounded match only ever fires on the literal snake_case tool name and
+    // never on ordinary prose like "send a message".
+    re: /\b(check_matches|publish_intent|withdraw_intent|amend_intent|list_intents|open_conversation|send_message|collect_messages|open_channel|channel_send|channel_receive|express_interest|propose_offer|send_to_human|decline_offer|withdraw_offer|list_offers|close_collection|standing_arrangement)\b/g,
     note: 'the raw switchboard tool names (distinctive snake_case tokens only; bare "respond"/"settle" excluded as common English)',
   },
 
@@ -138,9 +147,13 @@ export const LEAK_RULES: LeakRule[] = [
 ];
 
 /** Substrings that, if a hit falls entirely inside one, are NOT a leak. Guards
- *  the one allowed word that a leak regex would otherwise catch. */
+ *  the allowed words that a leak regex would otherwise catch. */
 const ALLOW_GUARDS: RegExp[] = [
   /\bswitchboard\b/gi, // never let any rule flag the product's own name
+  // "listing"/"listings": approved by the human as plain speech, and the word
+  // the switchboard itself uses for a thin post. Guarded rather than merely
+  // un-ruled so that a future noun rule cannot quietly re-flag it.
+  /\blistings?\b/gi,
 ];
 
 function isGuarded(text: string, start: number, end: number): boolean {

@@ -124,7 +124,7 @@ export class Harness {
     card: Record<string, unknown>,
     opts: { expectError?: boolean } = {},
   ): Promise<McpResult> {
-    const r = await this.mcp(actor.accessToken, 'publish_intent', { card });
+    const r = await this.mcp(actor.accessToken, 'publish_intent', { listing: card });
     if (!r.isError && r.result?.intent_id) {
       this.cards.push({ token: actor.accessToken, id: r.result.intent_id, label: actor.label });
     }

@@ -228,20 +228,20 @@ const fullLadder: Scenario = {
     assert(typeof mutual.result.counterparty?.first_name === 'string', 'mutual missing counterparty first name');
 
     // channel opens for both, same id
-    const chA = await h.mcp(wA.accessToken, 'open_channel', { match_id: matchId });
-    assert(!chA.isError && chA.result.kind === 'channel.open', `open_channel(wA) failed: ${JSON.stringify(chA.result)}`);
-    const channelId = chA.result.channel.channel_id;
-    const chB = await h.mcp(hB.accessToken, 'open_channel', { match_id: matchId });
-    assert(chB.result.channel.channel_id === channelId, 'channel id differs between the two sides');
+    const chA = await h.mcp(wA.accessToken, 'open_conversation', { match_id: matchId });
+    assert(!chA.isError && chA.result.kind === 'conversation.open', `open_channel(wA) failed: ${JSON.stringify(chA.result)}`);
+    const channelId = chA.result.conversation.conversation_id;
+    const chB = await h.mcp(hB.accessToken, 'open_conversation', { match_id: matchId });
+    assert(chB.result.conversation.conversation_id === channelId, 'conversation id differs between the two sides');
 
     // a message each way, collected the other side
-    await h.mcp(wA.accessToken, 'channel_send', { match_id: matchId, text: 'Saturday morning any good? I can come to you.' });
-    await h.mcp(hB.accessToken, 'channel_send', { match_id: matchId, text: 'Saturday works, I am near the markets.' });
-    const toB = await h.mcp(hB.accessToken, 'channel_receive', { match_id: matchId });
+    await h.mcp(wA.accessToken, 'send_message', { match_id: matchId, text: 'Saturday morning any good? I can come to you.' });
+    await h.mcp(hB.accessToken, 'send_message', { match_id: matchId, text: 'Saturday works, I am near the markets.' });
+    const toB = await h.mcp(hB.accessToken, 'collect_messages', { match_id: matchId });
     check.sweep(toB.raw, 'hB channel_receive');
     assert(toB.result.messages?.[0]?.body?.text?.includes('Saturday morning'), 'hB did not receive wA words');
     assert(toB.result.messages[0].body.provenance === 'counterparty-untrusted', 'message not marked counterparty-untrusted');
-    const toA = await h.mcp(wA.accessToken, 'channel_receive', { match_id: matchId });
+    const toA = await h.mcp(wA.accessToken, 'collect_messages', { match_id: matchId });
     assert(toA.result.messages?.[0]?.body?.text?.includes('markets'), 'wA did not receive hB words');
 
     // ladder is at ready_to_talk
@@ -253,7 +253,7 @@ const fullLadder: Scenario = {
     // archive, then it stays retrievable but is refused as actionable / channel
     const arch = await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'archive' });
     assert(!arch.isError && arch.result.state === 'archived', `archive failed: ${JSON.stringify(arch.result)}`);
-    const blocked = await h.mcp(wA.accessToken, 'channel_send', { match_id: matchId, text: 'still there?' });
+    const blocked = await h.mcp(wA.accessToken, 'send_message', { match_id: matchId, text: 'still there?' });
     assert(blocked.isError && blocked.result.code === 'STAGE_LOCKED', `archived channel_send not STAGE_LOCKED: ${JSON.stringify(blocked.result)}`);
 
     const after = await h.mcp(hB.accessToken, 'check_matches', {});

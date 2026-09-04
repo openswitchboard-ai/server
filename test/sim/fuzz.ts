@@ -300,9 +300,9 @@ export async function runFuzz(
         [wA, 'respond', { match_id: matchId, action: 'express_interest' }],
         [hB, 'respond', { match_id: matchId, action: 'express_interest' }],
         [wA, 'check_matches', {}],
-        [wA, 'open_channel', { match_id: matchId }],
-        [wA, 'channel_send', { match_id: matchId, text: `fuzz ${round} hello` }],
-        [hB, 'channel_receive', { match_id: matchId }],
+        [wA, 'open_conversation', { match_id: matchId }],
+        [wA, 'send_message', { match_id: matchId, text: `fuzz ${round} hello` }],
+        [hB, 'collect_messages', { match_id: matchId }],
         [wA, 'check_matches', {}],
       ];
       for (const [actor, tool, args] of seq) {
@@ -310,7 +310,7 @@ export async function runFuzz(
         if (r.isError && r.result?.code === 'RATE_LIMITED') break; // expected throttle
         if (tool === 'check_matches' && !args.stage) check.matchesView(r, `fuzz r${round} ${actor.label} sweep`);
         else check.sweep(r.raw, `fuzz r${round} ${actor.label} ${tool}`);
-        if (tool === 'open_channel' && !r.isError) outcome.channelsOpened++;
+        if (tool === 'open_conversation' && !r.isError) outcome.channelsOpened++;
         noteViolation();
       }
       await step(wA, 'respond', { match_id: matchId, action: 'archive' });

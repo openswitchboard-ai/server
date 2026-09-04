@@ -126,7 +126,7 @@ async function assertNotCollecting(m: MatchRow, accountId: string): Promise<void
     const secs = Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000));
     throw new OsbError('STAGE_LOCKED', {
       human_action:
-        'Your collection window is still open on this card: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
+        'Your collection window is still open on this listing: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
       retry_after: secs,
     });
   }
@@ -613,7 +613,7 @@ export async function openChannel(matchId: string, accountId: string) {
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
     throw new OsbError('STAGE_LOCKED', {
-      human_action: 'A channel can open only after both humans opt in to mutual disclosure.',
+      human_action: 'A conversation can open only after both humans opt in to mutual disclosure.',
     });
   }
   let channelId = m.channel_id;
@@ -633,11 +633,11 @@ export async function openChannel(matchId: string, accountId: string) {
       [matchId, channelId, openedAt, channelKey],
     );
   }
-  return assertOutbound('channel.open', {
+  return assertOutbound('conversation.open', {
     schema_version: SCHEMA_VERSION,
-    kind: 'channel.open' as const,
+    kind: 'conversation.open' as const,
     match_id: m.id,
-    channel: { medium: 'in-app' as const, channel_id: channelId },
+    conversation: { medium: 'in-app' as const, conversation_id: channelId },
     opened_at: new Date(openedAt!).toISOString(),
   });
 }
@@ -665,7 +665,7 @@ export async function getStagePayload(
     case 3:
       return buildMutual(cfg, m, accountId);
     default:
-      throw Object.assign(new Error(`stage must be 1, 2 or 3 (channel.open via open_channel)`), {
+      throw Object.assign(new Error(`stage must be 1, 2 or 3 (conversation.open via open_conversation)`), {
         validation: ['stage'],
       });
   }
@@ -780,11 +780,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         ),
       };
     }
-    // A match that has reached stage 4 names its channel here, so an agent
+    // A match that has reached stage 4 names its conversation here, so an agent
     // polling for matches already knows where to collect from. How many
     // messages are waiting is counted once for the whole sweep, in the tool
     // layer, alongside the sentence written for the human.
-    if (m.stage >= 4 && m.channel_id) entry.channel = { channel_id: m.channel_id };
+    if (m.stage >= 4 && m.channel_id) entry.conversation = { conversation_id: m.channel_id };
     // A pending offer FROM the other side must reach this agent on its ordinary
     // sweep — otherwise a routine "anything new?" misses a figure on the table.
     // The amount is a deliberate disclosure (an offer is meant to be seen), so

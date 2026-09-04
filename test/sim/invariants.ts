@@ -161,11 +161,11 @@ export function scanArchivedEntry(entry: any, where: string): Violation[] {
 /** The canonical live tool set. I3: no accept tool exists on the surface. */
 export const EXPECTED_TOOLS = [
   'amend_intent',
-  'channel_receive',
-  'channel_send',
+  'collect_messages',
+  'send_message',
   'check_matches',
   'list_intents',
-  'open_channel',
+  'open_conversation',
   'publish_intent',
   'respond',
   'settle',
