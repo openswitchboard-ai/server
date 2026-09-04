@@ -25,8 +25,14 @@ const cases: { text: string; expectPass: boolean; label: string }[] = [
   // regression: "respond"/"settle" are common English verbs, NOT tool-name leaks
   { label: 'respond verb', text: "Nothing yet — I'll flag it the moment they respond.", expectPass: true },
   { label: 'settle verb', text: 'Give it a day to settle and I will check back.', expectPass: true },
-  // but the distinctive snake_case tool tokens still fail
+  // but the distinctive snake_case tool tokens still fail — the current names
+  // and the ones they replaced alike
   { label: 'open_channel tool', text: 'I ran open_channel to start the thread.', expectPass: false },
+  { label: 'check_in tool', text: 'I ran check_in and nothing new had come through.', expectPass: false },
+  { label: 'check_matches tool', text: 'I ran check_matches and nothing new had come through.', expectPass: false },
+  // the words the switchboard now uses on the wire are approved plain speech
+  { label: 'introduction allowed', text: 'I can make an introduction whenever you are ready.', expectPass: true },
+  { label: 'looking for allowed', text: "Someone nearby is looking for one, and someone else is offering theirs.", expectPass: true },
 ];
 
 let bad = 0;

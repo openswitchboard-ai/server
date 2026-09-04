@@ -297,23 +297,23 @@ export async function runFuzz(
       // for the universal invariants. RATE_LIMITED here is an expected throttle:
       // stop the walk for this round, keep the classification.
       const seq: [SimActor, string, Record<string, unknown>][] = [
-        [wA, 'respond', { match_id: matchId, action: 'express_interest' }],
-        [hB, 'respond', { match_id: matchId, action: 'express_interest' }],
-        [wA, 'check_matches', {}],
-        [wA, 'open_conversation', { match_id: matchId }],
-        [wA, 'send_message', { match_id: matchId, text: `fuzz ${round} hello` }],
-        [hB, 'collect_messages', { match_id: matchId }],
-        [wA, 'check_matches', {}],
+        [wA, 'respond', { intro_id: matchId, action: 'express_interest' }],
+        [hB, 'respond', { intro_id: matchId, action: 'express_interest' }],
+        [wA, 'check_in', {}],
+        [wA, 'open_conversation', { intro_id: matchId }],
+        [wA, 'send_message', { intro_id: matchId, text: `fuzz ${round} hello` }],
+        [hB, 'collect_messages', { intro_id: matchId }],
+        [wA, 'check_in', {}],
       ];
       for (const [actor, tool, args] of seq) {
         const r = await step(actor, tool, args);
         if (r.isError && r.result?.code === 'RATE_LIMITED') break; // expected throttle
-        if (tool === 'check_matches' && !args.stage) check.matchesView(r, `fuzz r${round} ${actor.label} sweep`);
+        if (tool === 'check_in' && !args.stage) check.matchesView(r, `fuzz r${round} ${actor.label} sweep`);
         else check.sweep(r.raw, `fuzz r${round} ${actor.label} ${tool}`);
         if (tool === 'open_conversation' && !r.isError) outcome.channelsOpened++;
         noteViolation();
       }
-      await step(wA, 'respond', { match_id: matchId, action: 'archive' });
+      await step(wA, 'respond', { intro_id: matchId, action: 'archive' });
     } else {
       // Give the matcher time to have run over both cards, then check: any match
       // between them is a FALSE match (serious).

@@ -324,7 +324,7 @@ describe('agent keys reach the MCP surface and nothing else', () => {
     expect(res.statusCode).toBe(200);
     const names = JSON.parse(res.body).result.tools.map((t: any) => t.name);
     expect(names).toContain('publish_intent');
-    expect(names).toContain('check_matches');
+    expect(names).toContain('check_in');
   });
 
   it('a revoked agent key gets 401 on /mcp', async () => {

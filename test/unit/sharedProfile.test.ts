@@ -45,7 +45,7 @@ import * as cpages from '../../src/counter/pages.js';
 import * as chome from '../../src/counter/pagesHome.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
-import { OsbError, validatePayload } from '../../src/protocol.js';
+import { OsbError, validateOutbound } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = {
@@ -270,7 +270,7 @@ describe('opt_in on an empty profile', () => {
     expect(err.payload.human_action).toContain(profile.SHARED_PROFILE_ACTION);
     expect(err.payload.human_action).toContain('https://my.test/a/');
     // The error itself is a conformant protocol error.
-    expect(validatePayload('error', err.payload).valid).toBe(true);
+    expect(validateOutbound('error', err.payload).valid).toBe(true);
     expect(err.payload.human_action.length).toBeLessThanOrEqual(300);
   });
 
@@ -348,7 +348,7 @@ describe('stage-3 fetch with both opt-ins recorded but a profile still empty', (
     expect(world.stage).toBe(3);
   });
 
-  it('flags the blockage on the check_matches sweep instead of dropping it silently', async () => {
+  it('flags the blockage on the check_in sweep instead of dropping it silently', async () => {
     const list = await matches.checkMatches(cfg, ANA);
     expect(list[0].mutual).toBeUndefined();
     expect(list[0].mutual_blocked.code).toBe('CONSENT_REQUIRED');
@@ -362,19 +362,19 @@ describe('stage-3 fetch once both profiles are filled', () => {
     world.accounts[BEPPE] = { first_name: 'Beppe', locality: 'Trastevere' };
   });
 
-  it('returns a valid match.mutual to each side', async () => {
+  it('returns a valid intro.mutual to each side', async () => {
     const toAna: any = await matches.getStagePayload(cfg, ANA, MATCH, 3);
-    expect(toAna.kind).toBe('match.mutual');
+    expect(toAna.kind).toBe('intro.mutual');
     expect(toAna.counterparty).toEqual({ first_name: 'Beppe', locality: 'Trastevere' });
     expect(toAna.optin.both_recorded).toBe(true);
-    expect(validatePayload('match.mutual', toAna).valid).toBe(true);
+    expect(validateOutbound('intro.mutual', toAna).valid).toBe(true);
 
     const toBeppe: any = await matches.getStagePayload(cfg, BEPPE, MATCH, 3);
     expect(toBeppe.counterparty).toEqual({ first_name: 'Ana', locality: 'Fremantle' });
-    expect(validatePayload('match.mutual', toBeppe).valid).toBe(true);
+    expect(validateOutbound('intro.mutual', toBeppe).valid).toBe(true);
   });
 
-  it('carries the mutual payload on the check_matches sweep', async () => {
+  it('carries the mutual payload on the check_in sweep', async () => {
     const list = await matches.checkMatches(cfg, ANA);
     expect(list[0].mutual.counterparty.first_name).toBe('Beppe');
     expect(list[0].mutual_blocked).toBeUndefined();
@@ -400,7 +400,7 @@ describe('stage-3 fetch once both profiles are filled', () => {
     expect((await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested')).both).toBe(false);
     expect((await matches.recordStage3OptIn(cfg, MATCH, BEPPE, 'agent-attested')).both).toBe(true);
     const mutual: any = await matches.getStagePayload(cfg, ANA, MATCH, 3);
-    expect(validatePayload('match.mutual', mutual).valid).toBe(true);
+    expect(validateOutbound('intro.mutual', mutual).valid).toBe(true);
     expect(mutual.counterparty.first_name).toBe('Beppe');
   });
 });

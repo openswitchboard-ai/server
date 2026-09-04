@@ -7,7 +7,7 @@
  *
  *  - PARTICIPANT GATING: only the two accounts of an OPEN stage-4 match can
  *    reach a channel. A stranger is not told the match exists; a party on a
- *    match that has not opened a channel gets STAGE_LOCKED; a withdrawn card
+ *    match that has not opened a channel gets NOT_UNLOCKED_YET; a withdrawn card
  *    closes the channel for both sides.
  *  - DELETE ON DELIVERY: collecting a message is what removes it. After a
  *    receive the row count for that channel is ZERO, a second receive comes
@@ -43,7 +43,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
     expect(key.toString('utf8')).toBe(`ckey:${channelId}`);
     return blob.toString('utf8').replace(/^sealed:/, '');
   }),
-  // Identity fields still go through the account envelope, and the check_matches
+  // Identity fields still go through the account envelope, and the check_in
   // sweep reads them; the relay itself never touches these (asserted below).
   decryptFields: vi.fn(async (_a: string, _k: Buffer, fields: Record<string, Buffer>) =>
     Object.fromEntries(
@@ -302,20 +302,20 @@ describe('participant gating', () => {
     world.channel_id = null;
     const e = await channel.sendMessage(ANA, MATCH, 'hello?').catch((x) => x);
     expect(e).toBeInstanceOf(OsbError);
-    expect(e.payload.code).toBe('STAGE_LOCKED');
+    expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
   });
 
   it('refuses a match that is no longer open', async () => {
     world.state = 'declined';
     const e = await channel.sendMessage(ANA, MATCH, 'hello?').catch((x) => x);
-    expect(e.payload.code).toBe('STAGE_LOCKED');
+    expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
   });
 
   it('closes the channel for both sides when either card is withdrawn', async () => {
     world.cards['card-h'] = 'WITHDRAWN';
     for (const who of [ANA, BEPPE]) {
       const e = await channel.sendMessage(who, MATCH, 'still there?').catch((x) => x);
-      expect(e.payload.code).toBe('STAGE_LOCKED');
+      expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
       expect(e.payload.human_action).toMatch(/withdrawn/);
     }
   });
@@ -665,7 +665,7 @@ describe('the tool surface', () => {
     expect(names).toContain('send_message');
     expect(names).toContain('collect_messages');
     const send = TOOLS.find((t) => t.name === 'send_message')!;
-    expect(send.inputSchema.required).toEqual(['match_id', 'text']);
+    expect(send.inputSchema.required).toEqual(['intro_id', 'text']);
     const receive = TOOLS.find((t) => t.name === 'collect_messages')!;
     expect(receive.description).toMatch(/DELETES IT/);
     expect(receive.description).toMatch(/counterparty-untrusted/);
@@ -689,7 +689,7 @@ describe('the tool surface', () => {
       text: 'about that bike',
     });
     expect(sent.isError).toBeFalsy();
-    const got = await dispatchTool(cfg, BEPPE, 'collect_messages', { match_id: MATCH });
+    const got = await dispatchTool(cfg, BEPPE, 'collect_messages', { intro_id: MATCH });
     expect((got.structuredContent as any).messages[0].body).toEqual({
       text: 'about that bike',
       provenance: 'counterparty-untrusted',
@@ -698,14 +698,14 @@ describe('the tool surface', () => {
   });
 
   it('answers a stranger with the protocol error shape rather than a stack', async () => {
-    const r = await dispatchTool(cfg, STRANGER, 'collect_messages', { match_id: MATCH });
+    const r = await dispatchTool(cfg, STRANGER, 'collect_messages', { intro_id: MATCH });
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain('match not found');
+    expect(r.content[0].text).toContain('introduction not found');
   });
 });
 
-describe('check_matches says when something is waiting', () => {
-  it('folds a conversation summary into the match a polling agent already reads', async () => {
+describe('check_in says when something is waiting', () => {
+  it('folds a conversation summary into the entry a polling agent already reads', async () => {
     await channel.sendMessage(ANA, MATCH, 'first');
     await channel.sendMessage(ANA, MATCH, 'second');
     // checkMatches walks the caller's matches; this world answers the sweep
@@ -744,8 +744,8 @@ describe('check_matches says when something is waiting', () => {
       },
       connect: async () => client,
     } as any);
-    const r = await dispatchTool(cfg, BEPPE, 'check_matches', {});
-    const entry = (r.structuredContent as any).matches[0];
+    const r = await dispatchTool(cfg, BEPPE, 'check_in', {});
+    const entry = (r.structuredContent as any).introductions[0];
     expect(entry.conversation.conversation_id).toBe(CHANNEL);
     expect(entry.conversation.messages_waiting).toBe(2);
     expect(entry.conversation.note.provenance).toBe('switchboard-system');

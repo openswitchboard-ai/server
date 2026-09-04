@@ -6,7 +6,7 @@
  * agree a cadence with its human — how often to check, what is worth waking
  * them for, when to stay quiet, how bold to be with suggestions — and every
  * restart, model change, new session and new client used to lose that
- * agreement. Held here, it comes back on every check_matches sweep, so an
+ * agreement. Held here, it comes back on every check_in sweep, so an
  * agent that has never met this human before still arrives knowing what they
  * asked for.
  *

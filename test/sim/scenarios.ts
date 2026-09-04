@@ -81,11 +81,11 @@ const designedMatch: Scenario = {
     log(`live matcher paired them: ${matchId}`);
 
     for (const a of [wA, hB]) {
-      const r = await h.mcp(a.accessToken, 'check_matches', {});
+      const r = await h.mcp(a.accessToken, 'check_in', {});
       check.matchesView(r, `${a.label} sweep`);
-      const entry = r.result.matches.find((m: any) => m.match_id === matchId);
+      const entry = r.result.introductions.find((m: any) => m.intro_id === matchId);
       assert(entry, `${a.label} does not see the designed match`);
-      assert(entry.signal?.kind === 'match.signal', `${a.label} missing stage-1 signal`);
+      assert(entry.signal?.kind === 'intro.signal', `${a.label} missing stage-1 signal`);
       assert(entry.signal.category === CAM, `${a.label} signal category wrong`);
       assert(entry.signal.score === undefined, `${a.label} signal carries a score (I7)`);
       assert(entry.next === 'show_interest', `${a.label} next != show_interest (${entry.next})`);
@@ -206,10 +206,10 @@ const fullLadder: Scenario = {
     const matchId = await h.createMatch(wA, w.result.intent_id, hB, hv.result.intent_id);
 
     // mutual interest
-    const i1 = await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    const i1 = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     check.sweep(i1.raw, 'wA express_interest');
     assert(i1.result.next === 'awaiting_other_side', `wA next != awaiting_other_side (${i1.result.next})`);
-    const i2 = await h.mcp(hB.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    const i2 = await h.mcp(hB.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     check.sweep(i2.raw, 'hB express_interest');
     assert(i2.result.next === 'details_unlocked', `hB next != details_unlocked (${i2.result.next})`);
 
@@ -221,44 +221,44 @@ const fullLadder: Scenario = {
     assert(apB.status === 200 && /Approved/.test(apB.body), `hB approval page failed (${apB.status})`);
 
     // both opted in -> stage-3 mutual to each side (identity legitimate now)
-    const mutual = await h.mcp(wA.accessToken, 'check_matches', { match_id: matchId, stage: 3 });
+    const mutual = await h.mcp(wA.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
     check.sweep(mutual.raw, 'stage-3 mutual');
-    assert(!mutual.isError && mutual.result.kind === 'match.mutual', `stage-3 not unlocked: ${JSON.stringify(mutual.result)}`);
+    assert(!mutual.isError && mutual.result.kind === 'intro.mutual', `stage-3 not unlocked: ${JSON.stringify(mutual.result)}`);
     assert(mutual.result.optin?.both_recorded === true, 'both_recorded not true after both approvals');
     assert(typeof mutual.result.counterparty?.first_name === 'string', 'mutual missing counterparty first name');
 
     // channel opens for both, same id
-    const chA = await h.mcp(wA.accessToken, 'open_conversation', { match_id: matchId });
+    const chA = await h.mcp(wA.accessToken, 'open_conversation', { intro_id: matchId });
     assert(!chA.isError && chA.result.kind === 'conversation.open', `open_channel(wA) failed: ${JSON.stringify(chA.result)}`);
     const channelId = chA.result.conversation.conversation_id;
-    const chB = await h.mcp(hB.accessToken, 'open_conversation', { match_id: matchId });
+    const chB = await h.mcp(hB.accessToken, 'open_conversation', { intro_id: matchId });
     assert(chB.result.conversation.conversation_id === channelId, 'conversation id differs between the two sides');
 
     // a message each way, collected the other side
-    await h.mcp(wA.accessToken, 'send_message', { match_id: matchId, text: 'Saturday morning any good? I can come to you.' });
-    await h.mcp(hB.accessToken, 'send_message', { match_id: matchId, text: 'Saturday works, I am near the markets.' });
-    const toB = await h.mcp(hB.accessToken, 'collect_messages', { match_id: matchId });
+    await h.mcp(wA.accessToken, 'send_message', { intro_id: matchId, text: 'Saturday morning any good? I can come to you.' });
+    await h.mcp(hB.accessToken, 'send_message', { intro_id: matchId, text: 'Saturday works, I am near the markets.' });
+    const toB = await h.mcp(hB.accessToken, 'collect_messages', { intro_id: matchId });
     check.sweep(toB.raw, 'hB channel_receive');
     assert(toB.result.messages?.[0]?.body?.text?.includes('Saturday morning'), 'hB did not receive wA words');
     assert(toB.result.messages[0].body.provenance === 'counterparty-untrusted', 'message not marked counterparty-untrusted');
-    const toA = await h.mcp(wA.accessToken, 'collect_messages', { match_id: matchId });
+    const toA = await h.mcp(wA.accessToken, 'collect_messages', { intro_id: matchId });
     assert(toA.result.messages?.[0]?.body?.text?.includes('markets'), 'wA did not receive hB words');
 
     // ladder is at ready_to_talk
-    const sweep = await h.mcp(wA.accessToken, 'check_matches', {});
+    const sweep = await h.mcp(wA.accessToken, 'check_in', {});
     check.matchesView(sweep, 'wA sweep before archive');
-    const live = sweep.result.matches.find((m: any) => m.match_id === matchId);
+    const live = sweep.result.introductions.find((m: any) => m.intro_id === matchId);
     assert(live.next === 'ready_to_talk', `next != ready_to_talk (${live.next})`);
 
     // archive, then it stays retrievable but is refused as actionable / channel
-    const arch = await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'archive' });
+    const arch = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'archive' });
     assert(!arch.isError && arch.result.state === 'archived', `archive failed: ${JSON.stringify(arch.result)}`);
-    const blocked = await h.mcp(wA.accessToken, 'send_message', { match_id: matchId, text: 'still there?' });
-    assert(blocked.isError && blocked.result.code === 'STAGE_LOCKED', `archived channel_send not STAGE_LOCKED: ${JSON.stringify(blocked.result)}`);
+    const blocked = await h.mcp(wA.accessToken, 'send_message', { intro_id: matchId, text: 'still there?' });
+    assert(blocked.isError && blocked.result.code === 'NOT_UNLOCKED_YET', `archived channel_send not NOT_UNLOCKED_YET: ${JSON.stringify(blocked.result)}`);
 
-    const after = await h.mcp(hB.accessToken, 'check_matches', {});
+    const after = await h.mcp(hB.accessToken, 'check_in', {});
     check.sweep(after.raw, 'hB sweep after archive');
-    const archived = after.result.matches.find((m: any) => m.match_id === matchId);
+    const archived = after.result.introductions.find((m: any) => m.intro_id === matchId);
     check.archivedEntry(archived, 'archived entry');
     assert(archived?.mutual?.counterparty?.first_name, 'archived match lost its disclosed identity');
     log('ladder walked to stage-4 and archived; archived match retrievable, channel refused');
@@ -282,23 +282,23 @@ const declineNoLeak: Scenario = {
     const matchId = await h.createMatch(wA, w.result.intent_id, hB, hv.result.intent_id);
 
     // wA gets keen first.
-    await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
     // A reason attached to a decline is rejected outright.
-    const withReason = await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'decline', reason: 'changed my mind' });
+    const withReason = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'decline', reason: 'changed my mind' });
     assert(withReason.isError, 'a decline carrying a reason was accepted');
 
     // A clean decline carries nothing but the state change.
-    const declined = await h.mcp(wA.accessToken, 'respond', { match_id: matchId, action: 'decline' });
+    const declined = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'decline' });
     check.decline(declined.raw, 'wA decline');
     assert(!declined.isError && declined.result.state === 'declined', `decline failed: ${JSON.stringify(declined.result)}`);
 
     // hB must never learn that wA was ever interested.
-    const hbView = await h.mcp(hB.accessToken, 'check_matches', {});
+    const hbView = await h.mcp(hB.accessToken, 'check_in', {});
     check.matchesView(hbView, 'hB sweep after wA decline');
     assert(!/"interested"|awaiting_other_side|expressed/i.test(hbView.raw),
       `hB view leaks wA's prior interest: ${hbView.raw.slice(0, 400)}`);
-    const hbEntry = hbView.result.matches.find((m: any) => m.match_id === matchId);
+    const hbEntry = hbView.result.introductions.find((m: any) => m.intro_id === matchId);
     assert(!hbEntry || hbEntry.next === 'show_interest' || hbEntry.next === undefined,
       `hB sees an actionable state that leaks interest: next=${hbEntry?.next}`);
     log('decline is reasonless and the counterparty never learns interest existed');
@@ -324,13 +324,13 @@ const negotiation: Scenario = {
       h.waitCardDB(hv.result.intent_id, ['PUBLISHED']),
     ]);
     const matchId = await h.createMatch(dA, w.result.intent_id, eB, hv.result.intent_id);
-    await h.mcp(dA.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await h.mcp(eB.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await h.mcp(dA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await h.mcp(eB.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
     // Pass on (the default) refuses an agent-authored figure.
     const expiry = new Date(Date.now() + 86_400_000).toISOString();
     const passOn = await h.mcp(dA.accessToken, 'respond', {
-      match_id: matchId, action: 'propose_offer', offer: { amount: 500, ccy: 'AUD', expiry },
+      intro_id: matchId, action: 'propose_offer', offer: { amount: 500, ccy: 'AUD', expiry },
     });
     assert(passOn.isError && passOn.result.code === 'CONSENT_REQUIRED',
       `pass-on figure not refused with CONSENT_REQUIRED: ${JSON.stringify(passOn.result)}`);
@@ -338,18 +338,18 @@ const negotiation: Scenario = {
     // eB's human switches HIS card to Auto-negotiate with an odd box.
     await setAutoNegotiate(eB.jar, hv.result.intent_id, { open: 800, limit: 733.5, step: 17.25 });
     const inBox = await h.mcp(eB.accessToken, 'respond', {
-      match_id: matchId, action: 'propose_offer', offer: { amount: 800, ccy: 'AUD', expiry },
+      intro_id: matchId, action: 'propose_offer', offer: { amount: 800, ccy: 'AUD', expiry },
     });
     check.sweep(inBox.raw, 'eB in-box offer');
     assert(!inBox.isError && inBox.result.state === 'proposed', `in-box offer refused: ${JSON.stringify(inBox.result)}`);
     const outBox = await h.mcp(eB.accessToken, 'respond', {
-      match_id: matchId, action: 'propose_offer', offer: { amount: 400, ccy: 'AUD', expiry },
+      intro_id: matchId, action: 'propose_offer', offer: { amount: 400, ccy: 'AUD', expiry },
     });
     assert(outBox.isError && outBox.result.code === 'CONSENT_REQUIRED', `out-of-box offer not refused: ${JSON.stringify(outBox.result)}`);
     assert(String(JSON.stringify(outBox.result)).includes('733.5'), 'the edge was not named to the card owner');
 
     // The box, and the band, never cross to the counterparty.
-    const dView = await h.mcp(dA.accessToken, 'respond', { match_id: matchId, action: 'list_offers' });
+    const dView = await h.mcp(dA.accessToken, 'respond', { intro_id: matchId, action: 'list_offers' });
     check.sweep(dView.raw, 'dA list_offers');
     for (const leak of ['733.5', '17.25', '"step"', 'mandate', 'negotiation_mode', 'authored_by']) {
       assert(!dView.raw.includes(leak), `counterparty offer view leaks "${leak}"`);

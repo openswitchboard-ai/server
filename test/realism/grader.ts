@@ -129,11 +129,12 @@ export const LEAK_RULES: LeakRule[] = [
     // "settle in") and were dropped after they produced false positives against
     // real replies — the whole point of capturing substrings is to catch this.
     // The current names AND the ones they replaced: a stale agent still
-    // narrating open_channel is exactly as much of a leak as one narrating
-    // open_conversation. Every token here carries an underscore, so a
+    // narrating open_channel or check_matches is exactly as much of a leak as
+    // one narrating open_conversation or check_in. Every token here carries an
+    // underscore, so a
     // \b-bounded match only ever fires on the literal snake_case tool name and
     // never on ordinary prose like "send a message".
-    re: /\b(check_matches|publish_intent|withdraw_intent|amend_intent|list_intents|open_conversation|send_message|collect_messages|open_channel|channel_send|channel_receive|express_interest|propose_offer|send_to_human|decline_offer|withdraw_offer|list_offers|close_collection|standing_arrangement)\b/g,
+    re: /\b(check_in|check_matches|publish_intent|withdraw_intent|amend_intent|list_intents|open_conversation|send_message|collect_messages|open_channel|channel_send|channel_receive|express_interest|propose_offer|send_to_human|decline_offer|withdraw_offer|list_offers|close_collection|standing_arrangement)\b/g,
     note: 'the raw switchboard tool names (distinctive snake_case tokens only; bare "respond"/"settle" excluded as common English)',
   },
 

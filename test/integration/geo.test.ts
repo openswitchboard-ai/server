@@ -140,10 +140,10 @@ d('one city, two spellings, one match', () => {
       180_000,
     );
     for (const actor of [alice, bob]) {
-      const r = await mcpCall(actor.accessToken, 'check_matches', {});
-      const ours = (r.result.matches ?? []).find((m: any) => m.match_id === matchId);
+      const r = await mcpCall(actor.accessToken, 'check_in', {});
+      const ours = (r.result.introductions ?? []).find((m: any) => m.intro_id === matchId);
       expect(ours, JSON.stringify(r.result)).toBeTruthy();
-      expect(ours.signal.kind).toBe('match.signal');
+      expect(ours.signal.kind).toBe('intro.signal');
       expect(ours.signal.category).toBe('goods.bicycle.mountain');
       expect(ours.signal.score).toBeGreaterThanOrEqual(0.75);
     }
@@ -336,8 +336,8 @@ d('a card that reaches a whole country', () => {
       'a match between the Canberra nationwide HAVE and the Perth WANT',
       180_000,
     );
-    const r = await mcpCall(buyer.accessToken, 'check_matches', {});
-    const ours = (r.result.matches ?? []).find((m: any) => m.match_id === matchId);
+    const r = await mcpCall(buyer.accessToken, 'check_in', {});
+    const ours = (r.result.introductions ?? []).find((m: any) => m.intro_id === matchId);
     expect(ours, JSON.stringify(r.result)).toBeTruthy();
     expect(ours.signal.category).toBe('goods.electronics.laptop');
   }, 240_000);

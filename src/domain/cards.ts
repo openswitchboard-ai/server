@@ -202,9 +202,10 @@ export async function listIntents(accountId: string): Promise<any[]> {
             : {};
         })()
       : {}),
-    card: {
+    listing: {
       schema_version: row.schema_version,
-      type: row.type,
+      // The side, in the words the wire uses. WANT/HAVE stay in the column.
+      type: row.type === 'WANT' ? 'looking_for' : 'offering',
       category: row.category,
       geo: row.geo,
       ...(row.attributes && Object.keys(row.attributes).length

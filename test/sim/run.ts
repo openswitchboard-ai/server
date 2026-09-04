@@ -231,7 +231,7 @@ async function main(): Promise<number> {
         log(`    have  bucket=${fd.have.bucket} band=${fd.have.band} reach=${fd.have.reach} radius=${fd.have.radius_km}km`);
       } else {
         log(`  FINDING incompatible-but-MATCHED / FALSE MATCH (seed ${fd.seed}, round ${fd.round}, broke=${fd.reason}):`);
-        log(`    match_id=${fd.matchId}  want=${fd.category} ${fd.wantId}  have=${fd.have.category} ${fd.haveId}`);
+        log(`    intro_id=${fd.matchId}  want=${fd.category} ${fd.wantId}  have=${fd.have.category} ${fd.haveId}`);
         log(`    want bucket=${fd.want.bucket} reach=${fd.want.reach}  have bucket=${fd.have.bucket} reach=${fd.have.reach}`);
       }
     }

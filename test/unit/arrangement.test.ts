@@ -15,7 +15,7 @@
  *  - the shape is validated, capped, and free of anything shaped like a way to
  *    reach someone — which is what earns the plaintext column;
  *  - a set through the agent surface round-trips to a get;
- *  - every check_matches sweep carries the current object, so an agent that
+ *  - every check_in sweep carries the current object, so an agent that
  *    has never spoken to this human still learns how they want to be treated;
  *  - each set writes one WORM event naming the fields and none of the words;
  *  - the human's page shows it in plain words and can edit or clear it.
@@ -433,17 +433,17 @@ describe('the standing_arrangement tool', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('every check_matches sweep carries it', () => {
-  it('hands back the current arrangement alongside the matches', async () => {
+describe('every check_in sweep carries it', () => {
+  it('hands back the current arrangement alongside the introductions', async () => {
     await arrangement.saveArrangement(ANA, FULL, 'counter');
-    const r: any = await dispatchTool(cfg, ANA, 'check_matches', {});
-    expect(r.structuredContent.matches).toEqual([]);
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
+    expect(r.structuredContent.introductions).toEqual([]);
     expect(r.structuredContent.arrangement).toEqual(FULL);
     expect(r.structuredContent.arrangement_note.provenance).toBe('switchboard-system');
   });
 
   it('says so when there is none yet, so a fresh agent knows to ask', async () => {
-    const r: any = await dispatchTool(cfg, ANA, 'check_matches', {});
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
     expect(r.structuredContent.arrangement).toEqual({});
     expect(r.structuredContent.arrangement_note.text).toMatch(/has not saved any standing preferences|no standing preferences/i);
   });
@@ -451,7 +451,7 @@ describe('every check_matches sweep carries it', () => {
   it('a second agent on a fresh connection reads back what the first one saved', async () => {
     await dispatchTool(cfg, ANA, 'standing_arrangement', { action: 'set', arrangement: FULL });
     // A different call with nothing in common but the account id.
-    const r: any = await dispatchTool(cfg, ANA, 'check_matches', {});
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
     expect(r.structuredContent.arrangement).toEqual(FULL);
   });
 });
@@ -556,13 +556,13 @@ describe('the manual section for agents that can act unattended', () => {
 
   it('says to settle the arrangement with the human and then save it', () => {
     expect(section).toContain('standing_arrangement');
-    expect(section).toContain('check_matches hands it back on every sweep');
+    expect(section).toContain('check_in hands it back on every sweep');
     expect(section).toMatch(/restart/);
     expect(section).toMatch(/change of model/);
   });
 
   it('names what interrupts and what waits', () => {
-    expect(section).toContain('a new match');
+    expect(section).toContain('someone newly come forward');
     expect(section).toContain('patched through');
     expect(section).toContain('approval page');
   });

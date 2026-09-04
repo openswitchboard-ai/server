@@ -6,7 +6,7 @@
  * whatever the manual said that day, and an edit made since reaches it only if
  * something makes it reconnect — which for a long-lived agent may be never. So
  * the manual carries a version, a session records the version it was handed,
- * and the next check_matches sweep tells it what has been written since.
+ * and the next check_in sweep tells it what has been written since.
  *
  * The rules asserted here:
  *  - the changelog covers every version, in order, with no gaps;
@@ -63,7 +63,7 @@ function fakePool() {
       // gets near it.
       if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT arrangement FROM accounts/.test(sql)) return rows([{ arrangement: null }]);
-      // No matches, no cards: the sweep has nothing else to say.
+      // Nothing on the board: the sweep has nothing else to say.
       return rows([]);
     },
   } as any;
@@ -97,7 +97,7 @@ afterEach(() => {
 });
 
 const sweep = (session?: ToolSession) =>
-  dispatchTool(cfg, ANA, 'check_matches', {}, session) as Promise<any>;
+  dispatchTool(cfg, ANA, 'check_in', {}, session) as Promise<any>;
 const body = (r: any) => r.structuredContent;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ describe('the manual introduces itself', () => {
   });
   it('keeps the system words out of the human-facing voice, archive excepted', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(
-      /words match and connection are yours to think in and never theirs to hear/i,
+      /words the machinery uses are yours to think in and never theirs to hear/i,
     );
     expect(SERVER_INSTRUCTIONS).toMatch(/archive is plain enough to say out loud/i);
   });
@@ -224,7 +224,7 @@ describe('the sweep carries it, for a day', () => {
     const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: MANUAL.version, manualNotifiedAt: null };
     const r = body(await sweep(session));
     expect(r.manual_update).toBeUndefined();
-    expect(Object.keys(r)).toEqual(['matches', 'arrangement', 'arrangement_note']);
+    expect(Object.keys(r)).toEqual(['introductions', 'arrangement', 'arrangement_note']);
     expect(versionWrites).toEqual([]);
   });
 
@@ -321,54 +321,93 @@ describe('the manual says what a manual_update is', () => {
  * description a client renders into the model's context.
  *
  * The shipped changelog notes are deliberately out of scope: an entry that has
- * gone out is never reworded (see the header of instructions.ts), so notes 1-11
- * still describe the world in the words of their day, and note 12 is what tells
- * a returning agent the words have changed.
+ * gone out is never reworded (see the header of instructions.ts), so the older
+ * notes still describe the world in the words of their day, and the newest one
+ * is what tells a returning agent the words have changed.
  */
 const BANNED = [
   { label: 'card', re: /\b(index\s+)?cards?\b/i },
   { label: 'channel', re: /\bchannels?\b/i },
+  // Round two: the words that came from the wire itself. A live eval showed a
+  // model repeating each of these back to its human the moment the switchboard
+  // put one in front of it.
+  { label: 'match', re: /\bmatch(es)?\b/i },
+  { label: 'stage', re: /\bstages?\b/i },
+  // Case-SENSITIVE: the everyday verbs "want" and "have" are ordinary English
+  // and must not be flagged; only the shouted protocol nouns are.
+  { label: 'WANT', re: /\bWANT\b/ },
+  { label: 'HAVE', re: /\bHAVE\b/ },
 ];
 
 describe('what the switchboard calls things, in front of a model', () => {
-  it('keeps card and channel out of the manual an agent reads at connect', () => {
+  it('keeps the system words out of the manual an agent reads at connect', () => {
     for (const { label, re } of BANNED) {
       expect(re.test(SERVER_INSTRUCTIONS), `${label} in SERVER_INSTRUCTIONS`).toBe(false);
     }
   });
 
-  it('names the conversation tools in plain speech', async () => {
+  it('leaves the everyday verbs alone: this sweep is about nouns', () => {
+    // The guard on the guard. "want" and "have" are how a human talks, and the
+    // manual is full of them; only the shouted protocol spellings are banned.
+    expect(SERVER_INSTRUCTIONS).toMatch(/\bwant\b/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/\bhave\b/);
+  });
+
+  it('names the tools in plain speech', async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const names = TOOLS.map((t) => t.name);
     expect(names).toContain('open_conversation');
     expect(names).toContain('send_message');
     expect(names).toContain('collect_messages');
+    expect(names).toContain('check_in');
     // And the words they replaced are gone from the surface entirely.
     expect(names).not.toContain('open_channel');
     expect(names).not.toContain('channel_send');
     expect(names).not.toContain('channel_receive');
+    expect(names).not.toContain('check_matches');
   });
 
-  it('keeps card and channel out of every tool name and description', async () => {
+  it('asks for an introduction by intro_id, and for one unlock by step', async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
-    // Descriptions nest: the tool's own, and every `description` inside its
-    // input schema. A client renders all of them into the model's context.
-    const described = (node: any, out: string[] = []): string[] => {
-      if (Array.isArray(node)) node.forEach((n) => described(n, out));
+    const props = (name: string) =>
+      Object.keys(TOOLS.find((t) => t.name === name)!.inputSchema.properties ?? {});
+    for (const name of ['respond', 'open_conversation', 'send_message', 'collect_messages', 'settle']) {
+      expect(props(name), name).toContain('intro_id');
+      expect(props(name), name).not.toContain('match_id');
+    }
+    const checkIn = TOOLS.find((t) => t.name === 'check_in')!;
+    expect(Object.keys(checkIn.inputSchema.properties)).toEqual(['intent_id', 'intro_id', 'step']);
+    expect(checkIn.inputSchema.properties.step.enum).toEqual(['signal', 'details', 'names']);
+  });
+
+  it('offers the two sides of a listing in words a human could overhear', async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
+    expect(publish.inputSchema.properties.listing.properties.type.enum).toEqual([
+      'looking_for',
+      'offering',
+    ]);
+  });
+
+  it('keeps the system words out of every string on the tool surface', async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    // EVERY string a client renders into the model's context, at any depth:
+    // the tool's own name and description, and inside its input schema every
+    // description, every `title`, and every enum member, const and default.
+    // Prose is not the only place a word leaks — "Intent card" was a title and
+    // "anonymous-until-match" was an enum value.
+    const strings = (node: any, path: string, out: [string, string][] = []): [string, string][] => {
+      if (Array.isArray(node)) node.forEach((n, i) => strings(n, `${path}[${i}]`, out));
       else if (node && typeof node === 'object') {
-        for (const [k, v] of Object.entries(node)) {
-          if (k === 'description' && typeof v === 'string') out.push(v);
-          else described(v, out);
-        }
-      }
+        for (const [k, v] of Object.entries(node)) strings(v, `${path}.${k}`, out);
+      } else if (typeof node === 'string') out.push([path, node]);
       return out;
     };
     for (const t of TOOLS) {
       for (const { label, re } of BANNED) {
         expect(re.test(t.name), `${label} in tool name ${t.name}`).toBe(false);
-        expect(re.test(t.description), `${label} in ${t.name} description`).toBe(false);
-        for (const d of described(t.inputSchema)) {
-          expect(re.test(d), `${label} in ${t.name} input schema: ${d.slice(0, 80)}`).toBe(false);
+        for (const [path, value] of strings(t, t.name)) {
+          expect(re.test(value), `${label} at ${path}: ${value.slice(0, 90)}`).toBe(false);
         }
       }
     }
@@ -383,8 +422,14 @@ describe('what the switchboard calls things, in front of a model', () => {
 
   it('carries a changelog note telling a returning agent the words changed', () => {
     const latest = MANUAL_CHANGELOG.find((c) => c.version === MANUAL.version)!;
-    expect(latest.note).toContain('open_conversation');
-    expect(latest.note).toContain('send_message');
-    expect(latest.note).toContain('collect_messages');
+    expect(latest.note).toContain('check_in');
+    expect(latest.note).toContain('intro_id');
+    expect(latest.note).toContain('looking_for');
+    expect(latest.note).toContain('offering');
+    // The note that carried the previous rename is never reworded away.
+    const twelve = MANUAL_CHANGELOG.find((c) => c.version === 12)!;
+    expect(twelve.note).toContain('open_conversation');
+    expect(twelve.note).toContain('send_message');
+    expect(twelve.note).toContain('collect_messages');
   });
 });

@@ -13,8 +13,8 @@
  *  - only a party can archive — a stranger's token cannot;
  *  - it is idempotent — a second archive reports already_archived;
  *  - the live channel is torn down — channel_send and channel_receive on the
- *    archived match are refused with STAGE_LOCKED;
- *  - RETRIEVABILITY (the whole point): check_matches still returns the match,
+ *    archived match are refused with NOT_UNLOCKED_YET;
+ *  - RETRIEVABILITY (the whole point): check_in still returns the match,
  *    now with state 'archived', the category, the archive date, and the
  *    disclosed mutual first name + area, to each side;
  *  - an archived match is not offered as an actionable signal (no `next`, no
@@ -87,29 +87,29 @@ d('archiving a finished connection', () => {
       score: 0.88,
     });
     matchId = await poll(async () => {
-      const r = await mcpCall(ana.accessToken, 'check_matches', { intent_id: w.result.intent_id });
-      return r.result.matches?.[0]?.match_id as string | undefined;
+      const r = await mcpCall(ana.accessToken, 'check_in', { intent_id: w.result.intent_id });
+      return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
 
     // Both interested, both opted in (with a first name + area filled), channel
     // open, a message across it — a real pair mid-connection.
-    await mcpCall(ana.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
+    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     await setSharedProfile(ana.jar, 'Ana', 'Fremantle');
     await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere');
     await approveDisclosure(ana.jar, matchId, ana.pin);
     await approveDisclosure(beppe.jar, matchId, beppe.pin);
-    const opened = await mcpCall(ana.accessToken, 'open_conversation', { match_id: matchId });
+    const opened = await mcpCall(ana.accessToken, 'open_conversation', { intro_id: matchId });
     expect(opened.isError).toBe(false);
     await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'Lovely — let us swap numbers and take it from here.',
     });
   }, 300_000);
 
   it('a stranger cannot archive a match they are not party to', async () => {
     const r = await mcpCall(stranger.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'archive',
     });
     expect(r.isError).toBe(true);
@@ -117,7 +117,7 @@ d('archiving a finished connection', () => {
   });
 
   it('respond(archive) files it away and records who did it', async () => {
-    const r = await mcpCall(ana.accessToken, 'respond', { match_id: matchId, action: 'archive' });
+    const r = await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'archive' });
     expect(r.isError).toBe(false);
     expect(r.result.state).toBe('archived');
     expect(r.result.already_archived).toBe(false);
@@ -127,7 +127,7 @@ d('archiving a finished connection', () => {
 
   it('is idempotent — a second archive reports it already filed', async () => {
     const again = await mcpCall(beppe.accessToken, 'respond', {
-      match_id: matchId,
+      intro_id: matchId,
       action: 'archive',
     });
     expect(again.isError).toBe(false);
@@ -137,19 +137,19 @@ d('archiving a finished connection', () => {
 
   it('tears down the live channel — send and receive are refused', async () => {
     const send = await mcpCall(ana.accessToken, 'send_message', {
-      match_id: matchId,
+      intro_id: matchId,
       text: 'anyone still there?',
     });
     expect(send.isError).toBe(true);
-    expect(send.result.code).toBe('STAGE_LOCKED');
-    const recv = await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
+    expect(send.result.code).toBe('NOT_UNLOCKED_YET');
+    const recv = await mcpCall(beppe.accessToken, 'collect_messages', { intro_id: matchId });
     expect(recv.isError).toBe(true);
-    expect(recv.result.code).toBe('STAGE_LOCKED');
+    expect(recv.result.code).toBe('NOT_UNLOCKED_YET');
   });
 
-  it('stays retrievable: check_matches returns it archived, with the disclosed details', async () => {
-    const all = await mcpCall(ana.accessToken, 'check_matches', {});
-    const entry = all.result.matches.find((m: any) => m.match_id === matchId);
+  it('stays retrievable: check_in returns it archived, with the disclosed details', async () => {
+    const all = await mcpCall(ana.accessToken, 'check_in', {});
+    const entry = all.result.introductions.find((m: any) => m.intro_id === matchId);
     expect(entry).toBeTruthy();
     expect(entry.state).toBe('archived');
     expect(typeof entry.category).toBe('string');
@@ -162,8 +162,8 @@ d('archiving a finished connection', () => {
   });
 
   it('the counterparty can look it up too', async () => {
-    const all = await mcpCall(beppe.accessToken, 'check_matches', {});
-    const entry = all.result.matches.find((m: any) => m.match_id === matchId);
+    const all = await mcpCall(beppe.accessToken, 'check_in', {});
+    const entry = all.result.introductions.find((m: any) => m.intro_id === matchId);
     expect(entry.state).toBe('archived');
     expect(entry.mutual.counterparty).toEqual({ first_name: 'Ana', locality: 'Fremantle' });
   });

@@ -198,7 +198,7 @@ export function registerStripeWebhook(app: FastifyInstance, cfg: Config): void {
       try {
         await handleEvent(cfg, event, (m, x) => req.log.info(x ?? {}, m));
       } catch (e: any) {
-        if (e instanceof OsbError && e.payload.code === 'STAGE_LOCKED') {
+        if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           // The event does not apply to the settlement's current state (e.g.
           // a replayed capture on an already-released settlement). Truthful
           // no-op; keep the claim so Stripe stops retrying.
