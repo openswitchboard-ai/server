@@ -11,9 +11,9 @@ import {
 describe('outbound payload enforcement (no-leak rule)', () => {
   it('refuses to emit a stage-2 payload carrying a price band', () => {
     expect(() =>
-      assertOutbound('match.attributes', {
+      assertOutbound('intro.attributes', {
         schema_version: SCHEMA_VERSION,
-        kind: 'match.attributes',
+        kind: 'intro.attributes',
         match_id: '4b4b1f6e-3c3f-49f5-9df1-14b62ef62a1f',
         attributes: { condition: 'good' },
         price: { band: { min: 100, max: 300 }, ccy: 'AUD' },
@@ -23,9 +23,9 @@ describe('outbound payload enforcement (no-leak rule)', () => {
 
   it('refuses a stage-3 payload without the both-recorded opt-in attestation', () => {
     expect(() =>
-      assertOutbound('match.mutual', {
+      assertOutbound('intro.mutual', {
         schema_version: SCHEMA_VERSION,
-        kind: 'match.mutual',
+        kind: 'intro.mutual',
         match_id: '4b4b1f6e-3c3f-49f5-9df1-14b62ef62a1f',
         counterparty: { first_name: 'Ana', locality: 'Fremantle' },
       } as any),
