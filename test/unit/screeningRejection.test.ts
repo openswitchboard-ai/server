@@ -364,7 +364,7 @@ describe('who may see a rejection reason', () => {
     // outbound validation rather than shipping it.
     const { assertOutbound } = await import('../../src/protocol.js');
     expect(() =>
-      assertOutbound('match.attributes', { ...attributes, screening: { reason_code: 'pii-in-card' } }),
+      assertOutbound('intro.attributes', { ...attributes, screening: { reason_code: 'pii-in-card' } }),
     ).toThrow(/validation/);
   });
 });

@@ -4,7 +4,7 @@
  * The defect this suite exists to hold shut: registration never asked for
  * either field, so an account carried two encrypted empty strings, both humans
  * could opt in, and the stage-3 payload then failed OUTBOUND schema validation
- * (match.mutual requires minLength 1 on both). The agent saw a malformed
+ * (intro.mutual requires minLength 1 on both). The agent saw a malformed
  * server, and nobody was told the one thing that would fix it.
  *
  * The rules asserted here:
@@ -13,7 +13,7 @@
  *  - a stage-3 fetch on a match where both sides opted in but a profile is
  *    still empty answers CONSENT_REQUIRED as well — the outbound validator is
  *    never reached, and the recorded opt-ins are left alone;
- *  - once both profiles exist, the same fetch returns a valid match.mutual;
+ *  - once both profiles exist, the same fetch returns a valid intro.mutual;
  *  - identity is written only by the human's own pages, through the account's
  *    own envelope key.
  */
