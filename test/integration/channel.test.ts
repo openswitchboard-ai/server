@@ -65,11 +65,11 @@ d('a conversation carried across an open channel', () => {
     ]);
 
     const w = await mcpCall(ana.accessToken, 'publish_intent', {
-      card: minimalWant({ attributes: { condition: 'good' } }),
+      listing: minimalWant({ attributes: { condition: 'good' } }),
     });
     expect(w.isError).toBe(false);
     const h = await mcpCall(beppe.accessToken, 'publish_intent', {
-      card: minimalHave({ attributes: { condition: 'good' } }),
+      listing: minimalHave({ attributes: { condition: 'good' } }),
     });
     expect(h.isError).toBe(false);
     await waitForCardState(ana.accessToken, w.result.intent_id, ['PUBLISHED']);
@@ -103,13 +103,13 @@ d('a conversation carried across an open channel', () => {
   }, 300_000);
 
   it('opens the channel for each side, on the same channel id', async () => {
-    const forAna = await mcpCall(ana.accessToken, 'open_channel', { match_id: matchId });
+    const forAna = await mcpCall(ana.accessToken, 'open_conversation', { match_id: matchId });
     expect(forAna.isError).toBe(false);
-    expect(forAna.result.kind).toBe('channel.open');
-    channelId = forAna.result.channel.channel_id;
+    expect(forAna.result.kind).toBe('conversation.open');
+    channelId = forAna.result.conversation.conversation_id;
 
-    const forBeppe = await mcpCall(beppe.accessToken, 'open_channel', { match_id: matchId });
-    expect(forBeppe.result.channel.channel_id).toBe(channelId);
+    const forBeppe = await mcpCall(beppe.accessToken, 'open_conversation', { match_id: matchId });
+    expect(forBeppe.result.conversation.conversation_id).toBe(channelId);
   });
 
   // The waiting-message nudge closes the conversational deadlock: a message
@@ -128,7 +128,7 @@ d('a conversation carried across an open channel', () => {
   it('nudges the waiting side once, and holds the throttle on a rapid second message', async () => {
     // First message to beppe on an empty inbox: exactly one nudge is enqueued
     // and the ops worker sends it (a simulator address, so SES accepts it).
-    const first = await mcpCall(ana.accessToken, 'channel_send', {
+    const first = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'Are you about this week?',
     });
@@ -145,7 +145,7 @@ d('a conversation carried across an open channel', () => {
 
     // A rapid second message, still unread by beppe: the throttle suppresses a
     // second nudge at send time, so no further ops job and no second email.
-    const second = await mcpCall(ana.accessToken, 'channel_send', {
+    const second = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'No rush at all.',
     });
@@ -155,7 +155,7 @@ d('a conversation carried across an open channel', () => {
 
     // Leave the channel as we found it, so the later collection tests start
     // from an empty channel.
-    await mcpCall(beppe.accessToken, 'channel_receive', { match_id: matchId });
+    await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
     expect(await rowsOnChannel()).toBe(0);
   });
 
@@ -168,27 +168,27 @@ d('a conversation carried across an open channel', () => {
   });
 
   it('turns away an account that is not one of the two', async () => {
-    const send = await mcpCall(onlooker.accessToken, 'channel_send', {
+    const send = await mcpCall(onlooker.accessToken, 'send_message', {
       match_id: matchId,
       text: 'hello?',
     });
     expect(send.isError).toBe(true);
     expect(JSON.stringify(send.result)).toContain('not found');
-    const receive = await mcpCall(onlooker.accessToken, 'channel_receive', { match_id: matchId });
+    const receive = await mcpCall(onlooker.accessToken, 'collect_messages', { match_id: matchId });
     expect(receive.isError).toBe(true);
     expect(await rowsOnChannel()).toBe(0);
   });
 
   it('carries a message from each side', async () => {
-    const fromAna = await mcpCall(ana.accessToken, 'channel_send', {
+    const fromAna = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'Is Saturday morning any good? I can come to you.',
     });
     expect(fromAna.isError).toBe(false);
-    expect(fromAna.result.channel_id).toBe(channelId);
+    expect(fromAna.result.conversation_id).toBe(channelId);
     expect(fromAna.result.message_id).toMatch(/^[0-9a-f-]{36}$/);
 
-    const fromBeppe = await mcpCall(beppe.accessToken, 'channel_send', {
+    const fromBeppe = await mcpCall(beppe.accessToken, 'send_message', {
       match_id: matchId,
       text: 'Saturday works. I am near the markets, anywhere around there is fine.',
     });
@@ -214,25 +214,25 @@ d('a conversation carried across an open channel', () => {
     // The channel is open, so the action word is ready_to_talk — no stage int.
     expect(entry.stage_unlocked).toBeUndefined();
     expect(entry.next).toBe('ready_to_talk');
-    expect(entry.channel.channel_id).toBe(channelId);
-    expect(entry.channel.messages_waiting).toBe(1);
-    expect(entry.channel.note.provenance).toBe('switchboard-system');
+    expect(entry.conversation.conversation_id).toBe(channelId);
+    expect(entry.conversation.messages_waiting).toBe(1);
+    expect(entry.conversation.note.provenance).toBe('switchboard-system');
     expect(await rowsOnChannel()).toBe(2);
   });
 
   it('hands each side the other side words, labelled as such', async () => {
-    const toAna = await mcpCall(ana.accessToken, 'channel_receive', { match_id: matchId });
+    const toAna = await mcpCall(ana.accessToken, 'collect_messages', { match_id: matchId });
     expect(toAna.isError).toBe(false);
     expect(toAna.result.messages).toHaveLength(1);
     const msg = toAna.result.messages[0];
-    expect(msg.kind).toBe('channel.message');
-    expect(msg.channel_id).toBe(channelId);
+    expect(msg.kind).toBe('conversation.message');
+    expect(msg.conversation_id).toBe(channelId);
     expect(msg.body.text).toContain('markets');
     expect(msg.body.provenance).toBe('counterparty-untrusted');
-    expect(validatePayload('channel.message', msg).reasons.join('; ')).toBe('');
+    expect(validatePayload('conversation.message', msg).reasons.join('; ')).toBe('');
     expect(toAna.result.more_waiting).toBe(false);
 
-    const toBeppe = await mcpCall(beppe.accessToken, 'channel_receive', { match_id: matchId });
+    const toBeppe = await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
     expect(toBeppe.result.messages[0].body.text).toContain('Saturday morning');
   });
 
@@ -241,39 +241,39 @@ d('a conversation carried across an open channel', () => {
   });
 
   it('cannot hand the same message over twice', async () => {
-    const again = await mcpCall(ana.accessToken, 'channel_receive', { match_id: matchId });
+    const again = await mcpCall(ana.accessToken, 'collect_messages', { match_id: matchId });
     expect(again.isError).toBe(false);
     expect(again.result.messages).toEqual([]);
     expect(again.result.more_waiting).toBe(false);
 
     const summary = await mcpCall(ana.accessToken, 'check_matches', {});
     const entry = summary.result.matches.find((m: any) => m.match_id === matchId);
-    expect(entry.channel.messages_waiting).toBe(0);
-    expect(entry.channel.note).toBeUndefined();
+    expect(entry.conversation.messages_waiting).toBe(0);
+    expect(entry.conversation.note).toBeUndefined();
   });
 
   it('carries a message at the ceiling and refuses one past it', async () => {
-    const atCap = await mcpCall(ana.accessToken, 'channel_send', {
+    const atCap = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'x'.repeat(4000),
     });
     expect(atCap.isError).toBe(false);
-    const past = await mcpCall(ana.accessToken, 'channel_send', {
+    const past = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'x'.repeat(4001),
     });
     expect(past.isError).toBe(true);
     // Exactly one row landed: the one at the ceiling.
     expect(await rowsOnChannel()).toBe(1);
-    await mcpCall(beppe.accessToken, 'channel_receive', { match_id: matchId });
+    await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
     expect(await rowsOnChannel()).toBe(0);
   });
 
   it('offers both channel tools on the live surface, and tells an agent what they cost', async () => {
     const r = await mcpRpc(ana.accessToken, 'tools/list', {});
     const tools: any[] = r.result.tools;
-    const send = tools.find((t) => t.name === 'channel_send');
-    const receive = tools.find((t) => t.name === 'channel_receive');
+    const send = tools.find((t) => t.name === 'send_message');
+    const receive = tools.find((t) => t.name === 'collect_messages');
     expect(send).toBeTruthy();
     expect(receive.description).toMatch(/DELETES IT/);
     expect(receive.description).toMatch(/counterparty-untrusted/);

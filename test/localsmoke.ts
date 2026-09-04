@@ -244,7 +244,7 @@ const proh = await fetch(`${base}/mcp`, {
     params: {
       name: 'publish_intent',
       arguments: {
-        card: {
+        listing: {
           schema_version: '0.1.0',
           type: 'WANT',
           category: 'goods.weapons',

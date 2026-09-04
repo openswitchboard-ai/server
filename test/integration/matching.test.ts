@@ -67,7 +67,7 @@ const card = (
 });
 
 async function publish(actor: TestActor, c: any): Promise<string> {
-  const r = await mcpCall(actor.accessToken, 'publish_intent', { card: c });
+  const r = await mcpCall(actor.accessToken, 'publish_intent', { listing: c });
   expect(r.isError, JSON.stringify(r.result)).toBe(false);
   return r.result.intent_id as string;
 }

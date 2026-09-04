@@ -345,10 +345,10 @@ function withLink(sentence: string, url: string): string {
 }
 
 export const RELAY_ACTION =
-  'Your numbers come from you — reply to offers on your approval page, or switch this card to hands-off negotiation there:';
+  'Your numbers come from you — reply to offers on your approval page, or switch this listing to hands-off negotiation there:';
 
 export const NO_MANDATE_ACTION =
-  'This card is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your approval page:';
+  'This listing is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your approval page:';
 
 /** relay mode: the agent may not author a figure at all. */
 export function relayRefusal(cfg: Config, matchId: string): OsbError {
@@ -401,7 +401,7 @@ export function checkAgainstMandate(
   input: MandateCheckInput,
 ): MandateCheck {
   if (input.ccy.toUpperCase() !== m.ccy) {
-    return { ok: false, reason: `Your human's numbers on this card are in ${m.ccy}, and this offer is in ${input.ccy.toUpperCase()}.` };
+    return { ok: false, reason: `Your human's numbers on this listing are in ${m.ccy}, and this offer is in ${input.ccy.toUpperCase()}.` };
   }
   const amount = input.amount;
 
@@ -424,7 +424,7 @@ export function checkAgainstMandate(
   // The opening move: with an opening figure written down, the first offer is
   // that figure. "Open where they told you" is the whole instruction.
   if (input.isOpening && m.open !== undefined && amount !== m.open) {
-    return { ok: false, reason: `Your human said to open this card at ${m.open} ${m.ccy}.` };
+    return { ok: false, reason: `Your human said to open this listing at ${m.open} ${m.ccy}.` };
   }
 
   if (m.step !== undefined && input.priorAmounts.length) {

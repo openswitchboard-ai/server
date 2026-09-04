@@ -316,7 +316,7 @@ export async function acceptOfferByHuman(
   if (w) {
     throw new OsbError('STAGE_LOCKED', {
       human_action:
-        'Your collection window on this card is still open. Close it early from your approval page (or let it lapse), then accept.',
+        'Your collection window on this listing is still open. Close it early from your approval page (or let it lapse), then accept.',
       retry_after: Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000)),
     });
   }

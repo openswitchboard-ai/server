@@ -80,13 +80,15 @@ export async function loadOpenChannel(
   const side = sideOf(m, accountId); // throws notFound when the caller is not a party
   if (m.state !== 'open' || m.stage < 4 || !m.channel_id) {
     throw channelLocked(
-      'This match has no open channel yet. Both humans opt in first, and then open_channel opens it.',
+      'This match has no open conversation yet. Both humans opt in first, and then open_conversation opens it.',
     );
   }
   for (const cardId of [m.card_want, m.card_have]) {
     const card = await getCard(cardId);
     if (!card || card.lifecycle_state === 'WITHDRAWN') {
-      throw channelLocked('This channel has closed: one of the two cards behind it was withdrawn.');
+      throw channelLocked(
+        'This conversation has closed: one of the two listings behind it was withdrawn.',
+      );
     }
   }
   return {
@@ -139,9 +141,9 @@ export async function sendMessage(
   matchId: string,
   text: unknown,
   cfg?: Config,
-): Promise<{ channel_id: string; message_id: string; sent_at: string }> {
+): Promise<{ conversation_id: string; message_id: string; sent_at: string }> {
   if (typeof text !== 'string' || text.trim().length === 0) {
-    throw Object.assign(new Error('channel_send requires text to carry'), { validation: ['text'] });
+    throw Object.assign(new Error('send_message requires text to carry'), { validation: ['text'] });
   }
   if (text.length > MAX_MESSAGE_CHARS) {
     throw Object.assign(
@@ -206,7 +208,7 @@ export async function sendMessage(
       });
     }
     return {
-      channel_id: ch.channelId,
+      conversation_id: ch.channelId,
       message_id: r.rows[0].id as string,
       sent_at: new Date(r.rows[0].created_at).toISOString(),
     };
@@ -250,10 +252,10 @@ export async function receiveMessages(
     for (const [i, row] of r.rows.entries()) {
       const text = await decryptForChannel(ch.channelId, wrappedKey, row.body_enc as Buffer);
       messages.push(
-        assertOutbound('channel.message', {
+        assertOutbound('conversation.message', {
           schema_version: SCHEMA_VERSION,
-          kind: 'channel.message' as const,
-          channel_id: ch.channelId,
+          kind: 'conversation.message' as const,
+          conversation_id: ch.channelId,
           message_id: row.id as string,
           seq: i + 1,
           sent_at: new Date(row.created_at).toISOString(),

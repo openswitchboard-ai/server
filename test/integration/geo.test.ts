@@ -69,12 +69,12 @@ const card = (type: 'WANT' | 'HAVE', place: string) => ({
 d('one city, two spellings, one match', () => {
   beforeAll(async () => {
     const w = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', 'Canberra'),
+      listing: card('WANT', 'Canberra'),
     });
     expect(w.isError, JSON.stringify(w.result)).toBe(false);
     wantId = w.result.intent_id;
     const h = await mcpCall(bob.accessToken, 'publish_intent', {
-      card: card('HAVE', 'AU-ACT'),
+      listing: card('HAVE', 'AU-ACT'),
     });
     expect(h.isError, JSON.stringify(h.result)).toBe(false);
     haveId = h.result.intent_id;
@@ -154,7 +154,7 @@ d('one city, two spellings, one match', () => {
     // the source data hangs off the city. The switchboard now refuses the
     // shorthand outright and asks for a real place inside it.
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', 'ACT'),
+      listing: card('WANT', 'ACT'),
     });
     expect(r.isError, JSON.stringify(r.result)).toBe(true);
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
@@ -168,7 +168,7 @@ d('one city, two spellings, one match', () => {
     // usually means a card that REACHES Australia, so the refusal now names
     // the field that says so.
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', 'AU'),
+      listing: card('WANT', 'AU'),
     });
     expect(r.isError, JSON.stringify(r.result)).toBe(true);
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
@@ -179,7 +179,7 @@ d('one city, two spellings, one match', () => {
 
   it('refuses a name several cities answer to, and lists them', async () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', 'Perth'),
+      listing: card('WANT', 'Perth'),
     });
     expect(r.isError, JSON.stringify(r.result)).toBe(true);
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_AMBIGUOUS');
@@ -191,7 +191,7 @@ d('one city, two spellings, one match', () => {
     // lands where that one is.
     const chosen = (r.result.candidates as any[]).find((c) => c.display.endsWith('GB'));
     const again = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', chosen.place),
+      listing: card('WANT', chosen.place),
     });
     expect(again.isError, JSON.stringify(again.result)).toBe(false);
     expect(again.result.location_resolved.display).toContain('Scotland');
@@ -199,7 +199,7 @@ d('one city, two spellings, one match', () => {
 
   it('says where it put the card, and shows the same place on the ledger', async () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', 'Canberra'),
+      listing: card('WANT', 'Canberra'),
     });
     expect(r.isError, JSON.stringify(r.result)).toBe(false);
     expect(r.result.location_resolved, JSON.stringify(r.result)).toBeTruthy();
@@ -222,7 +222,7 @@ d('one city, two spellings, one match', () => {
       [{ place: 'Canberra', radius_km: 25 }, 'matching within 25 km'],
     ] as [any, string][]) {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
-        card: { ...card('WANT', 'Canberra'), geo },
+        listing: { ...card('WANT', 'Canberra'), geo },
       });
       expect(r.isError, JSON.stringify(r.result)).toBe(false);
       expect(r.result.location_resolved.display, JSON.stringify(r.result)).toBe(
@@ -237,7 +237,7 @@ d('one city, two spellings, one match', () => {
   it('refuses a street address, and a name nothing answers to', async () => {
     // A leading street number never gets past the protocol schema itself.
     const numbered = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: card('WANT', '12 Smith St'),
+      listing: card('WANT', '12 Smith St'),
     });
     expect(numbered.isError).toBe(true);
     expect(JSON.stringify(numbered.result)).toContain('/geo/place');
@@ -248,7 +248,7 @@ d('one city, two spellings, one match', () => {
       ['Nowhereville', /nearest city|region/i],
     ] as [string, RegExp][]) {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
-        card: card('WANT', place),
+        listing: card('WANT', place),
       });
       expect(r.isError, `${place}: ${JSON.stringify(r.result)}`).toBe(true);
       expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
@@ -279,7 +279,7 @@ d('a card that reaches a whole country', () => {
 
   beforeAll(async () => {
     const h = await mcpCall(seller.accessToken, 'publish_intent', {
-      card: laptop('HAVE', { place: 'Canberra', reach: 'country' }),
+      listing: laptop('HAVE', { place: 'Canberra', reach: 'country' }),
     });
     expect(h.isError, JSON.stringify(h.result)).toBe(false);
     expect(h.result.location_resolved.display).toBe(
@@ -290,7 +290,7 @@ d('a card that reaches a whole country', () => {
     // A modest radius, because Pia is not driving anywhere — and a reach that
     // says she will take it in the post.
     const w = await mcpCall(buyer.accessToken, 'publish_intent', {
-      card: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25, reach: 'country' }),
+      listing: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25, reach: 'country' }),
     });
     expect(w.isError, JSON.stringify(w.result)).toBe(false);
     expect(w.result.location_resolved.display).toContain('reaching all of Australia');
@@ -346,7 +346,7 @@ d('a card that reaches a whole country', () => {
     // The control: nothing about the distance changed, only what the two
     // people said they would do about it.
     const local = await mcpCall(buyer.accessToken, 'publish_intent', {
-      card: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25 }),
+      listing: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25 }),
     });
     expect(local.isError, JSON.stringify(local.result)).toBe(false);
     const localWant = local.result.intent_id;

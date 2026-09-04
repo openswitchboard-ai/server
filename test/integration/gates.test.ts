@@ -64,7 +64,7 @@ d('integration gates against live deployment', () => {
 
     // Cards with price bands (private) and, on the HAVE, a deliberate ask.
     const w = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: minimalWant({
+      listing: minimalWant({
         price: { band: { min: 0, max: 750 }, ccy: 'AUD' },
         attributes: { condition: 'good' },
       }),
@@ -74,7 +74,7 @@ d('integration gates against live deployment', () => {
     expect(w.result.state).toBe('PENDING_SCREENING');
 
     const h = await mcpCall(bob.accessToken, 'publish_intent', {
-      card: minimalHave({
+      listing: minimalHave({
         price: { band: { min: 400, max: 400 }, ccy: 'AUD' },
         ask: { amount: 620, ccy: 'AUD' },
         attributes: { condition: 'good', model: 'Trek Marlin 5', year: 2019 },
@@ -107,11 +107,11 @@ d('integration gates against live deployment', () => {
     const names = tools.result.tools.map((t: any) => t.name).sort();
     expect(names).toEqual([
       'amend_intent',
-      'channel_receive',
-      'channel_send',
+      'collect_messages',
+      'send_message',
       'check_matches',
       'list_intents',
-      'open_channel',
+      'open_conversation',
       'publish_intent',
       'respond',
       'settle',
@@ -184,7 +184,7 @@ d('integration gates against live deployment', () => {
     expect(locked1.isError).toBe(true);
     expect(locked1.result.code).toBe('STAGE_LOCKED');
     // open_channel is equally locked.
-    const ch = await mcpCall(alice.accessToken, 'open_channel', { match_id: matchId });
+    const ch = await mcpCall(alice.accessToken, 'open_conversation', { match_id: matchId });
     expect(ch.isError).toBe(true);
     expect(ch.result.code).toBe('STAGE_LOCKED');
 
@@ -237,7 +237,7 @@ d('integration gates against live deployment', () => {
 
   it('GATE (c): seeded injection fixture is SCREENING_REJECTED', async () => {
     const inj = await mcpCall(bob.accessToken, 'publish_intent', {
-      card: minimalHave({
+      listing: minimalHave({
         attributes: {
           condition: 'good',
           model:
@@ -315,14 +315,14 @@ d('integration gates against live deployment', () => {
     // depends on. This pair matches each other and nobody else.
     const island = { bucket: `gf_${randomBytes(2).toString('hex')}`, radius_km: 25 };
     const dw = await mcpCall(dana.accessToken, 'publish_intent', {
-      card: minimalWant({
+      listing: minimalWant({
         geo: island,
         price: { band: { min: 0, max: 900 }, ccy: 'AUD' },
         attributes: { condition: 'good' },
       }),
     });
     const eh = await mcpCall(eli.accessToken, 'publish_intent', {
-      card: minimalHave({
+      listing: minimalHave({
         geo: island,
         price: { band: { min: 300, max: 300 }, ccy: 'AUD' },
         attributes: { condition: 'good' },
@@ -518,7 +518,7 @@ d('integration gates against live deployment', () => {
     for (let i = 0; i < 6; i++) {
       results.push(
         await mcpCall(carol.accessToken, 'publish_intent', {
-          card: minimalWant({ attributes: { year: 2020 + i } }),
+          listing: minimalWant({ attributes: { year: 2020 + i } }),
         }),
       );
     }
@@ -536,7 +536,7 @@ d('integration gates against live deployment', () => {
     const tools = await mcpRpc(token, 'tools/list', {});
     expect(tools.result.tools.map((t: any) => t.name)).toContain('publish_intent');
     const published = await mcpCall(token, 'publish_intent', {
-      card: minimalWant({ attributes: { condition: 'fair' } }),
+      listing: minimalWant({ attributes: { condition: 'fair' } }),
     });
     expect(published.isError).toBe(false);
     expect(published.result.intent_id).toBeTruthy();
@@ -580,7 +580,7 @@ d('integration gates against live deployment', () => {
     expect(alsoOver.result.code).toBe('RATE_LIMITED');
     // Nothing on the write surface is touched by it.
     const stillWrites = await mcpCall(greedy.accessToken, 'publish_intent', {
-      card: minimalWant({ attributes: { condition: 'fair' } }),
+      listing: minimalWant({ attributes: { condition: 'fair' } }),
     });
     expect(stillWrites.result?.code).not.toBe('RATE_LIMITED');
   }, 300_000);
@@ -603,14 +603,14 @@ d('integration gates against live deployment', () => {
 
   it('rejects prohibited categories with CATEGORY_PROHIBITED', async () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      card: minimalWant({ category: 'goods.weapons' }),
+      listing: minimalWant({ category: 'goods.weapons' }),
     });
     expect(r.isError).toBe(true);
     expect(r.result.code).toBe('CATEGORY_PROHIBITED');
   });
 
   it('amend + withdraw lifecycle', async () => {
-    const c = await mcpCall(alice.accessToken, 'publish_intent', { card: minimalWant() });
+    const c = await mcpCall(alice.accessToken, 'publish_intent', { listing: minimalWant() });
     const id = c.result.intent_id;
     await waitForCardState(alice.accessToken, id, ['PUBLISHED']);
     const amended = await mcpCall(alice.accessToken, 'amend_intent', {

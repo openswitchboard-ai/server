@@ -37,11 +37,11 @@ export interface StoredScreening extends ScreeningVerdict {
  */
 const REASON_SENTENCES: Record<string, string> = {
   'prompt-injection':
-    'Some of the wording on this card reads like an instruction aimed at an AI that comes across it. A card carries plain facts about the thing itself. Take that wording out and it can go back on the board.',
+    'Some of the wording on this listing reads like an instruction aimed at an AI that comes across it. A listing carries plain facts about the thing itself. Take that wording out and it can go back on the board.',
   'pii-in-card':
-    'There are personal details on this card — a name, an email address, a phone number, a street address or something like them. Cards stay anonymous until you say yes to sharing. Take those out and it can go back on the board.',
+    'There are personal details on this listing — a name, an email address, a phone number, a street address or something like them. Listings stay anonymous until you say yes to sharing. Take those out and it can go back on the board.',
   'stolen-goods-markers':
-    'The wording on this card reads the way a listing for stolen goods reads. If that is a turn of phrase rather than the truth of it, say it plainly instead and the card can go back on the board.',
+    'The wording on this listing reads the way a listing for stolen goods reads. If that is a turn of phrase rather than the truth of it, say it plainly instead and the listing can go back on the board.',
   'recalled-goods':
     'This looks like an item under a safety recall, so the switchboard is holding it back. If that is wrong, describe the item more exactly in its attributes and it can go back on the board.',
   weapons:
@@ -61,7 +61,7 @@ const REASON_SENTENCES: Record<string, string> = {
 // True wherever it renders: the approval page shows the raw code beneath it,
 // an email does not, so this sentence never promises one.
 const REASON_FALLBACK =
-  'Screening held this card back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit the card and save it to send it through again.';
+  'Screening held this listing back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit the listing and save it to send it through again.';
 
 /** One human sentence for a reason code. Unknown codes get the honest fallback. */
 export function screeningReasonInPlainWords(reasonCode?: string): string {
