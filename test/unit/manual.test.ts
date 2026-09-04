@@ -113,8 +113,8 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
     expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');
   });
-  it('teaches wrapping up a connection: notice, offer once, archive, retrieve', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('WRAPPING UP A CONNECTION');
+  it('teaches wrapping one up: notice, offer once, archive, retrieve', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('WRAPPING ONE UP');
     // The one-time offer, in the plain human-facing voice ("archive" is fine
     // to say; the system words are not).
     expect(SERVER_INSTRUCTIONS).toContain(
@@ -139,7 +139,7 @@ describe('the manual introduces itself', () => {
   });
   it('keeps the system words out of the human-facing voice, archive excepted', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(
-      /words the machinery uses are yours to think in and never theirs to hear/i,
+      /machinery's words are yours to think in and never theirs to hear/i,
     );
     expect(SERVER_INSTRUCTIONS).toMatch(/archive is plain enough to say out loud/i);
   });
@@ -337,6 +337,11 @@ const BANNED = [
   // and must not be flagged; only the shouted protocol nouns are.
   { label: 'WANT', re: /\bWANT\b/ },
   { label: 'HAVE', re: /\bHAVE\b/ },
+  // Round three: the manual's own archive section taught "connection" and a
+  // live eval heard it straight back ("those two connections waiting"). The
+  // verb "connected" stays ordinary English; the noun is the machinery's.
+  { label: 'connection', re: /\bconnections?\b/i },
+  { label: 'score', re: /\bscores?\b/i },
 ];
 
 describe('what the switchboard calls things, in front of a model', () => {
@@ -421,7 +426,8 @@ describe('what the switchboard calls things, in front of a model', () => {
   });
 
   it('carries a changelog note telling a returning agent the words changed', () => {
-    const latest = MANUAL_CHANGELOG.find((c) => c.version === MANUAL.version)!;
+    // The rename note need not be the newest entry, only present and intact.
+    const latest = MANUAL_CHANGELOG.find((c) => c.note.includes('check_in') && c.note.includes('intro_id'))!;
     expect(latest.note).toContain('check_in');
     expect(latest.note).toContain('intro_id');
     expect(latest.note).toContain('looking_for');
