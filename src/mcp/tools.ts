@@ -166,12 +166,28 @@ function plainVocabulary(node: any): any {
  *  own spelling is what goes to the domain and the database. */
 const ANONYMOUS_UNTIL = 'anonymous-until-introduced';
 
-const LISTING_SIDE: Record<string, 'WANT' | 'HAVE'> = {
-  looking_for: 'WANT',
-  offering: 'HAVE',
-  WANT: 'WANT',
-  HAVE: 'HAVE',
+const LISTING_SIDE: Record<string, 'looking_for' | 'offering'> = {
+  looking_for: 'looking_for',
+  offering: 'offering',
+  WANT: 'looking_for',
+  HAVE: 'offering',
 };
+
+/**
+ * Lift a posted listing to the wire's words before it meets the protocol
+ * document: legacy WANT/HAVE and the old visibility spelling become the words
+ * the 0.12.0 schema admits. The domain translates to its own column values
+ * only after validation has passed.
+ */
+export function wireListing(posted: any): any {
+  if (!posted || typeof posted !== 'object') return posted;
+  const side = LISTING_SIDE[String(posted.type)];
+  return {
+    ...posted,
+    ...(side ? { type: side } : {}),
+    ...(posted.visibility === 'anonymous-until-match' ? { visibility: ANONYMOUS_UNTIL } : {}),
+  };
+}
 
 /**
  * The listing schema as the agent is shown it: the side enum in the words the
@@ -562,22 +578,11 @@ export async function dispatchTool(
       case 'publish_intent': {
         // `listing` is the name the agent is given. `card` is still accepted so
         // a client holding the older tool schema keeps working; nothing the
-        // switchboard sends uses that word any more. The side comes in as
-        // looking_for / offering and goes to the domain as the word the schema
-        // and the database use.
-        const posted = args?.listing ?? args?.card;
-        const side = LISTING_SIDE[String(posted?.type)];
-        const listing =
-          posted && typeof posted === 'object'
-            ? {
-                ...posted,
-                ...(side ? { type: side } : {}),
-                ...(posted.visibility === ANONYMOUS_UNTIL
-                  ? { visibility: 'anonymous-until-match' }
-                  : {}),
-              }
-            : posted;
-        return ok(await cards.publishIntent(cfg, accountId, listing));
+        // switchboard sends uses that word any more. Legacy WANT/HAVE and the
+        // old visibility spelling are lifted to the wire words here, BEFORE
+        // validation — the protocol document only admits the wire words, and
+        // the domain translates to its own column values after validating.
+        return ok(await cards.publishIntent(cfg, accountId, wireListing(args?.listing ?? args?.card)));
       }
       case 'list_intents':
         return ok({ intents: await cards.listIntents(accountId) });
