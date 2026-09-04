@@ -132,7 +132,7 @@ export async function runRedTeam(
       const r = await h.mcp(stranger.accessToken, 'respond', { match_id: matchId, action });
       if (!r.isError) { strangerRefused = false; strangerDetail.push(`${action} SUCCEEDED`); }
     }
-    const send = await h.mcp(stranger.accessToken, 'channel_send', { match_id: matchId, text: 'hi' });
+    const send = await h.mcp(stranger.accessToken, 'send_message', { match_id: matchId, text: 'hi' });
     if (!send.isError) { strangerRefused = false; strangerDetail.push('channel_send SUCCEEDED'); }
     const wd = await h.mcp(stranger.accessToken, 'withdraw_intent', { intent_id: wId });
     if (!wd.isError) { strangerRefused = false; strangerDetail.push('withdraw of foreign card SUCCEEDED'); }

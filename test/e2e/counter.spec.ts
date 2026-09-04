@@ -220,7 +220,7 @@ test('agent OAuth: authorize hand-off happens on the counter, in-browser', async
 
 test('agent posts a card; matches are empty; ledger shows it', async () => {
   const w = await mcpCall(aliceToken, 'publish_intent', {
-    card: minimalWant({
+    listing: minimalWant({
       price: { band: { min: 0, max: 800 }, ccy: 'AUD' },
       attributes: { condition: 'good' },
     }),
@@ -253,7 +253,7 @@ test('agent posts a card; matches are empty; ledger shows it', async () => {
 test('offer arrives: approval link is single-use', async () => {
   bob = await bootstrapActor('Bob', 'Subiaco');
   const h = await mcpCall(bob.accessToken, 'publish_intent', {
-    card: minimalHave({
+    listing: minimalHave({
       price: { band: { min: 400, max: 400 }, ccy: 'AUD' },
       ask: { amount: 620, ccy: 'AUD' },
       attributes: { condition: 'good', model: 'Trek Marlin 5', year: 2019 },

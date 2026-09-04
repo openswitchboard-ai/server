@@ -91,7 +91,7 @@ export async function publishIntent(
 ): Promise<PublishResult> {
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid intent card: ${v.reasons.join('; ')}`), {
+    throw Object.assign(new Error(`invalid intent listing: ${v.reasons.join('; ')}`), {
       validation: v.reasons,
     });
   }
@@ -269,7 +269,7 @@ export async function amendIntent(
   if (next.ask === null || next.ask === undefined) delete next.ask;
   const v = validatePayload('intent-card', next);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid amended card: ${v.reasons.join('; ')}`), {
+    throw Object.assign(new Error(`invalid amended listing: ${v.reasons.join('; ')}`), {
       validation: v.reasons,
     });
   }

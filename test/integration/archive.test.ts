@@ -71,10 +71,10 @@ d('archiving a finished connection', () => {
     ]);
 
     const w = await mcpCall(ana.accessToken, 'publish_intent', {
-      card: minimalWant({ attributes: { condition: 'good' } }),
+      listing: minimalWant({ attributes: { condition: 'good' } }),
     });
     const h = await mcpCall(beppe.accessToken, 'publish_intent', {
-      card: minimalHave({ attributes: { condition: 'good' } }),
+      listing: minimalHave({ attributes: { condition: 'good' } }),
     });
     anaCardId = w.result.intent_id;
     await waitForCardState(ana.accessToken, w.result.intent_id, ['PUBLISHED']);
@@ -99,9 +99,9 @@ d('archiving a finished connection', () => {
     await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere');
     await approveDisclosure(ana.jar, matchId, ana.pin);
     await approveDisclosure(beppe.jar, matchId, beppe.pin);
-    const opened = await mcpCall(ana.accessToken, 'open_channel', { match_id: matchId });
+    const opened = await mcpCall(ana.accessToken, 'open_conversation', { match_id: matchId });
     expect(opened.isError).toBe(false);
-    await mcpCall(ana.accessToken, 'channel_send', {
+    await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'Lovely — let us swap numbers and take it from here.',
     });
@@ -136,13 +136,13 @@ d('archiving a finished connection', () => {
   });
 
   it('tears down the live channel — send and receive are refused', async () => {
-    const send = await mcpCall(ana.accessToken, 'channel_send', {
+    const send = await mcpCall(ana.accessToken, 'send_message', {
       match_id: matchId,
       text: 'anyone still there?',
     });
     expect(send.isError).toBe(true);
     expect(send.result.code).toBe('STAGE_LOCKED');
-    const recv = await mcpCall(beppe.accessToken, 'channel_receive', { match_id: matchId });
+    const recv = await mcpCall(beppe.accessToken, 'collect_messages', { match_id: matchId });
     expect(recv.isError).toBe(true);
     expect(recv.result.code).toBe('STAGE_LOCKED');
   });

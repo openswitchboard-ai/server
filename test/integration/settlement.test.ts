@@ -97,11 +97,11 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       bootstrapActor('Sam', 'Subiaco'),
     ]);
     const w = await mcpCall(buyer.accessToken, 'publish_intent', {
-      card: minimalWant({ attributes: { condition: 'good' } }),
+      listing: minimalWant({ attributes: { condition: 'good' } }),
     });
     expect(w.isError).toBe(false);
     const h = await mcpCall(seller.accessToken, 'publish_intent', {
-      card: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
+      listing: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
     });
     expect(h.isError).toBe(false);
     await waitForCardState(buyer.accessToken, w.result.intent_id, ['PUBLISHED']);

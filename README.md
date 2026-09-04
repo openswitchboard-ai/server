@@ -45,8 +45,8 @@ Registration is closed until launch.
 One container, three concerns.
 
 **1. MCP endpoint** — `/mcp`, Streamable HTTP in stateless JSON mode. Eleven
-tools: `publish_intent`, `check_matches`, `respond`, `open_channel`,
-`channel_send`, `channel_receive`, `list_intents`, `standing_arrangement`,
+tools: `publish_intent`, `check_matches`, `respond`, `open_conversation`,
+`send_message`, `collect_messages`, `list_intents`, `standing_arrangement`,
 `amend_intent`, `withdraw_intent`, `settle`. Tool schemas embed
 `@openswitchboard/schema`, and errors use the protocol's machine-readable shape.
 Every outbound counterparty payload is validated against its protocol schema
