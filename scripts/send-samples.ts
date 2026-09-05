@@ -1,11 +1,14 @@
 /**
- * Send the [SAMPLE] set for visual review:
- *   AWS_PROFILE=openswitchboard npx tsx scripts/send-samples.ts \
- *     --to you@example.com [--env dev]
+ * Send the [SAMPLE] set for visual review / the inbox-placement gate:
+ *   dev (sandbox, recipient must be verified):
+ *     AWS_PROFILE=openswitchboard npx tsx scripts/send-samples.ts --to you@example.com
+ *   prod (production sending via the host identity, see infra/host-ses):
+ *     AWS_PROFILE=openswitchboard AWS_REGION=ap-southeast-2 \
+ *       SES_IDENTITY_ARN=arn:aws:ses:ap-southeast-2:968431686951:identity/openswitchboard.ai \
+ *       npx tsx scripts/send-samples.ts --to you@example.com --env prod --config-set osb-prod-email
  * Sends every sample template through SES with the env's configuration set,
  * the production From/reply-to and the RFC 8058 headers (sample token), each
- * subject prefixed "[SAMPLE]". Recipient must be sandbox-verified until
- * production access lands. Prints SES message IDs for the phase report.
+ * subject prefixed "[SAMPLE]". Prints SES message IDs for the phase report.
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
@@ -21,17 +24,21 @@ async function main() {
   if (!to) throw new Error('--to <address> is required (a mailbox you control)');
   const envName = arg('env', 'dev');
   const region = process.env.AWS_REGION ?? 'us-east-1';
-  const ssm = new SSMClient({ region });
+  // SSM lives with the stack (us-east-1); SES may be in the host region.
+  const ssm = new SSMClient({ region: process.env.OSB_STACK_REGION ?? 'us-east-1' });
   const ses = new SESv2Client({ region });
-  const configSet = (
-    await ssm.send(new GetParameterCommand({ Name: `/osb/${envName}/ses/configuration-set` }))
-  ).Parameter!.Value!;
+  const configSet =
+    arg('config-set', '') ||
+    (await ssm.send(new GetParameterCommand({ Name: `/osb/${envName}/ses/configuration-set` })))
+      .Parameter!.Value!;
+  const identityArn = process.env.SES_IDENTITY_ARN || undefined;
 
   const unsubUrl = `https://my-${envName}.openswitchboard.ai/email/unsub?t=sample`;
   for (const s of sampleSet()) {
     const r = await ses.send(
       new SendEmailCommand({
         FromEmailAddress: 'OpenSwitchboard <board@openswitchboard.ai>',
+        FromEmailAddressIdentityArn: identityArn,
         ReplyToAddresses: ['info@openswitchboard.ai'],
         Destination: { ToAddresses: [to] },
         ConfigurationSetName: configSet,
