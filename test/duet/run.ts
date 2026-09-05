@@ -26,12 +26,32 @@
  * themselves, and the harness watches it happen in the database.
  *
  * ---------------------------------------------------------------------------
+ * VIRGIN ACCOUNTS, EVERY RUN. The run provisions its own pair of human accounts
+ * before it starts and abandons them at the end. It used to share one pair
+ * across runs, and by the fourth run both agents opened their session, read the
+ * three earlier runs' history off the account — listings still standing, dozens
+ * of interest events — and each told its human the errand was already handled.
+ * Neither posted, the run produced no database event of its own, and it
+ * deadlocked. Account continuity is the product working as designed; it is
+ * simply not what this eval measures. `--reuse` reads the previous pair out of
+ * realism-reports/.duet-actors.json instead, for the rare case where running
+ * against a used account IS the point.
+ *
+ * AND THE RUN PROVES THE BINDING BEFORE IT BEGINS. Fresh accounts are worth
+ * nothing if an agent is still presenting the last run's key, which is a real
+ * possibility on Nagatha's side: her MCP client lives in a gateway that holds
+ * its connections open, so a swapped key can be applied lazily. So the first
+ * thing each agent is asked to do is look at its account, and the harness reads
+ * back from the database WHICH account the switchboard billed that read to. A
+ * mismatch fails the run then and there, with the teardown still running — see
+ * duet/probe.ts.
+ * ---------------------------------------------------------------------------
  * RUN
  *   RUN_DUET=1 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
  *     OSB_RATELIMIT_BYPASS=<ssm /osb/dev/ratelimit-bypass> \
  *     npx tsx test/duet/run.ts
  *
- *   One-time first:  RUN_DUET_PROVISION=1 … npx tsx test/duet/provision.ts
+ *   Flags: --reuse (run against the pair already in .duet-actors.json)
  *   Knobs: DUET_MAX_ROUNDS (40)  DUET_GAP_MS (90000)
  * ---------------------------------------------------------------------------
  */
@@ -52,9 +72,18 @@ import { Checker } from '../sim/checker.js';
 import { EXPECTED_TOOLS } from '../sim/invariants.js';
 import { log } from '../sim/harness.js';
 import { Jar, counterFetch, mcpCall, mcpRpc } from '../integration/helpers.js';
-import { DuetActor, readActors, signIn, writeActors } from './actors.js';
+import {
+  DuetActor,
+  DuetActors,
+  mintAccessToken,
+  readActors,
+  signIn,
+  writeActors,
+} from './actors.js';
 import { BRIEFS, HEARTBEAT, PRIVATE_NUMBERS, SideId, personaReply } from './persona.js';
 import { ProgressWatcher } from './progress.js';
+import { probeAccountBinding } from './probe.js';
+import { provisionPair } from './provision.js';
 import {
   DuetReport,
   HarnessAction,
@@ -65,6 +94,8 @@ import {
 } from './report.js';
 
 const REPORTS_DIR = join(process.cwd(), 'realism-reports');
+/** Run against the pair already on file instead of minting a new one. */
+const REUSE = process.argv.includes('--reuse');
 const MAX_ROUNDS = Number(process.env.DUET_MAX_ROUNDS ?? 40);
 const GAP_MS = Number(process.env.DUET_GAP_MS ?? 90_000);
 /** Consecutive nudge rounds with no DB event and nothing put to a human. */
@@ -301,16 +332,48 @@ async function main(): Promise<number> {
   const runId = runStart.slice(11, 19).replace(/:/g, '');
   log('=== OpenSwitchboard duet eval ===');
 
-  const actors = readActors();
+  // --- 0. This run's own two human accounts.
+  //
+  // Read Nagatha's live header FIRST. It is the one thing here that cannot be
+  // reconstructed if the process dies, and provisioning takes minutes.
+  const originalHeader = await readNagathaAuthHeader();
+  log(`nagatha's original MCP header saved (${originalHeader.slice(0, 18)}…)`);
+
+  // Whatever pair the last run used. Kept only so the binding probe can NAME a
+  // stale key rather than just report a missing read.
+  const previous = (() => {
+    try {
+      return readActors();
+    } catch {
+      return undefined;
+    }
+  })();
+  const knownAccounts: Record<string, string> = {};
+  if (previous) {
+    knownAccounts[previous.priya.accountId.toLowerCase()] = "a previous run's priya";
+    knownAccounts[previous.marlowe.accountId.toLowerCase()] = "a previous run's marlowe";
+  }
+
+  let actors: DuetActors;
+  if (REUSE) {
+    actors = readActors();
+    log('--reuse: running against the pair already on file (their history is NOT clean)');
+  } else {
+    log('--- provisioning this run\'s two human accounts (fresh, minutes) ---');
+    actors = await provisionPair(runId);
+  }
+  actors.nagathaOriginalAuthHeader = originalHeader;
+  writeActors(actors); // persisted BEFORE the swap, so a crash can still undo it
   log(`priya   account ${actors.priya.accountId} ("${actors.priya.firstName}")`);
   log(`marlowe account ${actors.marlowe.accountId} ("${actors.marlowe.firstName}")`);
+  // A reused pair is its own previous pair; do not accuse it of being stale.
+  if (REUSE) {
+    delete knownAccounts[actors.priya.accountId.toLowerCase()];
+    delete knownAccounts[actors.marlowe.accountId.toLowerCase()];
+  }
 
   // --- 1. Both boxes: point each agent at its own human's account, wipe both.
   log('--- standing up both agents ---');
-  const originalHeader = await readNagathaAuthHeader();
-  actors.nagathaOriginalAuthHeader = originalHeader;
-  writeActors(actors); // persisted BEFORE the swap, so a crash can still undo it
-  log(`nagatha's original MCP header saved (${originalHeader.slice(0, 18)}…)`);
   log(`park MEMORY.md: ${await parkNagathaMemory()}`);
   log(`nagatha key -> priya: ${await setNagathaAuthHeader(`Bearer ${actors.priya.agentKey}`)}`);
   log(`nagatha reset: ${await resetNagatha()}`);
@@ -352,6 +415,12 @@ async function main(): Promise<number> {
   // --- 2. Outsider guard: BOTH accounts are run accounts, and both are ours
   //        to decline with, so a crossing with a real person is severed and
   //        the stray introduction is taken off their page.
+  //
+  //        THIS run's two accounts and no others. A mute is an account-PAIR
+  //        row and permanent, so registering a previous run's abandoned
+  //        account here would quietly sever that account from strangers it has
+  //        nothing to do with, for good. The pair below is the pair minted
+  //        minutes ago; earlier pairs are left alone entirely.
   const guard = new OutsiderGuard({
     since: runStart,
     runAccountIds: [actors.priya.accountId, actors.marlowe.accountId],
@@ -384,6 +453,37 @@ async function main(): Promise<number> {
   const attempts = new Map<string, number>();
 
   try {
+    // --- 2b. The binding probe, as the run's first act. Nothing said here is
+    //         in the run's session and nothing here is about bikes; it exists
+    //         only so the database can confirm which account each agent's MCP
+    //         client is actually authenticating as. Failing here throws, which
+    //         lands in the catch below and still runs the whole teardown.
+    log('--- binding probe: which account is each agent actually on? ---');
+    for (const side of [sides.priya, sides.marlowe] as Side[]) {
+      const p = await probeAccountBinding({
+        label: side.agent,
+        accountId: side.actor.accountId,
+        session: `duet-probe-${side.id}-${runId}`,
+        ask: side.ask,
+        known: knownAccounts,
+        log: (m) => log(m),
+      });
+      harnessActions.push({
+        ts: now(),
+        round: 0,
+        side: side.id,
+        action: p.ok ? 'binding probe passed' : 'binding probe FAILED',
+        detail: p.detail,
+      });
+      if (!p.ok) {
+        throw new Error(
+          `binding probe failed, refusing to run: ${p.detail} ` +
+            `Put ${side.agent} on ${side.actor.accountId} and try again — a run on the wrong account ` +
+            `measures the wrong account's history.`,
+        );
+      }
+    }
+
     // --- 3. One brief each, as its human. Nothing else is ever volunteered.
     ROUND = 0;
     await turn(sides.priya, BRIEFS.priya, 'brief');
@@ -474,7 +574,23 @@ async function main(): Promise<number> {
   }
 
   // --- 5. End-of-run checks.
+  //
+  // A fresh access token per side first. The one minted at provisioning is good
+  // for an hour and a duet routinely runs longer, and everything below — the
+  // tool-surface read, the check_in reads, the card withdrawals in teardown —
+  // goes through it. The 2026-09-05T09-52-42 run reported all eleven tools
+  // missing for exactly this reason: the token had expired, tools/list came
+  // back empty, and an empty list reads as a vanished tool surface. Mutated in
+  // place on the actor objects so the outsider guard's decline closure, which
+  // reads the token at call time, picks the new one up too.
   log('--- end-of-run checks ---');
+  for (const side of [sides.priya, sides.marlowe] as Side[]) {
+    try {
+      side.actor.accessToken = await mintAccessToken(side.actor, side.jar);
+    } catch (e) {
+      log(`could not re-mint ${side.id}'s access token, using the old one: ${(e as Error).message}`);
+    }
+  }
   const checker = new Checker([
     actors.priya.firstName,
     actors.priya.locality,
@@ -567,6 +683,11 @@ async function main(): Promise<number> {
   // --- 6. Findings, written plainly.
   const evs = watcher.events;
   const has = (k: string) => evs.some((e) => e.kind === k);
+  findings.push(
+    REUSE
+      ? `Both agents ran against the pair of accounts already on file (--reuse), so whatever those accounts already held was in front of them from the first turn.`
+      : `Both accounts were provisioned minutes before the run and had never been used, so neither agent had any history of its own to read at connect. Before a word was said about bikes, the database confirmed each agent's read call was billed to this run's account.`,
+  );
   findings.push(
     `Both agents were briefed once and never told what to do again; the harness only ever sent a neutral "${HEARTBEAT}" or answered a question from a fixed rule table.`,
   );
@@ -706,7 +827,9 @@ async function main(): Promise<number> {
     limitations: [
       'The channel is opaque to the harness (encrypted, delete-on-delivery), so the private-number check is inferred from what each agent told its own human, plus the durable per-sender send tally in the database. Message CONTENT is never read by anything here.',
       'Both humans are rule tables, not models: they answer known facts, approve reasonable asks, decide a figure against one fixed threshold each, and otherwise defer. They never volunteer anything and never nudge the negotiation.',
-      'Both agents were pointed at fresh accounts provisioned for this run. Nagatha\'s long-lived dev account could not be used, because the stage-3 opt-in and the offer acceptance both happen on a human page behind an email sign-in and that account\'s address is not recoverable. Her original key was restored at teardown.',
+      'Both agents were pointed at accounts provisioned for THIS run and used once. Nagatha\'s long-lived dev account could not be used, because the stage-3 opt-in and the offer acceptance both happen on a human page behind an email sign-in and that account\'s address is not recoverable. Her original key was restored at teardown.',
+      'The pair is minted per run rather than shared between runs, and that is a departure from how the product is meant to be lived with. An account remembers, and an agent arriving on one is meant to catch up on what is already there — which is precisely what stopped the 2026-09-05T10-37-51 run, where both agents read three earlier runs\' history off the shared pair and reported the errand already handled. What is measured here is therefore two agents starting from nothing, and says nothing about how either behaves on an account with a past. `--reuse` runs against the previous pair when that is the question.',
+      'Each agent\'s account binding is proved from the database before the run starts, not assumed: the agent is asked to look at its account in a throwaway session, and the read call the switchboard bills is checked against the run\'s account id. A key that was swapped on disk but not applied to the live MCP connection fails the run there, instead of producing a run against the previous pair that looks like an agent doing nothing.',
       'Nagatha\'s MEMORY.md was parked for the run and restored afterwards: it carried the adversary eval\'s residue (a stale listing on the old account and a standing "every Robin*/Fremantle counterparty is a scam" prior), which would have been measuring a primed agent. USER.md — who Priya is — was left in place.',
       'The approval pages are pressed by the harness on a schedule the human in the wild would learn about from a summons email. Whether the agent had told its human first is recorded per action rather than gating the press, so the run can reach the later stages either way.',
       'HARNESS ARTEFACT, read the transcript with it in mind: the dev board is shared with real accounts, so the outsider guard mutes and DECLINES any introduction between a run account and someone outside the run — using that run account\'s own token, which is the same door its agent would use. An agent therefore sees introductions it showed interest in come back declined, and may narrate that to its human as the other party losing interest. Those declines are the harness protecting real people\'s boards, not a behaviour of the agent or of the product.',
