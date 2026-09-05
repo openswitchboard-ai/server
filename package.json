@@ -26,6 +26,7 @@
     "test:e2e:prod": "OSB_CHECK_PROD=1 playwright test test/e2e/prod.spec.ts",
     "sim": "RUN_SIM=1 tsx test/sim/run.ts",
     "sim:clean": "RUN_SIM=1 tsx test/sim/run.ts --clean",
+    "sim:category": "RUN_SIM=1 SIM_ONLY_CATEGORY=1 tsx test/sim/run.ts",
     "sim:typecheck": "tsc -p test/sim/tsconfig.json"
   },
   "dependencies": {

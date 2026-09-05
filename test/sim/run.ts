@@ -12,6 +12,8 @@
  *   SIM_SEED=<n>         fuzz seed (default from the clock; printed for repro)
  *   SIM_GEO_REACH=0      skip the (slow, real-place) reach-combo geo sub-case
  *   SIM_REDTEAM_RATE=0   skip the read-ceiling hammer (spends a whole actor-hour)
+ *   SIM_SKIP_CATEGORY=1  skip the category-divergence group (below)
+ *   SIM_ONLY_CATEGORY=1  run ONLY that group (npm run sim:category)
  *
  * Gated OFF by default: refuses to start unless RUN_SIM=1, so `npm test` (which
  * only runs test/unit + conformance) never touches it.
@@ -19,6 +21,11 @@
 import { mcpRpc } from '../integration/helpers.js';
 import { runFuzz } from './fuzz.js';
 import { Checker } from './checker.js';
+import {
+  CategoryDivergenceResult,
+  formatCategoryTable,
+  runCategoryDivergence,
+} from './categoryDivergence.js';
 import {
   Harness,
   SCHEMA_VERSION,
@@ -74,21 +81,32 @@ async function main(): Promise<number> {
   const hasBypass = !!process.env.OSB_RATELIMIT_BYPASS;
   const requestedActors = Number(process.env.SIM_ACTORS ?? 4);
   const nActors = hasBypass ? requestedActors : Math.min(requestedActors, 4);
-  const fuzzRounds = Number(process.env.SIM_FUZZ_ROUNDS ?? 4);
   const seed = Number(process.env.SIM_SEED ?? (Date.now() & 0xffffffff));
+
+  // SIM_ONLY_CATEGORY narrows the run to the category-divergence group. It is
+  // its own switch rather than three SIM_SKIP_* flags because that group is the
+  // one worth running on its own: it is quick, it touches nothing but the
+  // matcher's category rule, and its whole output is one table.
+  const onlyCategory = process.env.SIM_ONLY_CATEGORY === '1';
+  const fuzzRounds = onlyCategory ? 0 : Number(process.env.SIM_FUZZ_ROUNDS ?? 4);
 
   const h = new Harness();
   log('='.repeat(72));
   log(`OpenSwitchboard simulation harness — run ${h.runId}`);
   log(`target ${process.env.OSB_BASE_URL ?? 'https://mcp-dev.openswitchboard.ai'}`);
   log(`rate-limit bypass: ${hasBypass ? 'ON (per-IP limiters skipped; per-account quotas still enforced)' : 'OFF (per-IP limited — pool capped at 4)'}`);
-  log(`actors=${nActors}  fuzz_rounds=${fuzzRounds}  seed=${seed}`);
+  log(
+    onlyCategory
+      ? `actors=${nActors}  category-divergence group ONLY (SIM_ONLY_CATEGORY=1)`
+      : `actors=${nActors}  fuzz_rounds=${fuzzRounds}  seed=${seed}`,
+  );
   log('='.repeat(72));
 
   // Schema version dev is on — read from the live server once the pool is up.
   let serverSchema = SCHEMA_VERSION;
 
   const scenarioReports: ScenarioReport[] = [];
+  let categoryDivergence: CategoryDivergenceResult | undefined;
   let redTeam: RedTeamResult[] = [];
   let fuzzOutcome: Awaited<ReturnType<typeof runFuzz>> | undefined;
   let residueBefore = -1;
@@ -125,7 +143,7 @@ async function main(): Promise<number> {
     // SIM_SKIP_SCENARIOS=1 leaves each account's whole 10/day publish budget to
     // fuzz — useful for a fuzz-focused pass on a small (per-IP-capped) pool,
     // where the scenarios would otherwise spend most of the publish quota first.
-    const skipScenarios = process.env.SIM_SKIP_SCENARIOS === '1';
+    const skipScenarios = process.env.SIM_SKIP_SCENARIOS === '1' || onlyCategory;
     for (const [i, s] of (skipScenarios ? [] : SCENARIOS).entries()) {
       group(`scenario: ${s.name}`);
       if (h.actors.length < s.minActors) {
@@ -150,6 +168,26 @@ async function main(): Promise<number> {
       groupEnd();
     }
 
+    // ---- category divergence ---------------------------------------------
+    // Its own group rather than another entry in SCENARIOS: it asks one
+    // question across five filings and answers it as a table, and it is the
+    // group a person runs on its own while thinking about the taxonomy.
+    if (process.env.SIM_SKIP_CATEGORY === '1') {
+      log('category-divergence group skipped (SIM_SKIP_CATEGORY=1)');
+    } else if (h.actors.length < 2) {
+      log(`category-divergence group skipped — needs 2 actors, pool has ${h.actors.length}`);
+    } else {
+      group('category divergence (same errand, different nodes)');
+      try {
+        categoryDivergence = await runCategoryDivergence(h, check, h.actors);
+      } catch (e) {
+        log(`category-divergence group threw: ${String(e)}`);
+      } finally {
+        await h.reclaimCards();
+      }
+      groupEnd();
+    }
+
     // ---- fuzz -----------------------------------------------------------
     // Runs BEFORE the red-team: the red-team's R4 exhausts an actor's 60/h read
     // ceiling, and although fuzz observes the matcher through the DB (off that
@@ -170,7 +208,7 @@ async function main(): Promise<number> {
 
     // ---- red team -------------------------------------------------------
     // SIM_SKIP_REDTEAM=1 pairs with SIM_SKIP_SCENARIOS for a fuzz-only pass.
-    if (process.env.SIM_SKIP_REDTEAM === '1') {
+    if (process.env.SIM_SKIP_REDTEAM === '1' || onlyCategory) {
       log('red-team driver skipped (SIM_SKIP_REDTEAM=1)');
     } else {
       group('red-team driver');
@@ -206,11 +244,27 @@ async function main(): Promise<number> {
   log(`schema version (const): ${SCHEMA_VERSION}   server serverInfo.version: ${serverSchema}`);
   log('');
   log('Scenarios:');
+  if (!scenarioReports.length) log('  (none run)');
   for (const r of scenarioReports) {
     log(`  [${r.status.toUpperCase()}] ${r.name}${r.detail ? ' — ' + r.detail.slice(0, 200) : ''}`);
   }
   log('');
+  if (categoryDivergence) {
+    log('Category divergence — the same errand filed under different nodes:');
+    for (const l of formatCategoryTable(categoryDivergence)) log(`  ${l}`);
+    log(
+      `  demand log (category_misses): ${
+        categoryDivergence.missTable === 'absent'
+          ? 'table not present on this deployment — the refusal is unaffected'
+          : categoryDivergence.missTable === 'row-found'
+            ? 'the refused category was recorded'
+            : 'NO ROW written for the refused category  <-- FINDING'
+      }`,
+    );
+    log('');
+  }
   log('Red-team attempts (each must be correctly refused):');
+  if (!redTeam.length) log('  (none run)');
   for (const r of redTeam) {
     log(`  [${r.refused ? 'REFUSED' : 'GOT THROUGH'}] ${r.id} ${r.attempt}${r.detail ? ' — ' + r.detail : ''}`);
   }
@@ -264,7 +318,16 @@ async function main(): Promise<number> {
   // A compatible pair the matcher never paired, or an incompatible pair it
   // paired anyway, is a real matcher bug — fail the run.
   const matcherBug = !!fuzzOutcome && (fuzzOutcome.compatibleNoMatch > 0 || fuzzOutcome.incompatibleMatched > 0);
-  const ok = !scenarioFailed && !redTeamGotThrough && !invariantBroke && !dirtyBoard && !matcherBug;
+  // A category case that did not do what the current rule says it does is a
+  // real change in matching behaviour, whichever direction it moved in.
+  const categoryDiverged = !!categoryDivergence && categoryDivergence.failures > 0;
+  const ok =
+    !scenarioFailed &&
+    !redTeamGotThrough &&
+    !invariantBroke &&
+    !dirtyBoard &&
+    !matcherBug &&
+    !categoryDiverged;
   log(ok ? 'RESULT: PASS' : 'RESULT: FAIL (see findings above)');
   return ok ? 0 : 1;
 }
