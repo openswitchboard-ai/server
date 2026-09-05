@@ -4,24 +4,105 @@
  *
  * SCORE MODEL (documented here, the single source of truth):
  *
- *   score = 0.55 * semantic   (cosine similarity of the two cards' canonical
+ *   score = Ws * semantic     (cosine similarity of the two cards' canonical
  *                              projection embeddings, clamped to [0,1])
- *         + 0.20 * category   (taxonomy-tree closeness: 1.0 exact node,
+ *         + Wc * category     (taxonomy-tree closeness: 1.0 exact node,
  *                              -0.15 per tree step below the lowest common
  *                              ancestor, counting both sides, floor 0.4 —
  *                              so a parent/child pair is 0.85 and a sibling
  *                              pair 0.7)
- *         + 0.15 * geo        (1.0 at the same centre point, decaying linearly
+ *         + Wg * geo          (1.0 at the same centre point, decaying linearly
  *                              with distance over the two cards' combined
  *                              radii; a flat 0.6 for a pair that meets on a
  *                              declared reach — a whole country, or anywhere —
  *                              rather than on distance; buckets with no
  *                              resolved centre point fall back to the
  *                              pre-0.3.0 string comparison)
- *         + 0.10 * price      (fit of WANT ceiling over HAVE reserve floor;
+ *         + Wp * price        (fit of WANT ceiling over HAVE reserve floor;
  *                              neutral 0.6 when either side declared no band)
  *
- *   Weights sum to 1; every component is in [0,1], so score is in [0,1].
+ *   Every component is in [0,1] and the weights sum to 1, so score is in
+ *   [0,1]. The weights themselves are NOT a single fixed set: see below.
+ *
+ * ASSERTION-SCALED WEIGHTS (why the blend has two shapes).
+ *
+ *   The semantic component is a similarity between two projection texts, and
+ *   a projection text is category + attributes. When one card lists five
+ *   attributes and the other lists one, the two texts are different LENGTHS
+ *   as much as they are different in meaning, and the cosine falls for a
+ *   reason that has nothing to do with the two people disagreeing. A seller
+ *   writing out a 2021 Giant Trance in good condition and a buyer writing
+ *   "used mountain bike, medium" are the same errand; the buyer is not
+ *   contradicting anything, they are simply not asserting much.
+ *
+ *   That asymmetry is the majority real-world case on the WANT side, so the
+ *   blend leans on semantic similarity in proportion to how much the two
+ *   cards actually assert. THINNESS is the attribute count of the SPARSER
+ *   side: thin = min(attrCount(A), attrCount(B)), counting the same scalar
+ *   attributes projectionText embeds.
+ *
+ *     thin >= 3 (both sides rich):   semantic 0.55, category 0.20, geo 0.15
+ *     thin <= 2 (one side is thin):  semantic 0.30, category 0.35, geo 0.25
+ *
+ *   Price stays 0.10 in both. Each set sums to 1.0 (asserted in the tests).
+ *   The shift is a FLAT step at thin <= 2 rather than an interpolation over
+ *   0, 1, 2 — two weight sets are a thing a person can hold in their head and
+ *   reconstruct from a score, and no evidence available today says where a
+ *   smooth curve between them should bend.
+ *
+ *   What moves out of semantic goes to the two components a thin card CAN
+ *   still be trusted on: it named a category and it named a place, and both
+ *   of those are structured, checked, and unaffected by how much prose sits
+ *   beside them.
+ *
+ *   WORKED ARITHMETIC (three pairs, so the effect is legible without running
+ *   anything). All three use categoryCloseness for the pair, geo closeness
+ *   1.0 for two cards on one spot, and price fit 0.6 for the neutral
+ *   no-band-declared case.
+ *
+ *   (a) The duet pair, dev 2026-09-05 (realism-reports/duet-2026-09-05T09-19
+ *       -26-360Z.json). HAVE: goods.bicycle.mountain, 5 attributes (year,
+ *       brand, model, condition, frame_size), Canberra r3dp r=25. WANT: same
+ *       node, 1 attribute (frame_size: medium), same bucket. Neither side
+ *       declared a band. The recorded score was 0.60715854, so backing the
+ *       semantic value out of the OLD weights:
+ *           0.60715854 = 0.55 s + 0.20 (1.0) + 0.15 (1.0) + 0.10 (0.6)
+ *           0.55 s     = 0.60715854 - 0.41 = 0.19715854
+ *           s          = 0.35847007
+ *       thin = min(5, 1) = 1, so the thin set applies:
+ *           0.30 (0.35847007) + 0.35 (1.0) + 0.25 (1.0) + 0.10 (0.6)
+ *         = 0.10754102 + 0.35 + 0.25 + 0.06
+ *         = 0.76754102  -> MATCH (threshold 0.75)
+ *       A cosine of 0.358 is a weak signal, and the blend now says so by
+ *       weighting it at 0.30 instead of letting it decide the pair.
+ *
+ *   (b) A thin pair one node apart. Same two cards, but the WANT is filed
+ *       under goods.bicycle.road: siblings, categoryCloseness 0.7. At the
+ *       same semantic 0.35847007:
+ *           0.30 (0.35847007) + 0.35 (0.7) + 0.25 (1.0) + 0.10 (0.6)
+ *         = 0.10754102 + 0.245 + 0.25 + 0.06
+ *         = 0.66254102  -> NEAR-MISS (stored, never sent)
+ *       Category carrying more weight is what keeps this one under the line:
+ *       the discount for the sibling step is 0.105 of blend rather than 0.06.
+ *
+ *   (c) A rich pair that does not agree. Both sides list 4 attributes, same
+ *       node, same spot, no bands, and the descriptions have little to do
+ *       with each other — semantic 0.40. thin = 4, so nothing changes:
+ *           0.55 (0.40) + 0.20 (1.0) + 0.15 (1.0) + 0.10 (0.6)
+ *         = 0.22 + 0.20 + 0.15 + 0.06
+ *         = 0.63  -> NEAR-MISS, exactly as before the change.
+ *       Two cards that both said plenty and still did not line up are a pair
+ *       the embedding is entitled to judge, and it keeps its 0.55.
+ *
+ *   WHAT THIS DOES NOT DO. There is no new hard rule for contradicting
+ *   attributes. Two cards that assert the same key with conflicting values —
+ *   frame_size medium against frame_size large — put both strings into their
+ *   projection texts, and the cosine between them falls; that is the
+ *   mechanism that already prices a contradiction, and it is unchanged here.
+ *   Note that a contradiction takes two assertions, so any pair with a real
+ *   one has at least one attribute on the sparser side and is usually rich on
+ *   both. Where a contradiction does land in the thin set, semantic still
+ *   carries 0.30 of the blend and the near-miss floor still catches it.
  *
  * DECISION (per pair that passes ALL hard rules):
  *   score >= max(0.75 + bump(want_owner), 0.75 + bump(have_owner)) -> MATCH
@@ -51,7 +132,54 @@
  */
 import { loadTaxonomy } from '../protocol.js';
 
+export interface BlendWeights {
+  semantic: number;
+  category: number;
+  geo: number;
+  price: number;
+}
+
+/**
+ * The blend for a pair where BOTH sides asserted something substantial
+ * (>= 3 attributes each). Unchanged since the model was written, and still
+ * exported under the old name because it is still the default reading of the
+ * score model.
+ */
 export const WEIGHTS = { semantic: 0.55, category: 0.2, geo: 0.15, price: 0.1 } as const;
+
+/**
+ * The blend for a pair where the SPARSER side asserted little (<= 2
+ * attributes). Semantic gives up 0.25 of the blend, which goes to the two
+ * components a thin card can still be trusted on: category (+0.15) and geo
+ * (+0.10). Price is untouched. See the SCORE MODEL header for the worked
+ * arithmetic.
+ */
+export const THIN_WEIGHTS = { semantic: 0.3, category: 0.35, geo: 0.25, price: 0.1 } as const;
+
+/** At or below this many attributes on the sparser side, the pair is thin. */
+export const THIN_ATTR_MAX = 2;
+
+/**
+ * How many attributes a card asserts, counted exactly as projectionText
+ * counts them: scalars only, since a nested or null value contributes nothing
+ * to the embedded text and so cannot be what the semantic score is reading.
+ */
+export function attrCount(attributes: unknown): number {
+  if (!attributes || typeof attributes !== 'object') return 0;
+  return Object.values(attributes as Record<string, unknown>).filter((v) =>
+    ['string', 'number', 'boolean'].includes(typeof v),
+  ).length;
+}
+
+/**
+ * The blend to score this pair with. Thinness is the SPARSER side's count: a
+ * rich card meeting a thin one is a thin pair, because the thing that went
+ * wrong is the asymmetry, and the sparser side is the one that measures it.
+ */
+export function weightsFor(attrCountA: number, attrCountB: number): BlendWeights {
+  return Math.min(attrCountA, attrCountB) <= THIN_ATTR_MAX ? THIN_WEIGHTS : WEIGHTS;
+}
+
 export const CREATE_THRESHOLD = 0.75;
 export const NEAR_MISS_FLOOR = 0.55;
 export const MAX_THRESHOLD_BUMP = 0.1;
@@ -348,6 +476,14 @@ export interface PairInputs {
   categoryB: string;
   geoA: GeoBucket;
   geoB: GeoBucket;
+  /**
+   * The two cards' attributes, used ONLY to count how much each side asserted
+   * and pick the blend (see weightsFor). Values are never compared here — the
+   * semantic component is where attribute content is read. Absent means the
+   * card asserted nothing, which is a thin card and is scored as one.
+   */
+  attributesA?: unknown;
+  attributesB?: unknown;
   /** decrypted, engine-side only */
   wantBand?: PriceBand;
   haveBand?: PriceBand;
@@ -357,6 +493,10 @@ export interface PairEval {
   hardRulesPass: boolean;
   failed?: 'category' | 'geo' | 'price';
   score: number;
+  /** Which blend scored it, so a caller can log or explain the number. */
+  weights?: BlendWeights;
+  /** The sparser side's attribute count — the thinness the blend keyed on. */
+  thinness?: number;
 }
 
 export function evaluatePair(p: PairInputs): PairEval {
@@ -368,12 +508,20 @@ export function evaluatePair(p: PairInputs): PairEval {
   const price = evaluatePrice(p.wantBand, p.haveBand);
   if (!price.compatible) return { hardRulesPass: false, failed: 'price', score: 0 };
   const semantic = Math.max(0, Math.min(1, p.semantic));
+  const nA = attrCount(p.attributesA);
+  const nB = attrCount(p.attributesB);
+  const w = weightsFor(nA, nB);
   const score =
-    WEIGHTS.semantic * semantic +
-    WEIGHTS.category * categoryCloseness(p.categoryA, p.categoryB) +
-    WEIGHTS.geo * geo.closeness +
-    WEIGHTS.price * price.fit;
-  return { hardRulesPass: true, score: Math.min(1, score) };
+    w.semantic * semantic +
+    w.category * categoryCloseness(p.categoryA, p.categoryB) +
+    w.geo * geo.closeness +
+    w.price * price.fit;
+  return {
+    hardRulesPass: true,
+    score: Math.min(1, score),
+    weights: w,
+    thinness: Math.min(nA, nB),
+  };
 }
 
 export type PairDecision = 'match' | 'near-miss' | 'discard';

@@ -20,12 +20,19 @@
  * rather than assumed. What this group does is put the consequence of the
  * rule in front of a person in one table.
  *
- * All five cases share one run-scoped opaque bucket per case, so each is an
- * island: the pairing under test is the only one available, and nothing another
- * run left behind can either gate-crash it or stand in for it.
+ * One case in the group is not about filing at all. Case 3b holds the two
+ * cards constant on one node and varies how much each side SAYS: the duet
+ * pair's rich seller against its one-attribute buyer. It sits here because it
+ * shares the island machinery and reads beside the others, and because the
+ * question it asks is the same shape — what keeps two people apart who are
+ * not actually in disagreement.
+ *
+ * Every case gets its own run-scoped opaque bucket, so each is an island: the
+ * pairing under test is the only one available, and nothing another run left
+ * behind can either gate-crash it or stand in for it.
  *
  * Cards are withdrawn as each case finishes, so the group costs each actor two
- * open-intent slots at a time rather than ten.
+ * open-intent slots at a time rather than a dozen.
  */
 import { Checker } from './checker.js';
 import { Harness, SCHEMA_VERSION, SimActor, dbExec, log } from './harness.js';
@@ -50,6 +57,18 @@ const SOCIAL_LANG = 'social.language-exchange.conversation-practice';
  *  that differs and the semantic score stays as high as it can. */
 const BIKE_ATTRS = { condition: 'good', frame_size: 'L' };
 const LANG_ATTRS = { level: 'intermediate' };
+
+/** The duet pair's two cards, attribute for attribute, from
+ *  realism-reports/duet-2026-09-05T09-19-26-360Z.json. A seller who wrote
+ *  everything down, and a buyer who said the one thing that mattered to them. */
+const RICH_SELLER_ATTRS = {
+  year: 2021,
+  brand: 'Giant',
+  model: 'Trance',
+  condition: 'well kept, good condition',
+  frame_size: 'medium',
+};
+const THIN_BUYER_ATTRS = { frame_size: 'medium' };
 
 /** A generous band pair: the price rule contributes its full weight, so the
  *  blend is decided by category and semantics — the thing under test. */
@@ -151,18 +170,31 @@ export async function runCategoryDivergence(
     expected: 'match' | 'no-match',
     attributes: Record<string, unknown>,
     note?: string,
+    opts: {
+      /** Different attributes on the HAVE side; defaults to the same set. */
+      haveAttributes?: Record<string, unknown>;
+      /** Post both cards with no price at all, the way most cards arrive. */
+      noBands?: boolean;
+    } = {},
   ): Promise<void> {
     const geo = { bucket: h.bucket('cd'), radius_km: 25 };
+    const haveAttributes = opts.haveAttributes ?? attributes;
     let wantId: string | undefined;
     let haveId: string | undefined;
     try {
       const w = await h.publish(
         wantActor,
-        card('WANT', wantCategory, geo, { attributes, price: WANT_BAND }),
+        card('WANT', wantCategory, geo, {
+          attributes,
+          ...(opts.noBands ? {} : { price: WANT_BAND }),
+        }),
       );
       const hv = await h.publish(
         haveActor,
-        card('HAVE', haveCategory, geo, { attributes, price: HAVE_BAND }),
+        card('HAVE', haveCategory, geo, {
+          attributes: haveAttributes,
+          ...(opts.noBands ? {} : { price: HAVE_BAND }),
+        }),
       );
       wantId = w.result.intent_id;
       haveId = hv.result.intent_id;
@@ -224,7 +256,9 @@ export async function runCategoryDivergence(
   // 2. Parent vs child. categoryCompatible admits the ancestor line, and the
   //    SQL prefilter in matcher.ts admits it too, so this must pair — one
   //    agent being vaguer than the other is not a reason to keep two people
-  //    apart. It costs 0.03 of blended score (categoryCloseness 0.85).
+  //    apart. It costs 0.0525 of blended score (categoryCloseness 0.85 at the
+  //    thin blend's 0.35 category weight; it was 0.03 at 0.20, and BIKE_ATTRS
+  //    is two attributes a side, which is thin — see 3b).
   // -------------------------------------------------------------------------
   await pairing('parent vs child', BIKE, BIKE_MTN, 'match', BIKE_ATTRS);
 
@@ -234,11 +268,12 @@ export async function runCategoryDivergence(
   //    These pair now. categoryCompatible admits siblings whose shared parent
   //    is itself below the top level, so goods.bicycle.mountain and
   //    goods.bicycle.road reach the blend, the SQL prefilter keeps the
-  //    candidate, and semantic similarity — 0.55 of the score — decides. With
-  //    the attributes identical on both sides it decides in favour: the
-  //    category component is discounted to 0.7 closeness (0.14 of the blend,
-  //    against 0.17 for a parent/child pair), which the rest of the score
-  //    carries comfortably past 0.75.
+  //    candidate, and semantic similarity decides. With the attributes
+  //    identical on both sides it decides in favour: the category component
+  //    is discounted to 0.7 closeness, which the rest of the score carries
+  //    comfortably past 0.75. BIKE_ATTRS is two attributes a side, so this
+  //    pair scores on the thin blend (semantic 0.30, category 0.35) and the
+  //    sibling discount is 0.105 rather than 0.06 — still well clear.
   //
   //    A sibling pair whose descriptions have little in common lands under the
   //    threshold instead and leaves a near-miss row. That case is not staged
@@ -252,6 +287,39 @@ export async function runCategoryDivergence(
     'match',
     BIKE_ATTRS,
     'siblings under goods.bicycle pair, at 0.7 category closeness; semantics decide.',
+  );
+
+  // -------------------------------------------------------------------------
+  // 3b. Rich seller, thin buyer, one node.
+  //
+  //     THE CASE THIS EXISTS FOR. On dev, 2026-09-05, two live agents posted
+  //     these exact two cards — a 2021 Giant Trance in Canberra against "a
+  //     medium mountain bike, Canberra" — and the pair scored 0.6072 against
+  //     a 0.75 threshold, twice, byte-identical. Nothing about the two people
+  //     disagreed: the buyer asserted one thing, the seller asserted five,
+  //     and the semantic component read the difference in LENGTH as a
+  //     difference in meaning. See matchRules.ts, ASSERTION-SCALED WEIGHTS.
+  //
+  //     With the thin blend the same pair reaches about 0.7675 and matches.
+  //     The card bodies below are the duet's, attribute for attribute; the
+  //     bucket is this run's own island rather than Canberra, which scores
+  //     identically (one bucket, both sides) and keeps the pair alone on it.
+  //     No price on either card, as in the duet, so the price component sits
+  //     at its neutral 0.6.
+  //
+  //     NOT YET TRUE OF DEV. This case asserts the FIXED behaviour. Until the
+  //     assertion-scaled weights are deployed it will read 'DIVERGED', and
+  //     that is what it is for: it is the post-deploy check that the duet
+  //     near-miss is gone.
+  // -------------------------------------------------------------------------
+  await pairing(
+    'rich seller vs thin buyer (same node)',
+    BIKE_MTN,
+    BIKE_MTN,
+    'match',
+    THIN_BUYER_ATTRS,
+    'the duet pair, card for card: 0.6072 before assertion-scaled weights, ~0.7675 after.',
+    { haveAttributes: RICH_SELLER_ATTRS, noBands: true },
   );
 
   // -------------------------------------------------------------------------
