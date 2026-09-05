@@ -2,6 +2,19 @@ import { getPool } from '../db.js';
 import { OsbError } from '../protocol.js';
 import type { Quotas } from '../config.js';
 
+/**
+ * A wait, in words an agent can hand straight to its human. A bare
+ * retry_after invites the model to do clock arithmetic out loud ("around
+ * 10:10 UTC"), so every throttle error carries the rough, relative phrase
+ * alongside the machine-readable seconds.
+ */
+export function roughWait(seconds: number): string {
+  if (seconds <= 120) return 'in a minute or two';
+  if (seconds <= 50 * 60) return `in about ${Math.max(5, Math.round(seconds / 300) * 5)} minutes`;
+  if (seconds <= 90 * 60) return 'in about an hour';
+  return 'in a few hours';
+}
+
 /** Throws QUOTA_EXCEEDED when a publish would exceed newcomer quotas. */
 export async function checkPublishQuota(accountId: string, q: Quotas): Promise<void> {
   const pool = getPool();
@@ -12,7 +25,7 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
   );
   if (open.rows[0].n >= q.maxOpenCards) {
     throw new OsbError('QUOTA_EXCEEDED', {
-      human_action: `You have ${open.rows[0].n} open intents (limit ${q.maxOpenCards}). Withdraw one to post another.`,
+      human_action: `You have ${open.rows[0].n} open listings (limit ${q.maxOpenCards}). Withdraw one to post another.`,
     });
   }
   const day = await pool.query(
@@ -21,7 +34,10 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
     [accountId],
   );
   if (day.rows[0].n >= q.maxPublishesPerDay) {
-    throw new OsbError('QUOTA_EXCEEDED', { retry_after: 3600 });
+    throw new OsbError('QUOTA_EXCEEDED', {
+      retry_after: 3600,
+      human_action: `That is the day's posting done. Try again ${roughWait(3600)} — nothing your human needs to do, and no clock time to pass on.`,
+    });
   }
 }
 
@@ -33,7 +49,10 @@ export async function checkOfferRate(accountId: string, q: Quotas): Promise<void
     [accountId],
   );
   if (r.rows[0].n >= q.maxOffersPerHour) {
-    throw new OsbError('RATE_LIMITED_OFFERS', { retry_after: 3600 });
+    throw new OsbError('RATE_LIMITED_OFFERS', {
+      retry_after: 3600,
+      human_action: `Offers are paced. Send the next one ${roughWait(3600)} — nothing your human needs to do.`,
+    });
   }
 }
 
@@ -69,7 +88,10 @@ export async function checkReadRate(accountId: string): Promise<void> {
   // The window frees as its oldest call ages out, so that is when to come back.
   const oldest = new Date(r.rows[0].oldest).getTime();
   const retry = Math.max(1, Math.ceil((oldest + 3_600_000 - Date.now()) / 1000));
-  throw new OsbError('RATE_LIMITED', { retry_after: retry });
+  throw new OsbError('RATE_LIMITED', {
+    retry_after: retry,
+    human_action: `Checking is paced. Come back ${roughWait(retry)} — quietly, with nothing to tell your human and no clock time to pass on.`,
+  });
 }
 
 /** Anti-probing rail: max 3 offers per side per MATCH per rolling 24h. */
@@ -87,6 +109,9 @@ export async function checkPerMatchOfferRate(accountId: string, matchId: string)
   if (r.rows[0].n >= MAX_OFFERS_PER_MATCH_PER_DAY) {
     const oldest = new Date(r.rows[0].oldest).getTime();
     const retry = Math.max(60, Math.ceil((oldest + 86_400_000 - Date.now()) / 1000));
-    throw new OsbError('RATE_LIMITED_OFFERS', { retry_after: retry });
+    throw new OsbError('RATE_LIMITED_OFFERS', {
+      retry_after: retry,
+      human_action: `That introduction has had its offers for now. Try again ${roughWait(retry)}.`,
+    });
   }
 }
