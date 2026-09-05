@@ -1,10 +1,16 @@
 # DELIVERABILITY.md — email runbook (phase 0.E)
 
-State of the world (2026-08): domain identity `openswitchboard.ai` VERIFIED in
-SES us-east-1 (DKIM green, custom MAIL FROM `mail.openswitchboard.ai`, DMARC
-`p=quarantine`). The account is in the **SES sandbox**; production access is
-requested and pending. All sends carry the `osb-<env>-email` configuration
-set, From `OpenSwitchboard <board@openswitchboard.ai>`, reply-to
+State of the world (2026-09-05): our own account's SES production request
+was DENIED (2026-09-02; the e2e lanes had hard-bounced hundreds of test
+addresses on our domain, since fixed). **Prod mail now goes out AS the Smart
+Centric Home Automation account** (same organisation, SES production in
+ap-southeast-2): the task assumes `osb-prod-email-sender` there and sends
+from `openswitchboard.ai` verified in that account (own DKIM, MAIL FROM
+`bounce.openswitchboard.ai`, DMARC `p=quarantine`). See
+`infra/host-ses/README.md`. Dev stays in our own sandbox (us-east-1, MAIL
+FROM `mail.openswitchboard.ai`, simulator recipients). All sends carry the
+`osb-<env>-email` configuration set, From
+`OpenSwitchboard <board@openswitchboard.ai>`, reply-to
 `info@openswitchboard.ai`, and RFC 8058 one-click List-Unsubscribe headers
 (mailto + URL) on every account-bound message.
 
@@ -63,15 +69,29 @@ Work the list in order; check off before moving on:
 7. Google Postmaster Tools (register openswitchboard.ai when volume justifies
    it) for Gmail-specific reputation.
 
-## Inbox-placement gate (10/10) — PENDING SES PRODUCTION ACCESS
+## Inbox-placement gate (10/10)
 
-The 0.E release gate "10/10 inbox placement across Gmail/Outlook/iCloud"
-cannot run from the sandbox (only verified recipients accept mail). The exact
-procedure, to run the day production access is granted:
+### Baseline, 2026-09-05 (first production sends; domain 7 days old)
 
-1. `npx tsx scripts/send-samples.ts --to <gmail>` and the same for an
-   Outlook.com and an iCloud address (3 mailboxes you control), prefix stays
-   `[SAMPLE]`.
+| Provider | Landed | Auth | Notes |
+|---|---|---|---|
+| Gmail | 7/10 Primary; digest, renewal, kill-switch-on → Promotions | pass | Digest/renewal are borderline by content. Kill-switch is a copy miss. |
+| Outlook.com | 0/10 Focused; all in Other (not Junk) | pass | First-contact sender; Focused is per-mailbox engagement, not reputation. |
+| iCloud | 0/10; all Junk (X-Icl-Score 4.3, Proofpoint) | pass (spf, dkim d=openswitchboard.ai, dmarc) | Sending IP and domain clean on Spamhaus/SpamCop/Barracuda/SORBS/DBL/SURBL. New-domain reputation. |
+
+Two test-harness faults contaminated the first iCloud run and are fixed:
+sample links pointed at dev / a dead host (`send-samples.ts` now follows
+`--env`), and the sample unsubscribe URL 404'd (dead-link page now 200).
+Domain age is the remaining factor and only clean volume fixes it: follow
+the warmup plan above, then re-score at two weeks. Launch bar until then:
+authentication passes everywhere, no blocklist listings, nothing in Junk
+except at iCloud, and every verification code observed to arrive.
+
+### Procedure
+
+1. `AWS_PROFILE=openswitchboard AWS_REGION=ap-southeast-2 SES_ASSUME_ROLE_ARN=arn:aws:iam::968431686951:role/osb-prod-email-sender npx tsx scripts/send-samples.ts --env prod --config-set osb-prod-email --to <gmail>`
+   and the same for an Outlook.com and an iCloud address (3 mailboxes you
+   control), prefix stays `[SAMPLE]`. Prod sends are paced 20 s apart.
 2. Score: each of the ~10 sample messages must land in the PRIMARY inbox
    (Gmail: Primary tab; Outlook: Focused; iCloud: Inbox) — 10/10 per
    provider. A "Promotions"-tab landing counts as a miss.
