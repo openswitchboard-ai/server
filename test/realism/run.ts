@@ -42,6 +42,7 @@ import { join } from 'node:path';
 import { ask, readModel } from './nagatha.js';
 import { Counterpart, NagathaCard } from './counterpart.js';
 import { grade } from './grader.js';
+import { OutsiderGuard } from './outsiderGuard.js';
 import {
   GradedExchange,
   Report,
@@ -73,6 +74,22 @@ interface Ctx {
   };
   /** Nagatha card ids discovered during the run, for precise cleanup. */
   nagathaCardIds: string[];
+  /** Keeps the run's cards from matching REAL accounts. See outsiderGuard.ts. */
+  guard: OutsiderGuard;
+}
+
+/**
+ * Record a card of Nagatha's the moment we find it: keep the id for cleanup,
+ * tell the guard whose account it is (which ARMS the guard), and book a sweep
+ * for shortly after the matcher will have looked at it. Every place this run
+ * learns of one of her cards goes through here, so no posting path can forget.
+ */
+function noteNagathaCard(ctx: Ctx, card: NagathaCard | undefined): NagathaCard | undefined {
+  if (!card) return card;
+  ctx.nagathaCardIds.push(card.id);
+  ctx.guard.setAgentAccount(card.accountId);
+  ctx.guard.sweepSoon(`after ${card.category}`);
+  return card;
 }
 
 /** Ask Nagatha one thing, grade it, append it to the scenario. */
@@ -132,7 +149,7 @@ async function ensurePosted(
     await graded(scen, session, `Yep, all good — please just go ahead and post it now.`);
     card = await ctx.cp.waitNagathaCard(categoryLike, ctx.runStart, 30_000);
   }
-  return card;
+  return noteNagathaCard(ctx, card);
 }
 
 /** Poll a match row for a predicate on its columns. */
@@ -158,7 +175,6 @@ async function s1_postWant(ctx: Ctx): Promise<ScenarioResult> {
   const card = await ensurePosted(ctx, s, ctx.autoSession, 'goods.bicycle%', 45_000);
   if (card) {
     ctx.state.bikeCard = card;
-    ctx.nagathaCardIds.push(card.id);
     s.notes.push(`Her want landed as ${card.category} (card ${card.id.slice(0, 8)}).`);
   } else {
     s.notes.push('Could not find her bike want in the DB within 45s (she may have categorised it differently); later bike scenarios will re-look.');
@@ -170,10 +186,9 @@ async function s2_postHave(ctx: Ctx): Promise<ScenarioResult> {
   const s = newScenario('S2', 'autonomous', 'Post a have (book club with room)', 'Grade the confirmation.');
   await graded(s, ctx.autoSession, `I run a small book club and we've got room for a couple more people — can you let people know?`);
   const card = await ensurePosted(ctx, s, ctx.autoSession, 'social.hobby-group%', 20_000)
-    ?? await ctx.cp.waitNagathaCard('social.%', ctx.runStart, 5_000);
+    ?? noteNagathaCard(ctx, await ctx.cp.waitNagathaCard('social.%', ctx.runStart, 5_000));
   if (card) {
     ctx.state.bookHaveId = card.id;
-    ctx.nagathaCardIds.push(card.id);
     s.notes.push(`Her book-club post landed as ${card.category} (card ${card.id.slice(0, 8)}).`);
   } else {
     s.notes.push('Book-club card not located by category guess; not required for grading her confirmation.');
@@ -184,8 +199,8 @@ async function s2_postHave(ctx: Ctx): Promise<ScenarioResult> {
 async function s3_anythingNewMatchWaiting(ctx: Ctx): Promise<ScenarioResult> {
   const s = newScenario('S3', 'autonomous', 'Anything new? with a match already waiting', 'THE key jargon test: a match is waiting; she must surface it in plain English.');
   if (!ctx.state.bikeCard) {
-    const card = await ctx.cp.waitNagathaCard('goods.bicycle%', ctx.runStart, 10_000);
-    if (card) { ctx.state.bikeCard = card; ctx.nagathaCardIds.push(card.id); }
+    const card = noteNagathaCard(ctx, await ctx.cp.waitNagathaCard('goods.bicycle%', ctx.runStart, 10_000));
+    if (card) ctx.state.bikeCard = card;
   }
   if (!ctx.state.bikeCard) {
     s.error = 'no bike want to pair against';
@@ -200,6 +215,9 @@ async function s3_anythingNewMatchWaiting(ctx: Ctx): Promise<ScenarioResult> {
     'Canberra',
     Object.keys(ctx.state.bikeCard.attributes ?? {}).length ? undefined : { condition: 'used' },
   );
+  // The counterpart's own card is on the same shared board and can pair with a
+  // real account just as easily as hers can.
+  ctx.guard.sweepSoon('counterpart bike card');
   s.notes.push(`Scripted a counterpart ${ctx.state.bikeCard.category} in Canberra; waiting on the live matcher.`);
   const matchId = await ctx.cp.waitMatch(ctx.state.bikeCard.id, ctx.state.bikeCpCardId, 150_000);
   if (!matchId) {
@@ -366,20 +384,20 @@ async function emailTrack(ctx: Ctx): Promise<void> {
   try {
     await ask(ctx.emailSetupSession, `Please put out that I'm looking for a used acoustic guitar around Canberra.`);
     const gcard = await ensurePosted(ctx, setup, ctx.emailSetupSession, 'goods.music.guitar%', 30_000)
-      ?? await ctx.cp.waitNagathaCard('goods.music%', ctx.runStart, 5_000);
+      ?? noteNagathaCard(ctx, await ctx.cp.waitNagathaCard('goods.music%', ctx.runStart, 5_000));
     if (!gcard) {
       setup.error = 'could not locate her guitar want to build the email-track state';
       ctx.results.push(setup);
       writeIncremental(ctx);
       return;
     }
-    ctx.nagathaCardIds.push(gcard.id);
     setup.notes.push(`Guitar want located (${gcard.category}, ${gcard.id.slice(0, 8)}).`);
     const cpCard = await ctx.cp.postCounterpartCard(
       gcard,
       'Canberra',
       Object.keys(gcard.attributes ?? {}).length ? undefined : { condition: 'used' },
     );
+    ctx.guard.sweepSoon('counterpart guitar card');
     const matchId = await ctx.cp.waitMatch(gcard.id, cpCard, 150_000);
     if (!matchId) {
       setup.error = 'live matcher did not pair the guitar cards';
@@ -485,16 +503,26 @@ async function main(): Promise<number> {
   log(`OpenClaw configured model: ${CONFIGURED_MODEL}`);
 
   const cp = await Counterpart.create();
+  const runStart = new Date().toISOString();
   const ctx: Ctx = {
     cp,
     runId: cp.h.runId,
-    runStart: new Date().toISOString(),
+    runStart,
     autoSession: `realism-auto-${cp.h.runId}`,
     emailSession: `realism-email-${cp.h.runId}`,
     emailSetupSession: `realism-setup-${cp.h.runId}`,
     results: [],
     state: {},
     nagathaCardIds: [],
+    guard: new OutsiderGuard({
+      since: runStart,
+      runAccountIds: [cp.actor.accountId],
+      // The counterpart is ours: a crossing on its side can be declined
+      // properly, over MCP, the way its human's agent would.
+      declinable: [cp.actor.accountId],
+      decline: async (matchId) => !(await cp.decline(matchId)).isError,
+      logLine: (m) => log(m),
+    }),
   };
 
   // Tag the model from Nagatha's own first reply.
@@ -524,6 +552,7 @@ async function main(): Promise<number> {
       }
       writeIncremental(ctx);
     }
+    await ctx.guard.sweep('autonomous set complete');
   }
 
   if (only !== 'auto') {
@@ -532,12 +561,17 @@ async function main(): Promise<number> {
     } catch (e) {
       log(`email track threw: ${(e as Error).message}`);
     }
+    await ctx.guard.sweep('email set complete');
   }
 
   // Teardown: withdraw counterpart cards + archive scripted matches, and
   // withdraw the cards Nagatha posted during the eval (scoped to this run's
   // window) via the DB so her account is left clean.
   log('--- teardown ---');
+  // Before the cards come down: sever any real account this run bumped into,
+  // and decline the crossings the counterpart can decline. Never fails a run.
+  const guarded = await ctx.guard.flush();
+  log(`outsider guard: ${guarded.muted.length} outsider(s) severed this sweep, ${guarded.declined} declined`);
   const td = await ctx.cp.teardown().catch((e) => { log(`counterpart teardown: ${e.message}`); return { cardsWithdrawn: 0, matchesArchived: 0 }; });
   log(`counterpart teardown: withdrew ${td.cardsWithdrawn} cards, archived ${td.matchesArchived} matches`);
   await cleanupNagathaCards(ctx).catch((e) => log(`nagatha card cleanup: ${e.message}`));
