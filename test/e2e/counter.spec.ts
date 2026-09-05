@@ -60,7 +60,9 @@ test.afterAll(async () => {
   await ctx?.close();
 });
 
-const aliceEmail = `e2e+${randomBytes(5).toString('hex')}@openswitchboard.ai`;
+// Simulator address, same reason as helpers.ts testEmail(): real e2e+…@openswitchboard.ai
+// addresses hard-bounced and drove the SES bounce rate up.
+const aliceEmail = `success+e2e-${randomBytes(5).toString('hex')}@simulator.amazonses.com`;
 const ALICE_PIN = '731642';
 let aliceAccountId: string;
 let aliceToken: string; // alice's AGENT bearer token
