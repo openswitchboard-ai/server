@@ -5,7 +5,9 @@
  * are sitting there under categories the taxonomy has never heard of —
  * 'goods.laptop.macbook-air', 'social.conversation.language-exchange'. Those
  * cards can never meet anything: the matcher's tree check asks whether one
- * category is the other or an ancestor of it, and an invented path is neither.
+ * category is the other, sits on its ancestor line, or shares its immediate
+ * parent, and an invented path is none of the three — there is no real card
+ * under 'goods.laptop' for a sibling rule to reach.
  *
  * This sweep takes each such card, asks the same suggestion machinery a
  * refused publish would ask, and moves the card to the top answer. Every

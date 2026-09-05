@@ -90,15 +90,27 @@ async function loadSourceCard(cardId: string): Promise<(CardRow & {
 // run afterwards, in evaluatePair, unchanged.
 //
 // CATEGORY. evaluatePair's first hard rule is categoryCompatible - equal,
-// ancestor or descendant, and nothing else - so this clause is that rule
-// rather than an approximation of it. No threshold arithmetic is needed to
-// justify it: an incompatible pair never gets a score to compare against
-// 0.75, it is refused outright. (Worth writing down, since the weights say
-// otherwise on their own: category carries 0.20, so a pair perfect on
-// everything else would reach 0.55 + 0.15 + 0.10 = 0.80 with category at 0,
-// clear of the 0.75 threshold. It is the hard rule, not the weight, that
-// makes a same-tree restriction safe - and it is also why "same top-level
-// segment" would be far too loose a filter to be worth writing.)
+// ancestor, descendant, or siblings under a shared parent that itself sits
+// below the top level - so this clause is that rule rather than an
+// approximation of it. Nothing here is a scoring judgement: a pair the rule
+// refuses never gets a score to compare against 0.75 at all.
+//
+// WHAT ADMITTING SIBLINGS COSTS, honestly. Category carries 0.20 of the
+// blend and compatible pairs floor at 0.4 closeness, so the category
+// component can no longer be read as a guarantee that the rest of the score
+// has to carry the pair on its own. A sibling pair is 0.7 closeness, or 0.14
+// of the blend; perfect on semantics, geo and price it reaches
+// 0.55 + 0.14 + 0.15 + 0.10 = 0.94, and at semantic 0.9 it is about 0.89,
+// comfortably over the 0.75 threshold. That is the intended behaviour:
+// goods.bicycle.mountain and goods.bicycle.road describing the same bike
+// SHOULD meet, and semantic similarity at 0.55 of the weight is what decides
+// it. A sibling pair whose descriptions have little to do with each other
+// lands under the threshold on that weight alone — semantic 0.35 puts it at
+// about 0.58, which is a near-miss. The door stays narrow because of the
+// shape of the rule: only immediate siblings under a sub-level parent. 'Same
+// top-level segment' would let a sofa meet a laptop and lean entirely on the
+// 0.75 threshold to sort it out, and it remains far looser than anything
+// this admits.
 //
 // GEO. evaluateGeo has three shapes, and the clause keeps a candidate under
 // any of them:
@@ -230,10 +242,16 @@ function candidateWhere(source: {
        AND NOT EXISTS (SELECT 1 FROM match_mutes mm
                        WHERE (mm.account_id = c.account_id AND mm.muted_account = $2::uuid)
                           OR (mm.account_id = $2::uuid AND mm.muted_account = c.account_id))
-       -- category: equal, ancestor or descendant (the hard rule, in SQL)
+       -- category: equal, ancestor, descendant, or siblings under a shared
+       -- parent below the top level (the hard rule, in SQL)
        AND (c.category = $3::text
             OR left(c.category, length($3::text) + 1) = $3::text || '.'
-            OR left($3::text, length(c.category) + 1) = c.category || '.')
+            OR left($3::text, length(c.category) + 1) = c.category || '.'
+            OR (strpos(c.category, '.') > 0
+                AND strpos($3::text, '.') > 0
+                AND regexp_replace(c.category, '\\.[^.]+$', '')
+                    = regexp_replace($3::text, '\\.[^.]+$', '')
+                AND strpos(regexp_replace($3::text, '\\.[^.]+$', ''), '.') > 0))
        -- geo: keep everything the reach rule could possibly let through
        AND (
          $4::boolean
