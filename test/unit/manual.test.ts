@@ -153,6 +153,46 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/both sides quietly waiting on each other/i);
   });
 
+  it('sends a figure as an offer and keeps the open conversation for words', () => {
+    // The steer that version 15 added. The defect behind it: a real buyer agent
+    // typed its human's private ceiling into its first message across an open
+    // conversation, and the whole negotiation then happened in free text where
+    // no limit of the human's could be enforced. The conversation is sealed by
+    // design, so the only lever is making the offer road the visible one.
+    expect(SERVER_INSTRUCTIONS).toContain('The open conversation is for words');
+    expect(SERVER_INSTRUCTIONS).toMatch(/a figure is a different thing, and it travels as an offer/i);
+    // Why the offer road is the safe one: the human's limits are enforced, and
+    // only the allowed number crosses.
+    expect(SERVER_INSTRUCTIONS).toMatch(/refuses anything outside it/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/nothing they keep private can slip out with it/i);
+    // Hearing a figure is fine; sending one is the offer's job.
+    expect(SERVER_INSTRUCTIONS).toMatch(/hearing a figure here is perfectly fine/i);
+    expect(SERVER_INSTRUCTIONS).toContain("Sending one is propose_offer's job");
+    // It sits with the relay guidance, where an agent is deciding what to send.
+    const patched = SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH'));
+    expect(patched).toContain('The open conversation is for words');
+  });
+
+  it('tells a connected agent about the offer steer, in version 15', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(15);
+    const fifteen = MANUAL_CHANGELOG.find((c) => c.version === 15)!;
+    expect(fifteen).toBeDefined();
+    expect(fifteen.note).toContain('propose_offer');
+    expect(fifteen.note).toMatch(/a figure travels as an offer/i);
+    expect(fifteen.note).toMatch(/refuses anything outside it/i);
+  });
+
+  it('puts the same steer on the tools an agent reaches for', async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const desc = (name: string) => TOOLS.find((t) => t.name === name)!.description;
+    expect(desc('send_message')).toMatch(/a figure belongs on an offer/i);
+    expect(desc('open_conversation')).toMatch(/a figure travels as an offer/i);
+    // propose_offer already said the numbers are the human's; it now also says
+    // that this is the road every figure of theirs takes.
+    expect(desc('respond')).toContain('the numbers belong to your human');
+    expect(desc('respond')).toMatch(/this is where any figure travels/i);
+  });
+
   it('keeps the keep-it-moving change and carries a current latest note', () => {
     // The keep-it-moving guidance stays in the log even as later versions land.
     expect(MANUAL_CHANGELOG.some((c) => /whose turn it is/i.test(c.note))).toBe(true);
