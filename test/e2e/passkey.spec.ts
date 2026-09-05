@@ -17,7 +17,10 @@ import { randomBytes } from 'node:crypto';
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { COUNTER_URL, dbExec, sha256hex } from '../integration/helpers.js';
 
-const email = `e2epk+${randomBytes(5).toString('hex')}@openswitchboard.ai`;
+// SES mailbox simulator: accepted in the sandbox, never bounces, never counts
+// against quota or reputation. (Real e2epk+…@openswitchboard.ai addresses
+// hard-bounced at Titan and fed the bounce rate behind the SES production denial.)
+const email = `success+e2epk-${randomBytes(5).toString('hex')}@simulator.amazonses.com`;
 const PIN = '918273';
 
 test('passkey enrolment: virtual authenticator enrols during registration', async ({
