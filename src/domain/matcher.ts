@@ -96,21 +96,26 @@ async function loadSourceCard(cardId: string): Promise<(CardRow & {
 // refuses never gets a score to compare against 0.75 at all.
 //
 // WHAT ADMITTING SIBLINGS COSTS, honestly. Category carries 0.20 of the
-// blend and compatible pairs floor at 0.4 closeness, so the category
-// component can no longer be read as a guarantee that the rest of the score
-// has to carry the pair on its own. A sibling pair is 0.7 closeness, or 0.14
-// of the blend; perfect on semantics, geo and price it reaches
-// 0.55 + 0.14 + 0.15 + 0.10 = 0.94, and at semantic 0.9 it is about 0.89,
-// comfortably over the 0.75 threshold. That is the intended behaviour:
-// goods.bicycle.mountain and goods.bicycle.road describing the same bike
-// SHOULD meet, and semantic similarity at 0.55 of the weight is what decides
-// it. A sibling pair whose descriptions have little to do with each other
-// lands under the threshold on that weight alone — semantic 0.35 puts it at
-// about 0.58, which is a near-miss. The door stays narrow because of the
-// shape of the rule: only immediate siblings under a sub-level parent. 'Same
-// top-level segment' would let a sofa meet a laptop and lean entirely on the
-// 0.75 threshold to sort it out, and it remains far looser than anything
-// this admits.
+// blend for a pair where both sides asserted a few attributes (0.35 where one
+// side is thin — matchRules.ts, ASSERTION-SCALED WEIGHTS), and compatible
+// pairs floor at 0.4 closeness, so the category component can no longer be
+// read as a guarantee that the rest of the score has to carry the pair on its
+// own. Take the rich blend, where semantic decides the most. A sibling pair
+// is 0.7 closeness, or 0.14 of the blend; perfect on semantics, geo and price
+// it reaches 0.55 + 0.14 + 0.15 + 0.10 = 0.94, and at semantic 0.9 it is
+// about 0.89, comfortably over the 0.75 threshold. That is the intended
+// behaviour: goods.bicycle.mountain and goods.bicycle.road describing the
+// same bike SHOULD meet, and semantic similarity at 0.55 of the weight is
+// what decides it. A sibling pair whose descriptions have little to do with
+// each other lands under the threshold on that weight alone — semantic 0.35
+// puts it at about 0.58, which is a near-miss. Under the thin blend the
+// sibling discount is larger, 0.105 of blend rather than 0.06, so a thin card
+// filed one node across has further to climb, which is the right way round:
+// it said less, so the filing has to do more of the work. The door stays
+// narrow because of the shape of the rule: only immediate siblings under a
+// sub-level parent. 'Same top-level segment' would let a sofa meet a laptop
+// and lean entirely on the 0.75 threshold to sort it out, and it remains far
+// looser than anything this admits.
 //
 // GEO. evaluateGeo has three shapes, and the clause keeps a candidate under
 // any of them:
@@ -473,6 +478,11 @@ export async function runMatchingForCard(
       categoryB: cand.category,
       geoA: geoOf(source),
       geoB: geoOf(cand),
+      // Counted, never compared: attributes pick the blend (matchRules.ts,
+      // ASSERTION-SCALED WEIGHTS). Attribute VALUES are read only by the
+      // embedding, which happened before this loop.
+      attributesA: source.attributes,
+      attributesB: cand.attributes,
       // bands withheld: category/geo hard rules run without any decrypt
     });
     if (!pre.hardRulesPass) continue;
@@ -490,6 +500,8 @@ export async function runMatchingForCard(
       categoryB: cand.category,
       geoA: geoOf(source),
       geoB: geoOf(cand),
+      attributesA: source.attributes,
+      attributesB: cand.attributes,
       wantBand,
       haveBand,
     });
@@ -515,6 +527,8 @@ export async function runMatchingForCard(
           match_id: ins.rows[0].id,
           score: Number(evaled.score.toFixed(4)),
           category: want.category,
+          // Which blend scored it: a count, never an attribute value.
+          thinness: evaled.thinness,
         });
       }
     } else if (decision === 'near-miss') {
