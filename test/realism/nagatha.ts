@@ -77,6 +77,13 @@ export async function ask(sessionId: string, utterance: string): Promise<Nagatha
   } catch (e) {
     throw new Error(`unparseable openclaw JSON: ${(e as Error).message}\n${stdout.slice(0, 600)}`);
   }
+  // A failed model call (rate limit, provider outage) comes back ok:false with
+  // no payloads. Left alone it grades as an empty reply — a register failure
+  // she never committed — so surface it as the mechanical error it is.
+  if (parsed?.ok === false || parsed?.error) {
+    const msg = parsed?.error?.message ?? 'openclaw returned ok:false with no error message';
+    throw new Error(`openclaw agent call failed: ${String(msg).slice(0, 300)}`);
+  }
   const payloads: any[] = parsed?.result?.payloads ?? [];
   const text = payloads
     .map((p) => p?.text ?? '')
