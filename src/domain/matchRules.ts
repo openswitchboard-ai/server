@@ -7,7 +7,10 @@
  *   score = 0.55 * semantic   (cosine similarity of the two cards' canonical
  *                              projection embeddings, clamped to [0,1])
  *         + 0.20 * category   (taxonomy-tree closeness: 1.0 exact node,
- *                              -0.15 per ancestor/descendant step, floor 0.4)
+ *                              -0.15 per tree step below the lowest common
+ *                              ancestor, counting both sides, floor 0.4 —
+ *                              so a parent/child pair is 0.85 and a sibling
+ *                              pair 0.7)
  *         + 0.15 * geo        (1.0 at the same centre point, decaying linearly
  *                              with distance over the two cards' combined
  *                              radii; a flat 0.6 for a pair that meets on a
@@ -34,7 +37,8 @@
  * HARD RULES (all must pass before a score is even considered):
  *   - opposite types (WANT vs HAVE), different accounts, no mute either way;
  *   - both PUBLISHED, unexpired (TTL), not paused by a kill switch;
- *   - category-tree compatibility (equal, ancestor, or descendant);
+ *   - category-tree compatibility (equal, ancestor, descendant, or siblings
+ *     under a shared parent that is itself below the top level);
  *   - geo: each side's reach covers where the other side is — two radius cards
  *     when their centre points are within the sum of the two radii, a
  *     'country' card over any card in the same country, an 'anywhere' card
@@ -119,15 +123,49 @@ export function projectionText(card: { category: string; attributes?: any }): st
 // Category tree.
 // ---------------------------------------------------------------------------
 
-/** Compatible iff one category equals or is an ancestor/descendant of the other. */
-export function categoryCompatible(a: string, b: string): boolean {
-  return a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
+/** The path with its last segment removed, or '' for a top-level node. */
+function parentOf(category: string): string {
+  const cut = category.lastIndexOf('.');
+  return cut === -1 ? '' : category.slice(0, cut);
 }
 
-/** 1.0 exact; -0.15 per tree step apart along the ancestor line; floor 0.4. */
+/**
+ * Compatible iff one category equals or is an ancestor/descendant of the
+ * other, OR the two are SIBLINGS under a shared parent that is itself below
+ * the top level.
+ *
+ * The sibling case is why goods.bicycle.mountain and goods.bicycle.road reach
+ * the blend: two people who each described a bike and differed only on the
+ * discipline were being kept apart by the filing, and semantic similarity —
+ * which carries more than half the score — is the thing that should decide a
+ * pair like that.
+ *
+ * The shared parent has to contain a dot, so the rule stops one level down
+ * from the top: goods.bicycle and goods.electronics share only 'goods', and
+ * admitting them would open every top-level vertical to itself. Nothing wider
+ * than immediate siblings is admitted either — goods.bicycle.mountain and
+ * goods.skateboard share no immediate parent and stay apart.
+ */
+export function categoryCompatible(a: string, b: string): boolean {
+  if (a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`)) return true;
+  const parent = parentOf(a);
+  return parent !== '' && parent === parentOf(b) && parent.includes('.');
+}
+
+/**
+ * 1.0 exact, then -0.15 per tree step below the lowest common ancestor,
+ * counting both sides, floored at 0.4. On the ancestor line one side is zero
+ * steps, so a parent/child pair is 0.85 and a grandparent/grandchild 0.7,
+ * exactly as before. Siblings are one step each: 1 - 0.15 x 2 = 0.7.
+ * Incompatible pairs score 0.
+ */
 export function categoryCloseness(a: string, b: string): number {
   if (!categoryCompatible(a, b)) return 0;
-  const steps = Math.abs(a.split('.').length - b.split('.').length);
+  const pa = a.split('.');
+  const pb = b.split('.');
+  let shared = 0;
+  while (shared < pa.length && shared < pb.length && pa[shared] === pb[shared]) shared++;
+  const steps = pa.length - shared + (pb.length - shared);
   return Math.max(0.4, 1 - 0.15 * steps);
 }
 
