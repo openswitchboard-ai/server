@@ -66,6 +66,25 @@ export interface OfferRow {
 }
 
 /**
+ * A settlement one side proposed on the introduction.
+ *
+ * This row is read for one reason: a settlement only ever gets proposed after
+ * the two sides have agreed a figure, so its existence is the strongest signal
+ * in the database that a deal was reached. The 2026-09-05T11-05-10 run turned
+ * on exactly this — the two agents agreed $420, one of them proposed a $420
+ * settlement, and the run reported NO-DEAL because nothing but the offers table
+ * and the archive was being read.
+ */
+export interface SettlementRow {
+  id: string;
+  matchId: string;
+  proposer: string;
+  amount: number;
+  ccy: string;
+  state: string;
+}
+
+/**
  * A scored pair that passed every hard rule but fell short of the 0.75
  * create threshold, so no match was made. When the two run accounts turn up
  * here it is the single most important number of the run: the two agents wrote
@@ -85,6 +104,7 @@ export interface Snapshot {
   matches: MatchRow[];
   consents: ConsentRow[];
   offers: OfferRow[];
+  settlements: SettlementRow[];
   /** channel_id -> sender account -> messages sent (a durable tally). */
   sends: Record<string, Record<string, number>>;
   /** Near-misses where BOTH sides are this run's accounts. */
@@ -170,6 +190,7 @@ export class ProgressWatcher {
     const matchIds = matches.map((m) => m.id).join(',');
     let consents: ConsentRow[] = [];
     let offers: OfferRow[] = [];
+    let settlements: SettlementRow[] = [];
     const sends: Record<string, Record<string, number>> = {};
     if (matchIds) {
       const cr = await dbExec(
@@ -192,6 +213,21 @@ export class ProgressWatcher {
         [{ name: 'm', value: matchIds }],
       );
       offers = or.map((r) => ({
+        id: String(r[0]),
+        matchId: String(r[1]),
+        proposer: String(r[2]),
+        amount: Number(r[3]),
+        ccy: String(r[4]),
+        state: String(r[5]),
+      }));
+      const sr2 = await dbExec(
+        `SELECT id::text, match_id::text, proposer_account::text, amount::text, ccy, state
+           FROM settlements
+          WHERE match_id = ANY(string_to_array(:m, ',')::uuid[])
+          ORDER BY created_at`,
+        [{ name: 'm', value: matchIds }],
+      );
+      settlements = sr2.map((r) => ({
         id: String(r[0]),
         matchId: String(r[1]),
         proposer: String(r[2]),
@@ -237,7 +273,7 @@ export class ProgressWatcher {
       category: String(r[3]),
     }));
 
-    return { at, cards, matches, consents, offers, sends, nearMisses };
+    return { at, cards, matches, consents, offers, settlements, sends, nearMisses };
   }
 
   /** Take a snapshot, diff it against the last, and append what is new. */
@@ -294,6 +330,22 @@ export class ProgressWatcher {
       else if (p.state !== o.state) push('offer-state', `${o.amount} ${o.ccy}: ${p.state} -> ${o.state}`, this.sideOf(o.proposer));
     }
 
+    // A settlement is proposed only after the two sides have agreed a figure,
+    // so it is a deal event and reads as one in the timeline.
+    const prevSettlements = new Map((prev?.settlements ?? []).map((s) => [s.id, s]));
+    for (const s of now.settlements) {
+      const p = prevSettlements.get(s.id);
+      if (!p) {
+        push(
+          'settlement',
+          `${s.amount} ${s.ccy} settlement proposed (${s.state}) — the two sides had agreed a figure by this point`,
+          this.sideOf(s.proposer),
+        );
+      } else if (p.state !== s.state) {
+        push('settlement-state', `${s.amount} ${s.ccy}: ${p.state} -> ${s.state}`, this.sideOf(s.proposer));
+      }
+    }
+
     for (const [ch, bySender] of Object.entries(now.sends)) {
       for (const [sender, n] of Object.entries(bySender)) {
         const before = prev?.sends?.[ch]?.[sender] ?? 0;
@@ -347,6 +399,22 @@ export class ProgressWatcher {
         (c) => c.matchId === m.id && c.accountId === accountId && c.kind === 'stage3-optin',
       );
     });
+  }
+
+  /** Every offer on the introduction between our two accounts — the offers rail
+   *  as the two agents actually used it, or did not. */
+  ourOffers(): OfferRow[] {
+    const m = this.ourMatch();
+    if (!m) return [];
+    return (this.last?.offers ?? []).filter((o) => o.matchId === m.id);
+  }
+
+  /** Settlements on that same introduction. A row here is the strongest
+   *  database evidence that the two sides reached a deal. */
+  ourSettlements(): SettlementRow[] {
+    const m = this.ourMatch();
+    if (!m) return [];
+    return (this.last?.settlements ?? []).filter((s) => s.matchId === m.id);
   }
 
   /** An offer this side's human is being asked to accept (they did not make it). */

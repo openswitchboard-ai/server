@@ -56,6 +56,22 @@ export interface ModelLinterResult {
   repliesWithHardLeak: number;
   leakFrequency: { label: string; severity: string; count: number }[];
   worstExamples: { text: string; hits: LeakHit[] }[];
+  /** Clock times excused as two people arranging a pickup (duet/logistics.ts). */
+  meetingTimesAllowed: number;
+}
+
+/**
+ * Whether figures travelled on the offers rail, and what the switchboard holds
+ * to show it. This is the headline measurement of the run: the rail exists so
+ * a figure crosses under the human's own limits rather than as free text in a
+ * sealed conversation nothing can enforce against, and a run where the two
+ * agents negotiated entirely in words has proved the rail unused.
+ */
+export interface OffersRail {
+  used: boolean;
+  count: number;
+  offers: { side: string; amount: number; ccy: string; state: string }[];
+  settlements: { side: string; amount: number; ccy: string; state: string }[];
 }
 
 export interface DuetReport {
@@ -64,6 +80,8 @@ export interface DuetReport {
   env: string;
   outcome: 'deal' | 'no-deal' | 'deadlock' | 'error';
   outcomeDetail: string;
+  /** Did any figure travel as an offer, and what came of it. */
+  offersRail: OffersRail;
   sides: Record<
     SideId,
     { human: string; agent: string; model: string; accountId: string; sharedFirstName: string }
@@ -88,7 +106,14 @@ export interface DuetReport {
 export function buildLinter(
   side: SideId,
   model: string,
-  replies: { text: string; hits: LeakHit[]; hardCount: number; softCount: number; pass: boolean }[],
+  replies: {
+    text: string;
+    hits: LeakHit[];
+    hardCount: number;
+    softCount: number;
+    pass: boolean;
+    meetingTimesAllowed?: number;
+  }[],
 ): ModelLinterResult {
   const grades: GradeResult[] = replies.map((r) => ({
     text: r.text,
@@ -108,6 +133,7 @@ export function buildLinter(
       .sort((a, b) => b.hardCount - a.hardCount)
       .slice(0, 3)
       .map((r) => ({ text: r.text, hits: r.hits })),
+    meetingTimesAllowed: replies.reduce((n, r) => n + (r.meetingTimesAllowed ?? 0), 0),
   };
 }
 
@@ -120,6 +146,10 @@ export function renderMarkdown(r: DuetReport): string {
   L.push('');
   L.push(`- **Generated:** ${r.generatedAt}   **Run:** ${r.runId}   **Env:** ${r.env}`);
   L.push(`- **Outcome:** **${r.outcome.toUpperCase()}** — ${r.outcomeDetail}`);
+  L.push(
+    `- **Offers used:** **${r.offersRail.used ? 'YES' : 'NO'}** — ${r.offersRail.count} offer(s) on the rail` +
+      (r.offersRail.settlements.length ? `, ${r.offersRail.settlements.length} settlement(s)` : ''),
+  );
   L.push(`- **Rounds:** ${r.rounds}`);
   for (const side of ['priya', 'marlowe'] as SideId[]) {
     const s = r.sides[side];
@@ -134,6 +164,31 @@ export function renderMarkdown(r: DuetReport): string {
   if (!r.findings.length) L.push('_None recorded._');
   for (const f of r.findings) L.push(`- ${f}`);
   L.push('');
+
+  L.push('## Did the figures travel as offers?');
+  L.push('');
+  L.push(
+    r.offersRail.used
+      ? `**Yes — ${r.offersRail.count} offer(s) went on the rail**, where the server holds each human's own limits and refuses anything outside them.`
+      : '**No offer was ever put on the rail.** Every figure the two agents exchanged travelled as free text across the open conversation, which the switchboard seals and cannot enforce a limit against.',
+  );
+  L.push('');
+  if (r.offersRail.offers.length) {
+    L.push('| proposed by | amount | state |');
+    L.push('| --- | --- | --- |');
+    for (const o of r.offersRail.offers) L.push(`| ${o.side} | ${o.amount} ${o.ccy} | ${o.state} |`);
+    L.push('');
+  }
+  if (r.offersRail.settlements.length) {
+    L.push(
+      'Settlements proposed (a settlement is only ever proposed once the two sides have agreed a figure):',
+    );
+    L.push('');
+    L.push('| proposed by | amount | state |');
+    L.push('| --- | --- | --- |');
+    for (const s of r.offersRail.settlements) L.push(`| ${s.side} | ${s.amount} ${s.ccy} | ${s.state} |`);
+    L.push('');
+  }
 
   L.push('## What the two agents published, and whether the engine introduced them');
   L.push('');
@@ -161,10 +216,16 @@ export function renderMarkdown(r: DuetReport): string {
 
   L.push('## Jargon linter, per model');
   L.push('');
-  L.push('| side | model | replies | with a hard leak |');
-  L.push('| --- | --- | --- | --- |');
+  L.push(
+    'A clock time in a reply that is arranging a pickup ("Saturday at 10:00, at the shops") is excused here as ordinary speech; the register eval\'s own rule is untouched, and the excused count is shown so nothing is hidden.',
+  );
+  L.push('');
+  L.push('| side | model | replies | with a hard leak | pickup times excused |');
+  L.push('| --- | --- | --- | --- | --- |');
   for (const m of r.linter) {
-    L.push(`| ${m.side} | \`${m.model}\` | ${m.repliesGraded} | ${m.repliesWithHardLeak} |`);
+    L.push(
+      `| ${m.side} | \`${m.model}\` | ${m.repliesGraded} | ${m.repliesWithHardLeak} | ${m.meetingTimesAllowed} |`,
+    );
   }
   for (const m of r.linter) {
     L.push('');
