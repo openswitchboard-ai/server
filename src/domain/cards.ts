@@ -12,6 +12,7 @@ import {
 } from '../protocol.js';
 import { categoryDenied, categoryStatus } from '../denylist.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
+import { recordCategoryMiss } from './categoryMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords } from './screening.js';
 import type { Config } from '../config.js';
@@ -66,11 +67,23 @@ export interface CardRow {
  * closest open categories so the agent can correct itself on the next call.
  * Working those out is a courtesy — it never changes the decision, and a
  * refusal stands whether or not the suggestions arrive.
+ *
+ * The refusal is also the only place the switchboard hears what the taxonomy is
+ * missing, so it is written down on the way past (domain/categoryMisses.ts).
+ * That write is best-effort in the strong sense: it is awaited so the row is
+ * really there before the error leaves, but it cannot throw, and nothing about
+ * it reaches the agent. The refusal is unchanged whether the log succeeded,
+ * failed, or was never attempted.
  */
-export async function assertCategoryOpen(cfg: Config, category: string): Promise<void> {
+export async function assertCategoryOpen(
+  cfg: Config,
+  category: string,
+  accountId: string,
+): Promise<void> {
   const status = categoryStatus(category);
   if (status.status === 'open') return;
   const { categories } = await suggestCategories(cfg, category, 3);
+  await recordCategoryMiss(accountId, category, categories);
   throw new OsbError('CATEGORY_PROHIBITED', {
     human_action: suggestionSentence(status.status, categories),
     ...(categories.length ? { suggestions: categories } : {}),
@@ -97,7 +110,7 @@ export async function publishIntent(
   }
   checkSchemaVersion(card.schema_version);
 
-  await assertCategoryOpen(cfg, card.category);
+  await assertCategoryOpen(cfg, card.category, accountId);
   const denied = categoryDenied(card.category);
   if (denied) {
     throw new OsbError('CATEGORY_PROHIBITED', {
@@ -281,7 +294,7 @@ export async function amendIntent(
   // An amend is a re-publish, so the category faces the same gate. A card
   // whose category left the taxonomy since it was posted cannot be renewed
   // under it; the error names where to go instead.
-  await assertCategoryOpen(cfg, next.category);
+  await assertCategoryOpen(cfg, next.category, accountId);
   const geo = normaliseGeo(next.geo);
 
   await checkPublishQuota(accountId, cfg.quotas);
