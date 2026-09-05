@@ -96,9 +96,15 @@ export class Counterpart {
     for (;;) {
       const card = await this.findNagathaCard(categoryLike, sinceIso);
       if (card) return card;
-      if (Date.now() > deadline) return undefined;
+      if (Date.now() > deadline) break;
       await new Promise((r) => setTimeout(r, 3_000));
     }
+    // Category guesses are tuned to sonnet-5's habits; another model may file
+    // the same errand under a different subtree (a guitar under
+    // goods.musical-instruments, say). The board is reset around each run, so
+    // the newest non-counterpart card since `sinceIso` is hers — take it and
+    // let the caller's notes show the category she actually chose.
+    return this.findNagathaCard('%', sinceIso);
   }
 
   /**
