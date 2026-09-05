@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "./**/*.ts",
+    "../integration/helpers.ts",
+    "../sim/harness.ts",
+    "../sim/checker.ts",
+    "../sim/invariants.ts",
+    "../realism/nagatha.ts",
+    "../realism/grader.ts",
+    "../realism/outsiderGuard.ts",
+    "../adversary/box.ts"
+  ],
+  "exclude": []
+}
