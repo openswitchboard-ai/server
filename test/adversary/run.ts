@@ -52,6 +52,7 @@
 import { join } from 'node:path';
 import { ask, readModel } from '../realism/nagatha.js';
 import { Counterpart, NagathaCard } from '../realism/counterpart.js';
+import { OutsiderGuard } from '../realism/outsiderGuard.js';
 import { dbExec, log } from '../sim/harness.js';
 import { resetNagatha } from './box.js';
 import { Errand, SCENARIOS, errandNoun } from './attacks.js';
@@ -87,6 +88,8 @@ interface Ctx {
   errands: Record<Errand, ErrandState>;
   nagathaCardIds: string[];
   nagathaAccountId?: string;
+  /** Keeps this run's cards from matching REAL accounts. See outsiderGuard.ts. */
+  guard: OutsiderGuard;
 }
 
 let MODEL_UNDER_TEST = 'unknown';
@@ -129,6 +132,10 @@ async function standUpErrand(ctx: Ctx, errand: Errand, session: string): Promise
   st.card = card;
   ctx.nagathaCardIds.push(card.id);
   ctx.nagathaAccountId ??= card.accountId;
+  // Her account id is learned here and nowhere earlier, which is what ARMS the
+  // guard; the sweep lands about the time the matcher will have seen the card.
+  ctx.guard.setAgentAccount(card.accountId);
+  ctx.guard.sweepSoon(`after ${errand} listing`);
   st.note = `Live on the board as ${card.category} (${card.id.slice(0, 8)}).`;
   log(st.note);
 }
@@ -142,6 +149,9 @@ async function openRealWire(ctx: Ctx, errand: Errand, session: string): Promise<
     'Canberra',
     Object.keys(st.card.attributes ?? {}).length ? undefined : { condition: 'used' },
   );
+  // The counterparty card is on the same shared board and pairs with real
+  // accounts just as readily as hers does.
+  ctx.guard.sweepSoon(`counterparty ${errand} card`);
   const matchId = await ctx.cp.waitMatch(st.card.id, st.cpCardId, 150_000);
   if (!matchId) {
     st.note += ' Live matcher did not pair it within 150s, so attacks here use the labelled fallback.';
@@ -315,16 +325,24 @@ async function main(): Promise<number> {
   log(`OpenClaw configured model: ${CONFIGURED_MODEL}`);
 
   const cp = await Counterpart.create();
+  const runStart = new Date().toISOString();
   const ctx: Ctx = {
     cp,
     runId: cp.h.runId,
-    runStart: new Date().toISOString(),
+    runStart,
     results: [],
     errands: {
       'bike-buy': { errand: 'bike-buy', relayOpen: false, note: '' },
       'guitar-sell': { errand: 'guitar-sell', relayOpen: false, note: '' },
     },
     nagathaCardIds: [],
+    guard: new OutsiderGuard({
+      since: runStart,
+      runAccountIds: [cp.actor.accountId],
+      declinable: [cp.actor.accountId],
+      decline: async (matchId) => !(await cp.decline(matchId)).isError,
+      logLine: (m) => log(m),
+    }),
   };
 
   const setupSession = `adv-${ctx.runId}-setup`;
@@ -353,6 +371,7 @@ async function main(): Promise<number> {
   } catch (e) {
     log(`errand setup threw: ${(e as Error).message}`);
   }
+  await ctx.guard.sweep('errand setup complete');
 
   const midpoint = Math.floor(chosen.length / 2);
   for (let i = 0; i < chosen.length; i++) {
@@ -384,8 +403,13 @@ async function main(): Promise<number> {
     }
     writeIncremental(ctx);
   }
+  await ctx.guard.sweep('attack set complete');
 
   log('--- teardown ---');
+  // Sever any real account this run bumped into, and decline the crossings the
+  // counterparty can decline, before the listings come down. Best-effort.
+  const guarded = await ctx.guard.flush();
+  log(`outsider guard: ${guarded.muted.length} outsider(s) severed this sweep, ${guarded.declined} declined`);
   const td = await ctx.cp.teardown().catch((e) => {
     log(`counterpart teardown: ${e.message}`);
     return { cardsWithdrawn: 0, matchesArchived: 0 };
