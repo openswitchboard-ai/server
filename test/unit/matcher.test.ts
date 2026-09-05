@@ -15,8 +15,11 @@ import {
   REACH_GEO_CLOSENESS,
   THIN_ATTR_MAX,
   THIN_WEIGHTS,
+  THIN_WEIGHTS_NO_PRICE,
   WEIGHTS,
+  WEIGHTS_NO_PRICE,
   DEFAULT_GEO_RADIUS_KM,
+  assertsPrice,
   attrCount,
   categoryCloseness,
   categoryCompatible,
@@ -213,17 +216,31 @@ describe('price bands (decrypted engine-side only)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The duet pair, reconstructed from realism-reports/duet-2026-09-05T09-19-26
-// -360Z.json. Two live agents, one bike, one town, both runs byte-identical.
-// The report records the blended score and nothing else, so the semantic
-// value is backed out of the OLD weights:
+// The duet pair, reconstructed from two dev runs of the same two cards. Two
+// live agents, one bike, one town, byte-identical card bodies both times.
+//
+// SEMANTIC, from realism-reports/duet-2026-09-05T09-19-26-360Z.json. The
+// report records the blended score and nothing else, so the semantic value is
+// backed out of the ORIGINAL weights, with both cards on one point:
 //   0.60715854 = 0.55 s + 0.20 (category 1.0, same node)
 //                       + 0.15 (geo 1.0, one bucket, r=25 both sides)
 //                       + 0.10 (price 0.6, neither side declared a band)
 //   s = (0.60715854 - 0.41) / 0.55 = 0.35847007...
+//
+// GEO, from realism-reports/duet-2026-09-05T09-52-42-102Z.json, which scored
+// the same pair at 0.7489263 on the assertion-scaled weights and missed the
+// 0.75 threshold by 0.0011. That run's two Canberra cards did not resolve to
+// one point (r=25 and r=20, so a combined reach of 45 km), and the closeness
+// backs out of the thin blend at the same semantic:
+//   0.7489263 = 0.30 s + 0.35 (1.0) + 0.25 g + 0.10 (0.6)
+//   g = (0.7489263 - 0.10754102 - 0.35 - 0.06) / 0.25 = 0.92554111...
+// which is about 3.35 km apart over that reach.
 // ---------------------------------------------------------------------------
 const DUET_RECORDED_SCORE = 0.60715854;
 const DUET_SEMANTIC = (DUET_RECORDED_SCORE - 0.41) / 0.55;
+/** The 09-52-42 run's blended score: the near-miss this change is about. */
+const DUET2_RECORDED_SCORE = 0.7489263;
+const DUET_GEO = (DUET2_RECORDED_SCORE - 0.3 * DUET_SEMANTIC - 0.35 - 0.06) / 0.25;
 const DUET_HAVE_ATTRS = {
   year: 2021,
   brand: 'Giant',
@@ -233,12 +250,40 @@ const DUET_HAVE_ATTRS = {
 };
 const DUET_WANT_ATTRS = { frame_size: 'medium' };
 const CANBERRA_25 = { bucket: 'r3dp', lat: -35.2835, lon: 149.1281, radius_km: 25 };
+/**
+ * The WANT side of the 09-52-42 run. The report carries the blended score,
+ * not the two centre points, so this latitude is the one that reproduces the
+ * closeness backed out above (3.35 km due north of CANBERRA_25, r=20 as
+ * recorded) — the pair is real, the coordinate is the reconstruction.
+ */
+const CANBERRA_WANT_20 = { bucket: 'r3dp', lat: -35.25336688, lon: 149.1281, radius_km: 20 };
 
 describe('assertion-scaled weights', () => {
-  it('both weight sets sum to 1', () => {
-    for (const w of [WEIGHTS, THIN_WEIGHTS]) {
+  it('all four weight sets sum to 1', () => {
+    for (const w of [WEIGHTS, THIN_WEIGHTS, WEIGHTS_NO_PRICE, THIN_WEIGHTS_NO_PRICE]) {
       expect(w.semantic + w.category + w.geo + w.price).toBeCloseTo(1, 10);
     }
+    // The no-price sets are the priced ones with the price term removed and
+    // the rest divided by 0.9 — the renormalisation, spelled out.
+    for (const [priced, unpriced] of [
+      [WEIGHTS, WEIGHTS_NO_PRICE],
+      [THIN_WEIGHTS, THIN_WEIGHTS_NO_PRICE],
+    ] as const) {
+      expect(unpriced.price).toBe(0);
+      expect(unpriced.semantic).toBeCloseTo(priced.semantic / 0.9, 12);
+      expect(unpriced.category).toBeCloseTo(priced.category / 0.9, 12);
+      expect(unpriced.geo).toBeCloseTo(priced.geo / 0.9, 12);
+    }
+    expect(WEIGHTS_NO_PRICE.semantic).toBeCloseTo(0.61111111, 8);
+    expect(THIN_WEIGHTS_NO_PRICE.semantic).toBeCloseTo(0.33333333, 8);
+  });
+
+  it('a card asserts a price when it names a bound, and not otherwise', () => {
+    expect(assertsPrice(undefined)).toBe(false);
+    expect(assertsPrice({ band: {}, ccy: 'AUD' })).toBe(false);
+    expect(assertsPrice({ band: { max: 750 }, ccy: 'AUD' })).toBe(true);
+    expect(assertsPrice({ band: { min: 0 }, ccy: 'AUD' })).toBe(true);
+    expect(assertsPrice({ band: { min: 400, max: 750 }, ccy: 'AUD' })).toBe(true);
   });
 
   it('counts only the attributes the projection actually embeds', () => {
@@ -270,39 +315,82 @@ describe('assertion-scaled weights', () => {
     expect(weightsFor(3, 40)).toBe(WEIGHTS);
   });
 
-  it('the duet pair scored 0.6072 on the old weights and clears 0.75 on the new', () => {
-    const inputs = {
-      semantic: DUET_SEMANTIC,
-      categoryA: 'goods.bicycle.mountain',
-      categoryB: 'goods.bicycle.mountain',
-      geoA: CANBERRA_25,
-      geoB: { ...CANBERRA_25 },
-      // No bands: both duet cards left price unstated, so fit is the
-      // neutral 0.6.
-    };
-    // The backed-out semantic value reproduces the recorded score under the
-    // old blend — the arithmetic in the header, pinned.
+  it('a pair with no price on either side is scored without the price term', () => {
+    // The third argument is "did EITHER side assert a price". Default true, so
+    // a caller that knows nothing about bands gets the blend it always got.
+    expect(weightsFor(1, 5)).toBe(THIN_WEIGHTS);
+    expect(weightsFor(4, 5)).toBe(WEIGHTS);
+    expect(weightsFor(1, 5, true)).toBe(THIN_WEIGHTS);
+    expect(weightsFor(4, 5, true)).toBe(WEIGHTS);
+    expect(weightsFor(1, 5, false)).toBe(THIN_WEIGHTS_NO_PRICE);
+    expect(weightsFor(4, 5, false)).toBe(WEIGHTS_NO_PRICE);
+  });
+
+  it('the backed-out semantic reproduces the first run under the original weights', () => {
     const old =
       WEIGHTS.semantic * DUET_SEMANTIC + WEIGHTS.category * 1 + WEIGHTS.geo * 1 + WEIGHTS.price * 0.6;
     expect(DUET_SEMANTIC).toBeCloseTo(0.35847007, 8);
     expect(old).toBeCloseTo(DUET_RECORDED_SCORE, 8);
     expect(decide(old, 0, 0)).toBe('near-miss');
+  });
+
+  it('the duet pair missed by 0.0011 on the price term and clears 0.75 without it', () => {
+    // Case (a) from the SCORE MODEL header, card for card and run for run.
+    // The geo backed out of the recorded score, and the coordinate chosen to
+    // reproduce it, are the same number to eight places.
+    expect(DUET_GEO).toBeCloseTo(0.92554111, 8);
+    expect(evaluateGeo(CANBERRA_25, CANBERRA_WANT_20).closeness).toBeCloseTo(DUET_GEO, 7);
+
+    // What that run scored: the price term still in the blend, at its neutral
+    // 0.6 for two cards that never mentioned money.
+    const asRecorded =
+      0.3 * DUET_SEMANTIC + 0.35 * 1 + 0.25 * DUET_GEO + 0.1 * 0.6;
+    expect(asRecorded).toBeCloseTo(DUET2_RECORDED_SCORE, 8);
+    expect(decide(asRecorded, 0, 0)).toBe('near-miss');
+    expect(CREATE_THRESHOLD - asRecorded).toBeCloseTo(0.0011, 4);
 
     const now = evaluatePair({
-      ...inputs,
+      semantic: DUET_SEMANTIC,
+      categoryA: 'goods.bicycle.mountain',
+      categoryB: 'goods.bicycle.mountain',
+      geoA: CANBERRA_25,
+      geoB: CANBERRA_WANT_20,
+      attributesA: DUET_HAVE_ATTRS,
+      attributesB: DUET_WANT_ATTRS,
+      // No bands on either side: the price term is dropped, and the other
+      // three weights are divided by 0.9.
+    });
+    expect(now.hardRulesPass).toBe(true);
+    expect(now.weights).toBe(THIN_WEIGHTS_NO_PRICE);
+    expect(now.thinness).toBe(1);
+    expect(now.score).toBeCloseTo(
+      (0.3 * DUET_SEMANTIC + 0.35 * 1 + 0.25 * DUET_GEO) / 0.9,
+      8,
+    );
+    // The recorded score with the price term taken back out of it.
+    expect(now.score).toBeCloseTo((DUET2_RECORDED_SCORE - 0.06) / 0.9, 7);
+    expect(now.score).toBeCloseTo(0.76547367, 6);
+    expect(now.score).toBeGreaterThanOrEqual(CREATE_THRESHOLD);
+    expect(decide(now.score, 0, 0)).toBe('match');
+  });
+
+  it('the same pair on one point scores 0.7862', () => {
+    // The first run's geo (both cards on one spot) under the no-price blend:
+    // 0.76754102 with the neutral price term, (that - 0.06) / 0.9 without.
+    const r = evaluatePair({
+      semantic: DUET_SEMANTIC,
+      categoryA: 'goods.bicycle.mountain',
+      categoryB: 'goods.bicycle.mountain',
+      geoA: CANBERRA_25,
+      geoB: { ...CANBERRA_25 },
       attributesA: DUET_HAVE_ATTRS,
       attributesB: DUET_WANT_ATTRS,
     });
-    expect(now.hardRulesPass).toBe(true);
-    expect(now.weights).toBe(THIN_WEIGHTS);
-    expect(now.thinness).toBe(1);
-    expect(now.score).toBeCloseTo(
-      0.3 * DUET_SEMANTIC + 0.35 * 1 + 0.25 * 1 + 0.1 * 0.6,
-      8,
-    );
-    expect(now.score).toBeCloseTo(0.76754102, 6);
-    expect(now.score).toBeGreaterThanOrEqual(CREATE_THRESHOLD);
-    expect(decide(now.score, 0, 0)).toBe('match');
+    expect(r.weights).toBe(THIN_WEIGHTS_NO_PRICE);
+    expect(r.score).toBeCloseTo((0.3 * DUET_SEMANTIC + 0.35 * 1 + 0.25 * 1) / 0.9, 8);
+    expect(r.score).toBeCloseTo((0.76754102 - 0.06) / 0.9, 6);
+    expect(r.score).toBeCloseTo(0.78615669, 6);
+    expect(decide(r.score, 0, 0)).toBe('match');
   });
 
   it('a card with no attributes at all is thin, not rich', () => {
@@ -316,21 +404,130 @@ describe('assertion-scaled weights', () => {
       // attributesB absent: the card asserted nothing.
     });
     expect(r.thinness).toBe(0);
-    expect(r.weights).toBe(THIN_WEIGHTS);
+    // No bands either, so this is the thin blend with the price term dropped.
+    expect(r.weights).toBe(THIN_WEIGHTS_NO_PRICE);
+    // The same two cards WITH a band on one side keep the priced thin blend.
+    const priced = evaluatePair({
+      semantic: DUET_SEMANTIC,
+      categoryA: 'goods.bicycle.mountain',
+      categoryB: 'goods.bicycle.mountain',
+      geoA: CANBERRA_25,
+      geoB: { ...CANBERRA_25 },
+      attributesA: DUET_HAVE_ATTRS,
+      haveBand: { band: { min: 400 }, ccy: 'AUD' },
+    });
+    expect(priced.weights).toBe(THIN_WEIGHTS);
   });
 
   it('a personal threshold bump can still hold the duet pair back', () => {
-    // 0.7675 clears 0.75, and a nudged account's 0.77 it does not: the bump
-    // keeps working on top of the new blend.
-    const score = 0.3 * DUET_SEMANTIC + 0.35 + 0.25 + 0.06;
+    // 0.7655 clears 0.75, and a nudged account's 0.77 it does not: the bump
+    // keeps working on top of the renormalised blend.
+    const score = (0.3 * DUET_SEMANTIC + 0.35 + 0.25 * DUET_GEO) / 0.9;
+    expect(score).toBeCloseTo(0.76547367, 6);
     expect(decide(score, 0, 0)).toBe('match');
     expect(decide(score, 0.02, 0)).toBe('near-miss');
   });
 });
 
+// ---------------------------------------------------------------------------
+// An unasserted dimension cannot vote: the price term leaves the blend when
+// NEITHER side named a band, and stays exactly where it was when either did.
+// ---------------------------------------------------------------------------
+describe('the price term leaves the blend when nobody asserted a price', () => {
+  const base = {
+    semantic: 0.5,
+    categoryA: 'goods.bicycle.mountain',
+    categoryB: 'goods.bicycle.mountain',
+    geoA: CANBERRA_25,
+    geoB: { ...CANBERRA_25 },
+  };
+  const RICH = { a: 'x', b: 'y', c: 'z', d: 'w' };
+  const THIN = { frame_size: 'medium' };
+
+  it('renormalises the rich blend: no price term, three weights over 0.9', () => {
+    const r = evaluatePair({ ...base, attributesA: RICH, attributesB: { ...RICH } });
+    expect(r.weights).toBe(WEIGHTS_NO_PRICE);
+    expect(r.weights!.price).toBe(0);
+    expect(r.score).toBeCloseTo((0.55 * 0.5 + 0.2 * 1 + 0.15 * 1) / 0.9, 10);
+    // Identical to the old number with the neutral price term subtracted out.
+    expect(r.score).toBeCloseTo((0.55 * 0.5 + 0.2 + 0.15 + 0.1 * 0.6 - 0.06) / 0.9, 10);
+    expect(r.score).toBeCloseTo(0.69444444, 8);
+  });
+
+  it('renormalises the thin blend the same way', () => {
+    const r = evaluatePair({ ...base, attributesA: RICH, attributesB: THIN });
+    expect(r.weights).toBe(THIN_WEIGHTS_NO_PRICE);
+    expect(r.score).toBeCloseTo((0.3 * 0.5 + 0.35 * 1 + 0.25 * 1) / 0.9, 10);
+    expect(r.score).toBeCloseTo(0.83333333, 8);
+  });
+
+  it('one side asserting a price keeps the term, neutral fit and all', () => {
+    // The one-sided case: a WANT with a ceiling, a HAVE with no band at all.
+    // evaluatePrice returns its neutral 0.6, and that 0.6 stays in the blend
+    // at its full 0.10 — this path is untouched.
+    for (const [attrsB, weights] of [
+      [{ ...RICH }, WEIGHTS],
+      [THIN, THIN_WEIGHTS],
+    ] as const) {
+      const oneSided = evaluatePair({
+        ...base,
+        attributesA: RICH,
+        attributesB: attrsB,
+        wantBand: { band: { max: 750 }, ccy: 'AUD' },
+      });
+      expect(oneSided.weights).toBe(weights);
+      expect(oneSided.score).toBeCloseTo(
+        weights.semantic * 0.5 + weights.category * 1 + weights.geo * 1 + weights.price * 0.6,
+        10,
+      );
+      // And the same pair with the ceiling on the HAVE side instead: still
+      // one asserted side, still the priced blend.
+      const other = evaluatePair({
+        ...base,
+        attributesA: RICH,
+        attributesB: attrsB,
+        haveBand: { band: { min: 400 }, ccy: 'AUD' },
+      });
+      expect(other.weights).toBe(weights);
+      expect(other.score).toBeCloseTo(oneSided.score, 10);
+    }
+  });
+
+  it('both sides asserting a price is scored exactly as before', () => {
+    const r = evaluatePair({
+      ...base,
+      attributesA: RICH,
+      attributesB: { ...RICH },
+      wantBand: { band: { max: 750 }, ccy: 'AUD' },
+      haveBand: { band: { min: 400 }, ccy: 'AUD' },
+    });
+    expect(r.weights).toBe(WEIGHTS);
+    // headroom (750-400)/750 = 0.4667, over 0.25, so fit is 1.0.
+    expect(r.score).toBeCloseTo(0.55 * 0.5 + 0.2 + 0.15 + 0.1, 10);
+  });
+
+  it('a band with no numeric bound in it counts as silence', () => {
+    const r = evaluatePair({
+      ...base,
+      attributesA: RICH,
+      attributesB: { ...RICH },
+      wantBand: { band: {}, ccy: 'AUD' },
+    });
+    expect(r.weights).toBe(WEIGHTS_NO_PRICE);
+  });
+});
+
 describe('score blend + decision', () => {
-  it('weights sum to 1', () => {
+  it('weights sum to 1, with the price term and without it', () => {
     expect(WEIGHTS.semantic + WEIGHTS.category + WEIGHTS.geo + WEIGHTS.price).toBeCloseTo(1);
+    expect(
+      WEIGHTS_NO_PRICE.semantic + WEIGHTS_NO_PRICE.category + WEIGHTS_NO_PRICE.geo,
+    ).toBeCloseTo(1, 10);
+    expect(
+      THIN_WEIGHTS_NO_PRICE.semantic +
+        THIN_WEIGHTS_NO_PRICE.category +
+        THIN_WEIGHTS_NO_PRICE.geo,
+    ).toBeCloseTo(1, 10);
   });
   it('a designed twin pair scores above the create threshold', () => {
     const r = evaluatePair({
@@ -422,7 +619,10 @@ describe('score blend + decision', () => {
   });
   it('a thin pair one node across stays a near-miss', () => {
     // Case (b) from the SCORE MODEL header. Same two cards as the duet pair,
-    // but the WANT is filed under the sibling node: 0.7 category closeness.
+    // on one spot, but the WANT is filed under the sibling node: 0.7 category
+    // closeness. Neither card named a band, so the price term is dropped and
+    // the sibling step costs 0.11667 of blend rather than 0.105 — dropping
+    // the term does not rescue this pair, and should not.
     const r = evaluatePair({
       semantic: DUET_SEMANTIC,
       categoryA: 'goods.bicycle.mountain',
@@ -432,18 +632,22 @@ describe('score blend + decision', () => {
       attributesA: DUET_HAVE_ATTRS,
       attributesB: DUET_WANT_ATTRS,
     });
-    expect(r.weights).toBe(THIN_WEIGHTS);
+    expect(r.weights).toBe(THIN_WEIGHTS_NO_PRICE);
     expect(r.score).toBeCloseTo(
-      0.3 * DUET_SEMANTIC + 0.35 * 0.7 + 0.25 * 1 + 0.1 * 0.6,
+      (0.3 * DUET_SEMANTIC + 0.35 * 0.7 + 0.25 * 1) / 0.9,
       8,
     );
-    expect(r.score).toBeCloseTo(0.66254102, 6);
+    // The old number with the neutral price term taken back out of it.
+    expect(r.score).toBeCloseTo((0.66254102 - 0.06) / 0.9, 6);
+    expect(r.score).toBeCloseTo(0.66949002, 6);
+    expect(r.score).toBeLessThan(CREATE_THRESHOLD);
     expect(decide(r.score, 0, 0)).toBe('near-miss');
   });
 
-  it('a rich pair that does not agree is scored exactly as it was before', () => {
+  it('a rich pair that does not agree is still a near-miss', () => {
     // Case (c): both sides said plenty and still did not line up, so the
-    // embedding keeps its 0.55 and the number is the pre-change one.
+    // embedding keeps its share of the blend. No bands either, so the number
+    // is the old 0.63 renormalised: (0.63 - 0.06) / 0.9.
     const rich = { a: 'x', b: 'y', c: 'z', d: 'w' };
     const r = evaluatePair({
       semantic: 0.4,
@@ -454,10 +658,11 @@ describe('score blend + decision', () => {
       attributesA: rich,
       attributesB: { ...rich },
     });
-    expect(r.weights).toBe(WEIGHTS);
+    expect(r.weights).toBe(WEIGHTS_NO_PRICE);
     expect(r.thinness).toBe(4);
-    expect(r.score).toBeCloseTo(0.55 * 0.4 + 0.2 * 1 + 0.15 * 1 + 0.1 * 0.6, 8);
-    expect(r.score).toBeCloseTo(0.63, 8);
+    expect(r.score).toBeCloseTo((0.55 * 0.4 + 0.2 * 1 + 0.15 * 1) / 0.9, 8);
+    expect(r.score).toBeCloseTo((0.63 - 0.06) / 0.9, 8);
+    expect(r.score).toBeCloseTo(0.63333333, 8);
     expect(decide(r.score, 0, 0)).toBe('near-miss');
   });
 

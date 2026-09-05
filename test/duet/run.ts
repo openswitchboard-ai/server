@@ -482,13 +482,38 @@ async function main(): Promise<number> {
     actors.marlowe.locality,
   ]);
   const invariantsChecked: string[] = [];
+  // I3, and the one way this read can lie. The run's agent keys are provisioned
+  // for the run and can be gone by the time this fires — revoked from the
+  // approval page, expired, or simply no longer accepted — and a tools/list
+  // that never authenticated comes back as a JSON-RPC error or an empty tool
+  // array rather than a throw. Feeding that to the checker reads as "the whole
+  // tool surface has disappeared", which is what the 2026-09-05T09-52-42 run
+  // reported: 11 tools missing, all of them, because nothing was listed at all.
+  // So an empty or failed list is recorded as a check that COULD NOT RUN. A
+  // list that came back with tools in it and the wrong ones among them is a
+  // real finding and still goes to the checker untouched.
   try {
     const tools = await mcpRpc(actors.priya.accessToken, 'tools/list', {});
-    const names = (tools?.result?.tools ?? []).map((t: any) => t.name).sort();
-    checker.tools(names, 'tools/list at end of run');
-    invariantsChecked.push(`I3 (no accept-shaped tool; surface is exactly ${EXPECTED_TOOLS.length} tools)`);
+    const names: string[] = Array.isArray(tools?.result?.tools)
+      ? tools.result.tools.map((t: any) => t.name).sort()
+      : [];
+    if (!names.length) {
+      const why = tools?.error?.message ?? 'the list came back empty';
+      log(`I3 check could not run: ${why}`);
+      invariantsChecked.push(
+        `I3 — check could not run (tools/list returned nothing: ${why}; the run key was no longer valid, so this is not a finding about the tool surface)`,
+      );
+    } else {
+      checker.tools(names, 'tools/list at end of run');
+      invariantsChecked.push(
+        `I3 (no accept-shaped tool; surface is exactly ${EXPECTED_TOOLS.length} tools)`,
+      );
+    }
   } catch (e) {
     log(`tools/list check failed: ${(e as Error).message}`);
+    invariantsChecked.push(
+      `I3 — check could not run (tools/list failed: ${(e as Error).message})`,
+    );
   }
   for (const side of [sides.priya, sides.marlowe]) {
     try {
