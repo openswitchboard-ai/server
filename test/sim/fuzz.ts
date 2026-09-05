@@ -203,10 +203,17 @@ export async function runFuzz(
           wBand = { min: 0, max: pick([30, 50, 80]) };
           hBand = { min: pick([300, 400, 600]), max: pick([300, 400, 600]) };
         } else if (reason === 'category') {
-          // HAVE is a taxonomy leaf that is neither the WANT's category nor an
-          // ancestor/descendant of it.
-          let other = pick(CATS);
-          for (let g = 0; g < 6 && other.category === cat.category; g++) other = pick(CATS);
+          // HAVE is a taxonomy leaf the category rule cannot pair with the
+          // WANT's: not the same node, not on its ancestor line, and not a
+          // sibling under a shared parent below the top level. Siblings pair
+          // now (goods.electronics.camera and goods.electronics.laptop are two
+          // of them, both in this list), so "some other leaf" is no longer
+          // enough on its own to make an incompatible round.
+          const parentOf = (p: string) => (p.includes('.') ? p.slice(0, p.lastIndexOf('.')) : '');
+          const incompatible = (a: string, b: string) =>
+            !(a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`)) &&
+            !(parentOf(a) !== '' && parentOf(a) === parentOf(b) && parentOf(a).includes('.'));
+          const other = pick(CATS.filter((c) => incompatible(cat.category, c.category)));
           haveCategory = other.category;
           if (cat.priced) wBand = { min: 0, max: 900 };
           if (other.priced) hBand = { min: 100, max: 100 };

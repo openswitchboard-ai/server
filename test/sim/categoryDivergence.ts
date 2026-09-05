@@ -10,14 +10,15 @@
  * pairs.
  *
  * WHAT IS A FAILURE AND WHAT IS A FINDING. The matcher's rule is
- * matchRules.ts categoryCompatible: equal, ancestor, or descendant, and nothing
- * else. Two of these cases are therefore assertions about behaviour that must
- * hold — the control and the parent/child pair. The other two, siblings and
- * cross-subtree cousins, are assertions about CURRENT behaviour: the rule says
- * they do not pair, and the group asserts exactly that, so a change is caught
- * rather than assumed. Loosening the rule so that siblings meet is a PRODUCT
- * DECISION, not a bug fix, and it is not made here. What this group does is put
- * the consequence of the current rule in front of a person in one table.
+ * matchRules.ts categoryCompatible: equal, ancestor, descendant, or siblings
+ * under a shared parent that is itself below the top level. Three of these
+ * cases are therefore assertions about behaviour that must hold — the control,
+ * the parent/child pair, and, since the sibling rule landed, the two bike
+ * leaves under goods.bicycle. The cross-subtree cousins are an assertion about
+ * CURRENT behaviour: they share no ancestor and no parent, the rule says they
+ * do not pair, and the group asserts exactly that, so a change is caught
+ * rather than assumed. What this group does is put the consequence of the
+ * rule in front of a person in one table.
  *
  * All five cases share one run-scoped opaque bucket per case, so each is an
  * island: the pairing under test is the only one available, and nothing another
@@ -230,32 +231,35 @@ export async function runCategoryDivergence(
   // -------------------------------------------------------------------------
   // 3. Sibling leaves under one parent, identical attributes.
   //
-  //    EXPECTED-CURRENT-BEHAVIOUR, not a bug. categoryCompatible is the
-  //    ancestor line only, so goods.bicycle.mountain and goods.bicycle.road
-  //    never reach the blend: the SQL prefilter drops the candidate, and no
-  //    near-miss row is written either. Two people who each described a bike
-  //    and differed only on the discipline never hear about each other.
+  //    These pair now. categoryCompatible admits siblings whose shared parent
+  //    is itself below the top level, so goods.bicycle.mountain and
+  //    goods.bicycle.road reach the blend, the SQL prefilter keeps the
+  //    candidate, and semantic similarity — 0.55 of the score — decides. With
+  //    the attributes identical on both sides it decides in favour: the
+  //    category component is discounted to 0.7 closeness (0.14 of the blend,
+  //    against 0.17 for a parent/child pair), which the rest of the score
+  //    carries comfortably past 0.75.
   //
-  //    Whether that is right is a PRODUCT DECISION — a rule that walked one
-  //    step up to the common parent would pair them, and would also pair every
-  //    other sibling under every other parent, which is the part that needs
-  //    deciding rather than coding. Until it is decided, this asserts the rule
-  //    the matcher actually has, so a silent change is caught.
+  //    A sibling pair whose descriptions have little in common lands under the
+  //    threshold instead and leaves a near-miss row. That case is not staged
+  //    here: this island holds one pair, and what it is testing is that the
+  //    filing alone no longer keeps two people apart.
   // -------------------------------------------------------------------------
   await pairing(
     'sibling leaves',
     BIKE_MTN,
     BIKE_ROAD,
-    'no-match',
+    'match',
     BIKE_ATTRS,
-    'current rule: ancestor line only — siblings never pair. Loosening is a product decision.',
+    'siblings under goods.bicycle pair, at 0.7 category closeness; semantics decide.',
   );
 
   // -------------------------------------------------------------------------
   // 4. Cross-subtree cousins: the same errand, one filed as a service and one
-  //    as company. Same treatment as the siblings — the two paths share no
-  //    ancestor at all, so they are further apart under the rule than the
-  //    siblings are, and are dropped for the same reason.
+  //    as company. The two paths share no ancestor and no parent, so they are
+  //    further apart than the siblings under any reading of the tree, and the
+  //    prefilter drops them before scoring. No near-miss row either: however
+  //    alike the two read, nobody hears about it.
   // -------------------------------------------------------------------------
   await pairing(
     'cross-subtree cousins',

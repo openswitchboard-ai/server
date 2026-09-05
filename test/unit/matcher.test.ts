@@ -50,17 +50,103 @@ describe('canonical projection text', () => {
 });
 
 describe('category tree', () => {
-  it('compatible: equal / ancestor / descendant only', () => {
+  it('compatible: equal / ancestor / descendant', () => {
     expect(categoryCompatible('goods.bicycle.mountain', 'goods.bicycle.mountain')).toBe(true);
     expect(categoryCompatible('goods.bicycle', 'goods.bicycle.mountain')).toBe(true);
     expect(categoryCompatible('goods.bicycle.mountain', 'goods.bicycle')).toBe(true);
     expect(categoryCompatible('goods.bicycle.mountain', 'goods.furniture.sofa')).toBe(false);
     expect(categoryCompatible('goods.bicycle', 'goods.bicycles')).toBe(false); // no fuzzy prefixes
   });
-  it('closeness decays 0.15 per step', () => {
+
+  it('compatible: siblings under a parent that is itself below the top level', () => {
+    // The whole point of the change: one bike, two disciplines, one parent.
+    expect(categoryCompatible('goods.bicycle.mountain', 'goods.bicycle.road')).toBe(true);
+    expect(categoryCompatible('goods.bicycle.road', 'goods.bicycle.mountain')).toBe(true);
+    // Deeper down the tree the same rule applies, on the immediate parent.
+    expect(
+      categoryCompatible('goods.bicycle.mountain.hardtail', 'goods.bicycle.mountain.full-suspension'),
+    ).toBe(true);
+  });
+
+  it('incompatible: top-level siblings, and anything wider than one parent', () => {
+    // Shared parent 'goods' is top-level: admitting it would open a whole
+    // vertical to itself.
+    expect(categoryCompatible('goods.bicycle', 'goods.electronics')).toBe(false);
+    expect(categoryCompatible('services.tutoring', 'services.gardening')).toBe(false);
+    // Aunt/nephew: no shared IMMEDIATE parent, and not the ancestor line.
+    expect(categoryCompatible('goods.bicycle.mountain', 'goods.skateboard')).toBe(false);
+    expect(categoryCompatible('goods.skateboard', 'goods.bicycle.mountain')).toBe(false);
+    // Cousins two subtrees apart, at equal depth: still no.
+    expect(categoryCompatible('goods.bicycle.mountain', 'goods.skateboard.longboard')).toBe(false);
+    expect(
+      categoryCompatible('services.tutoring.languages', 'social.language-exchange.conversation'),
+    ).toBe(false);
+    // A top-level node beside a deeper node in another vertical.
+    expect(categoryCompatible('goods', 'services.tutoring')).toBe(false);
+    expect(categoryCompatible('goods', 'services')).toBe(false);
+  });
+
+  it('the rule is exactly: ancestor line OR same immediate parent below the top', () => {
+    const paths = [
+      'goods',
+      'services',
+      'goods.bicycle',
+      'goods.skateboard',
+      'services.tutoring',
+      'goods.bicycle.mountain',
+      'goods.bicycle.road',
+      'goods.skateboard.longboard',
+      'goods.bicycle.mountain.hardtail',
+      'goods.bicycle.mountain.full-suspension',
+    ];
+    const parent = (p: string) => (p.includes('.') ? p.slice(0, p.lastIndexOf('.')) : '');
+    for (const a of paths) {
+      for (const b of paths) {
+        const ancestorLine = a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
+        const siblings = parent(a) !== '' && parent(a) === parent(b) && parent(a).includes('.');
+        expect(categoryCompatible(a, b), `${a} x ${b}`).toBe(ancestorLine || siblings);
+      }
+    }
+  });
+
+  it('closeness decays 0.15 per tree step below the common ancestor', () => {
     expect(categoryCloseness('a.b.c', 'a.b.c')).toBe(1);
     expect(categoryCloseness('a.b', 'a.b.c')).toBeCloseTo(0.85);
     expect(categoryCloseness('a', 'a.b.c')).toBeCloseTo(0.7);
+    // Siblings: one step each side of the shared parent.
+    expect(categoryCloseness('goods.bicycle.mountain', 'goods.bicycle.road')).toBeCloseTo(0.7);
+    expect(
+      categoryCloseness('goods.bicycle.mountain.hardtail', 'goods.bicycle.mountain.full-suspension'),
+    ).toBeCloseTo(0.7);
+    // Incompatible pairs score nothing at all, whatever the tree distance.
+    expect(categoryCloseness('goods.bicycle.mountain', 'goods.skateboard')).toBe(0);
+    expect(categoryCloseness('goods.bicycle', 'goods.electronics')).toBe(0);
+    // Floor holds on a long ancestor line.
+    expect(categoryCloseness('a', 'a.b.c.d.e.f')).toBe(0.4);
+  });
+
+  it('a sibling pair reaches the blend, and semantics decide it', () => {
+    const pair = (semantic: number) =>
+      evaluatePair({
+        semantic,
+        categoryA: 'goods.bicycle.mountain',
+        categoryB: 'goods.bicycle.road',
+        geoA: { bucket: 'r3dp' },
+        geoB: { bucket: 'r3dp' },
+        wantBand: { band: { max: 750 }, ccy: 'AUD' },
+        haveBand: { band: { min: 0 }, ccy: 'AUD' },
+      });
+    // Alike on everything else: an introduction.
+    const strong = pair(0.9);
+    expect(strong.hardRulesPass).toBe(true);
+    expect(decide(strong.score, 0, 0)).toBe('match');
+    // Two bikes that have nothing to do with each other: a near-miss, stored
+    // and never sent, which is what the floor is for.
+    const weak = pair(0.35);
+    expect(weak.hardRulesPass).toBe(true);
+    expect(weak.score).toBeGreaterThanOrEqual(NEAR_MISS_FLOOR);
+    expect(weak.score).toBeLessThan(CREATE_THRESHOLD);
+    expect(decide(weak.score, 0, 0)).toBe('near-miss');
   });
 });
 
@@ -252,12 +338,19 @@ describe('candidate prefilter', () => {
     const real = placedCandidate();
     const kept = [...clones, real].filter((c) => prefilterKeeps(placedSource, c));
     expect(kept).toEqual([real]);
-    // An ancestor and a descendant of the source's own node stay in: the
-    // filter is categoryCompatible itself, not a same-leaf shortcut.
+    // An ancestor, a descendant and a sibling of the source's own node stay
+    // in: the filter is categoryCompatible itself, never a same-leaf shortcut.
     expect(prefilterKeeps(placedSource, placedCandidate({ category: 'goods.bicycle' }))).toBe(true);
     expect(
       prefilterKeeps(placedSource, placedCandidate({ category: 'goods.bicycle.mountain.hardtail' })),
     ).toBe(true);
+    expect(prefilterKeeps(placedSource, placedCandidate({ category: 'goods.bicycle.road' }))).toBe(
+      true,
+    );
+    // And the sibling rule stops where categoryCompatible stops.
+    expect(prefilterKeeps(placedSource, placedCandidate({ category: 'goods.skateboard' }))).toBe(
+      false,
+    );
   });
 
   it('leaves behind sixty same-category clones parked in a bucket of their own', () => {
@@ -345,10 +438,17 @@ describe('candidate prefilter', () => {
 
   it('hands Postgres the same rule, and the tie-break that keeps it stable', () => {
     const q = candidateQueryShape({ account_id: 'acct-1', type: 'WANT', ...placedSource });
-    // The category clause is the hard rule: equal, ancestor, descendant.
+    // The category clause is the hard rule: equal, ancestor, descendant, and
+    // siblings under a shared parent that is itself below the top level.
     expect(q.where).toContain(`c.category = $3::text`);
     expect(q.where).toContain(`left(c.category, length($3::text) + 1) = $3::text || '.'`);
     expect(q.where).toContain(`left($3::text, length(c.category) + 1) = c.category || '.'`);
+    expect(q.where).toContain(`regexp_replace(c.category, '\\.[^.]+$', '')`);
+    expect(q.where).toContain(`regexp_replace($3::text, '\\.[^.]+$', '')`);
+    // Dotless categories never reach the sibling branch, either side.
+    expect(q.where).toContain(`strpos(c.category, '.') > 0`);
+    expect(q.where).toContain(`strpos($3::text, '.') > 0`);
+    expect(q.where).toContain(`strpos(regexp_replace($3::text, '\\.[^.]+$', ''), '.') > 0`);
     // Opposite type, the source's own account excluded, and the category.
     expect(q.params.slice(0, 4)).toEqual(['HAVE', 'acct-1', 'goods.bicycle.mountain', false]);
     // Centre, radius and the box's degrees-per-km, then the slack.
