@@ -70,8 +70,10 @@ const RICH_SELLER_ATTRS = {
 };
 const THIN_BUYER_ATTRS = { frame_size: 'medium' };
 
-/** A generous band pair: the price rule contributes its full weight, so the
- *  blend is decided by category and semantics — the thing under test. */
+/** A generous band pair: both sides assert a price, so the price term stays in
+ *  the blend (matchRules.ts, AN UNASSERTED DIMENSION CANNOT VOTE) and
+ *  contributes its full weight at fit 1.0 — which leaves the blend to be
+ *  decided by category and semantics, the thing under test. */
 const WANT_BAND = { band: { min: 0, max: 750 }, ccy: 'AUD' };
 const HAVE_BAND = { band: { min: 0, max: 750 }, ccy: 'AUD' };
 
@@ -173,7 +175,12 @@ export async function runCategoryDivergence(
     opts: {
       /** Different attributes on the HAVE side; defaults to the same set. */
       haveAttributes?: Record<string, unknown>;
-      /** Post both cards with no price at all, the way most cards arrive. */
+      /**
+       * Post both cards with no price at all, the way most cards arrive.
+       * With neither side asserting a price the engine drops the price term
+       * and renormalises the other three weights over 0.9, so a score from a
+       * noBands case is not comparable with one from a banded case.
+       */
       noBands?: boolean;
     } = {},
   ): Promise<void> {
@@ -299,18 +306,26 @@ export async function runCategoryDivergence(
   //     disagreed: the buyer asserted one thing, the seller asserted five,
   //     and the semantic component read the difference in LENGTH as a
   //     difference in meaning. See matchRules.ts, ASSERTION-SCALED WEIGHTS.
+  //     The thin blend took the same pair to 0.7489 on the 09-52-42 run, which
+  //     is 0.0011 SHORT of the threshold — the second half of the fix is what
+  //     closed that gap.
   //
-  //     With the thin blend the same pair reaches about 0.7675 and matches.
-  //     The card bodies below are the duet's, attribute for attribute; the
-  //     bucket is this run's own island rather than Canberra, which scores
-  //     identically (one bucket, both sides) and keeps the pair alone on it.
-  //     No price on either card, as in the duet, so the price component sits
-  //     at its neutral 0.6.
+  //     THE ARITHMETIC HERE. The card bodies below are the duet's, attribute
+  //     for attribute; the bucket is this run's own island rather than
+  //     Canberra, so both cards sit on one bucket and geo closeness is 1.0
+  //     (the duet's two Canberra cards did not quite, which is why the live
+  //     numbers differ). Neither card carries a price, as in the duet, so the
+  //     price term is dropped and the thin weights are renormalised over 0.9:
+  //         (0.30 s + 0.35 (1.0) + 0.25 (1.0)) / 0.9
+  //     At the duet's semantic (0.35847) that is about 0.786 — where the same
+  //     pair with the old neutral price term in it reached 0.7675. The live
+  //     semantic on this island is its own number, so expect a score near
+  //     that rather than exactly it.
   //
   //     NOT YET TRUE OF DEV. This case asserts the FIXED behaviour. Until the
-  //     assertion-scaled weights are deployed it will read 'DIVERGED', and
-  //     that is what it is for: it is the post-deploy check that the duet
-  //     near-miss is gone.
+  //     assertion-scaled weights AND the no-price renormalisation are both
+  //     deployed it will read 'DIVERGED', and that is what it is for: it is
+  //     the post-deploy check that the duet near-miss is gone.
   // -------------------------------------------------------------------------
   await pairing(
     'rich seller vs thin buyer (same node)',
@@ -318,7 +333,7 @@ export async function runCategoryDivergence(
     BIKE_MTN,
     'match',
     THIN_BUYER_ATTRS,
-    'the duet pair, card for card: 0.6072 before assertion-scaled weights, ~0.7675 after.',
+    'the duet pair, card for card: 0.6072 on the original weights, 0.7489 with the thin blend alone, ~0.786 with the price term dropped as well.',
     { haveAttributes: RICH_SELLER_ATTRS, noBands: true },
   );
 

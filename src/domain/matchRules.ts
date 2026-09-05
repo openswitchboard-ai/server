@@ -19,7 +19,11 @@
  *                              resolved centre point fall back to the
  *                              pre-0.3.0 string comparison)
  *         + Wp * price        (fit of WANT ceiling over HAVE reserve floor;
- *                              neutral 0.6 when either side declared no band)
+ *                              neutral 0.6 when ONE side declared a band and
+ *                              the other did not, and dropped from the blend
+ *                              entirely — the other three weights
+ *                              renormalised — when NEITHER side said anything
+ *                              about price at all)
  *
  *   Every component is in [0,1] and the weights sum to 1, so score is in
  *   [0,1]. The weights themselves are NOT a single fixed set: see below.
@@ -44,7 +48,8 @@
  *     thin >= 3 (both sides rich):   semantic 0.55, category 0.20, geo 0.15
  *     thin <= 2 (one side is thin):  semantic 0.30, category 0.35, geo 0.25
  *
- *   Price stays 0.10 in both. Each set sums to 1.0 (asserted in the tests).
+ *   Price stays 0.10 in both, where there is a price term at all (see the
+ *   next section). Each set sums to 1.0 (asserted in the tests).
  *   The shift is a FLAT step at thin <= 2 rather than an interpolation over
  *   0, 1, 2 — two weight sets are a thing a person can hold in their head and
  *   reconstruct from a score, and no evidence available today says where a
@@ -55,44 +60,103 @@
  *   of those are structured, checked, and unaffected by how much prose sits
  *   beside them.
  *
- *   WORKED ARITHMETIC (three pairs, so the effect is legible without running
- *   anything). All three use categoryCloseness for the pair, geo closeness
- *   1.0 for two cards on one spot, and price fit 0.6 for the neutral
- *   no-band-declared case.
+ * AN UNASSERTED DIMENSION CANNOT VOTE (the price term).
  *
- *   (a) The duet pair, dev 2026-09-05 (realism-reports/duet-2026-09-05T09-19
- *       -26-360Z.json). HAVE: goods.bicycle.mountain, 5 attributes (year,
- *       brand, model, condition, frame_size), Canberra r3dp r=25. WANT: same
- *       node, 1 attribute (frame_size: medium), same bucket. Neither side
- *       declared a band. The recorded score was 0.60715854, so backing the
- *       semantic value out of the OLD weights:
+ *   This is the same principle as thinness, carried one step further.
+ *   Thinness says a card that asserted little should not have the semantic
+ *   component decide it. This says a dimension NEITHER card asserted should
+ *   not be in the blend at all.
+ *
+ *   Most cards arrive with no price on them: someone selling a bike says what
+ *   the bike is and where it is, and leaves the money for the conversation.
+ *   For a pair like that the price component was a flat 0.6 at weight 0.10 —
+ *   0.06 of score handed to every such pair alike, standing in for 0.10 of
+ *   weight the three components that DID measure something would otherwise
+ *   have shared. Two people who agreed on the category, sat in one town, and
+ *   wrote compatible descriptions were dragged back toward 0.6 by a dimension
+ *   on which neither of them had spoken. That is dilution, and it says
+ *   nothing about the pair.
+ *
+ *   So when neither side declares a price signal — no band, or a band with no
+ *   numeric bound on either end — the price term is REMOVED and the remaining
+ *   three weights are divided by their own sum (0.9 under either set), so
+ *   they again sum to 1:
+ *
+ *     rich, no price:  semantic 0.61111, category 0.22222, geo 0.16667
+ *     thin, no price:  semantic 0.33333, category 0.38889, geo 0.27778
+ *
+ *   Equivalently, and this is the easiest way to read any old number: a
+ *   no-price score is (the old score - 0.06) / 0.9. That lifts every pair
+ *   whose other three components averaged better than 0.6 and lowers every
+ *   pair that averaged worse, which is the right way round — the pair is now
+ *   judged on what it actually said.
+ *
+ *   ONE DECLARED SIDE KEEPS THE TERM. A card that named a band asserted
+ *   something, and the neutral 0.6 that evaluatePrice returns when the other
+ *   side left the relevant bound unset is the honest reading of "one of them
+ *   named a number and the other did not". Nothing about that path changes:
+ *   the price term stays at its 0.10 and the weights stay as they were.
+ *
+ *   WORKED ARITHMETIC (three pairs, so the effect is legible without running
+ *   anything). All three are pairs where NEITHER side declared a band, which
+ *   is the common case, so all three run on the renormalised no-price blend.
+ *
+ *   (a) The duet pair, dev 2026-09-05 (realism-reports/duet-2026-09-05T09-52
+ *       -42-102Z.json, and byte-identical to the 09-19-26-360Z run before
+ *       it). HAVE: goods.bicycle.mountain, 5 attributes (year, brand, model,
+ *       condition, frame_size), Canberra r3dp r=25. WANT: the same node, 1
+ *       attribute (frame_size: medium), Canberra r3dp r=20. Neither side
+ *       declared a band.
+ *
+ *       The reports record a blended score and nothing else, so the semantic
+ *       value is backed out of the earlier run, which scored 0.60715854 on
+ *       the ORIGINAL weights with both cards resolving to one point (geo 1.0):
  *           0.60715854 = 0.55 s + 0.20 (1.0) + 0.15 (1.0) + 0.10 (0.6)
  *           0.55 s     = 0.60715854 - 0.41 = 0.19715854
  *           s          = 0.35847007
- *       thin = min(5, 1) = 1, so the thin set applies:
- *           0.30 (0.35847007) + 0.35 (1.0) + 0.25 (1.0) + 0.10 (0.6)
- *         = 0.10754102 + 0.35 + 0.25 + 0.06
- *         = 0.76754102  -> MATCH (threshold 0.75)
- *       A cosine of 0.358 is a weak signal, and the blend now says so by
- *       weighting it at 0.30 instead of letting it decide the pair.
  *
- *   (b) A thin pair one node apart. Same two cards, but the WANT is filed
- *       under goods.bicycle.road: siblings, categoryCloseness 0.7. At the
- *       same semantic 0.35847007:
- *           0.30 (0.35847007) + 0.35 (0.7) + 0.25 (1.0) + 0.10 (0.6)
- *         = 0.10754102 + 0.245 + 0.25 + 0.06
- *         = 0.66254102  -> NEAR-MISS (stored, never sent)
- *       Category carrying more weight is what keeps this one under the line:
- *       the discount for the sibling step is 0.105 of blend rather than 0.06.
+ *       thin = min(5, 1) = 1, so the thin set applies. The 09-52-42 run
+ *       recorded 0.7489263 against a 0.75 threshold — short by 0.0011 — and
+ *       its geo closeness backs out of the thin blend at the same semantic:
+ *           0.7489263 = 0.30 (0.35847007) + 0.35 (1.0) + 0.25 g + 0.10 (0.6)
+ *           0.25 g    = 0.7489263 - 0.10754102 - 0.35 - 0.06 = 0.23138528
+ *           g         = 0.92554111
+ *       (the two Canberra cards did not land on one point that run; over the
+ *       pair's combined reach of 45 km that closeness is about 3.4 km apart).
+ *
+ *       Neither card said anything about price, so the price term goes and
+ *       the other three are divided by 0.9:
+ *           0.33333333 (0.35847007) + 0.38888889 (1.0) + 0.27777778 (0.92554111)
+ *         = 0.11949002 + 0.38888889 + 0.25709475
+ *         = 0.76547367  -> MATCH (threshold 0.75)
+ *       which is the recorded score with the price term taken back out:
+ *           (0.7489263 - 0.06) / 0.9 = 0.76547367
+ *       The 0.06 that had been standing between these two people was the one
+ *       component neither of them had said a word about.
+ *
+ *   (b) A thin pair one node apart. The same two cards, on one spot (geo 1.0)
+ *       so the filing is the only difference from (a), but the WANT filed
+ *       under goods.bicycle.road: siblings, categoryCloseness 0.7. With the
+ *       neutral price term that pair scored 0.66254102; without it:
+ *           0.33333333 (0.35847007) + 0.38888889 (0.7) + 0.27777778 (1.0)
+ *         = 0.11949002 + 0.27222222 + 0.27777778
+ *         = 0.66949002  -> NEAR-MISS (stored, never sent)
+ *           check: (0.66254102 - 0.06) / 0.9 = 0.66949002
+ *       Dropping the price term does not rescue this one, and should not. The
+ *       sibling step now costs 0.11667 of blend rather than 0.105, so the
+ *       pair is further from the line by that measure and still 0.08 short.
  *
  *   (c) A rich pair that does not agree. Both sides list 4 attributes, same
  *       node, same spot, no bands, and the descriptions have little to do
- *       with each other — semantic 0.40. thin = 4, so nothing changes:
- *           0.55 (0.40) + 0.20 (1.0) + 0.15 (1.0) + 0.10 (0.6)
- *         = 0.22 + 0.20 + 0.15 + 0.06
- *         = 0.63  -> NEAR-MISS, exactly as before the change.
- *       Two cards that both said plenty and still did not line up are a pair
- *       the embedding is entitled to judge, and it keeps its 0.55.
+ *       with each other — semantic 0.40. thin = 4, so the rich set applies:
+ *           0.61111111 (0.40) + 0.22222222 (1.0) + 0.16666667 (1.0)
+ *         = 0.24444444 + 0.22222222 + 0.16666667
+ *         = 0.63333333  -> NEAR-MISS
+ *           check: (0.63 - 0.06) / 0.9 = 0.63333333
+ *       It was 0.63 with the neutral price term in it, so renormalising moved
+ *       it by 0.0033 and changed nothing about the decision. Two
+ *       cards that both said plenty and still did not line up are a pair the
+ *       embedding is entitled to judge, and it keeps its share of the blend.
  *
  *   WHAT THIS DOES NOT DO. There is no new hard rule for contradicting
  *   attributes. Two cards that assert the same key with conflicting values —
@@ -156,6 +220,27 @@ export const WEIGHTS = { semantic: 0.55, category: 0.2, geo: 0.15, price: 0.1 } 
  */
 export const THIN_WEIGHTS = { semantic: 0.3, category: 0.35, geo: 0.25, price: 0.1 } as const;
 
+/**
+ * The same blend with the price term removed and the remaining three weights
+ * divided by their own sum, for a pair where NEITHER side said anything about
+ * price. See the SCORE MODEL header, AN UNASSERTED DIMENSION CANNOT VOTE.
+ */
+function withoutPrice(w: BlendWeights): BlendWeights {
+  const rest = w.semantic + w.category + w.geo;
+  return Object.freeze({
+    semantic: w.semantic / rest,
+    category: w.category / rest,
+    geo: w.geo / rest,
+    price: 0,
+  });
+}
+
+/** WEIGHTS with no price term: semantic 0.61111, category 0.22222, geo 0.16667. */
+export const WEIGHTS_NO_PRICE = withoutPrice(WEIGHTS);
+
+/** THIN_WEIGHTS with no price term: semantic 0.33333, category 0.38889, geo 0.27778. */
+export const THIN_WEIGHTS_NO_PRICE = withoutPrice(THIN_WEIGHTS);
+
 /** At or below this many attributes on the sparser side, the pair is thin. */
 export const THIN_ATTR_MAX = 2;
 
@@ -175,9 +260,20 @@ export function attrCount(attributes: unknown): number {
  * The blend to score this pair with. Thinness is the SPARSER side's count: a
  * rich card meeting a thin one is a thin pair, because the thing that went
  * wrong is the asymmetry, and the sparser side is the one that measures it.
+ *
+ * `priceAsserted` is whether EITHER side said anything about price. When
+ * neither did, the price term is dropped and the other three weights are
+ * renormalised. It defaults to true, so a caller that only knows how much the
+ * two cards asserted gets the blend it always got.
  */
-export function weightsFor(attrCountA: number, attrCountB: number): BlendWeights {
-  return Math.min(attrCountA, attrCountB) <= THIN_ATTR_MAX ? THIN_WEIGHTS : WEIGHTS;
+export function weightsFor(
+  attrCountA: number,
+  attrCountB: number,
+  priceAsserted = true,
+): BlendWeights {
+  const thin = Math.min(attrCountA, attrCountB) <= THIN_ATTR_MAX;
+  if (priceAsserted) return thin ? THIN_WEIGHTS : WEIGHTS;
+  return thin ? THIN_WEIGHTS_NO_PRICE : WEIGHTS_NO_PRICE;
 }
 
 export const CREATE_THRESHOLD = 0.75;
@@ -447,11 +543,27 @@ interface PriceEval {
 }
 
 /**
+ * Did this card say anything at all about price? A band with at least one
+ * finite bound is an assertion; no band, or a band with neither bound set, is
+ * silence. This is what decides whether the price term is in the blend —
+ * never what it scores, which is evaluatePrice's job and is unchanged.
+ */
+export function assertsPrice(band: PriceBand | undefined): boolean {
+  if (!band?.band) return false;
+  return Number.isFinite(band.band.min) || Number.isFinite(band.band.max);
+}
+
+/**
  * Intersection rule: WANT ceiling (band.max) >= HAVE reserve floor (band.min).
  * A side with no band (or no bound on the relevant side) imposes no
  * constraint. Mixed currencies are treated as incompatible (no FX in 0.F).
  * Fit: 1.0 when the ceiling clears the floor by >= 25% of the ceiling,
  * linear below that; 0.6 neutral when either side declared no usable bound.
+ *
+ * The neutral 0.6 is still returned when NEITHER side declared anything, and
+ * it is still the right answer to "how well do these two bands fit" — there
+ * is nothing to fit. What changed is that evaluatePair no longer puts that
+ * answer in the blend for such a pair (see assertsPrice and weightsFor).
  */
 export function evaluatePrice(
   want: PriceBand | undefined,
@@ -493,7 +605,11 @@ export interface PairEval {
   hardRulesPass: boolean;
   failed?: 'category' | 'geo' | 'price';
   score: number;
-  /** Which blend scored it, so a caller can log or explain the number. */
+  /**
+   * The weights this pair was ACTUALLY scored with, so a caller can log or
+   * explain the number: one of the four sets — rich or thin, with the price
+   * term or with it dropped and the rest renormalised (price: 0).
+   */
   weights?: BlendWeights;
   /** The sparser side's attribute count — the thinness the blend keyed on. */
   thinness?: number;
@@ -510,7 +626,10 @@ export function evaluatePair(p: PairInputs): PairEval {
   const semantic = Math.max(0, Math.min(1, p.semantic));
   const nA = attrCount(p.attributesA);
   const nB = attrCount(p.attributesB);
-  const w = weightsFor(nA, nB);
+  // One side naming a band is enough to keep the price term. With neither,
+  // w.price is 0 and the other three weights already carry the whole blend.
+  const priceAsserted = assertsPrice(p.wantBand) || assertsPrice(p.haveBand);
+  const w = weightsFor(nA, nB, priceAsserted);
   const score =
     w.semantic * semantic +
     w.category * categoryCloseness(p.categoryA, p.categoryB) +
