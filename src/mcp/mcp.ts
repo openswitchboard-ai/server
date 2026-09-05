@@ -14,12 +14,27 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate, recordManualVersion, unauthorized, type AuthContext } from '../auth/oauth.js';
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
 import { TOOLS, dispatchTool } from './tools.js';
-import type { Config } from '../config.js';
+import { settlementsConfigured, type Config } from '../config.js';
+
+/**
+ * The manual plus this deployment's own facts. The manual describes settle's
+ * happy path; whether that path is switched on is deployment state, and an
+ * agent that only learns it by calling settle will meanwhile describe an
+ * escrow that does not exist to a human weighing a payment. Deployment
+ * status rides outside the versioned text, like an arrangement note.
+ */
+function instructionsFor(cfg: Config): string {
+  if (settlementsConfigured(cfg)) return SERVER_INSTRUCTIONS;
+  return (
+    SERVER_INSTRUCTIONS +
+    '\n\nTHIS DEPLOYMENT, TODAY\nSettlement is switched off here: the switchboard has no part in any payment, holds no money, and settle answers SETTLEMENT_UNAVAILABLE. Any paying is arranged entirely between the two humans, and anyone claiming the switchboard is holding or expecting money is lying.'
+  );
+}
 
 function buildMcpServer(cfg: Config, auth: AuthContext): Server {
   const server = new Server(
     { name: 'openswitchboard', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions: instructionsFor(cfg) },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS.map((t) => ({
