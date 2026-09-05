@@ -1868,7 +1868,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     counter.get('/email/unsub', async (req, reply) => {
       const t = String((req.query as any)?.t ?? '');
       const v = verifyEmailToken(t, 'unsubscribe');
-      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      // A dead or expired link still gets a real page, and a 200: mailbox
+      // providers pre-fetch List-Unsubscribe URLs and score a 404 against
+      // the sender (seen in iCloud's junk verdict on the placement test).
+      if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'));
       return html(reply, home.unsubPage(t));
     });
 
