@@ -12,4 +12,6 @@ export const s3 = new S3Client({ region });
 export const sqs = new SQSClient({ region });
 export const secretsManager = new SecretsManagerClient({ region });
 export const bedrock = new BedrockRuntimeClient({ region });
-export const sesv2 = new SESv2Client({ region });
+// SES may live in another region than the rest of the stack (prod sends via
+// the host identity in ap-southeast-2; see config.sesRegion).
+export const sesv2 = new SESv2Client({ region: process.env.SES_REGION ?? region });

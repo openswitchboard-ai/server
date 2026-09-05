@@ -225,6 +225,9 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
 
   const command = new SendEmailCommand({
     FromEmailAddress: cfg.sesFrom,
+    // Sending authorization: prod borrows the openswitchboard.ai identity
+    // verified in the host account (infra/host-ses); undefined on dev.
+    FromEmailAddressIdentityArn: cfg.sesIdentityArn,
     ReplyToAddresses: [cfg.sesReplyTo],
     Destination: { ToAddresses: [input.to] },
     ConfigurationSetName: cfg.sesConfigurationSet,
