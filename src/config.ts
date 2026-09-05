@@ -40,11 +40,12 @@ export interface Config {
    *  at ap-southeast-2, where the identity that lends us production sending
    *  lives (see infra/host-ses). */
   sesRegion: string;
-  /** SES sending-authorization: when set, sends name this identity ARN
-   *  (owned by another account in the same organisation) so mail goes out
-   *  under that account's production access. Unset = send from our own
-   *  identity in our own account (dev, sandbox). */
-  sesIdentityArn?: string;
+  /** Role in the host account (same organisation, holds SES production
+   *  access, has openswitchboard.ai verified) that the SES client assumes.
+   *  SES enforces the sandbox on the CALLING account, so the call itself must
+   *  come from the host's credentials; sending authorization alone is not
+   *  enough. Unset = our own account, our own sandbox (dev). */
+  sesAssumeRoleArn?: string;
   /** SQS queue receiving SES bounce/complaint/delivery events (0.E). */
   emailEventsQueueUrl: string;
   dbSecretArn: string;
@@ -94,7 +95,7 @@ export function loadConfig(): Config {
     sesReplyTo: process.env.SES_REPLY_TO ?? 'info@openswitchboard.ai',
     sesConfigurationSet: required('SES_CONFIGURATION_SET'),
     sesRegion: process.env.SES_REGION ?? process.env.AWS_REGION ?? 'us-east-1',
-    sesIdentityArn: process.env.SES_IDENTITY_ARN || undefined,
+    sesAssumeRoleArn: process.env.SES_ASSUME_ROLE_ARN || undefined,
     emailEventsQueueUrl: required('EMAIL_EVENTS_QUEUE_URL'),
     dbSecretArn: required('DB_SECRET_ARN'),
     screeningQueueUrl: required('SCREENING_QUEUE_URL'),
