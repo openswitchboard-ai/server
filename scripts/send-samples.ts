@@ -13,7 +13,7 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { fromTemporaryCredentials } from '@aws-sdk/credential-providers';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
-import { sampleSet } from './emailSamples.js';
+import { sampleSet, humanOrigin } from './emailSamples.js';
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -44,8 +44,8 @@ async function main() {
     (await ssm.send(new GetParameterCommand({ Name: `/osb/${envName}/ses/configuration-set` })))
       .Parameter!.Value!;
 
-  const unsubUrl = `https://my-${envName}.openswitchboard.ai/email/unsub?t=sample`;
-  for (const s of sampleSet()) {
+  const unsubUrl = `${humanOrigin(envName)}/email/unsub?t=sample`;
+  for (const s of sampleSet(envName)) {
     const r = await ses.send(
       new SendEmailCommand({
         FromEmailAddress: 'OpenSwitchboard <board@openswitchboard.ai>',
@@ -71,7 +71,9 @@ async function main() {
       }),
     );
     console.log(`${s.name}\t${r.MessageId}`);
-    await new Promise((res) => setTimeout(res, 1200)); // sandbox rate: 1/s
+    // Spread the set out: ten near-identical mails in twelve seconds to one
+    // mailbox is a burst pattern in its own right.
+    await new Promise((res) => setTimeout(res, envName === 'prod' ? 20000 : 1200));
   }
 }
 

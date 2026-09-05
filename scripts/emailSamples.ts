@@ -15,15 +15,23 @@ import {
   type FooterLinks,
 } from '../src/email/templates.js';
 
-const COUNTER = 'https://my-dev.openswitchboard.ai';
+/** Human-pages origin for the env the samples are sent from. Links in a
+ *  placement test must resolve on the domain the mail is From: iCloud and
+ *  Gmail check, and a dead host (my-prod.…) or dev links in prod mail read
+ *  as spam. */
+export function humanOrigin(envName: string): string {
+  return envName === 'prod'
+    ? 'https://my.openswitchboard.ai'
+    : `https://my-${envName}.openswitchboard.ai`;
+}
 
-const links: FooterLinks = {
-  settingsUrl: `${COUNTER}/settings`,
-  ledgerUrl: `${COUNTER}/ledger`,
-  unsubUrl: `${COUNTER}/email/unsub?t=sample`,
-};
-
-export function sampleSet(): { name: string; content: EmailContent }[] {
+export function sampleSet(envName = 'dev'): { name: string; content: EmailContent }[] {
+  const COUNTER = humanOrigin(envName);
+  const links: FooterLinks = {
+    settingsUrl: `${COUNTER}/settings`,
+    ledgerUrl: `${COUNTER}/ledger`,
+    unsubUrl: `${COUNTER}/email/unsub?t=sample`,
+  };
   const counterUrl = `${COUNTER}/`;
   return [
     {
