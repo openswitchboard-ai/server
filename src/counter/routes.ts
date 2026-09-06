@@ -989,6 +989,20 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       }
       const showEvidence = ['evidence-locked', 'confirmed', 'disputed', 'released', 'refunded'].includes(row.state);
       const myApproval = role === 'buyer' ? row.buyer_approved_at : row.seller_approved_at;
+      // The handover notice, while the clock is running. The seller's first
+      // name is decrypted only here, where it changes what the page says.
+      let handover: pages.SettlementView['handover'];
+      if (row.state === 'evidence-locked' && row.handed_over_at && row.auto_release_at) {
+        const sellerName =
+          role === 'buyer'
+            ? await ops.disclosedFirstName(accountId, row.seller_account, { settlement_id: row.id })
+            : undefined;
+        handover = {
+          sellerName: sellerName ?? 'The seller',
+          onDay: pages.plainDay(new Date(row.handed_over_at)),
+          byDay: pages.plainDay(new Date(row.auto_release_at)),
+        };
+      }
       return {
         id: row.id,
         role,
@@ -1009,6 +1023,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         evidence: showEvidence ? await evidenceViewLinks(cfg, row.id) : [],
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated,
+        autoReleaseDays: cfg.settlementAutoReleaseDays,
+        handover,
       };
     };
 
@@ -1108,20 +1124,31 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
         throw e;
       }
-      await settlements.lockEvidence(settlements.counterAction(s.accountId!), found.row.id, manifestKey);
-      for (const [accountId, role] of [
-        [found.row.buyer_account, 'buyer'],
-        [found.row.seller_account, 'seller'],
+      const handedOver = await settlements.lockEvidence(
+        settlements.counterAction(s.accountId!),
+        found.row.id,
+        manifestKey,
+        cfg.settlementAutoReleaseDays,
+      );
+      // The handover starts the buyer's clock, so both mails carry the date it
+      // runs out. The buyer's is the new one — it is their window and their
+      // two ways to end it; the seller's is the existing confirm-request note,
+      // which now names the same date.
+      const deadline = handedOver.auto_release_at ?? undefined;
+      for (const [accountId, role, template] of [
+        [found.row.buyer_account, 'buyer', 'handover-window'],
+        [found.row.seller_account, 'seller', 'confirm-receipt-request'],
       ] as const) {
         const email = await ops.accountEmail(accountId, 'settlement-confirm-request-notification');
         if (email) {
-          await notifyBestEffort(req, 'confirm-receipt-request', () =>
+          await notifyBestEffort(req, template, () =>
             sendSettlementEmail(cfg, {
               to: email,
               accountId,
-              template: 'confirm-receipt-request',
+              template,
               settlementId: found.row.id,
               role,
+              deadline,
             }),
           );
         }

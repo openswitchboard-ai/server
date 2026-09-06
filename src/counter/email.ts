@@ -171,6 +171,10 @@ export interface SettlementEmailInput {
   summary?: string;
   /** update templates only: which side this recipient is on. */
   role?: 'buyer' | 'seller';
+  /** handover templates only: when the held payment releases on its own. */
+  deadline?: Date;
+  /** released only: true when the clock released it rather than the buyer. */
+  auto?: boolean;
 }
 
 export async function sendSettlementEmail(
@@ -210,6 +214,8 @@ export async function sendSettlementEmail(
         blind: ctx.blind,
         settlementUrl: `${cfg.counterOrigin}/settlements/${input.settlementId}`,
         counterUrl,
+        deadline: input.deadline,
+        auto: input.auto,
       },
       ctx.links,
     ),

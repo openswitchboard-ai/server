@@ -681,6 +681,28 @@ export interface SettlementView {
   evidence: { label: string; url: string }[];
   hasPasskey: boolean;
   elevated: boolean;
+  /** SETTLEMENT_AUTO_RELEASE_DAYS: how long the buyer's window runs. */
+  autoReleaseDays: number;
+  /** evidence-locked: the seller's handover and the clock it started. Both
+   *  sides see the same two dates. */
+  handover?: {
+    /** The seller's first name where it is known, "The seller" otherwise. */
+    sellerName: string;
+    /** "Saturday 6 September" — the day the seller declared the handover. */
+    onDay: string;
+    /** "Saturday 13 September" — the day the payment goes on its own. */
+    byDay: string;
+  };
+}
+
+/** "Saturday 13 September" — a date a person reads without decoding it. */
+export function plainDay(d: Date): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(d);
 }
 
 const STATE_LINES: Record<string, string> = {
@@ -689,7 +711,7 @@ const STATE_LINES: Record<string, string> = {
   'approved-by-seller': 'The seller has approved. Waiting on the buyer.',
   approved: 'Both approved. The buyer pays next; the money is then held.',
   funded: 'The payment is held in safe hands.',
-  'evidence-locked': 'Handover evidence is frozen. The buyer confirms receipt next.',
+  'evidence-locked': 'Handed over. The buyer confirms receipt next.',
   confirmed: 'Receipt confirmed. The release is on its way.',
   disputed: 'Disputed. The held payment goes back to the buyer.',
   released: 'Complete. The payment was released to the seller.',
@@ -707,6 +729,12 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
     { k: 'Introductory fee', v: `${v.fee}, paid by the buyer` },
     { k: 'Card processing', v: `${v.processing}, at Stripe's standard rate` },
     { k: 'The seller receives', v: `${v.amount} in full` },
+    ...(v.handover
+      ? [
+          { k: 'Handed over', v: v.handover.onDay },
+          { k: 'Releases on its own', v: v.handover.byDay },
+        ]
+      : []),
   ]
     .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
     .join('');
@@ -743,6 +771,20 @@ be paid once for this settlement.</p>
   <button type="submit" class="approve">Send the release again</button>
 </form>`);
   }
+  // The handover notice: the same two dates for both sides, above whatever
+  // each of them can do about it.
+  if (v.handover) {
+    const h = v.handover;
+    blocks.push(
+      v.role === 'buyer'
+        ? `<p class="lead">${esc(h.sellerName)} says it was handed over on ${esc(h.onDay)}.
+Confirm when you're happy, or raise a dispute. If you do neither, the payment releases to
+${esc(h.sellerName)} automatically on ${esc(h.byDay)}.</p>`
+        : `<p class="lead">You declared the handover on ${esc(h.onDay)}. The buyer can confirm
+or raise a dispute until ${esc(h.byDay)}; if they do neither, the payment is released to
+you on that day.</p>`,
+    );
+  }
   if (v.canConfirm) {
     const pinBlock = v.elevated
       ? `<input type="hidden" name="pin" value="">`
@@ -759,15 +801,19 @@ described.</p>
 </form>`);
   }
   if (v.canLockEvidence) {
-    blocks.push(`<h2>Handover evidence</h2>
-<p>Add photos of the handover, then lock them. Locked evidence is frozen in
-write-once storage and shown to the buyer with the confirmation request.</p>
+    blocks.push(`<h2>Handed over</h2>
+<p>Say that it has changed hands, and the buyer is asked to confirm receipt. From that
+moment they have ${esc(String(v.autoReleaseDays))} days to confirm or raise a dispute, and
+the payment is released to you on the ${esc(String(v.autoReleaseDays))}th day if they do
+neither.</p>
+<p>Photos are optional and worth adding. Anything you add is frozen in write-once storage
+and shown to the buyer alongside the confirmation request.</p>
 <div id="evlist" class="note" style="display:none"></div>
 <div id="everr"></div>
-<label for="evfile">Photos of the handover</label>
+<label for="evfile">Photos of the handover (optional)</label>
 <input type="file" id="evfile" accept="image/jpeg,image/png,image/webp" multiple>
 <form method="POST" action="/settlements/${esc(v.id)}/evidence/lock" id="lockForm">
-<button type="submit" id="lockBtn" disabled>Lock evidence</button></form>
+<button type="submit" id="lockBtn">Handed over — start the buyer's ${esc(String(v.autoReleaseDays))} days</button></form>
 <script>
 const evfile = document.getElementById('evfile');
 const evlist = document.getElementById('evlist');
@@ -814,7 +860,12 @@ evfile.addEventListener('change', async () => {
     ? foldedDetail(
         'Something is wrong with this',
         `<p class="small">A dispute returns everything the buyer paid — the agreed amount and
-both fee lines — and closes the settlement. No reason is carried.</p>
+both fee lines — and closes the settlement. No reason is carried.${
+          v.handover
+            ? ` It also stops the clock: a settlement in dispute stays put until the two of you
+sort it out, and nothing is released on ${esc(v.handover.byDay)}.`
+            : ''
+        }</p>
 <form method="POST" action="/settlements/${esc(v.id)}/dispute">
 <button type="submit" class="danger">Dispute — send the payment back</button></form>`,
       )

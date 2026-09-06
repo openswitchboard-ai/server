@@ -11,6 +11,18 @@
  *
  * G3 (refund path): a fresh settlement is funded, the buyer disputes, the
  * whole buyer total is refunded, and the webhook records 'refunded'.
+ *
+ * G4 (auto-release): a settlement is funded, the seller declares handover,
+ * the harness winds the settlement's own clock back into the past (the one
+ * test-only reach into the database — a real window is seven days long), the
+ * ops sweep runs, and the payment is released to the seller through the same
+ * webhook the buyer's confirmation goes through. The row afterwards says which
+ * road it took.
+ *
+ * G5 (a dispute inside the window wins): a settlement is funded and handed
+ * over with its clock live, the buyer disputes, the clock is cleared as the
+ * dispute lands, and a sweep run with the clock wound back finds nothing to
+ * release.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
@@ -77,9 +89,42 @@ async function approveOnCounter(actor: TestActor, settlementId: string): Promise
   expect(res.headers.get('location')).toBe(`/settlements/${settlementId}`);
 }
 
-async function proposeSettlement(): Promise<string> {
+/**
+ * An introduction settles once — a released settlement closes the door on
+ * that introduction — so each gate that funds a payment gets a fresh pair of
+ * listings and its own introduction, taken to the names step.
+ */
+async function newIntroduction(): Promise<string> {
+  const w = await mcpCall(buyer.accessToken, 'publish_intent', {
+    listing: minimalWant({ attributes: { condition: 'good' } }),
+  });
+  expect(w.isError).toBe(false);
+  const h = await mcpCall(seller.accessToken, 'publish_intent', {
+    listing: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
+  });
+  expect(h.isError).toBe(false);
+  await waitForCardState(buyer.accessToken, w.result.intent_id, ['PUBLISHED']);
+  await waitForCardState(seller.accessToken, h.result.intent_id, ['PUBLISHED']);
+  await sendOp({
+    op: 'create-match',
+    card_want: w.result.intent_id,
+    card_have: h.result.intent_id,
+    score: 0.9,
+  });
+  const id = await poll(async () => {
+    const r = await mcpCall(buyer.accessToken, 'check_in', { intent_id: w.result.intent_id });
+    return r.result.introductions?.[0]?.intro_id as string | undefined;
+  }, 'match to appear');
+  for (const action of ['express_interest', 'opt_in'] as const) {
+    await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action });
+    await mcpCall(seller.accessToken, 'respond', { intro_id: id, action });
+  }
+  return id;
+}
+
+async function proposeSettlement(introId = matchId): Promise<string> {
   const r = await mcpCall(buyer.accessToken, 'settle', {
-    intro_id: matchId,
+    intro_id: introId,
     amount: AMOUNT,
     ccy: 'AUD',
     description: 'Mountain bike as agreed, pickup this weekend.',
@@ -88,6 +133,65 @@ async function proposeSettlement(): Promise<string> {
   expect(r.result.kind).toBe('settlement');
   expect(r.result.state).toBe('proposed');
   return r.result.settlement_id as string;
+}
+
+/**
+ * The seller declares the handover: funded -> evidence-locked, which starts
+ * the buyer's window. Photos are optional, so this posts the lock with
+ * nothing uploaded — the path a seller who simply says "done" takes.
+ */
+async function declareHandover(sid: string): Promise<void> {
+  const lock = await counterFetch(seller.jar, `/settlements/${sid}/evidence/lock`, form({}));
+  expect(lock.status, await lock.clone().text().catch(() => '')).toBe(303);
+  expect(await settleState(seller.accessToken, sid)).toBe('evidence-locked');
+}
+
+/** The settlement's own clock, read as facts rather than as timestamps: the
+ *  Data API hands timestamps back as bare strings, so the arithmetic that
+ *  matters is done in the database. */
+async function clockOf(sid: string): Promise<{
+  handedOver: boolean;
+  running: boolean;
+  windowDays: number | null;
+  autoReleased: boolean;
+  confirmedVia: string | null;
+}> {
+  const [[handedOver, running, windowDays, autoReleased, confirmedVia]] = await dbExec(
+    `SELECT handed_over_at IS NOT NULL, auto_release_at IS NOT NULL,
+            EXTRACT(EPOCH FROM (auto_release_at - handed_over_at)) / 86400,
+            auto_released, confirmed_via
+     FROM settlements WHERE id = :id::uuid`,
+    [{ name: 'id', value: sid }],
+  );
+  return {
+    handedOver: handedOver === true,
+    running: running === true,
+    windowDays: windowDays === null ? null : Number(windowDays),
+    autoReleased: autoReleased === true,
+    confirmedVia: confirmedVia === null ? null : String(confirmedVia),
+  };
+}
+
+/** What the agent sees on a settle read. */
+async function settleRead(token: string, sid: string): Promise<any> {
+  const r = await mcpCall(token, 'settle', { settlement_id: sid });
+  expect(r.isError).toBe(false);
+  return r.result;
+}
+
+/**
+ * TEST-ONLY: wind this settlement's clock back into the past. A real window is
+ * SETTLEMENT_AUTO_RELEASE_DAYS long and nothing in the product can shorten it;
+ * the harness reaches into the dev database instead, exactly as it does for
+ * verification tokens (see helpers.ts). The sweep's own condition is
+ * `auto_release_at <= now()`, so this is the only thing that has to move.
+ */
+async function windClockBack(sid: string): Promise<void> {
+  await dbExec(
+    `UPDATE settlements SET auto_release_at = now() - interval '1 minute'
+     WHERE id = :id::uuid AND auto_release_at IS NOT NULL`,
+    [{ name: 'id', value: sid }],
+  );
 }
 
 /**
@@ -120,36 +224,18 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       bootstrapActor('Bella', 'Fremantle'),
       bootstrapActor('Sam', 'Subiaco'),
     ]);
-    const w = await mcpCall(buyer.accessToken, 'publish_intent', {
-      listing: minimalWant({ attributes: { condition: 'good' } }),
-    });
-    expect(w.isError).toBe(false);
-    const h = await mcpCall(seller.accessToken, 'publish_intent', {
-      listing: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
-    });
-    expect(h.isError).toBe(false);
-    await waitForCardState(buyer.accessToken, w.result.intent_id, ['PUBLISHED']);
-    await waitForCardState(seller.accessToken, h.result.intent_id, ['PUBLISHED']);
-    await sendOp({ op: 'create-match', card_want: w.result.intent_id, card_have: h.result.intent_id, score: 0.9 });
-    matchId = await poll(async () => {
-      const r = await mcpCall(buyer.accessToken, 'check_in', { intent_id: w.result.intent_id });
-      return r.result.introductions?.[0]?.intro_id as string | undefined;
-    }, 'match to appear');
-    // Reach stage 3 (both interests + both opt-ins).
-    await mcpCall(buyer.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(seller.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(buyer.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    await mcpCall(seller.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
+    matchId = await newIntroduction();
     // The seller's connected test account: created pre-verified through
     // Stripe's test-mode API and attached with the server's own envelope
     // encryption (production sellers use the hosted account-link flow).
     sellerStripeId = await createPreVerifiedSeller(matchId.slice(0, 8));
     await attachStripeAccount(seller.accountId, sellerStripeId);
     // Separate charges and transfers draw the release out of the platform's
-    // AVAILABLE balance. Two settlements run here, so make sure there is
-    // room for both before the first one starts.
-    await ensurePlatformBalance(SELLER_MINOR * 2, 'AUD');
-  }, 300_000);
+    // AVAILABLE balance, and the two refunding gates draw a whole buyer total
+    // out of it as well. Four settlements run here; top up for all of them
+    // before the first one starts.
+    await ensurePlatformBalance((SELLER_MINOR + BUYER_TOTAL_MINOR) * 3, 'AUD');
+  }, 420_000);
 
   it('settle requires stage 3 and refuses a bad proposal shape', async () => {
     const bad = await mcpCall(buyer.accessToken, 'settle', { intro_id: matchId, amount: AMOUNT });
@@ -259,7 +345,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
   }, 600_000);
 
   it('G3: disputed -> refunded, webhook-driven, the buyer made whole in Stripe', async () => {
-    const sid = await proposeSettlement();
+    const sid = await proposeSettlement(await newIntroduction());
     await approveOnCounter(buyer, sid);
     await approveOnCounter(seller, sid);
     const piId = await fundAndWait(sid);
@@ -285,6 +371,120 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     );
     expect(transferId).toBeNull();
   }, 600_000);
+
+  it('G4: handed over -> the window runs out -> released, with nobody confirming', async () => {
+    const sid = await proposeSettlement(await newIntroduction());
+    await approveOnCounter(buyer, sid);
+    await approveOnCounter(seller, sid);
+    await fundAndWait(sid);
+
+    // The seller says it changed hands, adding no photos at all: that is the
+    // optional half of the step, and the declaration is the part that counts.
+    await declareHandover(sid);
+    const started = await clockOf(sid);
+    expect(started.handedOver).toBe(true);
+    expect(started.running).toBe(true);
+    expect(started.windowDays).toBe(7); // SETTLEMENT_AUTO_RELEASE_DAYS
+    expect(started.autoReleased).toBe(false);
+
+    // The agent surface carries the deadline and the sentence to relay.
+    const read = await settleRead(buyer.accessToken, sid);
+    expect(read.state).toBe('evidence-locked');
+    expect(read.auto_release_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(read.note.provenance).toBe('switchboard-system');
+    expect(read.note.text).toContain('Handed over on');
+    expect(read.note.text).toContain('releases to the seller on');
+
+    // Both humans are shown the same clock on their own page.
+    for (const actor of [buyer, seller]) {
+      const page = await counterFetch(actor.jar, `${COUNTER_URL}/settlements/${sid}`);
+      expect(page.status).toBe(200);
+      const body = await page.text();
+      expect(body).toContain('Releases on its own');
+      expect(body).toContain('Handed over');
+    }
+
+    // Wind the clock into the past (test-only) and run the sweep. Nobody
+    // confirms anything from here on.
+    await windClockBack(sid);
+    await sendOp({ op: 'settlement-auto-release' });
+    await poll(
+      async () => ((await settleState(buyer.accessToken, sid)) === 'released' ? true : undefined),
+      'settlement to auto-release and be released by webhook',
+      180_000,
+    );
+
+    // The row says which road it took, and the clock is put away.
+    const after = await clockOf(sid);
+    expect(after.autoReleased).toBe(true);
+    expect(after.confirmedVia).toBe('auto-release');
+    expect(after.running).toBe(false);
+    expect(after.handedOver).toBe(true); // the record of the handover stays
+    // The settle read drops the deadline with the window.
+    const done = await settleRead(buyer.accessToken, sid);
+    expect(done.state).toBe('released');
+    expect(done.auto_release_at).toBeUndefined();
+
+    // Ask Stripe: the seller really was paid the agreed amount, once.
+    const [[transferId]] = await dbExec(
+      'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
+      [{ name: 'id', value: sid }],
+    );
+    expect(String(transferId)).toMatch(/^tr_/);
+    const transfer = await stripeApi(`/v1/transfers/${transferId}`);
+    expect(transfer.destination).toBe(sellerStripeId);
+    expect(transfer.amount).toBe(SELLER_MINOR);
+    expect(transfer.transfer_group).toBe(sid);
+    expect(transfer.reversed).toBe(false);
+
+    // A second sweep over the same settlement changes nothing.
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 15_000));
+    expect(await settleState(buyer.accessToken, sid)).toBe('released');
+    const transfers = await stripeApi(`/v1/transfers?transfer_group=${sid}`);
+    expect(transfers.data).toHaveLength(1);
+  }, 900_000);
+
+  it('G5: a dispute inside the window wins, and the sweep finds nothing to release', async () => {
+    const sid = await proposeSettlement(await newIntroduction());
+    await approveOnCounter(buyer, sid);
+    await approveOnCounter(seller, sid);
+    const piId = await fundAndWait(sid);
+    await declareHandover(sid);
+    expect((await clockOf(sid)).running).toBe(true);
+
+    // The buyer disputes while the clock is still running.
+    const dispute = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({}));
+    expect(dispute.status, await dispute.clone().text()).toBe(200);
+    // The clock is cleared in the same statement that records the dispute.
+    expect((await clockOf(sid)).running).toBe(false);
+    const read = await settleRead(buyer.accessToken, sid);
+    expect(read.auto_release_at).toBeUndefined();
+    expect(read.note).toBeUndefined();
+
+    // Winding a cleared clock back does nothing, and the sweep finds nothing.
+    await windClockBack(sid);
+    await sendOp({ op: 'settlement-auto-release' });
+    await poll(
+      async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
+      'settlement to be refunded by webhook',
+      180_000,
+    );
+    await new Promise((r) => setTimeout(r, 15_000));
+    expect(await settleState(buyer.accessToken, sid)).toBe('refunded');
+    const after = await clockOf(sid);
+    expect(after.autoReleased).toBe(false);
+    expect(after.confirmedVia).toBeNull();
+
+    // The buyer has their whole total back and the seller was never paid.
+    const charges = await stripeApi(`/v1/charges?payment_intent=${piId}`);
+    expect(charges.data[0].amount_refunded).toBe(BUYER_TOTAL_MINOR);
+    const [[transferId]] = await dbExec(
+      'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
+      [{ name: 'id', value: sid }],
+    );
+    expect(transferId).toBeNull();
+  }, 900_000);
 
   it('the settlement page renders for both humans', async () => {
     const list = await mcpCall(buyer.accessToken, 'settle', { intro_id: matchId });

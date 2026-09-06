@@ -653,9 +653,20 @@ export function renderSettlementProposed(
 
 export type SettlementUpdateEvent =
   | 'payment-held'
+  | 'handover-window'
   | 'confirm-receipt-request'
   | 'released'
   | 'refund';
+
+/** "Saturday 13 September" — a date a person reads without decoding it. */
+function plainDay(d: Date): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(d);
+}
 
 export function renderSettlementUpdate(
   v: {
@@ -664,9 +675,15 @@ export function renderSettlementUpdate(
     blind: boolean;
     settlementUrl: string;
     counterUrl: string;
+    /** When the held payment releases on its own. Carried by the handover
+     *  mails, which are the whole point of saying the date out loud. */
+    deadline?: Date;
+    /** True when the clock released this payment rather than the buyer. */
+    auto?: boolean;
   },
   f: FooterLinks,
 ): EmailContent {
+  const by = v.deadline ? plainDay(v.deadline) : undefined;
   const copy: Record<SettlementUpdateEvent, { subject: string; heading: string; buyer: string; seller: string; buttonLabel: string }> = {
     'payment-held': {
       subject: 'OpenSwitchboard: the payment is held',
@@ -677,20 +694,42 @@ export function renderSettlementUpdate(
         'The buyer paid and the money is held. Hand over the goods, then lock your handover evidence from the settlement page.',
       buttonLabel: 'Open the settlement',
     },
+    // The seller has said the thing changed hands, which starts the buyer's
+    // window. This is the buyer's mail: their two ways to end the window, and
+    // the date it ends by itself.
+    'handover-window': {
+      subject: by
+        ? `OpenSwitchboard: handed over — confirm or raise a problem by ${by}`
+        : 'OpenSwitchboard: handed over — confirm or raise a problem',
+      heading: 'The seller says it has changed hands.',
+      buyer: by
+        ? `Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, raise a dispute instead and the whole of what you paid comes back to you. You have until ${by}; after that the held payment is released to the seller on its own.`
+        : 'Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, raise a dispute instead and the whole of what you paid comes back to you.',
+      seller: by
+        ? `You have declared the handover. The buyer has until ${by} to confirm receipt or raise a problem, and the held payment comes to you on that date if they do neither.`
+        : 'You have declared the handover, and the buyer has been asked to confirm receipt.',
+      buttonLabel: 'Open the settlement',
+    },
     'confirm-receipt-request': {
       subject: 'OpenSwitchboard: confirm receipt',
       heading: 'Ready for your confirmation.',
-      buyer:
-        'The seller locked the handover evidence. Once the goods are in your hands, confirm receipt and the held payment is released.',
-      seller:
-        'Your evidence is locked and the buyer has been asked to confirm receipt.',
+      buyer: by
+        ? `The seller says the goods have changed hands. Once they are with you, confirm receipt and the held payment is released. You have until ${by}; after that it is released to the seller on its own.`
+        : 'The seller says the goods have changed hands. Once they are with you, confirm receipt and the held payment is released.',
+      seller: by
+        ? `Your handover is recorded and the buyer has been asked to confirm receipt. They have until ${by}; after that the held payment comes to you on its own.`
+        : 'Your handover is recorded and the buyer has been asked to confirm receipt.',
       buttonLabel: 'Open the settlement',
     },
     released: {
       subject: 'OpenSwitchboard: payment released',
       heading: 'The payment is released.',
-      buyer: 'You confirmed receipt and the held payment was released to the seller. This settlement is complete.',
-      seller: 'The buyer confirmed receipt and the held payment was released to you. This settlement is complete.',
+      buyer: v.auto
+        ? 'The window to confirm or raise a problem has run out, so the held payment was released to the seller. This settlement is complete.'
+        : 'You confirmed receipt and the held payment was released to the seller. This settlement is complete.',
+      seller: v.auto
+        ? "The buyer's window to confirm or raise a problem has run out, so the held payment was released to you. This settlement is complete."
+        : 'The buyer confirmed receipt and the held payment was released to you. This settlement is complete.',
       buttonLabel: 'See the settlement',
     },
     refund: {

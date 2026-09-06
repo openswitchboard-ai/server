@@ -11,6 +11,7 @@ import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
+import { runAutoReleaseSweep } from './settlementAutoRelease.js';
 import {
   notifyMatchCreated,
   notifyYourMove,
@@ -30,6 +31,10 @@ import type { Config } from '../config.js';
  *  - accept-offer-by-human: the ONLY path to the 'accepted-by-human' offer
  *    state. 0.D replaces this trigger with the counter's human-approval UI;
  *    the domain function itself (acceptOfferByHuman) is the stable interface.
+ *  - settlement-auto-release: the hourly tick behind the buyer's confirm-or-
+ *    dispute window. This worker mints no transition context of any kind; it
+ *    calls runAutoReleaseSweep, which owns the one scheduled context in the
+ *    codebase (see workers/settlementAutoRelease.ts).
  * Only principals with sqs:SendMessage on the ops queue (account operators /
  * the EventBridge schedule role) can reach any of this.
  */
@@ -239,6 +244,16 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 // card batch expires (see digestEngine.runRenewalTick).
                 const n = await runRenewalTick(cfg);
                 if (n > 0) log('email-renewal-tick: renewal emails sent', { count: n });
+                break;
+              }
+              case 'settlement-auto-release': {
+                // EventBridge hourly tick. A seller declared handover and the
+                // buyer's window has run out, so the held payment goes to the
+                // seller. The whole of the work — and the only place a
+                // scheduled transition context is minted — lives in
+                // settlementAutoRelease.ts; this case just calls it.
+                const r = await runAutoReleaseSweep(cfg, log);
+                if (r.due > 0) log('auto-release sweep: pass done', r);
                 break;
               }
               case 'accept-offer-by-human': {

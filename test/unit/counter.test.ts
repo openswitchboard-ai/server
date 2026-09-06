@@ -316,8 +316,16 @@ const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.Settl
   evidence: [],
   hasPasskey: false,
   elevated: false,
+  autoReleaseDays: 7,
   ...over,
 });
+
+/** The buyer's clock, as the page is handed it while the window runs. */
+const HANDOVER = {
+  sellerName: 'Priya',
+  onDay: 'Saturday 5 September',
+  byDay: 'Saturday 12 September',
+};
 
 describe('counter pages: copy-cull render suite', () => {
   const allPages = (): { name: string; html: string }[] => [
@@ -391,6 +399,34 @@ describe('counter pages: copy-cull render suite', () => {
     {
       name: 'settlement-buyer-confirm',
       html: cpages.settlementPage(settlementView({ state: 'evidence-locked', canConfirm: true, canDispute: true })),
+    },
+    {
+      name: 'settlement-buyer-handover-window',
+      html: cpages.settlementPage(
+        settlementView({
+          state: 'evidence-locked',
+          canConfirm: true,
+          canDispute: true,
+          handover: HANDOVER,
+        }),
+      ),
+    },
+    {
+      name: 'settlement-seller-handover-window',
+      html: cpages.settlementPage(
+        settlementView({
+          role: 'seller',
+          state: 'evidence-locked',
+          canDispute: true,
+          handover: HANDOVER,
+        }),
+      ),
+    },
+    {
+      name: 'settlement-seller-declare-handover',
+      html: cpages.settlementPage(
+        settlementView({ role: 'seller', state: 'funded', canLockEvidence: true, canDispute: true }),
+      ),
     },
     {
       name: 'settlement-buyer-retry-release',
@@ -578,6 +614,47 @@ describe('counter pages: copy-cull render suite', () => {
     );
     expect(html).toContain('Confirming releases 87.65 AUD to the seller');
     expect(html).toContain('nothing comes off the seller');
+  });
+
+  it('the buyer is told who handed over, when, and what happens if they do nothing', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        state: 'evidence-locked',
+        canConfirm: true,
+        canDispute: true,
+        handover: HANDOVER,
+      }),
+    );
+    expect(html).toContain('Priya says it was handed over on Saturday 5 September.');
+    expect(html).toContain("Confirm when you're happy, or raise a dispute.");
+    expect(html).toContain('releases to\nPriya automatically on Saturday 12 September');
+    // The two dates are on the facts list too, in the same words.
+    expect(html).toContain('Handed over');
+    expect(html).toContain('Releases on its own');
+    // And the dispute fold says the clock stops.
+    expect(html).toContain('nothing is released on Saturday 12 September');
+  });
+
+  it('the seller sees the same clock, from their own side', () => {
+    const html = cpages.settlementPage(
+      settlementView({ role: 'seller', state: 'evidence-locked', handover: HANDOVER }),
+    );
+    expect(html).toContain('You declared the handover on Saturday 5 September.');
+    expect(html).toContain('until Saturday 12 September');
+    // The seller's own name is never read back to them.
+    expect(html).not.toContain('Priya');
+  });
+
+  it("the seller's handover step is named for what it is, and photos are optional", () => {
+    const html = cpages.settlementPage(
+      settlementView({ role: 'seller', state: 'funded', canLockEvidence: true }),
+    );
+    expect(html).toContain('<h2>Handed over</h2>');
+    expect(html).toContain('Photos are optional');
+    expect(html).toContain('Photos of the handover (optional)');
+    expect(html).toContain("Handed over — start the buyer's 7 days");
+    // The button is live before anything is uploaded.
+    expect(html).not.toContain('id="lockBtn" disabled');
   });
 
   for (const p of allPages()) {

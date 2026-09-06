@@ -66,6 +66,7 @@ const baseCfg: Config = {
   settlementFeeFlatMinor: 100,
   settlementProcessingPercent: 1.7,
   settlementProcessingFixedMinor: 30,
+  settlementAutoReleaseDays: 7,
 };
 
 const srcRoot = join(__dirname, '..', '..', 'src');
@@ -89,6 +90,8 @@ describe('escrow state machine: no reachable money transition without a human si
     { kind: 'human', accountId: '00000000-0000-0000-0000-000000000000', recordedVia: 'counter' },
     // Structurally identical to a real webhook context:
     { kind: 'webhook', eventId: 'evt_x', eventType: 'checkout.session.completed' },
+    // Structurally identical to a real scheduled context:
+    { kind: 'scheduled', job: 'auto-release' },
     // An agent/ops-flavoured attempt:
     { kind: 'ops', op: 'release-settlement' },
   ];
@@ -96,9 +99,10 @@ describe('escrow state machine: no reachable money transition without a human si
   const args: Record<string, any[]> = {
     approveSettlement: ['sid'],
     declineSettlement: ['sid'],
-    lockEvidence: ['sid', 'manifest-key'],
+    lockEvidence: ['sid', 'manifest-key', 7],
     confirmReceipt: ['sid'],
     openDispute: ['sid'],
+    autoReleaseSettlement: ['sid'],
     markFunded: ['sid', { checkoutSession: 'cs_x', paymentIntent: 'pi_x' }],
     markReleased: ['sid'],
     markRefunded: ['sid'],
@@ -135,7 +139,7 @@ describe('escrow state machine: no reachable money transition without a human si
         // No DB is initialised in this suite: if the guard did not fire
         // first, we would see 'db not initialised' instead.
         await expect(fn(forged, ...args[name])).rejects.toThrow(
-          /settlement transition requires a human-action or verified-webhook context/,
+          /settlement transition requires a human-action, verified-webhook or scheduled context/,
         );
       }
     });
@@ -176,10 +180,65 @@ describe('escrow state machine: no reachable money transition without a human si
     expect(handler.indexOf('verifyWebhookSignature')).toBeLessThan(handler.indexOf('webhookAction('));
   });
 
-  it('the internal ops worker has no settlement vocabulary', () => {
+  it('scheduled contexts are minted only in the auto-release sweep', () => {
+    for (const f of allSourceFiles()) {
+      const src = readFileSync(f, 'utf8');
+      if (f.endsWith('domain/settlements.ts')) continue; // the definition
+      if (src.includes('scheduledAction(')) {
+        expect(f.endsWith('workers/settlementAutoRelease.ts'), f).toBe(true);
+      }
+    }
+  });
+
+  it('no transition but evidence-locked -> confirmed accepts a scheduled context', () => {
+    // The registry names exactly one scheduled transition...
+    const scheduled = Object.entries(SETTLEMENT_TRANSITIONS)
+      .filter(([, kind]) => kind === 'scheduled')
+      .map(([name]) => name);
+    expect(scheduled).toEqual(['autoReleaseSettlement']);
+    // ...and it is the only exported function that names the scheduled
+    // context type at all.
+    const src = read('domain/settlements.ts');
+    const users = [...src.matchAll(/export async function (\w+)\(\s*ctx: ScheduledCtx/g)].map(
+      (m) => m[1],
+    );
+    expect(users).toEqual(['autoReleaseSettlement']);
+    // The single state writer caps that context at one step, whatever anyone
+    // later hands it.
+    expect(src).toContain(
+      "const onlyStep = to === 'confirmed' && from.length === 1 && from[0] === 'evidence-locked';",
+    );
+  });
+
+  it('the internal ops worker mints nothing and knows only the sweep by name', () => {
     const src = read('workers/opsWorker.ts');
-    expect(src.toLowerCase()).not.toContain('settlement');
+    // It has no Stripe vocabulary at all, and it mints no context of any of
+    // the three kinds: the auto-release sweep owns the only scheduled one.
     expect(src).not.toContain('stripe');
+    for (const mint of ['counterAction(', 'webhookAction(', 'scheduledAction(']) {
+      expect(src, mint).not.toContain(mint);
+    }
+    expect(src).not.toContain('domain/settlements.js');
+    // Its whole settlement surface is one call into the sweep module.
+    expect(src).toContain("import { runAutoReleaseSweep } from './settlementAutoRelease.js';");
+    expect(src.match(/runAutoReleaseSweep\(/g)).toHaveLength(1);
+  });
+
+  it('the sweep moves the state before it moves the money, and owns no other transition', () => {
+    // The header explains at length which road this walks, so the scans run
+    // over the code alone.
+    const code = read('workers/settlementAutoRelease.ts')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    expect(code.indexOf('autoReleaseSettlement(scheduledAction()')).toBeGreaterThan(-1);
+    // Same order as the buyer's own confirm route: transition, then transfer.
+    expect(code.indexOf('autoReleaseSettlement(')).toBeLessThan(
+      code.indexOf('transferToSellerForSettlement('),
+    );
+    // And it reaches for nothing else that changes settlement state.
+    for (const other of ['confirmReceipt', 'openDispute', 'lockEvidence', 'markReleased']) {
+      expect(code, other).not.toContain(other);
+    }
   });
 });
 
@@ -474,6 +533,116 @@ describe('webhook signature verification (Stripe reference implementation)', () 
   });
 });
 
+/**
+ * The buyer's window: the seller declares handover, the buyer has
+ * SETTLEMENT_AUTO_RELEASE_DAYS to confirm or dispute, and silence releases the
+ * payment to the seller. Everything here runs with no database, so the guards
+ * asserted are the ones that fire before any row is touched.
+ */
+describe('the auto-release window', () => {
+  const handedOver = (days: number) => {
+    const at = new Date('2026-09-05T02:00:00.000Z');
+    const due = new Date(at.getTime() + days * 86_400_000);
+    return {
+      id: '7a2e5c1d-9f4b-4c8a-b3e6-2d1f0a9b8c7d',
+      match_id: '0d9f2c1e-7b4a-4f7e-9c2d-1a2b3c4d5e6f',
+      proposer_account: 'a',
+      buyer_account: 'a',
+      seller_account: 'b',
+      amount: '600',
+      ccy: 'AUD',
+      state: 'evidence-locked',
+      handed_over_at: at,
+      auto_release_at: due,
+      confirmed_via: null,
+      auto_released: false,
+    } as any;
+  };
+
+  it('only the scheduled context can auto-release, and it is checked before any row is read', async () => {
+    const human = settlements.counterAction('00000000-0000-0000-0000-000000000000');
+    await expect(settlements.autoReleaseSettlement(human as any, 'sid')).rejects.toThrow(
+      /auto-release requires a scheduled context/,
+    );
+    const webhook = settlements.webhookAction('evt_x', 'transfer.created');
+    await expect(settlements.autoReleaseSettlement(webhook as any, 'sid')).rejects.toThrow(
+      /auto-release requires a scheduled context/,
+    );
+    // The real one gets past the door and stops at the database instead.
+    await expect(
+      settlements.autoReleaseSettlement(settlements.scheduledAction(), 'sid'),
+    ).rejects.toThrow(/db not initialised/);
+  });
+
+  it('the sweep looks only for evidence-locked settlements whose clock has passed', () => {
+    const src = read('domain/settlements.ts');
+    const q = src.slice(src.indexOf('export async function settlementsDueForAutoRelease'));
+    expect(q).toContain("state = 'evidence-locked'");
+    expect(q).toContain('auto_release_at <= now()');
+  });
+
+  it('a dispute stops the clock, and so does a confirmation', () => {
+    // Both ends of the window are cleared in the same statement that ends it,
+    // so the sweep can never find a settlement that has already moved on.
+    const src = read('domain/settlements.ts');
+    const writer = src.slice(src.indexOf('async function applyTransition'));
+    expect(writer).toContain("to === 'disputed'\n        ? ', auto_release_at = NULL'");
+    expect(writer).toContain(
+      "? `, auto_release_at = NULL, confirmed_via = 'auto-release', auto_released = true`",
+    );
+    expect(writer).toContain("`, auto_release_at = NULL, confirmed_via = 'buyer-confirm'`");
+    // And the dispute path still starts from evidence-locked, unchanged.
+    const dispute = src.slice(src.indexOf('export async function openDispute'));
+    expect(dispute).toContain("['funded', 'evidence-locked']");
+  });
+
+  it('the window is a whole number of days in a sane range, checked before the database', async () => {
+    const ctx = settlements.counterAction('00000000-0000-0000-0000-000000000000');
+    for (const bad of [0, -1, 7.5, 91, Number.NaN]) {
+      await expect(settlements.lockEvidence(ctx, 'sid', 'key', bad)).rejects.toThrow(
+        /bad auto-release window/,
+      );
+    }
+    // A good one gets through to the database instead.
+    await expect(settlements.lockEvidence(ctx, 'sid', 'key', 7)).rejects.toThrow(
+      /db not initialised/,
+    );
+  });
+
+  it('the handover writes both dates before the state moves, and only out of funded', () => {
+    const src = read('domain/settlements.ts');
+    const lock = src.slice(src.indexOf('export async function lockEvidence'));
+    const body = lock.slice(0, lock.indexOf('\nexport '));
+    expect(body).toContain('handed_over_at = now()');
+    expect(body).toContain('auto_release_at = now() + make_interval(days => $3::int)');
+    expect(body).toContain("WHERE id = $1 AND state = 'funded'");
+    expect(body.indexOf('auto_release_at = now()')).toBeLessThan(body.indexOf('applyTransition('));
+  });
+
+  it('a settlement in its window carries the deadline on the wire', () => {
+    const out: any = settlements.serializeSettlement(handedOver(7));
+    expect(validateOutbound('settlement', out).valid).toBe(true);
+    expect(out.auto_release_at).toBe('2026-09-12T02:00:00.000Z');
+    // And a settlement with no clock carries no field at all.
+    const done: any = settlements.serializeSettlement({
+      ...handedOver(7),
+      state: 'released',
+      auto_release_at: null,
+    });
+    expect('auto_release_at' in done).toBe(false);
+    expect(validateOutbound('settlement', done).valid).toBe(true);
+  });
+
+  it('the note an agent relays names both days in plain words', () => {
+    const note = settlements.autoReleaseNote(handedOver(7))!;
+    expect(note).toContain('Handed over on Saturday 5 September');
+    expect(note).toContain('releases to the seller on Saturday 12 September');
+    expect(note).toContain('their own approval page');
+    // No clock, no note.
+    expect(settlements.autoReleaseNote({ ...handedOver(7), auto_release_at: null })).toBeUndefined();
+  });
+});
+
 describe('settlement protocol payloads', () => {
   const row = {
     id: '7a2e5c1d-9f4b-4c8a-b3e6-2d1f0a9b8c7d',
@@ -492,6 +661,10 @@ describe('settlement protocol payloads', () => {
     stripe_payment_intent: null,
     stripe_transfer_id: null,
     evidence_manifest_key: null,
+    handed_over_at: null,
+    auto_release_at: null,
+    confirmed_via: null,
+    auto_released: false,
   } as any;
 
   it('serializes to a schema-valid settlement message for every state', () => {
