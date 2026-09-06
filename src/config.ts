@@ -37,14 +37,15 @@ export interface Config {
    *  reach the SNS -> SQS pipeline (0.E). */
   sesConfigurationSet: string;
   /** Region the SES client talks to. Defaults to the app region; prod points
-   *  at ap-southeast-2, where the identity that lends us production sending
-   *  lives (see infra/host-ses). */
+   *  at us-west-2, which is where this account holds SES production access
+   *  (us-east-1 is still sandboxed). */
   sesRegion: string;
-  /** Role in the host account (same organisation, holds SES production
+  /** Role in another account of the organisation (holds SES production
    *  access, has openswitchboard.ai verified) that the SES client assumes.
-   *  SES enforces the sandbox on the CALLING account, so the call itself must
-   *  come from the host's credentials; sending authorization alone is not
-   *  enough. Unset = our own account, our own sandbox (dev). */
+   *  SES enforces the sandbox on the CALLING account, so on that path the
+   *  call itself must come from the host's credentials; sending authorization
+   *  alone is not enough. Unset — dev, and prod since 2026-09-06 — means our
+   *  own credentials on our own identity (see infra/host-ses/README.md). */
   sesAssumeRoleArn?: string;
   /** SQS queue receiving SES bounce/complaint/delivery events (0.E). */
   emailEventsQueueUrl: string;

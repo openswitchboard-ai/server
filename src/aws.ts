@@ -13,9 +13,10 @@ export const s3 = new S3Client({ region });
 export const sqs = new SQSClient({ region });
 export const secretsManager = new SecretsManagerClient({ region });
 export const bedrock = new BedrockRuntimeClient({ region });
-// Prod sends from the host account (infra/host-ses): the client assumes a
-// role there, in that region, because SES applies the sandbox to whichever
-// account makes the call. Dev: own account, own region, no role.
+// SES may not be in the app's region: prod sends from us-west-2, where this
+// account's production access was granted, with its own credentials. A role
+// ARN means the borrowed path (infra/host-ses), where the call has to be the
+// host account's own because SES applies the sandbox to the caller.
 const sesRegion = process.env.SES_REGION ?? region;
 const sesRole = process.env.SES_ASSUME_ROLE_ARN;
 export const sesv2 = new SESv2Client({
