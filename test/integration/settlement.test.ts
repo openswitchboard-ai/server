@@ -111,10 +111,21 @@ async function newIntroduction(): Promise<string> {
     card_have: h.result.intent_id,
     score: 0.9,
   });
+  // Read the introduction back from the database rather than from check_in.
+  // Four introductions run through this suite and the per-account hourly read
+  // ceiling is shared by every read tool, so the polling that used to find it
+  // would spend most of the buyer's budget before the first payment. It also
+  // names THIS pair rather than whichever introduction check_in listed first.
   const id = await poll(async () => {
-    const r = await mcpCall(buyer.accessToken, 'check_in', { intent_id: w.result.intent_id });
-    return r.result.introductions?.[0]?.intro_id as string | undefined;
-  }, 'match to appear');
+    const rows = await dbExec(
+      'SELECT id FROM matches WHERE card_want = :w::uuid AND card_have = :h::uuid',
+      [
+        { name: 'w', value: w.result.intent_id },
+        { name: 'h', value: h.result.intent_id },
+      ],
+    );
+    return rows[0] ? String(rows[0][0]) : undefined;
+  }, 'the introduction to appear');
   await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
   await mcpCall(seller.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
   // Once these two have more than one listing apiece on the board, a second

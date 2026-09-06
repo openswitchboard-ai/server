@@ -433,6 +433,12 @@ describe('counter pages: copy-cull render suite', () => {
       html: cpages.settlementPage(settlementView({ state: 'confirmed', canRetryRelease: true })),
     },
     {
+      name: 'settlement-buyer-retry-auto-release',
+      html: cpages.settlementPage(
+        settlementView({ state: 'confirmed', canRetryRelease: true, autoReleased: true }),
+      ),
+    },
+    {
       name: 'settlement-seller-setup',
       html: cpages.settlementPage(settlementView({ role: 'seller', needsPaymentSetup: true })),
     },

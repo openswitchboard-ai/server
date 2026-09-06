@@ -683,6 +683,9 @@ export interface SettlementView {
   elevated: boolean;
   /** SETTLEMENT_AUTO_RELEASE_DAYS: how long the buyer's window runs. */
   autoReleaseDays: number;
+  /** The window ran out and the clock released this payment, rather than the
+   *  buyer confirming. Changes what the retry block says. */
+  autoReleased?: boolean;
   /** evidence-locked: the seller's handover and the clock it started. Both
    *  sides see the same two dates. */
   handover?: {
@@ -763,8 +766,13 @@ you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in ful
       : `<label for="pin">Confirm with your PIN</label>
          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
     blocks.push(`<h2>Send the release again</h2>
-<p>Your receipt is confirmed and the payment to the seller has not gone through
-yet. Nothing has moved, and sending it again is safe: the seller can only ever
+<p>${
+      v.autoReleased
+        ? `The window ran out and this payment is due to the seller. It has not gone
+through yet, and the switchboard tries again by itself every hour`
+        : `Your receipt is confirmed and the payment to the seller has not gone through
+yet`
+    }. Nothing has moved, and sending it again is safe: the seller can only ever
 be paid once for this settlement.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm">
   ${pinBlock}
