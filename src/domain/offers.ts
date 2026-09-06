@@ -299,15 +299,25 @@ export async function acceptOfferByHuman(
   recordedVia: string,
 ) {
   const o = await loadOffer(offerId);
+  // A human reaches this from their own page, so a wrong-state offer is a
+  // "not yet" to explain, never a 500. Declining from either state stays
+  // legal; accepting waits for the agent to bring the offer to them.
   if (o.state !== 'awaiting-human') {
-    throw new Error(`offer ${offerId} is '${o.state}', not awaiting-human`);
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        o.state === 'proposed'
+          ? 'This offer has not been brought to you yet. Ask your assistant to pass it on, and it will be here to accept.'
+          : `This offer is no longer open to accept (it is ${o.state}).`,
+    });
   }
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('introduction missing');
   const side = sideOf(m, humanAccountId);
   void side;
   if (o.proposer_account === humanAccountId) {
-    throw new Error('the proposing side cannot accept its own offer');
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'This is your own side\'s offer. Only the other person can accept it.',
+    });
   }
   // Collection window: while the accepting human's OWN card is contested and
   // still collecting, acceptance is locked - close the window (or let it
