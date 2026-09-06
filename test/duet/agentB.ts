@@ -162,7 +162,7 @@ export async function resetB(): Promise<string> {
   const remote = [
     REMOTE_PATH,
     `rm -rf ${B_HOME}/agents/main/sessions/* ${B_HOME}/agents/main/agent/openclaw-agent.sqlite*`,
-    `rm -rf ${B_HOME}/state/openclaw.sqlite* ${B_HOME}/workspace/memory/* ${B_HOME}/workspace/MEMORY.md`,
+    `rm -rf ${B_HOME}/state/openclaw.sqlite* ${B_HOME}/workspace/memory/* ${B_HOME}/workspace/MEMORY.md ${B_HOME}/agents/*/sessions/* ${B_HOME}/agents/*/agent/openclaw-agent.sqlite ${B_HOME}/agents/*/agent/openclaw-agent.sqlite-shm ${B_HOME}/agents/*/agent/openclaw-agent.sqlite-wal`,
     `mkdir -p ${B_HOME}/workspace/memory`,
     `echo "agent B reset: $(date -Is)"`,
   ].join('; ');

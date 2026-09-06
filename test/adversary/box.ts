@@ -34,7 +34,10 @@ export async function resetNagatha(): Promise<string> {
   const remote = [
     'export PATH=$PATH:~/.local/bin:/usr/local/bin',
     'systemctl --user stop openclaw-gateway',
-    'rm -rf ~/.openclaw/agents/main/sessions/* ~/.openclaw/workspace/memory/* ~/.openclaw/state/openclaw.sqlite*',
+    // The agent-level index (agents/main/agent/openclaw-agent.sqlite) is the
+    // one store the earlier resets missed: 121 MB of it, and a fresh account
+    // still "remembered" five previous listings of the same bike.
+    'rm -rf ~/.openclaw/agents/main/sessions/* ~/.openclaw/workspace/memory/* ~/.openclaw/state/openclaw.sqlite* ~/.openclaw/agents/main/agent/openclaw-agent.sqlite ~/.openclaw/agents/main/agent/openclaw-agent.sqlite-shm ~/.openclaw/agents/main/agent/openclaw-agent.sqlite-wal',
     'systemctl --user start openclaw-gateway',
     'sleep 5',
     'systemctl --user is-active openclaw-gateway',
