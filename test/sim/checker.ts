@@ -40,7 +40,12 @@ export class Checker {
     for (const e of entries) {
       const v = this.ladder.observe(e.intro_id, e.next, `${where} entry ${e.intro_id}`);
       if (v) this.add([v]);
-      const identityAllowed = e.next === 'ready_to_talk' || e.state === 'archived';
+      // A stage-4 introduction names its open conversation, and a
+      // conversation only ever opens after both opt-ins — so identity there
+      // is legitimate whatever `next` says now (an offer parked for the human
+      // reads awaiting_your_human at stage 4 too, and once tripped this).
+      const identityAllowed =
+        e.next === 'ready_to_talk' || e.state === 'archived' || !!e.conversation;
       if (!identityAllowed) {
         this.add(scanIdentityLeak(JSON.stringify(e), this.identityStrings, `${where} entry ${e.intro_id}`));
       }
