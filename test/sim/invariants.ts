@@ -201,3 +201,241 @@ export function scanToolsForAccept(toolNames: string[], where: string): Violatio
   if (extra.length) out.push({ invariant: 'I3', detail: `tool surface has unexpected tools: ${extra.join(', ')}`, where });
   return out;
 }
+
+// ===========================================================================
+// THE MONEY INVARIANTS (I8–I12)
+//
+// Everything below takes FACTS the money group has already read out of the
+// database and out of Stripe, and says whether they are allowed. Keeping the
+// judgment here and the reading there means each rule is one readable
+// comparison, and the rule can be unit-reasoned about without a sandbox.
+// ===========================================================================
+
+/**
+ * I8 — funded means both humans said yes.
+ *
+ * Three separate readings have to agree, because each can fail on its own:
+ * the two approval timestamps on the row, the state itself, and the WORM
+ * consent log, which is the record that would be produced if anyone ever
+ * asked who authorised this. A settlement that is funded with one approval
+ * missing anywhere is the worst defect this suite can find.
+ */
+export interface FundedFacts {
+  settlementId: string;
+  state: string;
+  buyerApprovedAt: string | null;
+  sellerApprovedAt: string | null;
+  /** Account ids with a 'settlement-approved' consent event in the WORM log. */
+  consentApprovals: string[];
+  buyerAccount: string;
+  sellerAccount: string;
+  /**
+   * What the buyer's own pay route answered while only ONE approval stood.
+   * 409 is the refusal we want; a 303 to Stripe would mean the money could
+   * start moving on one signature.
+   */
+  payBeforeBothApprovalsStatus?: number;
+}
+
+export function checkFundedNeedsBothApprovals(f: FundedFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I8', detail, where });
+  const past = ['funded', 'evidence-locked', 'confirmed', 'disputed', 'released', 'refunded'];
+  if (past.includes(f.state)) {
+    if (!f.buyerApprovedAt) v(`settlement ${f.settlementId} is '${f.state}' with no buyer approval timestamp`);
+    if (!f.sellerApprovedAt) v(`settlement ${f.settlementId} is '${f.state}' with no seller approval timestamp`);
+    const lower = f.consentApprovals.map((a) => a.toLowerCase());
+    if (!lower.includes(f.buyerAccount.toLowerCase())) {
+      v(`settlement ${f.settlementId} is '${f.state}' but the consent log holds no buyer approval`);
+    }
+    if (!lower.includes(f.sellerAccount.toLowerCase())) {
+      v(`settlement ${f.settlementId} is '${f.state}' but the consent log holds no seller approval`);
+    }
+  }
+  if (f.payBeforeBothApprovalsStatus !== undefined && f.payBeforeBothApprovalsStatus !== 409) {
+    v(
+      `the buyer's pay route answered ${f.payBeforeBothApprovalsStatus} while only one approval stood — ` +
+        `payment must be refused until both humans have approved`,
+    );
+  }
+  return out;
+}
+
+/**
+ * I9 — nothing an agent can call moves money.
+ *
+ * Two halves. The tool SURFACE must carry no step named for a money move,
+ * and the one settlement tool there is must refuse every attempt to drive a
+ * human step through it. The second half is the one that matters: a tool can
+ * be innocently named and still take an `action` nobody documented.
+ *
+ * An attempt counts as refused when the call came back an error OR came back
+ * a plain read — what is never allowed is the state moving.
+ */
+export interface AgentMoveAttempt {
+  label: string;
+  /** Did the server refuse it (isError, or a read that changed nothing)? */
+  refused: boolean;
+  detail: string;
+}
+
+export interface AgentReachFacts {
+  toolNames: string[];
+  attempts: AgentMoveAttempt[];
+  /** DB state before and after the whole batch of attempts. */
+  stateBefore: string;
+  stateAfter: string;
+}
+
+/** Tool names shaped like a money step a human owns. */
+const FORBIDDEN_MONEY_TOOL = /approve|confirm|release|refund|dispute|payout|capture|transfer|charge/i;
+
+export function checkNoAgentMoneyPath(f: AgentReachFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I9', detail, where });
+  for (const n of f.toolNames.filter((t) => FORBIDDEN_MONEY_TOOL.test(t))) {
+    v(`a money-step tool exists on the MCP surface: ${n}`);
+  }
+  for (const a of f.attempts.filter((x) => !x.refused)) {
+    v(`an agent-reachable call was NOT refused: ${a.label} — ${a.detail}`);
+  }
+  if (f.stateBefore !== f.stateAfter) {
+    v(
+      `the settlement state moved while only an agent was calling: ` +
+        `${f.stateBefore} -> ${f.stateAfter}`,
+    );
+  }
+  return out;
+}
+
+/**
+ * I10 — the arithmetic of a release.
+ *
+ * The seller receives the AGREED AMOUNT and not a cent less: the fee and the
+ * processing line were the buyer's, paid as lines of their own, so nothing
+ * comes off the transfer. And the buyer's charge is the three persisted
+ * figures added up — persisted, because those are what the buyer was actually
+ * shown on the hosted page, and a recomputation from today's config would
+ * quietly bless a fee that moved since.
+ */
+export interface ReleaseFacts {
+  settlementId: string;
+  /** From the settlement row. */
+  agreedMinor: number;
+  feeMinor: number | null;
+  processingMinor: number | null;
+  buyerTotalMinor: number | null;
+  /** From Stripe. */
+  chargedMinor: number;
+  transferMinor: number;
+  transferGroup: string | null;
+  transferDestination: string | null;
+  sellerStripeAccount: string;
+  /** Stripe's own view of where the charge sent the money. Both must be empty. */
+  transferData: unknown;
+  applicationFeeAmount: unknown;
+  /** What actually landed on the seller's connected account. */
+  destinationPaymentMinor?: number;
+}
+
+export function checkReleaseAmounts(f: ReleaseFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I10', detail, where });
+  if (f.transferMinor !== f.agreedMinor) {
+    v(`the release transfer was ${f.transferMinor} but the agreed amount is ${f.agreedMinor}`);
+  }
+  if (f.destinationPaymentMinor !== undefined && f.destinationPaymentMinor !== f.agreedMinor) {
+    v(
+      `the seller's connected account received ${f.destinationPaymentMinor}, ` +
+        `not the agreed ${f.agreedMinor}`,
+    );
+  }
+  if (f.feeMinor === null || f.processingMinor === null || f.buyerTotalMinor === null) {
+    v(
+      `the settlement row has no persisted breakdown (fee=${f.feeMinor} processing=${f.processingMinor} ` +
+        `total=${f.buyerTotalMinor}); the buyer was charged against a figure nothing recorded`,
+    );
+  } else {
+    const sum = f.agreedMinor + f.feeMinor + f.processingMinor;
+    if (sum !== f.buyerTotalMinor) {
+      v(
+        `the persisted lines do not add up: ${f.agreedMinor} + ${f.feeMinor} + ${f.processingMinor} ` +
+          `= ${sum}, but buyer_total_minor is ${f.buyerTotalMinor}`,
+      );
+    }
+    if (f.chargedMinor !== f.buyerTotalMinor) {
+      v(`Stripe took ${f.chargedMinor} from the buyer but the row says ${f.buyerTotalMinor}`);
+    }
+  }
+  if (f.transferGroup !== f.settlementId) {
+    v(`the transfer's transfer_group is ${f.transferGroup}, not the settlement id`);
+  }
+  if (f.transferDestination !== f.sellerStripeAccount) {
+    v(`the transfer went to ${f.transferDestination}, not the seller's account ${f.sellerStripeAccount}`);
+  }
+  if (f.transferData) v('the charge carried transfer_data — money was routed away from the platform balance');
+  if (f.applicationFeeAmount) v('the charge carried an application fee');
+  return out;
+}
+
+/**
+ * I11 — a dispute costs the buyer nothing, and costs them nothing twice.
+ *
+ * The refund is of the WHOLE buyer total, our fee included: a person who
+ * disputes gets every cent back and the platform wears Stripe's cut on the
+ * round trip. Pressing dispute again must add no second refund, and no
+ * transfer may exist on a settlement that went back.
+ */
+export interface RefundFacts {
+  settlementId: string;
+  state: string;
+  buyerTotalMinor: number | null;
+  refundedMinor: number;
+  /** How many refund objects Stripe holds against the charge. */
+  refundCount: number;
+  /** The settlement row's transfer id, which must still be null. */
+  transferId: string | null;
+  /** HTTP status of the second, idempotent dispute press. */
+  secondDisputeStatus?: number;
+}
+
+export function checkRefundOnceAndWhole(f: RefundFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I11', detail, where });
+  if (f.state !== 'refunded') v(`settlement ${f.settlementId} disputed but its state is '${f.state}'`);
+  if (f.buyerTotalMinor === null) {
+    v('the settlement row has no persisted buyer total, so "in full" cannot be checked');
+  } else if (f.refundedMinor !== f.buyerTotalMinor) {
+    v(`the buyer got ${f.refundedMinor} back, not their whole total of ${f.buyerTotalMinor}`);
+  }
+  if (f.refundCount !== 1) v(`Stripe holds ${f.refundCount} refunds against the charge; a dispute refunds once`);
+  if (f.transferId) v(`a transfer (${f.transferId}) exists on a settlement that was refunded`);
+  if (f.secondDisputeStatus !== undefined && f.secondDisputeStatus >= 500) {
+    v(`the second, idempotent dispute press answered ${f.secondDisputeStatus} rather than settling quietly`);
+  }
+  return out;
+}
+
+/**
+ * I12 — a proposal has to come from the right place.
+ *
+ * Settlement opens only once both humans can talk (stage 3) on an OPEN
+ * introduction, and only to the two people on it. Every attempt listed here
+ * is one that must come back refused; a proposal that got through is a row
+ * on someone's ledger that nobody agreed to.
+ */
+export interface ProposalAttempt {
+  label: string;
+  refused: boolean;
+  detail: string;
+}
+
+export function checkProposalGuards(attempts: ProposalAttempt[], where: string): Violation[] {
+  return attempts
+    .filter((a) => !a.refused)
+    .map((a) => ({
+      invariant: 'I12',
+      detail: `a settle proposal that should have been refused got through: ${a.label} — ${a.detail}`,
+      where,
+    }));
+}
