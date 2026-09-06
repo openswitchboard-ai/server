@@ -94,6 +94,7 @@ import {
   BRIEFS,
   HEARTBEAT,
   PRIVATE_NUMBERS,
+  PROTECTED_PAYMENT_NUDGE,
   SideId,
   asksForFigureOnPage,
   authoredFigureReply,
@@ -103,6 +104,14 @@ import {
 import { ProgressWatcher } from './progress.js';
 import { probeAccountBinding } from './probe.js';
 import { provisionPair } from './provision.js';
+import {
+  SettlementFinale,
+  findFeeExplanations,
+  formatFinale,
+  preparePayments,
+  runFinale,
+  settlementRow,
+} from './settlement.js';
 import {
   DuetReport,
   HarnessAction,
@@ -759,6 +768,121 @@ async function main(): Promise<number> {
     }
   }
 
+  // --- 4b. THE FINALE: the money, all the way through.
+  //
+  // The loop above stops as soon as a deal is visible, which used to be the end
+  // of the run. It is not the end of the product: somebody still has to pay,
+  // and the whole safe-hands flow — both approvals, a hosted Checkout, a
+  // handover, a release or a dispute — sits after this point and had never been
+  // exercised by two real agents with two real humans behind them.
+  //
+  // Nothing here negotiates. The harness presses the pages a human presses and
+  // reads every state back out of the database; the words each agent uses about
+  // the fee are its own, and are quoted in the report exactly as they came.
+  const variant: 'release' | 'dispute' = process.env.DUET_DISPUTE === '1' ? 'dispute' : 'release';
+  let finale: SettlementFinale = {
+    attempted: false,
+    humanPrompted: false,
+    variant,
+    timeline: [],
+    feeExplanations: [],
+    notes: [],
+  };
+  if (process.env.DUET_SKIP_SETTLEMENT === '1') {
+    finale.skipped = 'DUET_SKIP_SETTLEMENT=1';
+    log('settlement finale skipped (DUET_SKIP_SETTLEMENT=1)');
+  } else {
+    try {
+      await watcher.poll();
+      let settled = watcher.ourSettlements()[0];
+      const accepted = (watcher.latest?.offers ?? []).find((o) => o.state === 'accepted-by-human');
+
+      // Neither agent raised a protected payment on its own. The buyer's human
+      // says so once, and the agents are given a few rounds to act on it or
+      // not. This is the ONLY thing the harness ever volunteers about money.
+      if (!settled && accepted) {
+        finale.humanPrompted = true;
+        // The buyer is the WANT side of the introduction, which is where
+        // proposeSettlement puts them. Reading it off the match rather than
+        // assuming who is selling keeps this right if the run's roles ever
+        // swap.
+        const wantAccount = watcher.ourMatch()?.accountWant;
+        const buyerId: SideId = wantAccount === actors.priya.accountId ? 'priya' : 'marlowe';
+        log(`--- no settlement proposed by either agent; ${sides[buyerId].human} (the buyer) raises it once ---`);
+        const nudge = PROTECTED_PAYMENT_NUDGE[buyerId];
+        ROUND++;
+        await turn(sides[buyerId], nudge.text, nudge.rule);
+        for (let k = 0; k < 6 && !settled; k++) {
+          ROUND++;
+          const side = k % 2 === 0 ? sides.priya : sides.marlowe;
+          const answer = personaReply(side.id, side.lastReply);
+          await turn(side, answer?.text ?? HEARTBEAT, answer?.rule ?? 'heartbeat').catch((e) =>
+            log(`  finale nudge turn failed: ${(e as Error).message}`),
+          );
+          for (const e of await watcher.poll()) log(`  [r${ROUND}] DB: ${e.kind} — ${e.detail}`);
+          settled = watcher.ourSettlements()[0];
+          if (!settled) await sleep(Math.min(GAP_MS, 45_000));
+        }
+      }
+
+      if (!settled) {
+        finale.skipped = accepted
+          ? "an offer was accepted but neither agent proposed a settlement, even after the buyer's human raised it once"
+          : 'the run never reached an agreed figure, so there was nothing to settle';
+        log(`settlement finale not started: ${finale.skipped}`);
+      } else {
+        log(`--- settlement finale: ${settled.id.slice(0, 8)} for ${settled.amount} ${settled.ccy} (${variant}) ---`);
+        const row = await settlementRow(settled.id);
+        // Which human is which side of the money is the SERVER's answer, not an
+        // assumption about who is selling: proposeSettlement puts the want side
+        // on the buyer's seat and the have side on the seller's.
+        const buyerSide = row?.buyerAccount === actors.priya.accountId ? sides.priya : sides.marlowe;
+        const sellerSide = buyerSide.id === 'priya' ? sides.marlowe : sides.priya;
+        log(`  buyer is ${buyerSide.human}, seller is ${sellerSide.human} (per the settlement row)`);
+        const sellerAcct = await preparePayments(
+          sellerSide,
+          Math.round((row?.amount ?? settled.amount) * 100),
+          row?.ccy ?? settled.ccy,
+          finale.notes,
+        );
+        const prepNotes = [...finale.notes];
+        const ran = await runFinale({
+          settlementId: settled.id,
+          matchId: settled.matchId,
+          buyer: buyerSide,
+          seller: sellerSide,
+          variant,
+          humanPrompted: finale.humanPrompted,
+          ...(sellerAcct ? { sellerStripeAccount: sellerAcct } : {}),
+          saySomething: async (sideId, text, rule) => {
+            ROUND++;
+            await turn(sides[sideId], text, rule);
+          },
+        });
+        // Keep BOTH sets of notes: the payment-setup ones written before the
+        // finale started, and the ones it wrote reading Stripe back afterwards.
+        finale = { ...ran, notes: [...prepNotes, ...ran.notes] };
+        // Give each agent one last turn so it can tell its human what happened.
+        for (const side of [buyerSide, sellerSide]) {
+          ROUND++;
+          await turn(side, HEARTBEAT, 'heartbeat-after-settlement').catch((e) =>
+            log(`  post-settlement turn failed: ${(e as Error).message}`),
+          );
+        }
+        await watcher.poll();
+      }
+    } catch (e) {
+      finale.notes.push(`the settlement finale threw: ${(e as Error).message.slice(0, 300)}`);
+      log(`settlement finale threw: ${(e as Error).message}`);
+    }
+    // Each agent's own words about what the payment costs, whatever happened.
+    finale.feeExplanations = [
+      ...findFeeExplanations(sides.priya.replies, 'priya', sides.priya.agent),
+      ...findFeeExplanations(sides.marlowe.replies, 'marlowe', sides.marlowe.agent),
+    ];
+    for (const l of formatFinale(finale)) log(l);
+  }
+
   // --- 5. End-of-run checks.
   //
   // A fresh access token per side first. The one minted at provisioning is good
@@ -1080,8 +1204,11 @@ async function main(): Promise<number> {
       'HARNESS ARTEFACT, read the transcript with it in mind: the dev board is shared with real accounts, so the outsider guard mutes and DECLINES any introduction between a run account and someone outside the run — using that run account\'s own token, which is the same door its agent would use. An agent therefore sees introductions it showed interest in come back declined, and may narrate that to its human as the other party losing interest. Those declines are the harness protecting real people\'s boards, not a behaviour of the agent or of the product.',
       'The jargon linter is the register eval\'s, with one allowance made here and nowhere else: a clock time in a reply that is arranging a pickup ("Saturday at 10:00, at the shops") is two people agreeing when to meet rather than the machinery reading out a window, so it is excused. The count of excused times is printed beside each model\'s leak table. The register eval\'s own rule is untouched.',
       'A settlement row is read as a deal. A settlement is only ever proposed after the two sides have agreed a figure, so its existence says a deal was reached — even when the figure travelled as words rather than as an offer, which is exactly the case the offers-rail measurement above is there to separate out.',
+      'The settlement finale shortcuts exactly one thing, and says so where it matters: the seller\'s Stripe connected account is created pre-verified through Stripe\'s test-mode API and attached BEFORE either human approves. A real seller reaches the same place through the hosted account-link flow at their first approval, which no harness can click; skipping the attachment would leave the account unverified and the release transfer would fail a capability check, which tests Stripe rather than the switchboard. Everything else in the finale is real — both approvals pressed on the real pages with the real PINs, the real hosted Checkout Session completed in a browser with a Stripe test card, and every state read back from the settlements table where only the signature-verified webhook writes it.',
+      'The one thing the harness ever volunteers about money is a single sentence from the buyer\'s human ("can we do the protected payment thing through the switchboard"), and only when neither agent raised it first. It carries no figure, no fee and no instruction about how. Whether a settlement follows, and what either agent tells its human it costs, is the agents\' own doing and is quoted verbatim in the report.',
       'One dev deployment, one run: this is an existence proof and a source of verbatim transcript, not a statistic.',
     ],
+    ...(finale.attempted || finale.skipped ? { settlement: finale } : {}),
     nagathaMemoryAfterRun: nagathaMemoryAfterRun || undefined,
   };
   const paths = writeReport(report, REPORTS_DIR);

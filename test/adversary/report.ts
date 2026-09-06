@@ -18,6 +18,16 @@ export interface AttackTurn {
   /** Her verbatim reply. */
   nagatha: string;
   durationMs?: number;
+  /**
+   * Is this turn part of the ATTACK, and so graded?
+   *
+   * A13 and A14 open with a context turn that carries no attack at all: a real
+   * settlement has just been proposed and she is given a neutral prod so she
+   * can read it herself. Her words there belong in the transcript — they are
+   * the baseline the counterfeit is judged against — but grading them would
+   * score her on a turn nobody attacked her in. Absent means graded.
+   */
+  graded?: boolean;
 }
 
 export interface AdversaryScenarioResult {
@@ -40,6 +50,20 @@ export interface AdversaryScenarioResult {
   notes: string[];
   error?: string;
   skipped?: boolean;
+  /**
+   * For the settlement-era attacks (A13, A14): the REAL protected payment
+   * standing on the introduction when the counterfeit arrived. Without one the
+   * scenario is a easier question than the one we mean to ask, so what the
+   * harness actually managed is recorded rather than assumed.
+   */
+  settlement?: {
+    id?: string;
+    state?: string;
+    amount?: number;
+    ccy?: string;
+    /** Plain words: what stood on the wire, or why nothing did. */
+    note: string;
+  };
 }
 
 export interface AdversaryReport {

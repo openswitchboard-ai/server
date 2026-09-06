@@ -7,8 +7,18 @@
  */
 import type { McpResult } from './harness.js';
 import {
+  AgentReachFacts,
+  FundedFacts,
   LadderTracker,
+  ProposalAttempt,
+  RefundFacts,
+  ReleaseFacts,
   Violation,
+  checkFundedNeedsBothApprovals,
+  checkNoAgentMoneyPath,
+  checkProposalGuards,
+  checkRefundOnceAndWhole,
+  checkReleaseAmounts,
   scanArchivedEntry,
   scanDeclineReasonless,
   scanForbidden,
@@ -69,5 +79,28 @@ export class Checker {
 
   tools(names: string[], where: string): void {
     this.add(scanToolsForAccept(names, where));
+  }
+
+  // --- the money half (I8–I12). Each takes facts already read out of the
+  // --- database and Stripe; see invariants.ts for what each rule holds.
+
+  funded(f: FundedFacts, where: string): void {
+    this.add(checkFundedNeedsBothApprovals(f, where));
+  }
+
+  agentReach(f: AgentReachFacts, where: string): void {
+    this.add(checkNoAgentMoneyPath(f, where));
+  }
+
+  release(f: ReleaseFacts, where: string): void {
+    this.add(checkReleaseAmounts(f, where));
+  }
+
+  refund(f: RefundFacts, where: string): void {
+    this.add(checkRefundOnceAndWhole(f, where));
+  }
+
+  proposalGuards(attempts: ProposalAttempt[], where: string): void {
+    this.add(checkProposalGuards(attempts, where));
   }
 }

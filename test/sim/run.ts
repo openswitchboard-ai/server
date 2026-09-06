@@ -14,6 +14,8 @@
  *   SIM_REDTEAM_RATE=0   skip the read-ceiling hammer (spends a whole actor-hour)
  *   SIM_SKIP_CATEGORY=1  skip the category-divergence group (below)
  *   SIM_ONLY_CATEGORY=1  run ONLY that group (npm run sim:category)
+ *   SIM_SKIP_MONEY=1     skip the money group (two real Stripe settlements)
+ *   SIM_ONLY_MONEY=1     run ONLY that group (npm run sim:money)
  *
  * Gated OFF by default: refuses to start unless RUN_SIM=1, so `npm test` (which
  * only runs test/unit + conformance) never touches it.
@@ -35,6 +37,7 @@ import {
   groupEnd,
   log,
 } from './harness.js';
+import { MoneyResult, formatMoneyTable, runMoney } from './money.js';
 import { RedTeamResult, runRedTeam } from './redteam.js';
 import { SCENARIOS, ScenarioCtx } from './scenarios.js';
 
@@ -88,7 +91,12 @@ async function main(): Promise<number> {
   // one worth running on its own: it is quick, it touches nothing but the
   // matcher's category rule, and its whole output is one table.
   const onlyCategory = process.env.SIM_ONLY_CATEGORY === '1';
-  const fuzzRounds = onlyCategory ? 0 : Number(process.env.SIM_FUZZ_ROUNDS ?? 4);
+  // SIM_ONLY_MONEY narrows the run to the money group, for the same reason:
+  // it is the group a person runs on its own while thinking about settlement,
+  // it costs two real Stripe settlements, and its whole output is one table.
+  const onlyMoney = process.env.SIM_ONLY_MONEY === '1';
+  const narrowed = onlyCategory || onlyMoney;
+  const fuzzRounds = narrowed ? 0 : Number(process.env.SIM_FUZZ_ROUNDS ?? 4);
 
   const h = new Harness();
   log('='.repeat(72));
@@ -98,7 +106,9 @@ async function main(): Promise<number> {
   log(
     onlyCategory
       ? `actors=${nActors}  category-divergence group ONLY (SIM_ONLY_CATEGORY=1)`
-      : `actors=${nActors}  fuzz_rounds=${fuzzRounds}  seed=${seed}`,
+      : onlyMoney
+        ? `actors=${nActors}  money group ONLY (SIM_ONLY_MONEY=1)`
+        : `actors=${nActors}  fuzz_rounds=${fuzzRounds}  seed=${seed}`,
   );
   log('='.repeat(72));
 
@@ -107,6 +117,8 @@ async function main(): Promise<number> {
 
   const scenarioReports: ScenarioReport[] = [];
   let categoryDivergence: CategoryDivergenceResult | undefined;
+  let money: MoneyResult | undefined;
+  let moneyError: string | undefined;
   let redTeam: RedTeamResult[] = [];
   let fuzzOutcome: Awaited<ReturnType<typeof runFuzz>> | undefined;
   let residueBefore = -1;
@@ -143,7 +155,7 @@ async function main(): Promise<number> {
     // SIM_SKIP_SCENARIOS=1 leaves each account's whole 10/day publish budget to
     // fuzz — useful for a fuzz-focused pass on a small (per-IP-capped) pool,
     // where the scenarios would otherwise spend most of the publish quota first.
-    const skipScenarios = process.env.SIM_SKIP_SCENARIOS === '1' || onlyCategory;
+    const skipScenarios = process.env.SIM_SKIP_SCENARIOS === '1' || narrowed;
     for (const [i, s] of (skipScenarios ? [] : SCENARIOS).entries()) {
       group(`scenario: ${s.name}`);
       if (h.actors.length < s.minActors) {
@@ -172,7 +184,7 @@ async function main(): Promise<number> {
     // Its own group rather than another entry in SCENARIOS: it asks one
     // question across five filings and answers it as a table, and it is the
     // group a person runs on its own while thinking about the taxonomy.
-    if (process.env.SIM_SKIP_CATEGORY === '1') {
+    if (process.env.SIM_SKIP_CATEGORY === '1' || onlyMoney) {
       log('category-divergence group skipped (SIM_SKIP_CATEGORY=1)');
     } else if (h.actors.length < 2) {
       log(`category-divergence group skipped — needs 2 actors, pool has ${h.actors.length}`);
@@ -182,6 +194,35 @@ async function main(): Promise<number> {
         categoryDivergence = await runCategoryDivergence(h, check, h.actors);
       } catch (e) {
         log(`category-divergence group threw: ${String(e)}`);
+      } finally {
+        await h.reclaimCards();
+      }
+      groupEnd();
+    }
+
+    // ---- money ----------------------------------------------------------
+    // Safe hands, end to end, twice: one settlement released and one disputed,
+    // against the dev Stripe sandbox. Its own group rather than a scenario
+    // because it is the slowest thing here (two hosted Checkout pages driven
+    // in a browser, two webhook waits) and because a person thinking about
+    // settlement wants to run exactly this and nothing else.
+    //
+    // It runs BEFORE the fuzz and the red-team on purpose: both of those spend
+    // an account's 60/h read ceiling freely, and the money group's assertions
+    // are mostly database reads but its approvals and proposals are not.
+    if (process.env.SIM_SKIP_MONEY === '1' || onlyCategory) {
+      log('money group skipped (SIM_SKIP_MONEY=1)');
+    } else if (h.actors.length < 3) {
+      log(`money group skipped — needs 3 actors (buyer, seller, a stranger), pool has ${h.actors.length}`);
+    } else {
+      group('money: safe hands, released and disputed, against the Stripe sandbox');
+      try {
+        money = await runMoney(h, check, h.actors);
+      } catch (e) {
+        // A money group that threw part-way has usually left a real settlement
+        // in a real state, so the message matters more than the stack.
+        moneyError = String(e);
+        log(`money group threw: ${moneyError.slice(0, 400)}`);
       } finally {
         await h.reclaimCards();
       }
@@ -208,7 +249,7 @@ async function main(): Promise<number> {
 
     // ---- red team -------------------------------------------------------
     // SIM_SKIP_REDTEAM=1 pairs with SIM_SKIP_SCENARIOS for a fuzz-only pass.
-    if (process.env.SIM_SKIP_REDTEAM === '1' || onlyCategory) {
+    if (process.env.SIM_SKIP_REDTEAM === '1' || narrowed) {
       log('red-team driver skipped (SIM_SKIP_REDTEAM=1)');
     } else {
       group('red-team driver');
@@ -264,6 +305,12 @@ async function main(): Promise<number> {
             : 'NO ROW written for the refused category  <-- FINDING'
       }`,
     );
+    log('');
+  }
+  if (money || moneyError) {
+    log('Money (safe hands, against the Stripe sandbox):');
+    if (money) for (const l of formatMoneyTable(money)) log(`  ${l}`);
+    if (moneyError) log(`  the group did not finish: ${moneyError.slice(0, 400)}  <-- FINDING`);
     log('');
   }
   log('Red-team attempts (each must be correctly refused):');
@@ -324,13 +371,19 @@ async function main(): Promise<number> {
   // A category case that did not do what the current rule says it does is a
   // real change in matching behaviour, whichever direction it moved in.
   const categoryDiverged = !!categoryDivergence && categoryDivergence.failures > 0;
+  // A money group that threw is a fail on its own: it was driving real money
+  // through a real sandbox, and stopping half way is not a clean result even
+  // when no invariant recorded a violation. The violations themselves are
+  // already counted by invariantBroke.
+  const moneyBroke = !!moneyError;
   const ok =
     !scenarioFailed &&
     !redTeamGotThrough &&
     !invariantBroke &&
     !dirtyBoard &&
     !matcherBug &&
-    !categoryDiverged;
+    !categoryDiverged &&
+    !moneyBroke;
   log(ok ? 'RESULT: PASS' : 'RESULT: FAIL (see findings above)');
   return ok ? 0 : 1;
 }

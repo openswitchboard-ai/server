@@ -4,6 +4,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["./**/*.ts", "../integration/helpers.ts"],
+  "include": ["./**/*.ts", "../integration/helpers.ts", "../integration/stripeHelpers.ts"],
   "exclude": []
 }

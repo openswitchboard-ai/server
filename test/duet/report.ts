@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { GradeResult, LeakHit, leakFrequency } from '../realism/grader.js';
 import type { DbEvent } from './progress.js';
 import type { SideId } from './persona.js';
+import { type SettlementFinale, formatFinale } from './settlement.js';
 
 export interface Utterance {
   ts: string;
@@ -107,6 +108,13 @@ export interface DuetReport {
   listings: { side: string; type: string; category: string; geo: any; attributes: any }[];
   /** Pairs of the run's own cards the engine scored but did not introduce. */
   nearMisses: { score: number; category: string; threshold: number }[];
+  /**
+   * The money, all the way through: both approvals, the buyer's three-line
+   * Checkout, the handover, and the release or the refund — with the state
+   * timeline read back from the database and the figures read back from
+   * Stripe. See duet/settlement.ts.
+   */
+  settlement?: SettlementFinale;
   nagathaMemoryAfterRun?: string;
 }
 
@@ -197,6 +205,79 @@ export function renderMarkdown(r: DuetReport): string {
     L.push('| --- | --- | --- |');
     for (const s of r.offersRail.settlements) L.push(`| ${s.side} | ${s.amount} ${s.ccy} | ${s.state} |`);
     L.push('');
+  }
+
+  // --- the money, all the way through -------------------------------------
+  if (r.settlement) {
+    const f = r.settlement;
+    L.push('## Safe hands: the money, all the way through');
+    L.push('');
+    if (!f.attempted || f.skipped) {
+      L.push(`_The finale did not run to the end: ${f.skipped ?? 'it was never started'}._`);
+      L.push('');
+    }
+    if (f.settlementId) {
+      L.push(
+        `A settlement of **${f.amount} ${f.ccy}** was proposed by **${f.proposedBy}**, ` +
+          (f.humanPrompted
+            ? 'after the buyer\'s human raised a protected payment once, in one sentence, with no figure and no instruction about how.'
+            : '**unprompted** — neither human ever mentioned a protected payment; the agent offered it off the manual.'),
+      );
+      L.push('');
+      L.push(`Variant: **${f.variant}**. Final state: **${f.finalState ?? 'unknown'}**.`);
+      L.push('');
+    }
+    if (f.timeline.length) {
+      L.push('| when | state | what put it there |');
+      L.push('| --- | --- | --- |');
+      for (const e of f.timeline) {
+        L.push(`| ${e.at} | \`${e.state}\` | ${e.by}${e.detail ? ` — ${e.detail}` : ''} |`);
+      }
+      L.push('');
+      L.push(
+        'Every state above was read back out of the `settlements` table. `funded`, `released` and `refunded` are ' +
+          "written only by Stripe's signature-verified webhook, so a 200 or a 303 from the counter is not evidence " +
+          'that money moved.',
+      );
+      L.push('');
+    }
+    if (f.money) {
+      const m = f.money;
+      const fmt = (v: number | null | undefined) =>
+        v === null || v === undefined ? '—' : `$${(v / 100).toFixed(2)}`;
+      L.push('**What the buyer was charged, itemised as they saw it:**');
+      L.push('');
+      L.push('| line | amount |');
+      L.push('| --- | --- |');
+      L.push(`| the agreed amount | ${fmt(m.agreedMinor)} |`);
+      L.push(`| introductory fee | ${fmt(m.feeMinor)} |`);
+      L.push(`| card processing, at the provider's standard rate | ${fmt(m.processingMinor)} |`);
+      L.push(`| **the buyer's total** | **${fmt(m.buyerTotalMinor)}** |`);
+      L.push('');
+      L.push('| read back from Stripe | amount |');
+      L.push('| --- | --- |');
+      if (m.stripeChargedMinor !== undefined) L.push(`| taken from the buyer | ${fmt(m.stripeChargedMinor)} |`);
+      if (m.stripeTransferMinor !== undefined) L.push(`| transferred to the seller | ${fmt(m.stripeTransferMinor)} |`);
+      if (m.stripeRefundedMinor !== undefined) L.push(`| refunded to the buyer | ${fmt(m.stripeRefundedMinor)} |`);
+      L.push('');
+    }
+    L.push('### What each agent told its human the payment costs');
+    L.push('');
+    if (!f.feeExplanations.length) {
+      L.push('_Neither agent explained the fee to its human in words this scan could find._');
+    } else {
+      for (const e of f.feeExplanations) {
+        L.push(`**${e.agent}:**`);
+        L.push('');
+        L.push('> ' + e.excerpt.split('\n').join('\n> '));
+        L.push('');
+      }
+    }
+    L.push('');
+    if (f.notes.length) {
+      for (const n of f.notes) L.push(`- ${n}`);
+      L.push('');
+    }
   }
 
   L.push('## What the two agents published, and whether the engine introduced them');
