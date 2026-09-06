@@ -220,7 +220,9 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const charge = charges.data[0];
     expect(charge.captured).toBe(true);
     expect(charge.amount_captured).toBe(BUYER_TOTAL_MINOR);
-    expect(charge.transfer).toBeNull();
+    // Stripe omits `transfer` on a charge that has none, so read the absence
+    // the same way the PaymentIntent's transfer_data is read above.
+    expect(charge.transfer ?? null).toBeNull();
 
     // The seller's side: one transfer, for the agreed amount in full,
     // carrying the settlement id as its transfer_group.
