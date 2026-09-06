@@ -74,7 +74,7 @@ import {
   writeEvidenceManifest,
 } from '../domain/evidence.js';
 import { settlementsConfigured } from '../config.js';
-import { formatMinor, settlementFeeMinor, toMinorUnits } from '../stripe.js';
+import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
@@ -133,10 +133,39 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     const html = (reply: FastifyReply, body: string, code = 200) =>
       reply.code(code).type('text/html').send(body);
 
-    /** The introductory fee on a settlement, written out for a human. The
-     *  buyer pays the agreed amount exactly; the seller receives it less this. */
-    const settlementFeeLine = (row: { amount: string; ccy: string }): string =>
-      formatMinor(settlementFeeMinor(toMinorUnits(Number(row.amount), row.ccy), cfg), row.ccy);
+    /** The three lines a settlement charges the buyer, written out for a
+     *  human. The seller receives the agreed amount in full; the introductory
+     *  fee and the card processing are the buyer's, itemised. */
+    const settlementMoneyLines = (row: {
+      amount: string;
+      ccy: string;
+      fee_amount_minor?: number | null;
+      processing_fee_minor?: number | null;
+      buyer_total_minor?: number | null;
+    }) => {
+      const amountMinor = toMinorUnits(Number(row.amount), row.ccy);
+      // Once a Checkout Session exists the row holds the exact figures the
+      // buyer was shown, and those are what both humans keep seeing. Before
+      // that there is nothing to show but what today's config would charge.
+      const stored =
+        row.buyer_total_minor != null &&
+        row.processing_fee_minor != null &&
+        row.fee_amount_minor != null;
+      const b = stored
+        ? {
+            amountMinor,
+            feeMinor: row.fee_amount_minor!,
+            processingMinor: row.processing_fee_minor!,
+            buyerTotalMinor: row.buyer_total_minor!,
+          }
+        : settlementBreakdown(amountMinor, cfg);
+      return {
+        amount: formatMinor(b.amountMinor, row.ccy),
+        fee: formatMinor(b.feeMinor, row.ccy),
+        processing: formatMinor(b.processingMinor, row.ccy),
+        buyerTotal: formatMinor(b.buyerTotalMinor, row.ccy),
+      };
+    };
 
     // A failed send (SES congestion, sandbox quota) still shows the code page:
     // the code is still required, and the honest note says the email may lag.
@@ -655,21 +684,20 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return { error: `This settlement is ${s.state} — nothing to decide.` };
         }
         const m = await getMatch(s.match_id);
-        const fee = settlementFeeLine(s);
-        const amountMinor = toMinorUnits(Number(s.amount), s.ccy);
+        const money = settlementMoneyLines(s);
+        // Both humans see the same three lines, in the same words, on the page
+        // where they act: the buyer pays the fees, itemised, and the seller
+        // receives the agreed amount in full.
         facts.push(
           {
             k: party === 'buyer' ? 'You would pay' : 'You would be paid',
-            v:
-              party === 'buyer'
-                ? `${Number(s.amount)} ${s.ccy}`
-                : formatMinor(amountMinor - settlementFeeMinor(amountMinor, cfg), s.ccy),
+            v: party === 'buyer' ? money.buyerTotal : money.amount,
           },
           { k: 'For', v: m ? categoryLeafLabel(m.category) : 'your match' },
-          {
-            k: 'Introductory fee',
-            v: `${fee}, taken from the amount released to the seller`,
-          },
+          { k: 'What you agreed', v: money.amount },
+          { k: 'Introductory fee', v: `${money.fee}, paid by the buyer` },
+          { k: 'Card processing', v: `${money.processing}, at Stripe's standard rate` },
+          { k: 'The seller receives', v: `${money.amount} in full` },
           {
             k: 'How it works',
             v: party === 'buyer' ? 'held until you confirm receipt' : 'held until the buyer confirms receipt',
@@ -965,8 +993,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         id: row.id,
         role,
         state: row.state,
-        amount: `${Number(row.amount)} ${row.ccy}`,
-        fee: settlementFeeLine(row),
+        ...settlementMoneyLines(row),
         category: m ? categoryLeafLabel(m.category) : 'your match',
         descriptionText: row.description?.text,
         myApprovalPending:

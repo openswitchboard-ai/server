@@ -9,13 +9,19 @@
  *   - The buyer's money is captured immediately into our own Stripe balance.
  *     No destination charge, no transfer_data, no application fee, no manual
  *     capture. The settlement id is the PaymentIntent's transfer_group.
- *   - "Safe hands" is therefore the platform holding the money, not a card
- *     authorisation ageing out. Releasing is a Transfer of amount - fee to
- *     the seller's connected account, with the same transfer_group and the
- *     settlement id as its idempotency key.
- *   - Refunding is a refund of the PaymentIntent. The money never left our
- *     balance, so nothing has to be reversed; if a transfer did already go
- *     out (a release and a dispute racing), it is reversed first.
+ *   - The buyer pays three itemised lines: the agreed amount, our flat
+ *     introductory fee, and card processing at Stripe's standard rate, grossed
+ *     up so the first two survive Stripe's cut of the whole charge.
+ *   - "Safe hands" is therefore the platform holding the money rather than a
+ *     card authorisation ageing out. Releasing is a Transfer of the AGREED
+ *     AMOUNT to the seller's connected account, with the same transfer_group
+ *     and the settlement id as its idempotency key: the seller receives what
+ *     was agreed, in full, and the two fee lines stay in the platform balance
+ *     because the buyer put them there.
+ *   - Refunding is a refund of the PaymentIntent, the whole buyer total. The
+ *     money never left our balance, so nothing has to be reversed; if a
+ *     transfer did already go out (a release and a dispute racing), it is
+ *     reversed first.
  *
  * NOTE these functions move money but never settlement STATE: state changes
  * live exclusively in settlements.ts behind human/webhook contexts. Transfer
@@ -29,7 +35,7 @@ import { getPool } from '../db.js';
 import { decryptFields, encryptField } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { accountEmail } from './counterOps.js';
-import { getStripe, settlementFeeMinor, toMinorUnits } from '../stripe.js';
+import { getStripe, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import type { Config } from '../config.js';
 import type { SettlementRow } from './settlements.js';
 
@@ -191,6 +197,15 @@ function integrationIdentifier(): string {
  * the seller's share leaves later, as a transfer. The settlement id travels
  * as the PaymentIntent's transfer_group so the charge and the transfer sit
  * together in Stripe's own reporting.
+ *
+ * THREE LINE ITEMS, because the buyer pays the fees and is shown what they
+ * are: the thing itself at the agreed amount, our flat introductory fee, and
+ * card processing at Stripe's standard rate. The seller receives the agreed
+ * amount in full.
+ *
+ * The breakdown is written onto the settlement row here, at the moment the
+ * buyer is shown it. That row, and not a recomputation from config, is what
+ * the funding webhook checks the payment against later.
  */
 export async function createCheckoutForSettlement(
   cfg: Config,
@@ -198,21 +213,21 @@ export async function createCheckoutForSettlement(
 ): Promise<{ url: string; sessionId: string }> {
   const stripe = await getStripe();
   const amountMinor = toMinorUnits(Number(s.amount), s.ccy);
-  const fee = settlementFeeMinor(amountMinor, cfg);
+  const b = settlementBreakdown(amountMinor, cfg);
+  const currency = s.ccy.toLowerCase();
+  const line = (unit_amount: number, name: string) => ({
+    quantity: 1,
+    price_data: { currency, unit_amount, product_data: { name } },
+  });
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     success_url: `${cfg.counterOrigin}/settlements/${s.id}`,
     cancel_url: `${cfg.counterOrigin}/settlements/${s.id}`,
     integration_identifier: integrationIdentifier(),
     line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: s.ccy.toLowerCase(),
-          unit_amount: amountMinor,
-          product_data: { name: 'OpenSwitchboard settlement (held until you confirm receipt)' },
-        },
-      },
+      line(b.amountMinor, 'What you agreed (held until you confirm receipt)'),
+      line(b.feeMinor, 'Protected payment — introductory fee'),
+      line(b.processingMinor, "Card processing, at Stripe's standard rate"),
     ],
     payment_intent_data: {
       transfer_group: s.id,
@@ -223,8 +238,9 @@ export async function createCheckoutForSettlement(
   if (!session.url) throw new Error('stripe checkout session has no url');
   await getPool().query(
     `UPDATE settlements SET stripe_checkout_session = $2, fee_amount_minor = $3,
-       updated_at = now() WHERE id = $1`,
-    [s.id, session.id, fee],
+       processing_fee_minor = $4, buyer_total_minor = $5, updated_at = now()
+     WHERE id = $1`,
+    [s.id, session.id, b.feeMinor, b.processingMinor, b.buyerTotalMinor],
   );
   return { url: session.url, sessionId: session.id };
 }
@@ -245,7 +261,10 @@ export async function checkoutUrlForSettlement(cfg: Config, s: SettlementRow): P
 }
 
 /**
- * Release: transfer amount - fee from the platform balance to the seller.
+ * Release: transfer the AGREED AMOUNT, in full, from the platform balance to
+ * the seller. Our fee and the processing recovery never touch this figure —
+ * the buyer paid both as lines of their own, so they are already sitting in
+ * the platform balance by construction.
  *
  * The settlement id is the idempotency key, so a retry — a human pressing
  * confirm twice, a route replayed — can never pay the seller twice. The
@@ -267,10 +286,9 @@ export async function transferToSellerForSettlement(
   }
   const stripe = await getStripe();
   const amountMinor = toMinorUnits(Number(s.amount), s.ccy);
-  const fee = settlementFeeMinor(amountMinor, cfg);
   const transfer = await stripe.transfers.create(
     {
-      amount: amountMinor - fee,
+      amount: amountMinor,
       currency: s.ccy.toLowerCase(),
       destination: sellerId,
       transfer_group: s.id,
@@ -279,18 +297,24 @@ export async function transferToSellerForSettlement(
     { idempotencyKey: `osb-settlement-release-${s.id}` },
   );
   await getPool().query(
-    `UPDATE settlements SET stripe_transfer_id = $2, fee_amount_minor = $3, updated_at = now()
-     WHERE id = $1`,
-    [s.id, transfer.id, fee],
+    `UPDATE settlements SET stripe_transfer_id = $2, updated_at = now() WHERE id = $1`,
+    [s.id, transfer.id],
   );
   return transfer;
 }
 
 /**
- * Refund: the buyer's money goes back in full. It never left the platform
- * balance, so there is nothing to claw back from the seller. If a transfer
- * did already go out — a confirm and a dispute crossing — it is reversed
- * first, and only then is the buyer refunded.
+ * Refund: the buyer's money goes back in full — the agreed amount, our
+ * introductory fee and the processing line, the whole buyer total. A dispute
+ * costs the buyer nothing, and the platform wears Stripe's cut on the round
+ * trip. The refund carries no amount, which is Stripe's own way of saying
+ * "all of it", so it always matches whatever the buyer was actually charged.
+ *
+ * The money never left the platform balance, so there is nothing to claw back
+ * from the seller. If a transfer did already go out — a confirm and a dispute
+ * crossing — it is reversed first (that transfer is the agreed amount, so the
+ * reversal brings the agreed amount home and the rest is already here), and
+ * only then is the buyer refunded.
  *
  * The 'refunded' state lands from the charge.refunded webhook.
  */
@@ -321,23 +345,32 @@ export async function refundPaymentForSettlement(s: SettlementRow): Promise<void
 
 /**
  * Verify a PaymentIntent actually matches its settlement before the funded
- * transition: right amount, right currency, the settlement's own
+ * transition: the right total, right currency, the settlement's own
  * transfer_group, and money actually taken. Anything else is refused — a
  * webhook event can only fund a settlement with the exact payment shape the
  * settlement calls for.
+ *
+ * The total checked is buyer_total_minor, WRITTEN ONTO THE ROW when the
+ * Checkout Session was created, so this is a comparison against the figure
+ * the buyer was actually shown. It is never recomputed from config here: a
+ * fee or a rate changed between the session and the payment would otherwise
+ * refuse an honest payment. A settlement with no recorded total has no
+ * session behind it and funds nothing.
  *
  * There is no capture-method check any more: these charges capture on the
  * spot, and no destination to check either, because the money lands in the
  * platform balance and is transferred on separately.
  */
 export async function verifyPaymentMatchesSettlement(
-  cfg: Config,
   s: SettlementRow,
   paymentIntentId: string,
 ): Promise<{ ok: true } | { ok: false; problem: string }> {
   const stripe = await getStripe();
   const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-  const expectedMinor = toMinorUnits(Number(s.amount), s.ccy);
+  const expectedMinor = s.buyer_total_minor;
+  if (expectedMinor === null || expectedMinor === undefined) {
+    return { ok: false, problem: 'settlement has no recorded buyer total' };
+  }
   if (pi.status !== 'succeeded') return { ok: false, problem: `status ${pi.status}` };
   if (pi.amount_received !== expectedMinor) {
     return { ok: false, problem: `received ${pi.amount_received} != ${expectedMinor}` };

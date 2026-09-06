@@ -23,7 +23,7 @@ import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, sideOf, type MatchRow } from './matches.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
-import { settlementFeeMinor, toMinorUnits } from '../stripe.js';
+import { settlementBreakdown, toMinorUnits } from '../stripe.js';
 import type { Config } from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,15 @@ export interface SettlementRow {
   ccy: string;
   description: any;
   state: SettlementState;
+  /** Our introductory fee, in minor units. The buyer pays it. */
   fee_amount_minor: number;
+  /** The card-processing line the buyer was shown, in minor units. Written
+   *  with the Checkout Session; null until one exists. */
+  processing_fee_minor: number | null;
+  /** The three lines added up: what the buyer was actually charged. Written
+   *  with the Checkout Session, and the figure the funding webhook checks the
+   *  payment against. */
+  buyer_total_minor: number | null;
   buyer_approved_at: Date | null;
   seller_approved_at: Date | null;
   stripe_checkout_session: string | null;
@@ -220,11 +228,11 @@ export async function proposeSettlement(
       validation: true,
     });
   }
-  // The introductory fee comes out of what the seller receives, so a
-  // settlement has to be worth more than the fee. Refused here, before a row
-  // exists, rather than at the transfer.
+  // A settlement has to be worth more than the fee riding on it, or the
+  // three lines the buyer sees make no sense. Refused here, before a row
+  // exists, rather than at the Checkout Session.
   try {
-    settlementFeeMinor(toMinorUnits(input.amount, input.ccy), cfg);
+    settlementBreakdown(toMinorUnits(input.amount, input.ccy), cfg);
   } catch {
     throw Object.assign(
       new Error('the amount is too small to settle through the switchboard'),

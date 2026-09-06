@@ -303,6 +303,8 @@ const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.Settl
   state: 'approved',
   amount: '87.65 AUD',
   fee: '1.00 AUD',
+  processing: '1.84 AUD',
+  buyerTotal: '90.49 AUD',
   category: LABEL,
   myApprovalPending: false,
   canPay: false,
@@ -371,9 +373,12 @@ describe('counter pages: copy-cull render suite', () => {
         action: 'settlement-approve',
         refId: 's-1',
         facts: [
-          { k: 'You would pay', v: '87.65 AUD' },
+          { k: 'You would pay', v: '90.49 AUD' },
           { k: 'For', v: LABEL },
-          { k: 'Introductory fee', v: '1.00 AUD, taken from the amount released to the seller' },
+          { k: 'What you agreed', v: '87.65 AUD' },
+          { k: 'Introductory fee', v: '1.00 AUD, paid by the buyer' },
+          { k: 'Card processing', v: "1.84 AUD, at Stripe's standard rate" },
+          { k: 'The seller receives', v: '87.65 AUD in full' },
           { k: 'How it works', v: 'held until you confirm receipt' },
         ],
         anomalies: [],
@@ -544,28 +549,35 @@ describe('counter pages: copy-cull render suite', () => {
     expect(LABEL).not.toContain('.');
   });
 
-  // The fee is charged to the seller, so BOTH humans are told about it in the
-  // same words, on the page where they act.
-  it('every settlement page says the fee and which side it comes off', () => {
+  // The buyer pays the fees, itemised, so BOTH humans are told the same three
+  // lines in the same words, on the page where they act.
+  it('every settlement page itemises the three lines and who pays them', () => {
     for (const role of ['buyer', 'seller'] as const) {
       const html = cpages.settlementPage(settlementView({ role, canPay: role === 'buyer' }));
       expect(html, role).toContain('Introductory fee');
-      expect(html, role).toContain('1.00 AUD');
-      expect(html, role).toContain('taken from the amount released to the seller');
+      expect(html, role).toContain('1.00 AUD, paid by the buyer');
+      expect(html, role).toContain('Card processing');
+      expect(html, role).toContain('1.84 AUD');
+      expect(html, role).toContain('90.49 AUD');
+      expect(html, role).toContain('87.65 AUD in full');
     }
   });
 
-  it('the buyer is told they pay the agreed amount exactly', () => {
+  it('the buyer sees the three lines before they go to Stripe', () => {
     const html = cpages.settlementPage(settlementView({ canPay: true }));
-    expect(html).toContain('You pay 87.65 AUD exactly');
+    expect(html).toContain('87.65 AUD for what you agreed');
+    expect(html).toContain('an introductory fee of\n1.00 AUD');
+    expect(html).toContain("1.84 AUD for card processing at Stripe's standard rate");
+    expect(html).toContain('That comes to 90.49 AUD');
+    expect(html).toContain('the seller receives the 87.65 AUD you agreed, in full');
   });
 
-  it('confirming says what the seller actually receives', () => {
+  it('confirming says the seller receives the agreed amount in full', () => {
     const html = cpages.settlementPage(
       settlementView({ state: 'evidence-locked', canConfirm: true }),
     );
-    expect(html).toContain('less the introductory');
-    expect(html).toContain('1.00 AUD');
+    expect(html).toContain('Confirming releases 87.65 AUD to the seller');
+    expect(html).toContain('nothing comes off the seller');
   });
 
   for (const p of allPages()) {

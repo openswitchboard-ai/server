@@ -14,7 +14,9 @@
  *    the internal ops worker has no settlement vocabulary at all.
  *  - ROUTES: /stripe/webhook does not exist unless the deployment is
  *    configured for settlements; when it exists it rejects unsigned posts.
- *  - MONEY MATH: fee parameter present, wired, and equal to 0.
+ *  - MONEY MATH: the buyer's three lines — the agreed amount, our flat
+ *    introductory fee, and card processing grossed up to survive Stripe's cut
+ *    of the whole charge — and the seller receiving the agreed amount in full.
  *  - WEBHOOK SIGNATURES: Stripe's own constructEvent rejects a wrong secret
  *    and a tampered payload (real verification code, no mocks).
  */
@@ -30,6 +32,8 @@ import {
   WEBHOOK_EVENTS,
   feeMinorUnits,
   formatMinor,
+  processingRecoveryMinor,
+  settlementBreakdown,
   settlementFeeMinor,
   toMinorUnits,
 } from '../../src/stripe.js';
@@ -60,6 +64,8 @@ const baseCfg: Config = {
   docsBase: 'https://openswitchboard.ai/docs',
   settlementFeePercent: 0,
   settlementFeeFlatMinor: 100,
+  settlementProcessingPercent: 1.7,
+  settlementProcessingFixedMinor: 30,
 };
 
 const srcRoot = join(__dirname, '..', '..', 'src');
@@ -246,7 +252,7 @@ describe('settle tool', () => {
   });
 });
 
-describe('money math (a flat introductory fee, taken off the seller)', () => {
+describe('money math (buyer-paid, itemised: agreed + our fee + card processing)', () => {
   it('converts to minor units per currency', () => {
     expect(toMinorUnits(600, 'AUD')).toBe(60000);
     expect(toMinorUnits(12.34, 'AUD')).toBe(1234);
@@ -290,10 +296,50 @@ describe('money math (a flat introductory fee, taken off the seller)', () => {
     expect(formatMinor(100, 'JPY')).toBe('100 JPY'); // zero-decimal
   });
 
-  it('the seller receives amount - fee and the buyer pays the amount exactly', () => {
-    const amountMinor = toMinorUnits(87.65, 'AUD');
-    expect(amountMinor).toBe(8765);
-    expect(amountMinor - settlementFeeMinor(amountMinor, baseCfg)).toBe(8665);
+  it('grosses the processing line up so what we keep survives Stripe\'s cut', () => {
+    // p = ceil((net * r + f) / (1 - r)), r = 1.7%, f = 30.
+    // net 42100 -> (715.7 + 30) / 0.983 = 758.59... -> 759.
+    expect(processingRecoveryMinor(42100, baseCfg)).toBe(759);
+    // The property that matters, over a wide spread of amounts: after Stripe
+    // takes its cut of the WHOLE charge, the agreed amount and our fee are
+    // still there.
+    for (const net of [201, 1000, 8865, 42100, 250100, 9_999_999]) {
+      const p = processingRecoveryMinor(net, baseCfg);
+      const total = net + p;
+      const stripeTakes = (total * 1.7) / 100 + 30;
+      expect(total - stripeTakes, `net ${net}`).toBeGreaterThanOrEqual(net);
+      // And no more than a rounding-up of one minor unit over.
+      expect(total - stripeTakes, `net ${net}`).toBeLessThan(net + 1);
+    }
+  });
+
+  it('refuses a processing rate that cannot be recovered', () => {
+    expect(() => processingRecoveryMinor(1000, { ...baseCfg, settlementProcessingPercent: 100 })).toThrow();
+    expect(() => processingRecoveryMinor(1000, { ...baseCfg, settlementProcessingPercent: -1 })).toThrow();
+    expect(() => processingRecoveryMinor(1000, { ...baseCfg, settlementProcessingFixedMinor: -1 })).toThrow();
+    expect(() => processingRecoveryMinor(0, baseCfg)).toThrow();
+  });
+
+  it('the buyer pays three lines and the seller receives the agreed amount in full', () => {
+    // The worked example: $420.00 agreed.
+    const b = settlementBreakdown(toMinorUnits(420, 'AUD'), baseCfg);
+    expect(b).toEqual({
+      amountMinor: 42000,
+      feeMinor: 100,
+      processingMinor: 759,
+      buyerTotalMinor: 42859,
+    });
+    // The three lines are the whole of the charge, and the seller's transfer
+    // is the first of them, untouched.
+    expect(b.amountMinor + b.feeMinor + b.processingMinor).toBe(b.buyerTotalMinor);
+    const smaller = settlementBreakdown(toMinorUnits(87.65, 'AUD'), baseCfg);
+    expect(smaller.amountMinor).toBe(8765);
+    expect(smaller.feeMinor).toBe(100);
+    expect(smaller.buyerTotalMinor).toBe(8765 + 100 + smaller.processingMinor);
+  });
+
+  it('refuses a settlement too small to carry its own fee', () => {
+    expect(() => settlementBreakdown(100, baseCfg)).toThrow(/not larger than/);
   });
 });
 
@@ -328,6 +374,20 @@ describe('the settlement money shape', () => {
     }
     // The settlement id ties the charge and the transfer together.
     expect(code).toContain('transfer_group: s.id');
+  });
+
+  it('charges the buyer three lines and releases the agreed amount whole', () => {
+    // The buyer's Checkout page itemises what they are paying...
+    expect(code).toContain('line(b.amountMinor');
+    expect(code).toContain('line(b.feeMinor');
+    expect(code).toContain('line(b.processingMinor');
+    // ...and the seller's transfer is the agreed amount, with nothing taken
+    // out of it.
+    expect(code).toContain('amount: amountMinor,');
+    expect(code).not.toContain('amountMinor - fee');
+    // The funding check compares against the total the buyer was actually
+    // shown, read off the row rather than recomputed from config.
+    expect(code).toContain('const expectedMinor = s.buyer_total_minor');
   });
 
   it('opens seller accounts as v2 recipients, never as an express type', () => {

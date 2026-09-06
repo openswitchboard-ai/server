@@ -655,9 +655,13 @@ export interface SettlementView {
   id: string;
   role: 'buyer' | 'seller';
   state: string;
-  amount: string; // rendered "600 AUD"
-  /** The introductory fee, rendered "1.00 AUD". */
+  amount: string; // rendered "600 AUD" — what the seller receives, in full
+  /** Our introductory fee, rendered "1.00 AUD". The buyer pays it. */
   fee: string;
+  /** Card processing at Stripe's standard rate, rendered "10.52 AUD". */
+  processing: string;
+  /** The three lines added up: what the buyer is charged. */
+  buyerTotal: string;
   category: string;
   descriptionText?: string;
   myApprovalPending: boolean;
@@ -698,7 +702,11 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
     { k: 'For', v: v.category },
     { k: 'State', v: v.state },
     { k: 'Your side', v: v.role === 'buyer' ? 'you pay' : 'you are paid' },
-    { k: 'Introductory fee', v: `${v.fee}, taken from the amount released to the seller` },
+    { k: 'The buyer pays', v: `${v.buyerTotal} in three lines` },
+    { k: 'What you agreed', v: v.amount },
+    { k: 'Introductory fee', v: `${v.fee}, paid by the buyer` },
+    { k: 'Card processing', v: `${v.processing}, at Stripe's standard rate` },
+    { k: 'The seller receives', v: `${v.amount} in full` },
   ]
     .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
     .join('');
@@ -715,9 +723,11 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
   if (v.canPay) {
     blocks.push(`<form method="POST" action="/settlements/${esc(v.id)}/pay">
 <button type="submit" class="approve">Pay on Stripe's secure page</button></form>
-<p class="small muted">Your payment details go to Stripe only. You pay ${esc(v.amount)} exactly.
-The money is held here and moves to the seller after you confirm receipt, less the
-introductory fee of ${esc(v.fee)}.</p>`);
+<p class="small muted">Your payment details go to Stripe only. Stripe's page shows you
+three lines before you pay: ${esc(v.amount)} for what you agreed, an introductory fee of
+${esc(v.fee)}, and ${esc(v.processing)} for card processing at Stripe's standard rate.
+That comes to ${esc(v.buyerTotal)}. The money is held here and moves to the seller after
+you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in full.</p>`);
   }
   if (v.canRetryRelease) {
     const pinBlock = v.elevated
@@ -739,8 +749,10 @@ be paid once for this settlement.</p>
       : `<label for="pin">Confirm with your PIN</label>
          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
     blocks.push(`<h2>Confirm receipt</h2>
-<p>Confirming releases the held payment to the seller, less the introductory
-fee of ${esc(v.fee)}. Do this once the goods are in your hands and as described.</p>
+<p>Confirming releases ${esc(v.amount)} to the seller — the whole of what you agreed.
+The introductory fee and the card processing were separate lines on your payment, so
+nothing comes off the seller's side. Do this once the goods are in your hands and as
+described.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm">
   ${pinBlock}
   <button type="submit" class="approve">Confirm receipt — release the payment</button>
@@ -801,8 +813,8 @@ evfile.addEventListener('change', async () => {
   const dispute = v.canDispute
     ? foldedDetail(
         'Something is wrong with this',
-        `<p class="small">A dispute returns the held payment to the buyer in full and closes the
-settlement. No reason is carried.</p>
+        `<p class="small">A dispute returns everything the buyer paid — the agreed amount and
+both fee lines — and closes the settlement. No reason is carried.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/dispute">
 <button type="submit" class="danger">Dispute — send the payment back</button></form>`,
       )

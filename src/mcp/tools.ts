@@ -14,7 +14,7 @@ import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
 import { checkReadRate } from '../domain/quotas.js';
 import { settlementsConfigured, type Config } from '../config.js';
-import { formatMinor, settlementFeeMinor, toMinorUnits } from '../stripe.js';
+import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
 
 export interface ToolDef {
   name: string;
@@ -435,7 +435,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'settle',
     description:
-      "Propose an escrowed settlement on an introduction where both humans have shared their first names, or read settlement state. Proposing (intro_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. The payment only ever starts on the buyer's own approval page. A $1 introductory fee comes off what the seller receives: the buyer pays the agreed amount exactly. No agent action moves a settlement past 'proposed'. Pass settlement_id (or intro_id alone) to read state.",
+      "Propose an escrowed settlement on an introduction where both humans have shared their first names, or read settlement state. Proposing (intro_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. The payment only ever starts on the buyer's own approval page. The buyer pays the fees, itemised on that hosted page as three lines: the agreed amount, a $1 introductory fee, and the processing charge at the provider's standard rate. The seller receives the agreed amount in full. No agent action moves a settlement past 'proposed'. Pass settlement_id (or intro_id alone) to read state.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -692,15 +692,19 @@ export async function dispatchTool(
           ccy,
           description,
         });
-        // The fee is said out loud here as well as on both approval pages, so
-        // an agent offering this to its human already knows the price.
+        // The price is said out loud here as well as on both approval pages,
+        // so an agent offering this to its human already knows it.
+        const b = settlementBreakdown(toMinorUnits(amount, ccy), cfg);
         return ok({
           ...r.settlement,
           note: {
             text:
               'Both humans now have this on their own approval page, and that page is the only place the payment can start. ' +
-              `An introductory fee of ${formatMinor(settlementFeeMinor(toMinorUnits(amount, ccy), cfg), ccy)} ` +
-              `comes off what the seller receives: the buyer pays ${amount} ${ccy} exactly.`,
+              `The buyer pays ${formatMinor(b.buyerTotalMinor, ccy)} in three lines: ` +
+              `${formatMinor(b.amountMinor, ccy)} as agreed, an introductory fee of ` +
+              `${formatMinor(b.feeMinor, ccy)}, and ${formatMinor(b.processingMinor, ccy)} ` +
+              'to process the payment at the provider\'s standard rate. ' +
+              `The seller receives ${formatMinor(b.amountMinor, ccy)} in full.`,
             provenance: 'switchboard-system',
           },
         });

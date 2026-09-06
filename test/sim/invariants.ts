@@ -13,6 +13,20 @@
  *   I5  declines are reasonless
  *   I6  archived matches stay retrievable but never resurface as actionable
  *   I7  no match score and no integer stage in any agent-facing payload
+ *
+ * And the money half — safe hands, where a wrong answer costs somebody real
+ * currency. These five are checked against the DATABASE and STRIPE, never
+ * against what an API call said about itself: every state that matters lands
+ * from a signature-verified webhook, so a 200 from the counter proves only
+ * that the request was accepted.
+ *
+ *   I8   a settlement reaches 'funded' only after BOTH humans approved, and
+ *        the WORM consent log holds both approvals
+ *   I9   no agent-reachable tool can approve, confirm, release or refund
+ *   I10  the release transfer is the agreed amount EXACTLY, and the buyer's
+ *        charge is the three persisted lines added up
+ *   I11  a dispute refunds the buyer's whole total, once, with no transfer
+ *   I12  a settle proposal from the wrong side or the wrong stage is refused
  */
 
 export interface Violation {
