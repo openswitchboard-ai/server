@@ -70,6 +70,11 @@ const RICH_SELLER_ATTRS = {
 };
 const THIN_BUYER_ATTRS = { frame_size: 'medium' };
 
+/** The same thin buyer, writing the size the way half the world writes it.
+ *  This is the pair the 2026-09-06 duet actually posted, and the spelling is
+ *  the whole of the difference — see case 3c. */
+const THIN_BUYER_ATTRS_LETTER = { frame_size: 'M' };
+
 /** A generous band pair: both sides assert a price, so the price term stays in
  *  the blend (matchRules.ts, AN UNASSERTED DIMENSION CANNOT VOTE) and
  *  contributes its full weight at fit 1.0 — which leaves the blend to be
@@ -334,6 +339,36 @@ export async function runCategoryDivergence(
     'match',
     THIN_BUYER_ATTRS,
     'the duet pair, card for card: 0.6072 on the original weights, 0.7489 with the thin blend alone, ~0.786 with the price term dropped as well.',
+    { haveAttributes: RICH_SELLER_ATTRS, noBands: true },
+  );
+
+  // -------------------------------------------------------------------------
+  // 3c. The same pair again, with the buyer writing "M" instead of "medium".
+  //
+  //     THE CASE THIS EXISTS FOR. On dev, 2026-09-06, the duet's seller wrote
+  //     frame_size "medium" and its buyer wrote frame_size "M". They meant one
+  //     bike. projectionText embedded "frame_size: medium" on one card and
+  //     "frame_size: m" on the other, the semantic component read the spelling
+  //     as a disagreement, and the pair scored 0.7309 against 0.75 — closer
+  //     than 3b ever was, and still apart, on nothing but an abbreviation.
+  //
+  //     WHAT SHOULD HAPPEN NOW. domain/attributeCanon.ts canonicalises
+  //     attribute values at publish and at amend, before the row is written,
+  //     so both cards are stored with frame_size "medium" and both embed the
+  //     same text. This case should therefore read the same as 3b — same
+  //     cards, same island, same weights — and any gap between the two rows'
+  //     scores is the spelling still leaking through somewhere.
+  //
+  //     NOT YET TRUE OF DEV until the canonicaliser is deployed; until then
+  //     this reads 'DIVERGED', which is exactly what it is here to catch.
+  // -------------------------------------------------------------------------
+  await pairing(
+    'rich seller vs thin buyer, size written "M"',
+    BIKE_MTN,
+    BIKE_MTN,
+    'match',
+    THIN_BUYER_ATTRS_LETTER,
+    'the 2026-09-06 duet pair: 0.7309 before canonicalisation, and it should now score as 3b does.',
     { haveAttributes: RICH_SELLER_ATTRS, noBands: true },
   );
 

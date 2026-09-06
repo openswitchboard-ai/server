@@ -544,6 +544,57 @@ export async function withdrawPublishedCards(): Promise<number> {
   return taken;
 }
 
+/**
+ * Nagatha, the standing agent under test. Her cards are hers: every harness
+ * that touches them does it deliberately and by name, and this helper refuses
+ * to sweep them by accident.
+ */
+export const NAGATHA_ACCOUNT_ID = '411af5b9-b2a9-4126-83f8-73bf4934f5dd';
+
+/**
+ * Take down EVERY live card owned by the accounts a run created, not only the
+ * ones the run remembered publishing.
+ *
+ * WHY THIS EXISTS. A harness tracks the cards it published through its own
+ * helpers, and `withdrawPublishedCards` / `Harness.reclaimCards` take those
+ * back. But an eval run drives a real agent, and a driven agent publishes
+ * cards of its own accord — an amend that reposts, a second listing it decided
+ * to make, a card published after the last snapshot the runner took. Those
+ * were never in the tracking list, so they stayed PUBLISHED on the dev board
+ * after the run that made them was over, matched against later runs, and were
+ * the residue this fixes. The accounts are fresh per run and abandoned after
+ * it, so nothing they own is wanted once the run ends: withdrawing all of it
+ * is right, not merely convenient.
+ *
+ * Withdrawal, not deletion: the card moves to WITHDRAWN, the same terminal
+ * state the owning agent would put it in. Best-effort in the strong sense —
+ * it never throws, so it can never fail a green run.
+ */
+export async function retireAccountCards(
+  accountIds: (string | undefined)[],
+  label = 'teardown',
+): Promise<number> {
+  const ids = [...new Set(accountIds.filter((id): id is string => !!id))].filter(
+    (id) => id !== NAGATHA_ACCOUNT_ID,
+  );
+  if (!ids.length) return 0;
+  try {
+    const rows = await dbExec(
+      `UPDATE cards SET lifecycle_state = 'WITHDRAWN', updated_at = now()
+        WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
+          AND lifecycle_state IN ('PUBLISHED','PENDING_SCREENING')
+        RETURNING id`,
+      [{ name: 'ids', value: ids.join(',') }],
+    );
+    const n = rows.length;
+    console.log(`board ${label}: retired ${n} card(s) across ${ids.length} run account(s)`);
+    return n;
+  } catch (e) {
+    console.log(`board ${label}: card retirement failed (${(e as Error).message})`);
+    return 0;
+  }
+}
+
 for (const register of [
   async () => (await import('vitest')).afterAll(withdrawPublishedCards, 300_000),
   async () => (await import('@playwright/test')).test.afterAll(withdrawPublishedCards),

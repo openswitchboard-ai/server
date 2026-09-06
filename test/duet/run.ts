@@ -74,7 +74,14 @@ import { OutsiderGuard } from '../realism/outsiderGuard.js';
 import { Checker } from '../sim/checker.js';
 import { EXPECTED_TOOLS } from '../sim/invariants.js';
 import { log } from '../sim/harness.js';
-import { Jar, counterFetch, humanOffer, mcpCall, mcpRpc } from '../integration/helpers.js';
+import {
+  Jar,
+  counterFetch,
+  humanOffer,
+  mcpCall,
+  mcpRpc,
+  retireAccountCards,
+} from '../integration/helpers.js';
 import {
   DuetActor,
   DuetActors,
@@ -966,6 +973,15 @@ async function main(): Promise<number> {
     }
   }
   log(`withdrew ${withdrawn} run card(s)`);
+  // The snapshot above only knows the cards the runner saw. Both accounts are
+  // this run's own and are abandoned when it ends, so anything of theirs still
+  // standing — a card the agent published after the last snapshot, an amend
+  // that reposted — comes down too.
+  const retired = await retireAccountCards(
+    [sides.priya.actor.accountId, sides.marlowe.actor.accountId],
+    'duet teardown',
+  );
+  log(`retired ${retired} further card(s) the run's own accounts still had standing`);
   const flushed = await guard.flush();
   log(`outsider guard: ${flushed.muted.length} outsider(s) severed, ${flushed.declined} declined`);
   await resetNagatha().then((s) => log(`nagatha reset: ${s}`)).catch((e) => log(`nagatha reset: ${e.message}`));

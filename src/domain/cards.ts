@@ -11,6 +11,7 @@ import {
   validatePayload,
 } from '../protocol.js';
 import { categoryDenied, categoryStatus } from '../denylist.js';
+import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
@@ -121,6 +122,12 @@ export async function publishIntent(
     });
   }
 
+  // One agreed spelling before the row is written, so two people who meant
+  // the same thing embed the same text (domain/attributeCanon.ts). This runs
+  // after validation and its output is what is stored, read back, and
+  // embedded.
+  const attributes = canonicaliseAttributes(card.category, card.attributes ?? {});
+
   // Location resolution: a named place becomes a centre point and a
   // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
   const geo = normaliseGeo(card.geo);
@@ -151,7 +158,7 @@ export async function publishIntent(
       card.type === 'looking_for' ? 'WANT' : 'HAVE',
       card.category,
       JSON.stringify(geo.geo),
-      JSON.stringify(card.attributes ?? {}),
+      JSON.stringify(attributes),
       card.ask ? JSON.stringify(card.ask) : null,
       card.urgency ?? 'none',
       'anonymous-until-match',
@@ -295,6 +302,12 @@ export async function amendIntent(
   // whose category left the taxonomy since it was posted cannot be renewed
   // under it; the error names where to go instead.
   await assertCategoryOpen(cfg, next.category, accountId);
+  // Same canonicalisation as publish, on the same terms: an amend is a
+  // re-publish, and the re-screen that follows re-embeds from this row, so
+  // the amended card's vector is built from the canonical form as well.
+  // Canonicalisation is idempotent, so rebuilding `current` from attributes
+  // that already went through it changes nothing.
+  const attributes = canonicaliseAttributes(next.category, next.attributes ?? {});
   const geo = normaliseGeo(next.geo);
 
   await checkPublishQuota(accountId, cfg.quotas);
@@ -316,7 +329,7 @@ export async function amendIntent(
     [
       intentId,
       JSON.stringify(geo.geo),
-      JSON.stringify(next.attributes ?? {}),
+      JSON.stringify(attributes),
       next.ask ? JSON.stringify(next.ask) : null,
       next.urgency ?? 'none',
       next.status ?? 'active',
