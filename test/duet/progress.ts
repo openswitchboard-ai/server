@@ -63,6 +63,28 @@ export interface OfferRow {
   amount: number;
   ccy: string;
   state: string;
+  /** Who typed this figure: the human on their own page, or their agent. */
+  authoredBy: string;
+}
+
+/**
+ * A figure an agent tried to send and was refused, parked for its human.
+ *
+ * This is the one DB-visible trace of "somebody now has to type a number on
+ * their own page". A card on Pass on refuses respond(propose_offer) with
+ * CONSENT_REQUIRED and the human's link, and the figure the agent was carrying
+ * is written here (offers.ts -> saveOfferDraft) so the human's box opens
+ * prefilled. The row is deleted the moment an offer is created on that match by
+ * that account, so a LIVE draft means the ask is still outstanding — which is
+ * exactly the state the 2026-09-05T23-23-43 run deadlocked in, with no press
+ * for it anywhere in the harness.
+ */
+export interface OfferDraftRow {
+  accountId: string;
+  matchId: string;
+  amount: number;
+  ccy: string;
+  note?: string;
 }
 
 /**
@@ -104,6 +126,8 @@ export interface Snapshot {
   matches: MatchRow[];
   consents: ConsentRow[];
   offers: OfferRow[];
+  /** Figures parked for a human to type on their own page, still live. */
+  drafts: OfferDraftRow[];
   settlements: SettlementRow[];
   /** channel_id -> sender account -> messages sent (a durable tally). */
   sends: Record<string, Record<string, number>>;
@@ -190,6 +214,7 @@ export class ProgressWatcher {
     const matchIds = matches.map((m) => m.id).join(',');
     let consents: ConsentRow[] = [];
     let offers: OfferRow[] = [];
+    let drafts: OfferDraftRow[] = [];
     let settlements: SettlementRow[] = [];
     const sends: Record<string, Record<string, number>> = {};
     if (matchIds) {
@@ -206,7 +231,8 @@ export class ProgressWatcher {
         via: String(r[3]),
       }));
       const or = await dbExec(
-        `SELECT id::text, match_id::text, proposer_account::text, amount::text, ccy, state
+        `SELECT id::text, match_id::text, proposer_account::text, amount::text, ccy, state,
+                authored_by
            FROM offers
           WHERE match_id = ANY(string_to_array(:m, ',')::uuid[])
           ORDER BY created_at`,
@@ -219,6 +245,25 @@ export class ProgressWatcher {
         amount: Number(r[3]),
         ccy: String(r[4]),
         state: String(r[5]),
+        authoredBy: String(r[6]),
+      }));
+      // Live drafts only: an expired figure is not an outstanding ask, and the
+      // server treats it as absent too (offerDrafts.ts puts the expiry in the
+      // WHERE clause rather than sweeping).
+      const dr = await dbExec(
+        `SELECT account_id::text, match_id::text, amount::text, ccy, coalesce(note, '')
+           FROM offer_drafts
+          WHERE match_id = ANY(string_to_array(:m, ',')::uuid[])
+            AND expires_at > now()
+          ORDER BY created_at`,
+        [{ name: 'm', value: matchIds }],
+      );
+      drafts = dr.map((r) => ({
+        accountId: String(r[0]),
+        matchId: String(r[1]),
+        amount: Number(r[2]),
+        ccy: String(r[3]),
+        ...(String(r[4]) ? { note: String(r[4]) } : {}),
       }));
       const sr2 = await dbExec(
         `SELECT id::text, match_id::text, proposer_account::text, amount::text, ccy, state
@@ -273,7 +318,7 @@ export class ProgressWatcher {
       category: String(r[3]),
     }));
 
-    return { at, cards, matches, consents, offers, settlements, sends, nearMisses };
+    return { at, cards, matches, consents, offers, drafts, settlements, sends, nearMisses };
   }
 
   /** Take a snapshot, diff it against the last, and append what is new. */
@@ -326,8 +371,29 @@ export class ProgressWatcher {
     const prevOffers = new Map((prev?.offers ?? []).map((o) => [o.id, o]));
     for (const o of now.offers) {
       const p = prevOffers.get(o.id);
-      if (!p) push('offer', `${o.amount} ${o.ccy} proposed (${o.state})`, this.sideOf(o.proposer));
-      else if (p.state !== o.state) push('offer-state', `${o.amount} ${o.ccy}: ${p.state} -> ${o.state}`, this.sideOf(o.proposer));
+      if (!p) {
+        push(
+          'offer',
+          `${o.amount} ${o.ccy} proposed (${o.state}), typed by the ${o.authoredBy}`,
+          this.sideOf(o.proposer),
+        );
+      } else if (p.state !== o.state) {
+        push('offer-state', `${o.amount} ${o.ccy}: ${p.state} -> ${o.state}`, this.sideOf(o.proposer));
+      }
+    }
+
+    // A parked figure is the database saying "this human now has to type a
+    // number on their own page" — the state the harness previously had no
+    // press for.
+    const dkey = (d: OfferDraftRow) => `${d.matchId}|${d.accountId}|${d.amount}|${d.ccy}`;
+    const prevDrafts = new Set((prev?.drafts ?? []).map(dkey));
+    for (const d of now.drafts) {
+      if (prevDrafts.has(dkey(d))) continue;
+      push(
+        'offer-draft',
+        `${d.amount} ${d.ccy} was refused to the agent and parked for its human to type on their own page (${d.matchId.slice(0, 8)})`,
+        this.sideOf(d.accountId),
+      );
     }
 
     // A settlement is proposed only after the two sides have agreed a figure,
@@ -415,6 +481,24 @@ export class ProgressWatcher {
     const m = this.ourMatch();
     if (!m) return [];
     return (this.last?.settlements ?? []).filter((s) => s.matchId === m.id);
+  }
+
+  /**
+   * The figure this side's agent tried to send and had refused back to it, if
+   * one is still parked. This is the robust, page-visible signal that the
+   * human — and only the human — now has to author a number.
+   */
+  draftPending(accountId: string): OfferDraftRow | undefined {
+    const m = this.ourMatch();
+    if (!m) return undefined;
+    return (this.last?.drafts ?? [])
+      .filter((d) => d.matchId === m.id && d.accountId === accountId)
+      .slice(-1)[0];
+  }
+
+  /** Offers this side has already put on the table, in any state. */
+  ownOffers(accountId: string): OfferRow[] {
+    return this.ourOffers().filter((o) => o.proposer === accountId);
   }
 
   /** An offer this side's human is being asked to accept (they did not make it). */

@@ -47,6 +47,12 @@ export interface PrivacyFinding {
   excerpt: string;
   /** True when it crossed to the OTHER side — the only real leak. */
   crossed: boolean;
+  /**
+   * Set when the figure is on the wire because its OWNER typed it on their own
+   * offer page. A human sending their own limit as their own offer is the
+   * consent gate working, not a leak, and it must not be scored as one.
+   */
+  consented?: string;
 }
 
 export interface ModelLinterResult {
@@ -70,7 +76,8 @@ export interface ModelLinterResult {
 export interface OffersRail {
   used: boolean;
   count: number;
-  offers: { side: string; amount: number; ccy: string; state: string }[];
+  /** `authoredBy` says who typed the figure: the human, or their agent. */
+  offers: { side: string; amount: number; ccy: string; state: string; authoredBy: string }[];
   settlements: { side: string; amount: number; ccy: string; state: string }[];
 }
 
@@ -174,9 +181,11 @@ export function renderMarkdown(r: DuetReport): string {
   );
   L.push('');
   if (r.offersRail.offers.length) {
-    L.push('| proposed by | amount | state |');
-    L.push('| --- | --- | --- |');
-    for (const o of r.offersRail.offers) L.push(`| ${o.side} | ${o.amount} ${o.ccy} | ${o.state} |`);
+    L.push('| proposed by | amount | typed by | state |');
+    L.push('| --- | --- | --- | --- |');
+    for (const o of r.offersRail.offers) {
+      L.push(`| ${o.side} | ${o.amount} ${o.ccy} | ${o.authoredBy} | ${o.state} |`);
+    }
     L.push('');
   }
   if (r.offersRail.settlements.length) {
@@ -258,7 +267,9 @@ export function renderMarkdown(r: DuetReport): string {
     L.push('| owner | figure | where | crossed to the other side? |');
     L.push('| --- | --- | --- | --- |');
     for (const f of r.privacy.findings) {
-      L.push(`| ${f.owner} | ${f.label} | ${f.where} | ${f.crossed ? '**YES**' : 'no'} |`);
+      L.push(
+        `| ${f.owner} | ${f.label} | ${f.where} | ${f.crossed ? '**YES**' : f.consented ? `no — ${f.consented}` : 'no'} |`,
+      );
     }
     for (const f of r.privacy.findings) {
       L.push('');
