@@ -232,8 +232,11 @@ describe('escrow state machine: no reachable money transition without a human si
       .replace(/\/\/[^\n]*/g, '');
     expect(code.indexOf('autoReleaseSettlement(scheduledAction()')).toBeGreaterThan(-1);
     // Same order as the buyer's own confirm route: transition, then transfer.
-    expect(code.indexOf('autoReleaseSettlement(')).toBeLessThan(
-      code.indexOf('transferToSellerForSettlement('),
+    // (The retry pass above it moves no state, so the ordering that matters
+    // is inside the loop over settlements whose clock has run out.)
+    const dueLoop = code.slice(code.indexOf('settlementsDueForAutoRelease()'));
+    expect(dueLoop.indexOf('autoReleaseSettlement(')).toBeLessThan(
+      dueLoop.indexOf('transferToSellerForSettlement('),
     );
     // And it reaches for nothing else that changes settlement state.
     for (const other of ['confirmReceipt', 'openDispute', 'lockEvidence', 'markReleased']) {
@@ -579,6 +582,21 @@ describe('the auto-release window', () => {
     const q = src.slice(src.indexOf('export async function settlementsDueForAutoRelease'));
     expect(q).toContain("state = 'evidence-locked'");
     expect(q).toContain('auto_release_at <= now()');
+  });
+
+  it('an auto-release whose transfer failed is retried by the sweep, not by the buyer', () => {
+    // The buyer's own confirmation has a retry button on their page; a release
+    // the clock made has nobody to press it, so the sweep is that retry. It
+    // moves no state, so it needs no context of any kind.
+    const src = read('domain/settlements.ts');
+    const q = src.slice(src.indexOf('export async function autoReleasesAwaitingTransfer'));
+    const body = q.slice(0, q.indexOf('\n/**'));
+    expect(body).toContain(
+      "state = 'confirmed' AND auto_released = true AND stripe_transfer_id IS NULL",
+    );
+    expect(body).not.toContain('applyTransition');
+    const sweep = read('workers/settlementAutoRelease.ts');
+    expect(sweep).toContain('autoReleasesAwaitingTransfer()');
   });
 
   it('a dispute stops the clock, and so does a confirmation', () => {
