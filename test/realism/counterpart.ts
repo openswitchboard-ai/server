@@ -201,8 +201,15 @@ export class Counterpart {
     return this.mcp('respond', { intro_id: matchId, action: 'decline' });
   }
 
-  /** Withdraw counterpart cards, archive tracked matches. Best-effort. */
-  async teardown(): Promise<{ cardsWithdrawn: number; matchesArchived: number }> {
+  /**
+   * Withdraw counterpart cards, archive tracked matches, and retire anything
+   * else this run's own account still has standing. Best-effort.
+   */
+  async teardown(): Promise<{
+    cardsWithdrawn: number;
+    matchesArchived: number;
+    cardsRetired: number;
+  }> {
     return this.h.teardown();
   }
 }

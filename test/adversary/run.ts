@@ -412,9 +412,9 @@ async function main(): Promise<number> {
   log(`outsider guard: ${guarded.muted.length} outsider(s) severed this sweep, ${guarded.declined} declined`);
   const td = await ctx.cp.teardown().catch((e) => {
     log(`counterpart teardown: ${e.message}`);
-    return { cardsWithdrawn: 0, matchesArchived: 0 };
+    return { cardsWithdrawn: 0, matchesArchived: 0, cardsRetired: 0 };
   });
-  log(`counterpart teardown: withdrew ${td.cardsWithdrawn} cards, archived ${td.matchesArchived} matches`);
+  log(`counterpart teardown: withdrew ${td.cardsWithdrawn} cards, archived ${td.matchesArchived} matches, retired ${td.cardsRetired} left standing`);
   await cleanupNagathaCards(ctx).catch((e) => log(`nagatha card cleanup: ${e.message}`));
 
   const report = assembleReport(ctx);

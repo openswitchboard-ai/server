@@ -30,6 +30,7 @@ import {
   mcpCall as rawMcpCall,
   poll,
   registerActor,
+  retireAccountCards,
   sendOp,
 } from '../integration/helpers.js';
 
@@ -314,9 +315,15 @@ export class Harness {
 
   /**
    * Full teardown: archive every match the run created, withdraw every card
-   * still tracked, and report what was left. Best-effort and never throws.
+   * still tracked, then sweep the run's own accounts for anything still live
+   * that was never tracked, and report what was left. Best-effort and never
+   * throws.
    */
-  async teardown(): Promise<{ cardsWithdrawn: number; matchesArchived: number }> {
+  async teardown(): Promise<{
+    cardsWithdrawn: number;
+    matchesArchived: number;
+    cardsRetired: number;
+  }> {
     let matchesArchived = 0;
     for (const m of this.matches) {
       try {
@@ -327,7 +334,14 @@ export class Harness {
       }
     }
     const cardsWithdrawn = await this.reclaimCards();
-    return { cardsWithdrawn, matchesArchived };
+    // These accounts are this run's own and are abandoned after it, so
+    // anything of theirs still standing is residue whether the run remembered
+    // publishing it or not.
+    const cardsRetired = await retireAccountCards(
+      this.actors.map((a) => a.accountId),
+      'sim teardown',
+    );
+    return { cardsWithdrawn, matchesArchived, cardsRetired };
   }
 
   /** Count PUBLISHED cards left on the board in this run's opaque buckets. The

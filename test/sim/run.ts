@@ -225,7 +225,10 @@ async function main(): Promise<number> {
     // ---- cleanup --------------------------------------------------------
     group('cleanup');
     const td = await h.teardown();
-    log(`withdrew ${td.cardsWithdrawn} residual cards, archived ${td.matchesArchived} matches`);
+    log(
+      `withdrew ${td.cardsWithdrawn} residual cards, archived ${td.matchesArchived} matches, ` +
+        `retired ${td.cardsRetired} card(s) the run's own accounts still had standing`,
+    );
     try {
       residueAfter = await h.boardResidue();
     } catch (e) {
