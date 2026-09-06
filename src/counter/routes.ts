@@ -678,11 +678,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
           return { error: `This offer is ${o.state} — nothing to decide.` };
         }
-        // Their agent has not brought this one to them yet. The decision is
-        // still theirs; the nudge is to hear their agent's read first.
+        // Their agent has not weighed in on this one. For most people the
+        // email is the delivery and nothing is on its way, so the nudge is an
+        // offer of a second opinion, never a suggestion to wait.
         if (o.state === 'proposed') {
           anomalies.push(
-            'Your assistant has not brought this offer to you yet. It is yours to accept now if you like; a quick word with your assistant first will get you its read on the price.',
+            'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details. It is yours to accept now either way.',
           );
         }
         facts.push(

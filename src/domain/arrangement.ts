@@ -283,7 +283,7 @@ export async function saveArrangement(
   accountId: string,
   value: Arrangement,
   recordedVia: string,
-): Promise<void> {
+): Promise<{ matchEmailsTurnedOff: boolean }> {
   await writeConsentEvent({
     event: 'arrangement-updated',
     account_id: accountId,
@@ -295,6 +295,42 @@ export async function saveArrangement(
     `UPDATE accounts SET arrangement = $2::jsonb, arrangement_updated_at = now() WHERE id = $1`,
     [accountId, JSON.stringify(value)],
   );
+  return { matchEmailsTurnedOff: await quietMatchEmailsForCadence(accountId, value, recordedVia) };
+}
+
+/**
+ * A checking cadence means an agent is the messenger now, so the match
+ * emails — the delivery path for people whose agent only acts when they open
+ * a chat — become a second copy of news they already get. They go off once,
+ * and only from the untouched default: a frequency the human chose on their
+ * page ('daily', 'weekly', or 'off' already) is theirs and stays. The page
+ * turns them back on with a tap, and the consent log carries the change.
+ */
+async function quietMatchEmailsForCadence(
+  accountId: string,
+  value: Arrangement,
+  recordedVia: string,
+): Promise<boolean> {
+  if (value.check_every_minutes === undefined) return false;
+  const r = await getPool().query(
+    'SELECT email_freq_matches, email_freq_digests FROM accounts WHERE id = $1',
+    [accountId],
+  );
+  const a = r.rows[0];
+  if (!a || a.email_freq_matches !== 'immediate') return false;
+  await writeConsentEvent({
+    event: 'email-frequency-changed',
+    account_id: accountId,
+    email_freq_matches: 'off',
+    email_freq_digests: a.email_freq_digests,
+    reason: 'checking-cadence-saved',
+    recorded_via: recordedVia,
+  });
+  await getPool().query(
+    `UPDATE accounts SET email_freq_matches = 'off' WHERE id = $1`,
+    [accountId],
+  );
+  return true;
 }
 
 // ---------------------------------------------------------------------------

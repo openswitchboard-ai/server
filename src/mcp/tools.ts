@@ -648,12 +648,16 @@ export async function dispatchTool(
         if (action !== 'set') return invalidInput("standing_arrangement action is 'get' or 'set'");
         const checked = arrangement.validateArrangement(args?.arrangement);
         if (!checked.ok) return invalidInput(checked.error);
-        await arrangement.saveArrangement(accountId, checked.value, 'agent-attested');
+        const saved = await arrangement.saveArrangement(accountId, checked.value, 'agent-attested');
         return ok({
           arrangement: checked.value,
           saved: true,
           note: {
-            text: 'Saved. Every agent your human connects will be handed this on its next check, and your human can see and change it on their approval page.',
+            text:
+              'Saved. Every agent your human connects will be handed this on its next check, and your human can see and change it on their approval page.' +
+              (saved.matchEmailsTurnedOff
+                ? ' Because you check on a schedule now, the switchboard has turned off the emails it would send them when someone comes forward — you are the messenger; a tap on their page turns them back on. Tell them so.'
+                : ''),
             provenance: 'switchboard-system',
           },
         });
