@@ -267,12 +267,24 @@ async function sweepApprovals(
   }
 
   for (const o of watcher.offersAwaiting(side.actor.accountId)) {
-    const key = `offer:${side.id}:${o.id}`;
-    if (attempts.has(key)) continue;
-    attempts.set(key, 1);
     // The human's own rule on a figure: Priya at or above her floor, Marlowe at
     // or below his budget. Nothing else about the number is considered.
     const yes = side.id === 'priya' ? o.amount >= 400 : o.amount <= 420;
+    // An ACCEPT is only legal once the counterparty's agent has parked the
+    // offer for its human — proposed -> awaiting-human, the send_to_human
+    // transition in domain/offers.ts, which is the whole point of the gate. A
+    // DECLINE is legal from either state, so a no goes straight out.
+    //
+    // Run 8 deadlocked here. The press fired while the offer was still
+    // 'proposed', the server refused it, and the one-shot guard below counted
+    // that doomed press as the human's turn — so when the offer really did
+    // reach awaiting-human eight rounds later, with both humans agreed on
+    // $420, nobody ever clicked. Waiting for the state is the fix; not
+    // spending a press on a refusal is the other half of it.
+    if (yes && o.state !== 'awaiting-human') continue;
+    const key = `offer:${side.id}:${o.id}`;
+    const n = attempts.get(key) ?? 0;
+    if (n >= 3) continue;
     try {
       const res = await counterFetch(
         side.jar,
@@ -285,6 +297,11 @@ async function sweepApprovals(
         }),
       );
       const out = await res.text();
+      // Count the press only when the server took it. A refusal changed
+      // nothing on the board, and the offer may well be pressable a round or
+      // two later — which is exactly the case this whole branch exists for.
+      if (res.ok) attempts.set(key, 3);
+      else attempts.set(key, n + 1);
       harnessActions.push({
         ts: now(),
         round: ROUND,
