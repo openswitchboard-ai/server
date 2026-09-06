@@ -1,5 +1,8 @@
 /**
- * Stripe wiring for the safe-hands escrow core (phase 1.A).
+ * Stripe wiring for the safe-hands settlement core.
+ *
+ * Every call goes through a StripeClient instance built here; no global key
+ * is ever set. The API version is pinned.
  *
  * The secret key lives in Secrets Manager (osb/<env>/stripe, JSON
  * {secret_key, webhook_secret?}) and is injected as STRIPE_SECRET_ARN.
@@ -21,12 +24,21 @@ import type { Config } from './config.js';
 
 export const STRIPE_WEBHOOK_PATH = '/stripe/webhook';
 
-/** Webhook events the escrow state machine consumes. */
+/**
+ * Webhook events the settlement state machine consumes.
+ *
+ *   checkout.session.completed          -> funded (payment_status paid)
+ *   checkout.session.async_payment_*    -> funded, or a logged failure, for
+ *                                          the delayed payment methods
+ *   transfer.created                    -> released (the seller's money left
+ *                                          the platform balance)
+ *   charge.refunded                     -> refunded
+ */
 export const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   'checkout.session.completed',
-  'payment_intent.amount_capturable_updated',
-  'payment_intent.succeeded',
-  'payment_intent.canceled',
+  'checkout.session.async_payment_succeeded',
+  'checkout.session.async_payment_failed',
+  'transfer.created',
   'charge.refunded',
 ];
 
@@ -107,8 +119,13 @@ export async function ensureWebhookEndpoint(cfg: Config): Promise<void> {
     const eps = await stripe.webhookEndpoints.list({ limit: 100 });
     const mine = eps.data.find((e) => e.url === url && e.status === 'enabled');
     if (mine) {
+      // The stored set is brought to exactly this one: events are dropped as
+      // well as added when the money shape changes, so nothing keeps arriving
+      // that nothing reads.
       const have = new Set(mine.enabled_events);
-      if (!WEBHOOK_EVENTS.every((e) => have.has(e))) {
+      const differs =
+        have.size !== WEBHOOK_EVENTS.length || !WEBHOOK_EVENTS.every((e) => have.has(e));
+      if (differs) {
         await stripe.webhookEndpoints.update(mine.id, { enabled_events: WEBHOOK_EVENTS });
       }
       s.webhookSecret = json.webhook_secret;
@@ -167,10 +184,43 @@ export function toMinorUnits(amount: number, ccy: string): number {
 }
 
 /**
- * Platform fee in minor units. The fee parameter exists in config and is 0:
- * feePercent defaults to 0 and phase 1 charges no fee.
+ * The percentage part of the fee, in minor units. Kept as a parameter and set
+ * to 0 by default; the introductory fee is the flat one below.
  */
 export function feeMinorUnits(amountMinor: number, feePercent: number): number {
   if (feePercent < 0 || feePercent > 100) throw new Error(`bad fee percent ${feePercent}`);
   return Math.round((amountMinor * feePercent) / 100);
+}
+
+/**
+ * The whole settlement fee in minor units: the flat introductory fee plus
+ * whatever the percentage parameter adds (0 by default).
+ *
+ * The fee is taken by TRANSFERRING LESS, never as a Stripe application fee:
+ * the buyer is charged the agreed amount exactly and the seller receives
+ * amount - fee. It is an introductory number and deliberately below cost —
+ * Stripe's own processing on a settlement of any ordinary size runs to more
+ * than a dollar, so the platform is out of pocket on every one of these.
+ *
+ * Throws when the fee would swallow the whole settlement; propose-time
+ * validation refuses those amounts before a settlement row exists.
+ */
+export function settlementFeeMinor(
+  amountMinor: number,
+  cfg: { settlementFeeFlatMinor: number; settlementFeePercent: number },
+): number {
+  const flat = cfg.settlementFeeFlatMinor;
+  if (!Number.isInteger(flat) || flat < 0) throw new Error(`bad flat fee ${flat}`);
+  const fee = flat + feeMinorUnits(amountMinor, cfg.settlementFeePercent);
+  if (fee >= amountMinor) {
+    throw new Error(`settlement of ${amountMinor} is not larger than the ${fee} fee`);
+  }
+  return fee;
+}
+
+/** The fee written out for a human, e.g. "$1.00" for 100 minor AUD units. */
+export function formatMinor(minor: number, ccy: string): string {
+  const zeroDecimal = ZERO_DECIMAL.has(ccy.toUpperCase());
+  const value = zeroDecimal ? String(minor) : (minor / 100).toFixed(2);
+  return `${value} ${ccy.toUpperCase()}`;
 }

@@ -1,25 +1,27 @@
 /**
- * Stripe-sandbox helpers for the settlement integration suite (phase 1.A).
+ * Stripe-sandbox helpers for the settlement integration suite.
  *
- * The suite runs against LIVE dev + the dev Stripe sandbox. Two shortcuts
- * keep it deterministic without softening anything real:
+ * The suite runs against LIVE dev + the dev Stripe sandbox. One shortcut
+ * keeps it deterministic without softening anything real:
  *
  *  - The SELLER'S CONNECTED ACCOUNT is created pre-verified through Stripe's
- *    own test-mode API (application-collected requirements + Stripe's
- *    documented test values), instead of driving the hosted onboarding UI.
- *    Production sellers still onboard through the hosted account-link flow.
- *  - The BUYER'S PAYMENT is confirmed through the API with Stripe's test
- *    payment-method token (pm_card_visa) as a manual-capture destination
- *    charge carrying the settlement metadata — the same shape the server's
- *    Checkout Session produces — because a hosted Checkout page cannot be
- *    completed by API. The funded/released/refunded transitions still land
- *    exclusively via the real, signature-verified webhook on live dev.
+ *    own test-mode API: a v2 account with the Recipient configuration, the
+ *    identity fields filled in directly, and the terms-of-service attestation
+ *    that stripe_transfers waits on. Production sellers reach the same place
+ *    through the hosted account-link flow, which this skips.
+ *
+ * The BUYER'S PAYMENT is not shortcut: the real hosted Checkout Session the
+ * server created is completed in a browser, with a Stripe test card, because
+ * checkout.session.completed is what funds a settlement and no API call
+ * produces it. The funded/released/refunded transitions land exclusively via
+ * the real, signature-verified webhook on live dev.
  *
  * The seller's connected-account id is attached to the seller's account row
  * with the SAME envelope encryption the server uses (the harness holds
  * dev-scoped KMS access, like its existing RDS-Data observability).
  */
 import { createCipheriv, randomBytes } from 'node:crypto';
+import { chromium } from '@playwright/test';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { DecryptCommand, KMSClient } from '@aws-sdk/client-kms';
@@ -63,41 +65,86 @@ export async function stripeApi(
   return json;
 }
 
-/** Pre-verified, transfers-active connected account (Stripe test values). */
-export async function createPreVerifiedSeller(label: string): Promise<string> {
-  const acct = await stripeApi('/v1/accounts', {
-    country: 'AU',
-    'controller[fees][payer]': 'application',
-    'controller[losses][payments]': 'application',
-    'controller[stripe_dashboard][type]': 'none',
-    'controller[requirement_collection]': 'application',
-    'capabilities[transfers][requested]': 'true',
-    business_type: 'individual',
-    'business_profile[url]': 'https://openswitchboard.ai',
-    'business_profile[mcc]': '5734',
-    'business_profile[product_description]': `OpenSwitchboard e2e seller ${label}`,
-    'individual[first_name]': 'Testa',
-    'individual[last_name]': 'Seller',
-    'individual[email]': 'testsuite+seller@openswitchboard.ai',
-    'individual[phone]': '0000000000',
-    'individual[dob][day]': '1',
-    'individual[dob][month]': '1',
-    'individual[dob][year]': '1901',
-    'individual[address][line1]': 'address_full_match',
-    'individual[address][city]': 'Sydney',
-    'individual[address][state]': 'NSW',
-    'individual[address][postal_code]': '2000',
-    'individual[address][country]': 'AU',
-    'tos_acceptance[date]': String(Math.floor(Date.now() / 1000)),
-    'tos_acceptance[ip]': '203.0.113.10',
-    'external_account[object]': 'bank_account',
-    'external_account[country]': 'AU',
-    'external_account[currency]': 'aud',
-    'external_account[routing_number]': '000000',
-    'external_account[account_number]': '000123456',
+/** The v2 API takes JSON, so it gets its own thin caller. */
+export async function stripeApiV2(
+  path: string,
+  body?: unknown,
+  method?: string,
+): Promise<any> {
+  const key = await stripeSecretKey();
+  const res = await fetch(`https://api.stripe.com${path}`, {
+    method: method ?? (body ? 'POST' : 'GET'),
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'content-type': 'application/json',
+      'Stripe-Version': '2026-07-29.dahlia',
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
-  if (acct.capabilities?.transfers !== 'active') {
-    throw new Error(`test seller ${acct.id} is not transfers-active: ${JSON.stringify(acct.capabilities)}`);
+  const json: any = await res.json();
+  if (json.error) {
+    throw new Error(`stripe ${path}: ${json.error.message ?? JSON.stringify(json.error)}`);
+  }
+  return json;
+}
+
+/**
+ * A pre-verified v2 Recipient account: transfers-active without anyone
+ * walking the hosted onboarding. Everything here is a documented Stripe test
+ * value; the terms-of-service attestation is the one field stripe_transfers
+ * waits on, and address_full_match is Stripe's own always-verifies line 1.
+ * (stripe_balance.payouts stays restricted — it wants a bank account and an
+ * identity document — and that is fine: the settlement never pays out, it
+ * transfers into the recipient's Stripe balance.)
+ */
+export async function createPreVerifiedSeller(label: string): Promise<string> {
+  const acct = await stripeApiV2('/v2/core/accounts', {
+    display_name: `OpenSwitchboard e2e seller ${label}`,
+    contact_email: `testsuite+seller-${label}@openswitchboard.ai`,
+    dashboard: 'none',
+    defaults: {
+      currency: 'aud',
+      responsibilities: { fees_collector: 'application', losses_collector: 'application' },
+      profile: {
+        business_url: 'https://openswitchboard.ai',
+        product_description: `OpenSwitchboard e2e seller ${label}`,
+      },
+    },
+    identity: {
+      country: 'AU',
+      entity_type: 'individual',
+      attestations: {
+        terms_of_service: {
+          account: { date: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), ip: '203.0.113.10' },
+        },
+      },
+      individual: {
+        given_name: 'Testa',
+        surname: 'Seller',
+        email: `testsuite+seller-${label}@openswitchboard.ai`,
+        date_of_birth: { day: 1, month: 1, year: 1901 },
+        phone: '+61400000000',
+        address: {
+          line1: 'address_full_match',
+          city: 'Sydney',
+          state: 'NSW',
+          postal_code: '2000',
+          country: 'AU',
+        },
+      },
+    },
+    configuration: {
+      recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } },
+    },
+    include: ['configuration.recipient'],
+  });
+  const status = acct.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers
+    ?.status;
+  if (status !== 'active') {
+    throw new Error(
+      `test seller ${acct.id} cannot receive transfers: stripe_transfers is ${status} ` +
+        `(${JSON.stringify(acct.configuration?.recipient?.capabilities)})`,
+    );
   }
   return acct.id as string;
 }
@@ -156,33 +203,74 @@ export async function attachStripeAccount(accountId: string, stripeAcctId: strin
 }
 
 /**
- * Fund a settlement the way the server's Checkout Session would: a
- * manual-capture destination charge with the settlement metadata, confirmed
- * with Stripe's test payment-method token. Returns the PaymentIntent id.
+ * Pay a real hosted Checkout Session, in a browser, with a Stripe test card.
+ *
+ * There is no API that completes a Checkout Session — the session's
+ * PaymentIntent does not even exist until someone starts paying on the page —
+ * and checkout.session.completed is the event that funds a settlement. So the
+ * suite drives the page the buyer would drive, on the session the server
+ * itself created, and everything downstream is the real thing.
+ *
+ * The card is 4000 0000 0000 0077: it succeeds and puts the money straight
+ * into the platform's AVAILABLE balance, so the release transfer that follows
+ * has funds to draw on inside one test run.
  */
-export async function fundSettlementByApi(
-  settlementId: string,
-  amountMinor: number,
-  ccy: string,
-  sellerAcct: string,
-): Promise<string> {
-  const pi = await stripeApi('/v1/payment_intents', {
-    amount: String(amountMinor),
-    currency: ccy.toLowerCase(),
-    capture_method: 'manual',
+export async function payHostedCheckout(url: string): Promise<void> {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#email', { timeout: 60_000 });
+    await page.fill('#email', 'testsuite+buyer@openswitchboard.ai');
+    // Wallets and delayed methods come and go on this page; the card option
+    // is an accordion row that may already be open.
+    if (!(await page.locator('#cardNumber').isVisible().catch(() => false))) {
+      await page.locator('#payment-method-accordion-item-title-card').click({ force: true });
+    }
+    await page.waitForSelector('#cardNumber', { timeout: 60_000 });
+    await page.fill('#cardNumber', '4000000000000077');
+    await page.fill('#cardExpiry', `12${String(new Date().getFullYear() + 3).slice(2)}`);
+    await page.fill('#cardCvc', '123');
+    await page.fill('#billingName', 'Bella Buyer').catch(() => {});
+    await page.fill('#billingPostalCode', '6160').catch(() => {});
+    // "Save my information for faster checkout" asks for a phone number and
+    // blocks the form until it gets one. A test buyer saves nothing.
+    const saveForLater = page.locator('#enableStripePass');
+    if (await saveForLater.isVisible().catch(() => false)) {
+      await saveForLater.uncheck({ force: true }).catch(() => {});
+    }
+    await page.click('button[type=submit]');
+    // Stripe sends the buyer on to the success_url once the payment lands.
+    // Where that goes afterwards (a sign-in redirect, say) is the counter's
+    // business; leaving checkout.stripe.com is the signal that matters.
+    await page.waitForURL((u) => !u.host.endsWith('checkout.stripe.com'), {
+      timeout: 120_000,
+      waitUntil: 'commit',
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Make sure the platform has enough AVAILABLE balance in this currency for a
+ * release transfer. Test-mode card money lands as pending unless the charge
+ * used the bypass card, and a first run on a fresh sandbox has nothing at all.
+ */
+export async function ensurePlatformBalance(minMinor: number, ccy: string): Promise<void> {
+  const currency = ccy.toLowerCase();
+  const bal = await stripeApi('/v1/balance');
+  const have = (bal.available ?? []).find((b: any) => b.currency === currency)?.amount ?? 0;
+  if (have >= minMinor) return;
+  await stripeApi('/v1/payment_intents', {
+    amount: String(Math.max(minMinor - have, minMinor)),
+    currency,
     confirm: 'true',
-    payment_method: 'pm_card_visa',
-    'transfer_data[destination]': sellerAcct,
-    application_fee_amount: '0',
-    'metadata[osb_settlement_id]': settlementId,
-    'metadata[osb_env]': ENV_NAME,
+    payment_method: 'pm_card_bypassPending',
+    description: 'OpenSwitchboard test harness: platform balance top-up',
     'automatic_payment_methods[enabled]': 'true',
     'automatic_payment_methods[allow_redirects]': 'never',
   });
-  if (pi.status !== 'requires_capture') {
-    throw new Error(`funding PI ${pi.id} is ${pi.status}, expected requires_capture`);
-  }
-  return pi.id as string;
 }
 
 /** A tiny valid 1x1 PNG for evidence uploads. */

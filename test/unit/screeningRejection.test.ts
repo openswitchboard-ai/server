@@ -65,6 +65,7 @@ const cfg: Config = {
   quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
   settlementFeePercent: 0,
+  settlementFeeFlatMinor: 100,
 };
 
 const ACCOUNT = 'acct-screening-rejection';

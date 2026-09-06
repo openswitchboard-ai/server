@@ -76,6 +76,7 @@ const cfg: Config = {
   quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
   settlementFeePercent: 0,
+  settlementFeeFlatMinor: 100,
 } as unknown as Config;
 
 const MATCH = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
