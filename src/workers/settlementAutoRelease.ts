@@ -21,11 +21,14 @@
  * id as its idempotency key, so a transfer attempted twice pays the seller
  * once. The order here is the same as the human route's: move the state
  * first, then move the money, so a settlement whose transfer fails is left at
- * 'confirmed' with nothing moved — visible, and picked up again by the retry
- * on the settlement page.
+ * 'confirmed' with nothing moved — visible, and picked up again on the next
+ * pass. That retry is the first half of the sweep: a buyer who confirms has a
+ * retry button on their own page, and a release the clock made has nobody to
+ * press it.
  */
 import {
   autoReleaseSettlement,
+  autoReleasesAwaitingTransfer,
   scheduledAction,
   settlementsDueForAutoRelease,
 } from '../domain/settlements.js';
@@ -40,18 +43,43 @@ export interface AutoReleaseSweepResult {
   released: number;
   /** Settlements another sweep, a confirmation or a dispute got to first. */
   skipped: number;
-  /** Settlements confirmed here whose transfer did not go through. */
+  /** Settlements confirmed by the clock whose transfer did not go through,
+   *  on this pass or an earlier one. Retried on every pass. */
   failed: number;
+  /** Earlier auto-releases whose transfer went through on this pass. */
+  recovered: number;
 }
 
 export async function runAutoReleaseSweep(
   cfg: Config,
   log: (msg: string, extra?: any) => void,
 ): Promise<AutoReleaseSweepResult> {
-  const result: AutoReleaseSweepResult = { due: 0, released: 0, skipped: 0, failed: 0 };
+  const result: AutoReleaseSweepResult = {
+    due: 0,
+    released: 0,
+    skipped: 0,
+    failed: 0,
+    recovered: 0,
+  };
   // A deployment with payments switched off has no clock to run and no way to
   // move money if it had one.
   if (!settlementsConfigured(cfg)) return result;
+  // First, the ones an earlier pass confirmed and could not pay: the buyer's
+  // own confirmation has a retry on their page and an auto-release has
+  // nobody to press it, so the sweep is that retry.
+  for (const stuck of await autoReleasesAwaitingTransfer()) {
+    try {
+      await transferToSellerForSettlement(cfg, stuck);
+      result.recovered += 1;
+      log('settlement auto-release transfer recovered', { settlement_id: stuck.id });
+    } catch (e: any) {
+      result.failed += 1;
+      log('settlement auto-release transfer still failing; nothing moved', {
+        settlement_id: stuck.id,
+        error: e?.message,
+      });
+    }
+  }
   const due = await settlementsDueForAutoRelease();
   result.due = due.length;
   for (const s of due) {

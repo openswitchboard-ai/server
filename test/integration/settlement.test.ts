@@ -115,9 +115,18 @@ async function newIntroduction(): Promise<string> {
     const r = await mcpCall(buyer.accessToken, 'check_in', { intent_id: w.result.intent_id });
     return r.result.introductions?.[0]?.intro_id as string | undefined;
   }, 'match to appear');
-  for (const action of ['express_interest', 'opt_in'] as const) {
-    await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action });
-    await mcpCall(seller.accessToken, 'respond', { intro_id: id, action });
+  await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
+  await mcpCall(seller.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
+  // Once these two have more than one listing apiece on the board, a second
+  // introduction opens a collection window on the listing it lands on, and
+  // opt_in is refused until the window closes. The humans close theirs early,
+  // which is the one-tap step their own page offers.
+  for (const actor of [buyer, seller]) {
+    await mcpCall(actor.accessToken, 'respond', { intro_id: id, action: 'close_collection' });
+  }
+  for (const actor of [buyer, seller]) {
+    const r = await mcpCall(actor.accessToken, 'respond', { intro_id: id, action: 'opt_in' });
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
   }
   return id;
 }
@@ -129,7 +138,7 @@ async function proposeSettlement(introId = matchId): Promise<string> {
     ccy: 'AUD',
     description: 'Mountain bike as agreed, pickup this weekend.',
   });
-  expect(r.isError).toBe(false);
+  expect(r.isError, JSON.stringify(r.result)).toBe(false);
   expect(r.result.kind).toBe('settlement');
   expect(r.result.state).toBe('proposed');
   return r.result.settlement_id as string;
@@ -384,7 +393,8 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const started = await clockOf(sid);
     expect(started.handedOver).toBe(true);
     expect(started.running).toBe(true);
-    expect(started.windowDays).toBe(7); // SETTLEMENT_AUTO_RELEASE_DAYS
+    // SETTLEMENT_AUTO_RELEASE_DAYS, measured off the row's own two stamps.
+    expect(started.windowDays).toBeCloseTo(7, 3);
     expect(started.autoReleased).toBe(false);
 
     // The agent surface carries the deadline and the sentence to relay.

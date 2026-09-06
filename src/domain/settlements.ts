@@ -656,6 +656,26 @@ export async function settlementsDueForAutoRelease(limit = 50): Promise<Settleme
 }
 
 /**
+ * Auto-releases whose transfer did not go through: 'confirmed', the clock's
+ * doing, and no transfer recorded. The buyer's own confirmation has a retry
+ * on their settlement page; an auto-release has nobody to press it, so the
+ * sweep picks these up again on its next pass. No state changes here — the
+ * settlement is already 'confirmed' — so this needs no transition context;
+ * it is the money half alone, and the release's idempotency key means a
+ * transfer that did in fact go out is never sent twice.
+ */
+export async function autoReleasesAwaitingTransfer(limit = 50): Promise<SettlementRow[]> {
+  const r = await getPool().query(
+    `SELECT * FROM settlements
+     WHERE state = 'confirmed' AND auto_released = true AND stripe_transfer_id IS NULL
+     ORDER BY confirmed_at
+     LIMIT $1`,
+    [limit],
+  );
+  return r.rows;
+}
+
+/**
  * The buyer's window ran out: evidence-locked -> confirmed, on the clock
  * rather than on anyone's word. The release transfer is started by the sweep
  * right after this, exactly as the buyer's own confirm route does it, and
