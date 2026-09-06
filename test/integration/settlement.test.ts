@@ -4,14 +4,13 @@
  * G2 (happy path): settle proposed -> both humans approve on their approval
  * pages (PIN) -> the buyer pays the real hosted Checkout Session in a browser
  * -> webhook funds -> seller locks evidence into the WORM vault -> buyer
- * confirms receipt (PIN) -> a transfer of amount - fee goes out -> webhook
- * releases. Then Stripe is asked directly: the buyer was charged the agreed
- * amount exactly into the platform balance with nothing routed away, and the
- * seller's connected test account received the amount less the flat
- * introductory fee.
+ * confirms receipt (PIN) -> a transfer of the agreed amount goes out ->
+ * webhook releases. Then Stripe is asked directly: the buyer was charged the
+ * three itemised lines into the platform balance with nothing routed away,
+ * and the seller's connected test account received the agreed amount in full.
  *
  * G3 (refund path): a fresh settlement is funded, the buyer disputes, the
- * PaymentIntent is refunded in full, and the webhook records 'refunded'.
+ * whole buyer total is refunded, and the webhook records 'refunded'.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
@@ -42,9 +41,14 @@ const d = RUN ? describe : describe.skip;
 
 const AMOUNT = 87.65; // 8765 minor units
 const AMOUNT_MINOR = 8765;
-/** SETTLEMENT_FEE_FLAT_MINOR default: $1.00, off what the seller receives. */
+/** SETTLEMENT_FEE_FLAT_MINOR default: $1.00, paid by the buyer. */
 const FEE_MINOR = 100;
-const SELLER_MINOR = AMOUNT_MINOR - FEE_MINOR;
+/** SETTLEMENT_PROCESSING_* defaults (1.7% + 30), grossed up over the first
+ *  two lines: ceil((8865 * 0.017 + 30) / 0.983). */
+const PROCESSING_MINOR = 184;
+const BUYER_TOTAL_MINOR = AMOUNT_MINOR + FEE_MINOR + PROCESSING_MINOR; // 9049
+/** The seller receives the agreed amount, in full. */
+const SELLER_MINOR = AMOUNT_MINOR;
 
 let buyer: TestActor; // WANT side pays
 let seller: TestActor; // HAVE side is paid
@@ -204,21 +208,21 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       120_000,
     );
 
-    // Ask Stripe directly. The buyer's side: the agreed amount exactly, taken
+    // Ask Stripe directly. The buyer's side: the three itemised lines, taken
     // into OUR balance, with nothing routed away from it.
     const pi = await stripeApi(`/v1/payment_intents/${piId}`);
     expect(pi.status).toBe('succeeded');
-    expect(pi.amount_received).toBe(AMOUNT_MINOR);
+    expect(pi.amount_received).toBe(BUYER_TOTAL_MINOR);
     expect(pi.transfer_group).toBe(sid);
     expect(pi.transfer_data).toBeNull();
     expect(pi.application_fee_amount).toBeNull();
     const charges = await stripeApi(`/v1/charges?payment_intent=${piId}`);
     const charge = charges.data[0];
     expect(charge.captured).toBe(true);
-    expect(charge.amount_captured).toBe(AMOUNT_MINOR);
+    expect(charge.amount_captured).toBe(BUYER_TOTAL_MINOR);
     expect(charge.transfer).toBeNull();
 
-    // The seller's side: one transfer, for the amount less the flat fee,
+    // The seller's side: one transfer, for the agreed amount in full,
     // carrying the settlement id as its transfer_group.
     const [[transferId]] = await dbExec(
       'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
@@ -240,12 +244,16 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     );
     expect(destPayment.amount).toBe(SELLER_MINOR);
 
-    // The fee we kept is the one the settlement recorded and both humans saw.
-    const [[feeMinor]] = await dbExec(
-      'SELECT fee_amount_minor FROM settlements WHERE id = :id::uuid',
+    // The breakdown we kept is the one the settlement recorded and both humans
+    // saw before the buyer paid.
+    const [[feeMinor, processingMinor, buyerTotalMinor]] = await dbExec(
+      `SELECT fee_amount_minor, processing_fee_minor, buyer_total_minor
+       FROM settlements WHERE id = :id::uuid`,
       [{ name: 'id', value: sid }],
     );
     expect(Number(feeMinor)).toBe(FEE_MINOR);
+    expect(Number(processingMinor)).toBe(PROCESSING_MINOR);
+    expect(Number(buyerTotalMinor)).toBe(BUYER_TOTAL_MINOR);
   }, 600_000);
 
   it('G3: disputed -> refunded, webhook-driven, the buyer made whole in Stripe', async () => {
@@ -267,7 +275,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const charges = await stripeApi(`/v1/charges?payment_intent=${piId}`);
     const charge = charges.data[0];
     expect(charge.refunded).toBe(true);
-    expect(charge.amount_refunded).toBe(AMOUNT_MINOR); // in full, fee included
+    expect(charge.amount_refunded).toBe(BUYER_TOTAL_MINOR); // everything, both fee lines included
     // Nothing ever went to the seller on this one.
     const [[transferId]] = await dbExec(
       'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',

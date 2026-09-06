@@ -75,11 +75,16 @@ export interface Config {
    *  SET TO 0: the introductory fee is the flat one below. */
   settlementFeePercent: number;
   /** Flat introductory fee, in the settlement currency's minor unit (100 =
-   *  $1.00). Taken out of what the seller receives — the buyer pays the agreed
-   *  amount exactly and the seller is transferred amount - fee. Stripe's own
-   *  processing cost on a settlement of any ordinary size is larger than this,
-   *  which is the point of calling it introductory. */
+   *  $1.00). The BUYER pays it, itemised on the payment page as a line of its
+   *  own; the seller receives the agreed amount in full. */
   settlementFeeFlatMinor: number;
+  /** Stripe's percentage rate on a domestic card, as a percent (1.7 = 1.7%).
+   *  The buyer's third line recovers this so the agreed amount plus our fee
+   *  arrives whole. */
+  settlementProcessingPercent: number;
+  /** Stripe's fixed per-charge amount, in the settlement currency's minor
+   *  unit (30 = $0.30). The other half of the same recovery. */
+  settlementProcessingFixedMinor: number;
 }
 
 export function loadConfig(): Config {
@@ -125,6 +130,8 @@ export function loadConfig(): Config {
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
     settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
     settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
+    settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),
+    settlementProcessingFixedMinor: Number(process.env.SETTLEMENT_PROCESSING_FIXED_MINOR ?? 30),
   };
 }
 

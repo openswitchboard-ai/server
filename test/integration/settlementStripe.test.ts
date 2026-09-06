@@ -11,14 +11,15 @@
  *  - a v2 Recipient account is created the way the server creates it, and a
  *    pre-verified one reads back stripe_transfers: active;
  *  - the hosted onboarding link comes back for the recipient configuration;
- *  - the Checkout Session takes the agreed amount into the PLATFORM balance,
+ *  - the Checkout Session itemises the buyer's three lines (the agreed amount,
+ *    our introductory fee, card processing) into the PLATFORM balance,
  *    carrying the settlement id as its transfer_group, with no destination
  *    and no application fee — and a real browser can pay it;
  *  - verifyPaymentMatchesSettlement accepts that payment and refuses a
- *    payment of the wrong amount;
- *  - the release transfers amount - fee to the seller, once, however many
- *    times it is called;
- *  - the refund path puts the buyer's money back in full.
+ *    payment of the wrong total;
+ *  - the release transfers the agreed amount to the seller in full, once,
+ *    however many times it is called;
+ *  - the refund path puts the whole buyer total back, fees included.
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -68,7 +69,7 @@ vi.mock('../../src/crypto.js', () => ({
   }),
 }));
 
-const { initStripe, getStripe, settlementFeeMinor, toMinorUnits } = await import(
+const { initStripe, getStripe, settlementBreakdown, toMinorUnits } = await import(
   '../../src/stripe.js'
 );
 const stripeDomain = await import('../../src/domain/settlementStripe.js');
@@ -81,12 +82,17 @@ const cfg: any = {
   counterOrigin: 'https://my-dev.openswitchboard.ai',
   settlementFeePercent: 0,
   settlementFeeFlatMinor: 100,
+  settlementProcessingPercent: 1.7,
+  settlementProcessingFixedMinor: 30,
   stripeSecretArn: 'osb/dev/stripe',
 };
 
 const AMOUNT = 87.65;
 const AMOUNT_MINOR = 8765;
+/** Our introductory fee, and the processing line grossed up over both. */
 const FEE_MINOR = 100;
+const PROCESSING_MINOR = 184; // ceil((8865 * 0.017 + 30) / 0.983)
+const BUYER_TOTAL_MINOR = AMOUNT_MINOR + FEE_MINOR + PROCESSING_MINOR; // 9049
 
 /** A settlement row, exactly as the database would hand it over. */
 function settlementRow(over: Record<string, any> = {}): any {
@@ -101,6 +107,8 @@ function settlementRow(over: Record<string, any> = {}): any {
     description: null,
     state: 'approved',
     fee_amount_minor: 0,
+    processing_fee_minor: null,
+    buyer_total_minor: null,
     buyer_approved_at: null,
     seller_approved_at: null,
     stripe_checkout_session: null,
@@ -138,21 +146,38 @@ d('the settlement money shape against the Stripe sandbox', () => {
     expect(await stripeDomain.sellerAccountReady(preVerifiedSeller)).toBe(true);
   }, 60_000);
 
-  it('takes the buyer\'s money into the platform balance and releases amount - fee', async () => {
+  it('charges the buyer three lines and releases the agreed amount in full', async () => {
     const s = settlementRow();
     const { url, sessionId } = await stripeDomain.createCheckoutForSettlement(cfg, s);
     expect(url).toContain('checkout.stripe.com');
 
     const stripe = await getStripe();
-    const created = await stripe.checkout.sessions.retrieve(sessionId);
-    expect(created.amount_total).toBe(AMOUNT_MINOR);
+    const created = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['line_items'],
+    });
+    expect(created.amount_total).toBe(BUYER_TOTAL_MINOR);
     expect(created.currency).toBe('aud');
     expect(created.metadata?.osb_settlement_id).toBe(s.id);
     // The label Stripe asks integrations to carry, with its random suffix.
     expect(created.integration_identifier).toMatch(/^osb_settlement_[a-z]{8}$/);
-    // The fee was written onto the settlement when the session was made.
-    const feeWrite = dbCalls.find((c) => /fee_amount_minor = \$3/.test(c.sql));
-    expect(feeWrite?.params[2]).toBe(FEE_MINOR);
+    // Three lines, in the order the buyer reads them.
+    const lines = created.line_items!.data;
+    expect(lines.map((l) => l.amount_total)).toEqual([
+      AMOUNT_MINOR,
+      FEE_MINOR,
+      PROCESSING_MINOR,
+    ]);
+    expect(lines[1].description).toBe('Protected payment — introductory fee');
+    expect(lines[2].description).toBe("Card processing, at Stripe's standard rate");
+    // The whole breakdown was written onto the settlement when the session was
+    // made, which is what the funding webhook checks the payment against.
+    const write = dbCalls.find((c) => /buyer_total_minor = \$5/.test(c.sql));
+    expect(write?.params.slice(2)).toEqual([FEE_MINOR, PROCESSING_MINOR, BUYER_TOTAL_MINOR]);
+    Object.assign(s, {
+      fee_amount_minor: FEE_MINOR,
+      processing_fee_minor: PROCESSING_MINOR,
+      buyer_total_minor: BUYER_TOTAL_MINOR,
+    });
 
     // A real browser pays the real page.
     await payHostedCheckout(url);
@@ -165,23 +190,28 @@ d('the settlement money shape against the Stripe sandbox', () => {
     // Nothing was routed away from us, and the settlement id ties it together.
     const pi = await stripe.paymentIntents.retrieve(piId);
     expect(pi.status).toBe('succeeded');
-    expect(pi.amount_received).toBe(AMOUNT_MINOR);
+    expect(pi.amount_received).toBe(BUYER_TOTAL_MINOR);
     expect(pi.transfer_group).toBe(s.id);
     expect(pi.transfer_data ?? null).toBeNull();
     expect(pi.application_fee_amount ?? null).toBeNull();
 
     // The check the webhook runs before it funds anything.
-    expect(await stripeDomain.verifyPaymentMatchesSettlement(cfg, s, piId)).toEqual({ ok: true });
-    const wrongAmount = await stripeDomain.verifyPaymentMatchesSettlement(
-      cfg,
-      { ...s, amount: '99.99' },
+    expect(await stripeDomain.verifyPaymentMatchesSettlement(s, piId)).toEqual({ ok: true });
+    const wrongTotal = await stripeDomain.verifyPaymentMatchesSettlement(
+      { ...s, buyer_total_minor: BUYER_TOTAL_MINOR + 1 },
       piId,
     );
-    expect(wrongAmount.ok).toBe(false);
+    expect(wrongTotal.ok).toBe(false);
+    // A settlement with no session behind it funds nothing at all.
+    const noTotal = await stripeDomain.verifyPaymentMatchesSettlement(
+      { ...s, buyer_total_minor: null },
+      piId,
+    );
+    expect(noTotal.ok).toBe(false);
 
-    // Release: one transfer, for the amount less the flat introductory fee.
+    // Release: one transfer, for the agreed amount, whole.
     const transfer = await stripeDomain.transferToSellerForSettlement(cfg, s);
-    expect(transfer.amount).toBe(AMOUNT_MINOR - FEE_MINOR);
+    expect(transfer.amount).toBe(AMOUNT_MINOR);
     expect(transfer.currency).toBe('aud');
     expect(transfer.destination).toBe(preVerifiedSeller);
     expect(transfer.transfer_group).toBe(s.id);
@@ -196,7 +226,7 @@ d('the settlement money shape against the Stripe sandbox', () => {
       {},
       { stripeAccount: preVerifiedSeller },
     );
-    expect(dest.amount).toBe(AMOUNT_MINOR - FEE_MINOR);
+    expect(dest.amount).toBe(AMOUNT_MINOR);
   }, 600_000);
 
   it('refuses to release to a seller who cannot receive transfers', async () => {
@@ -210,7 +240,7 @@ d('the settlement money shape against the Stripe sandbox', () => {
     sellerAccountIdStored = preVerifiedSeller;
   }, 120_000);
 
-  it('puts the buyer\'s money back in full on a refund, fee included', async () => {
+  it('puts the whole buyer total back on a refund, both fee lines included', async () => {
     const s = settlementRow();
     const { url, sessionId } = await stripeDomain.createCheckoutForSettlement(cfg, s);
     await payHostedCheckout(url);
@@ -227,13 +257,18 @@ d('the settlement money shape against the Stripe sandbox', () => {
     });
     const charge = pi.latest_charge as any;
     expect(charge.refunded).toBe(true);
-    expect(charge.amount_refunded).toBe(AMOUNT_MINOR);
+    expect(charge.amount_refunded).toBe(BUYER_TOTAL_MINOR);
     const refunds = await stripe.refunds.list({ charge: charge.id });
     expect(refunds.data).toHaveLength(1);
   }, 600_000);
 
   it('the fee is the flat introductory one, whatever the settlement is worth', () => {
-    expect(settlementFeeMinor(toMinorUnits(AMOUNT, 'AUD'), cfg)).toBe(FEE_MINOR);
-    expect(settlementFeeMinor(toMinorUnits(2500, 'AUD'), cfg)).toBe(FEE_MINOR);
+    expect(settlementBreakdown(toMinorUnits(AMOUNT, 'AUD'), cfg)).toEqual({
+      amountMinor: AMOUNT_MINOR,
+      feeMinor: FEE_MINOR,
+      processingMinor: PROCESSING_MINOR,
+      buyerTotalMinor: BUYER_TOTAL_MINOR,
+    });
+    expect(settlementBreakdown(toMinorUnits(2500, 'AUD'), cfg).feeMinor).toBe(FEE_MINOR);
   });
 });

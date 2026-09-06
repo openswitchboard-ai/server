@@ -193,14 +193,13 @@ export function feeMinorUnits(amountMinor: number, feePercent: number): number {
 }
 
 /**
- * The whole settlement fee in minor units: the flat introductory fee plus
+ * Our whole settlement fee in minor units: the flat introductory fee plus
  * whatever the percentage parameter adds (0 by default).
  *
- * The fee is taken by TRANSFERRING LESS, never as a Stripe application fee:
- * the buyer is charged the agreed amount exactly and the seller receives
- * amount - fee. It is an introductory number and deliberately below cost —
- * Stripe's own processing on a settlement of any ordinary size runs to more
- * than a dollar, so the platform is out of pocket on every one of these.
+ * The BUYER pays this, as a line of its own on the Checkout page. The seller
+ * receives the agreed amount in full: the release transfer is the agreed
+ * amount exactly, and our fee stays in the platform balance because the buyer
+ * put it there.
  *
  * Throws when the fee would swallow the whole settlement; propose-time
  * validation refuses those amounts before a settlement row exists.
@@ -216,6 +215,74 @@ export function settlementFeeMinor(
     throw new Error(`settlement of ${amountMinor} is not larger than the ${fee} fee`);
   }
   return fee;
+}
+
+/**
+ * The card-processing line, in minor units.
+ *
+ * Stripe's cut comes off the WHOLE charge, so recovering it is a gross-up
+ * rather than an addition. With a rate r and a fixed f, charging
+ *
+ *   total = net + p     where     p = ceil((net * r + f) / (1 - r))
+ *
+ * leaves total - (total * r + f) >= net: the agreed amount plus our fee
+ * arrives whole, and the rounding up of a fraction of a cent is the only
+ * difference, in the buyer's favour by less than one minor unit of drift.
+ *
+ * The arithmetic is done in integers over a scaled rate so a rate like 1.7
+ * cannot drift a cent either way through binary floating point.
+ *
+ * International and premium cards cost Stripe's standard rate PLUS a
+ * surcharge, and this line does not chase it: that excess is absorbed by the
+ * platform. The buyer is told one number, at Stripe's standard rate, whatever
+ * plastic they end up using.
+ */
+const RATE_SCALE = 10_000;
+
+export function processingRecoveryMinor(
+  netMinor: number,
+  cfg: { settlementProcessingPercent: number; settlementProcessingFixedMinor: number },
+): number {
+  const percent = cfg.settlementProcessingPercent;
+  const fixed = cfg.settlementProcessingFixedMinor;
+  if (!(percent >= 0) || percent >= 100) throw new Error(`bad processing percent ${percent}`);
+  if (!Number.isInteger(fixed) || fixed < 0) throw new Error(`bad processing fixed ${fixed}`);
+  if (!Number.isSafeInteger(netMinor) || netMinor <= 0) {
+    throw new Error(`bad net amount ${netMinor}`);
+  }
+  const rate = Math.round((percent * RATE_SCALE) / 100); // r as rate/RATE_SCALE
+  return Math.ceil((netMinor * rate + fixed * RATE_SCALE) / (RATE_SCALE - rate));
+}
+
+/** What the buyer's Checkout page itemises, and what the settlement row keeps. */
+export interface SettlementBreakdown {
+  /** The agreed amount, which the seller receives in full. */
+  amountMinor: number;
+  /** Our introductory fee. */
+  feeMinor: number;
+  /** Card processing, at Stripe's standard rate. */
+  processingMinor: number;
+  /** The three lines added up: what the buyer is charged. */
+  buyerTotalMinor: number;
+}
+
+export function settlementBreakdown(
+  amountMinor: number,
+  cfg: {
+    settlementFeeFlatMinor: number;
+    settlementFeePercent: number;
+    settlementProcessingPercent: number;
+    settlementProcessingFixedMinor: number;
+  },
+): SettlementBreakdown {
+  const feeMinor = settlementFeeMinor(amountMinor, cfg);
+  const processingMinor = processingRecoveryMinor(amountMinor + feeMinor, cfg);
+  return {
+    amountMinor,
+    feeMinor,
+    processingMinor,
+    buyerTotalMinor: amountMinor + feeMinor + processingMinor,
+  };
 }
 
 /** The fee written out for a human, e.g. "$1.00" for 100 minor AUD units. */

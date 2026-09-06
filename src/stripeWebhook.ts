@@ -76,8 +76,9 @@ function settlementIdOf(obj: { metadata?: Record<string, string> | null }): stri
 /**
  * The funding path, shared by checkout.session.completed and
  * checkout.session.async_payment_succeeded: verify the payment matches the
- * settlement exactly (amount, currency, the settlement's own transfer_group,
- * money actually taken into the platform balance), then approved -> funded.
+ * settlement exactly (the buyer total the row recorded, currency, the
+ * settlement's own transfer_group, money actually taken into the platform
+ * balance), then approved -> funded.
  * A payment that does not match funds nothing; a second payment that slipped
  * through is refunded, because with immediate capture the buyer really has
  * been charged twice.
@@ -112,7 +113,7 @@ async function handleFunding(
     }
     return;
   }
-  const check = await verifyPaymentMatchesSettlement(cfg, current, paymentIntent);
+  const check = await verifyPaymentMatchesSettlement(current, paymentIntent);
   if (!check.ok) {
     log('stripe webhook: payment does not match its settlement; refusing to fund', {
       settlement_id: sid,

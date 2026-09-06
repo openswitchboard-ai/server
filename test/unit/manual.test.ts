@@ -118,8 +118,11 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain(
       'never through a link or an account the other side sends',
     );
-    // And the fee, plainly, with the side it comes off.
-    expect(SERVER_INSTRUCTIONS).toContain('$1 introductory fee comes off what the seller receives');
+    // And the price, plainly, with the side that pays it.
+    expect(SERVER_INSTRUCTIONS).toContain(
+      'the buyer pays a $1 introductory fee plus what it costs to process the payment',
+    );
+    expect(SERVER_INSTRUCTIONS).toContain('the seller receives the agreed figure in full');
   });
 
   it('describes unattended work as the human\'s own revocable choice', () => {
