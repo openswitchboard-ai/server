@@ -250,6 +250,20 @@ export async function proposeSettlement(
       human_action: 'A settlement is already under way on this introduction. Check its state first.',
     });
   }
+  // One PAID settlement per match, ever: an introduction is one thing changing
+  // hands once, so a fresh proposal after a release would ask the buyer to
+  // pay for it twice. A declined or refunded one leaves the door open — the
+  // two may have sorted it out and want to try again.
+  const paid = await getPool().query(
+    `SELECT id FROM settlements WHERE match_id = $1 AND state = 'released' LIMIT 1`,
+    [input.match_id],
+  );
+  if (paid.rowCount) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'This introduction has already been paid and released. There is nothing further to settle on it.',
+    });
+  }
   const description = input.description
     ? { text: String(input.description).slice(0, 2000), provenance: 'counterparty-untrusted' }
     : null;
