@@ -656,6 +656,8 @@ export interface SettlementView {
   role: 'buyer' | 'seller';
   state: string;
   amount: string; // rendered "600 AUD"
+  /** The introductory fee, rendered "1.00 AUD". */
+  fee: string;
   category: string;
   descriptionText?: string;
   myApprovalPending: boolean;
@@ -667,6 +669,8 @@ export interface SettlementView {
   canLockEvidence: boolean;
   /** buyer, state evidence-locked: confirm ceremony */
   canConfirm: boolean;
+  /** buyer, state confirmed: the release did not go through, send it again */
+  canRetryRelease: boolean;
   /** either side, funded/evidence-locked */
   canDispute: boolean;
   /** buyer, evidence-locked+: presigned links to the frozen evidence */
@@ -694,6 +698,7 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
     { k: 'For', v: v.category },
     { k: 'State', v: v.state },
     { k: 'Your side', v: v.role === 'buyer' ? 'you pay' : 'you are paid' },
+    { k: 'Introductory fee', v: `${v.fee}, taken from the amount released to the seller` },
   ]
     .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
     .join('');
@@ -710,8 +715,23 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
   if (v.canPay) {
     blocks.push(`<form method="POST" action="/settlements/${esc(v.id)}/pay">
 <button type="submit" class="approve">Pay on Stripe's secure page</button></form>
-<p class="small muted">Your card details go to Stripe only. The money is held and moves to the seller
-after you confirm receipt.</p>`);
+<p class="small muted">Your payment details go to Stripe only. You pay ${esc(v.amount)} exactly.
+The money is held here and moves to the seller after you confirm receipt, less the
+introductory fee of ${esc(v.fee)}.</p>`);
+  }
+  if (v.canRetryRelease) {
+    const pinBlock = v.elevated
+      ? `<input type="hidden" name="pin" value="">`
+      : `<label for="pin">Confirm with your PIN</label>
+         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+    blocks.push(`<h2>Send the release again</h2>
+<p>Your receipt is confirmed and the payment to the seller has not gone through
+yet. Nothing has moved, and sending it again is safe: the seller can only ever
+be paid once for this settlement.</p>
+<form method="POST" action="/settlements/${esc(v.id)}/confirm">
+  ${pinBlock}
+  <button type="submit" class="approve">Send the release again</button>
+</form>`);
   }
   if (v.canConfirm) {
     const pinBlock = v.elevated
@@ -719,8 +739,8 @@ after you confirm receipt.</p>`);
       : `<label for="pin">Confirm with your PIN</label>
          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
     blocks.push(`<h2>Confirm receipt</h2>
-<p>Confirming releases the held payment to the seller. Do this once the goods
-are in your hands and as described.</p>
+<p>Confirming releases the held payment to the seller, less the introductory
+fee of ${esc(v.fee)}. Do this once the goods are in your hands and as described.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm">
   ${pinBlock}
   <button type="submit" class="approve">Confirm receipt — release the payment</button>

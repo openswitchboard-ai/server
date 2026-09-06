@@ -26,7 +26,13 @@ import * as settlements from '../../src/domain/settlements.js';
 import { SETTLEMENT_TRANSITIONS } from '../../src/domain/settlements.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { buildApp } from '../../src/app.js';
-import { feeMinorUnits, toMinorUnits } from '../../src/stripe.js';
+import {
+  WEBHOOK_EVENTS,
+  feeMinorUnits,
+  formatMinor,
+  settlementFeeMinor,
+  toMinorUnits,
+} from '../../src/stripe.js';
 import { validateOutbound, validatePayload } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 
@@ -53,6 +59,7 @@ const baseCfg: Config = {
   quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
   settlementFeePercent: 0,
+  settlementFeeFlatMinor: 100,
 };
 
 const srcRoot = join(__dirname, '..', '..', 'src');
@@ -239,7 +246,7 @@ describe('settle tool', () => {
   });
 });
 
-describe('money math (fee present, wired, and 0)', () => {
+describe('money math (a flat introductory fee, taken off the seller)', () => {
   it('converts to minor units per currency', () => {
     expect(toMinorUnits(600, 'AUD')).toBe(60000);
     expect(toMinorUnits(12.34, 'AUD')).toBe(1234);
@@ -248,17 +255,125 @@ describe('money math (fee present, wired, and 0)', () => {
     expect(() => toMinorUnits(-5, 'AUD')).toThrow();
   });
 
-  it('fee at the configured 0 percent is exactly 0 for any amount', () => {
+  it('the percentage part is a parameter and sits at 0', () => {
     for (const minor of [1, 999, 60000, 123457, 99_999_999]) {
       expect(feeMinorUnits(minor, baseCfg.settlementFeePercent)).toBe(0);
     }
-  });
-
-  it('the fee parameter itself works (would charge if ever raised)', () => {
+    // ...and it still works, if it is ever raised.
     expect(feeMinorUnits(60000, 2)).toBe(1200);
     expect(feeMinorUnits(999, 2.5)).toBe(25);
     expect(() => feeMinorUnits(1000, -1)).toThrow();
     expect(() => feeMinorUnits(1000, 101)).toThrow();
+  });
+
+  it('the whole fee is the flat 100 minor units, whatever the amount', () => {
+    for (const minor of [101, 999, 8765, 60000, 99_999_999]) {
+      expect(settlementFeeMinor(minor, baseCfg)).toBe(100);
+    }
+  });
+
+  it('the flat fee and the percentage add up when both are set', () => {
+    const cfg = { settlementFeeFlatMinor: 100, settlementFeePercent: 2 };
+    expect(settlementFeeMinor(60000, cfg)).toBe(1300); // 100 + 1200
+  });
+
+  it('refuses a settlement the fee would swallow', () => {
+    expect(() => settlementFeeMinor(100, baseCfg)).toThrow(/not larger than/);
+    expect(() => settlementFeeMinor(50, baseCfg)).toThrow(/not larger than/);
+    expect(settlementFeeMinor(101, baseCfg)).toBe(100); // one minor unit over is fine
+    expect(() => settlementFeeMinor(1000, { ...baseCfg, settlementFeeFlatMinor: -1 })).toThrow();
+  });
+
+  it('writes the fee out the way both humans see it', () => {
+    expect(formatMinor(100, 'AUD')).toBe('1.00 AUD');
+    expect(formatMinor(1300, 'aud')).toBe('13.00 AUD');
+    expect(formatMinor(100, 'JPY')).toBe('100 JPY'); // zero-decimal
+  });
+
+  it('the seller receives amount - fee and the buyer pays the amount exactly', () => {
+    const amountMinor = toMinorUnits(87.65, 'AUD');
+    expect(amountMinor).toBe(8765);
+    expect(amountMinor - settlementFeeMinor(amountMinor, baseCfg)).toBe(8665);
+  });
+});
+
+/**
+ * The money shape itself, asserted over the source: separate charges and
+ * transfers, Accounts v2 recipients, and none of the destination-charge or
+ * manual-capture machinery this replaced.
+ */
+describe('the settlement money shape', () => {
+  const stripeSrc = read('domain/settlementStripe.ts');
+  // The comments explain at length what this shape does NOT do, so the source
+  // scans below run over the code alone.
+  const code = stripeSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  it('takes the buyer\'s money into the platform balance, with nothing routed away', () => {
+    for (const gone of [
+      'capture_method',
+      'payment_method_types',
+      'paymentIntents.capture',
+      'paymentIntents.cancel',
+    ]) {
+      expect(code, gone).not.toContain(gone);
+    }
+    // transfer_data and application_fee_amount each appear exactly once, and
+    // only to REFUSE a payment that would route the money somewhere other
+    // than the platform balance.
+    for (const guard of ['transfer_data', 'application_fee_amount']) {
+      expect(code.match(new RegExp(guard, 'g')), guard).toHaveLength(1);
+      expect(code.indexOf('verifyPaymentMatchesSettlement'), guard).toBeLessThan(
+        code.indexOf(guard),
+      );
+    }
+    // The settlement id ties the charge and the transfer together.
+    expect(code).toContain('transfer_group: s.id');
+  });
+
+  it('opens seller accounts as v2 recipients, never as an express type', () => {
+    expect(code).toContain('v2.core.accounts.create');
+    expect(code).toContain('stripe_transfers: { requested: true }');
+    expect(code).toContain("dashboard: 'express'");
+    expect(code).not.toContain("type: 'express'");
+    expect(code).toContain("fees_collector: 'application'");
+    expect(code).toContain("losses_collector: 'application'");
+  });
+
+  it('reads readiness from stripe_transfers alone', () => {
+    expect(code).toContain('stripe_transfers?.status');
+    expect(code).not.toContain('charges_enabled');
+    expect(code).not.toContain('payouts_enabled');
+  });
+
+  it('pays the seller once: the settlement id is the idempotency key', () => {
+    expect(code).toContain('idempotencyKey: `osb-settlement-release-${s.id}`');
+  });
+
+  it('never uses a global Stripe key: every call comes off the client instance', () => {
+    for (const f of allSourceFiles()) {
+      const src = readFileSync(f, 'utf8');
+      if (f.endsWith('src/stripe.ts')) continue; // where the client is built
+      if (/\bnew Stripe\(/.test(src)) expect(f, `${f} builds its own Stripe client`).toBe('');
+    }
+  });
+
+  it('the webhook set is the one this shape produces', () => {
+    expect([...WEBHOOK_EVENTS].sort()).toEqual([
+      'charge.refunded',
+      'checkout.session.async_payment_failed',
+      'checkout.session.async_payment_succeeded',
+      'checkout.session.completed',
+      'transfer.created',
+    ]);
+  });
+
+  it('funding is gated on the payment having actually landed', () => {
+    const handler = read('stripeWebhook.ts');
+    expect(handler).toContain("session.payment_status === 'unpaid'");
+    // And 'released' is a webhook state, off the transfer, never off the
+    // synchronous API response in the human route.
+    expect(handler).toContain("case 'transfer.created'");
+    expect(read('counter/routes.ts')).not.toContain('markReleased');
   });
 });
 
@@ -315,6 +430,7 @@ describe('settlement protocol payloads', () => {
     seller_approved_at: null,
     stripe_checkout_session: null,
     stripe_payment_intent: null,
+    stripe_transfer_id: null,
     evidence_manifest_key: null,
   } as any;
 

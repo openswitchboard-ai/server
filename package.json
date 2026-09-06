@@ -50,7 +50,7 @@
     "argon2": "^0.45.1",
     "fastify": "^5.2.0",
     "pg": "^8.13.0",
-    "stripe": "^22.6.0"
+    "stripe": "^22.6.1"
   },
   "devDependencies": {
     "@aws-sdk/client-rds-data": "^3.1121.0",

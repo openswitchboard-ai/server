@@ -4,6 +4,18 @@
  * anything reads it; only then is a webhook transition context minted. The
  * money-state transitions funded/released/refunded happen exclusively here.
  *
+ * WHY 'released' COMES FROM A WEBHOOK. Creating a Transfer is synchronous:
+ * the API call returns a Transfer object, and we could write 'released' from
+ * that response in the confirm route. We do not, for one structural reason —
+ * money states are reachable only from a signature-verified webhook context,
+ * and marking released off an API response inside a human route would put a
+ * money state behind a human context instead. transfer.created arrives in
+ * seconds and Stripe retries it, the transfer id is written to the row as
+ * soon as the API returns, and a settlement stuck at 'confirmed' with a
+ * transfer id recorded is a visible, recoverable state rather than a lost
+ * one. The cost is that 'released' lags the actual movement of money by a
+ * few seconds, which is the right trade for keeping the single writer honest.
+ *
  * Registered only when the deployment has settlement handling configured;
  * otherwise the route does not exist.
  */
@@ -49,18 +61,26 @@ async function notifyBothParties(
   }
 }
 
-/** Extract our settlement id from an event's object metadata. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Extract our settlement id from an event's object metadata. The shape is
+ * checked: a settlement id is a uuid, and anything else would be a value we
+ * did not write, which must never reach a database lookup.
+ */
 function settlementIdOf(obj: { metadata?: Record<string, string> | null }): string | undefined {
-  return obj.metadata?.osb_settlement_id || undefined;
+  const id = obj.metadata?.osb_settlement_id;
+  return id && UUID.test(id) ? id : undefined;
 }
 
 /**
  * The funding path, shared by checkout.session.completed and
- * payment_intent.amount_capturable_updated: verify the payment matches the
- * settlement exactly (amount, currency, seller destination, manual capture,
- * fee), then approved -> funded. A payment that does not match funds
- * nothing; a duplicate hold is cancelled so the buyer's money is never held
- * twice.
+ * checkout.session.async_payment_succeeded: verify the payment matches the
+ * settlement exactly (amount, currency, the settlement's own transfer_group,
+ * money actually taken into the platform balance), then approved -> funded.
+ * A payment that does not match funds nothing; a second payment that slipped
+ * through is refunded, because with immediate capture the buyer really has
+ * been charged twice.
  */
 async function handleFunding(
   cfg: Config,
@@ -77,10 +97,15 @@ async function handleFunding(
   }
   if (current.state !== 'approved') {
     if (current.stripe_payment_intent !== paymentIntent) {
-      // A second hold slipped through after funding: release it.
+      // A second payment landed after funding: give it straight back.
       const stripe = await getStripe();
-      await stripe.paymentIntents.cancel(paymentIntent).catch(() => {});
-      log('stray settlement payment cancelled (settlement already funded)', {
+      await stripe.refunds
+        .create(
+          { payment_intent: paymentIntent, metadata: { osb_settlement_id: sid } },
+          { idempotencyKey: `osb-settlement-stray-${paymentIntent}` },
+        )
+        .catch(() => {});
+      log('stray settlement payment refunded (settlement already funded)', {
         settlement_id: sid,
         payment_intent: paymentIntent,
       });
@@ -104,11 +129,22 @@ async function handleFunding(
 async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?: any) => void) {
   const ctx: WebhookCtx = webhookAction(event.id, event.type);
   switch (event.type) {
-    case 'checkout.session.completed': {
+    case 'checkout.session.completed':
+    case 'checkout.session.async_payment_succeeded': {
       const session = event.data.object;
       const sid = settlementIdOf(session);
       if (!sid) return; // a payment unrelated to settlements
       if (session.metadata?.osb_env && session.metadata.osb_env !== cfg.envName) return;
+      // A completed session whose payment has not actually landed (a delayed
+      // method still processing) funds nothing; async_payment_succeeded is
+      // the event that comes back for it.
+      if (session.payment_status === 'unpaid') {
+        log('stripe webhook: checkout completed but unpaid; waiting for the payment', {
+          settlement_id: sid,
+          session: session.id,
+        });
+        return;
+      }
       const pi = typeof session.payment_intent === 'string'
         ? session.payment_intent
         : session.payment_intent?.id;
@@ -116,33 +152,40 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
       await handleFunding(cfg, ctx, sid, pi, session.id, log);
       return;
     }
-    case 'payment_intent.amount_capturable_updated': {
-      const pi = event.data.object;
-      const sid = settlementIdOf(pi);
+    case 'checkout.session.async_payment_failed': {
+      const session = event.data.object;
+      const sid = settlementIdOf(session);
       if (!sid) return;
-      if (pi.metadata?.osb_env && pi.metadata.osb_env !== cfg.envName) return;
-      await handleFunding(cfg, ctx, sid, pi.id, undefined, log);
-      return;
-    }
-    case 'payment_intent.succeeded': {
-      const pi = event.data.object;
-      const sid = settlementIdOf(pi) ?? (await getSettlementByPaymentIntent(pi.id))?.id;
-      if (!sid) return;
-      const row = await markReleased(ctx, sid);
-      log('settlement released', { settlement_id: sid, payment_intent: pi.id });
-      await notifyBothParties(cfg, row, 'released');
-      return;
-    }
-    case 'payment_intent.canceled': {
-      const pi = event.data.object;
-      const sid = settlementIdOf(pi) ?? (await getSettlementByPaymentIntent(pi.id))?.id;
-      if (!sid) return;
-      const row = await markRefunded(ctx, sid);
-      log('settlement refunded (authorisation released)', {
+      // Nothing was taken, so nothing changes: the settlement stays approved
+      // and the buyer can start a fresh payment from their own page.
+      log('settlement payment failed; settlement still awaits payment', {
         settlement_id: sid,
-        payment_intent: pi.id,
+        session: session.id,
       });
-      await notifyBothParties(cfg, row, 'refund');
+      return;
+    }
+    case 'transfer.created': {
+      const transfer = event.data.object;
+      // Our own releases are the only transfers this cares about: they carry
+      // the settlement id in metadata AND as their transfer_group. A transfer
+      // from anywhere else (Stripe writes its own transfer_group on some
+      // charges) is left alone.
+      const sid = settlementIdOf(transfer);
+      if (!sid) return;
+      if (transfer.metadata?.osb_env !== cfg.envName) return;
+      if (transfer.transfer_group !== sid) {
+        log('stripe webhook: transfer metadata and transfer_group disagree; ignored', {
+          settlement_id: sid,
+          transfer: transfer.id,
+          transfer_group: transfer.transfer_group,
+        });
+        return;
+      }
+      const current = await getSettlement(sid);
+      if (!current) return; // a transfer unrelated to settlements
+      const row = await markReleased(ctx, sid);
+      log('settlement released', { settlement_id: sid, transfer: transfer.id });
+      await notifyBothParties(cfg, row, 'released');
       return;
     }
     case 'charge.refunded': {

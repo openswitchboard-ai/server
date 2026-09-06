@@ -71,9 +71,15 @@ export interface Config {
   /** WORM evidence bucket (Object Lock; 90-day retention) for settlement
    *  evidence snapshots. Required whenever stripeSecretArn is set. */
   evidenceBucket?: string;
-  /** Platform fee, percent of the settlement amount. Present in config by
-   *  design and SET TO 0 — no fee is charged in phase 1. */
+  /** Platform fee, percent of the settlement amount. Kept as a parameter and
+   *  SET TO 0: the introductory fee is the flat one below. */
   settlementFeePercent: number;
+  /** Flat introductory fee, in the settlement currency's minor unit (100 =
+   *  $1.00). Taken out of what the seller receives — the buyer pays the agreed
+   *  amount exactly and the seller is transferred amount - fee. Stripe's own
+   *  processing cost on a settlement of any ordinary size is larger than this,
+   *  which is the point of calling it introductory. */
+  settlementFeeFlatMinor: number;
 }
 
 export function loadConfig(): Config {
@@ -118,6 +124,7 @@ export function loadConfig(): Config {
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
     settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
+    settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
   };
 }
 

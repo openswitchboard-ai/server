@@ -23,6 +23,7 @@ import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, sideOf, type MatchRow } from './matches.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
+import { settlementFeeMinor, toMinorUnits } from '../stripe.js';
 import type { Config } from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +111,8 @@ export interface SettlementRow {
   seller_approved_at: Date | null;
   stripe_checkout_session: string | null;
   stripe_payment_intent: string | null;
+  /** The release transfer to the seller, recorded when it is created. */
+  stripe_transfer_id: string | null;
   evidence_manifest_key: string | null;
 }
 
@@ -216,6 +219,17 @@ export async function proposeSettlement(
     throw Object.assign(new Error('ccy must be a three-letter currency code'), {
       validation: true,
     });
+  }
+  // The introductory fee comes out of what the seller receives, so a
+  // settlement has to be worth more than the fee. Refused here, before a row
+  // exists, rather than at the transfer.
+  try {
+    settlementFeeMinor(toMinorUnits(input.amount, input.ccy), cfg);
+  } catch {
+    throw Object.assign(
+      new Error('the amount is too small to settle through the switchboard'),
+      { validation: true },
+    );
   }
   // One live settlement per match: a second proposal while one is in flight
   // would double-charge the buyer.
@@ -411,9 +425,9 @@ export async function lockEvidence(
   return applyTransition(ctx, settlementId, ['funded'], 'evidence-locked', 'evidence_locked_at');
 }
 
-/** Buyer confirms receipt: evidence-locked -> confirmed. The capture that
- *  follows is initiated by the same signed request; 'released' is recorded
- *  only when Stripe's webhook confirms the capture. */
+/** Buyer confirms receipt: evidence-locked -> confirmed. The transfer to the
+ *  seller is started by the same signed request; 'released' is recorded only
+ *  when Stripe's webhook reports the transfer. */
 export async function confirmReceipt(ctx: HumanCtx, settlementId: string): Promise<SettlementRow> {
   assertTransitionContext(ctx);
   const s = await getSettlement(settlementId);
@@ -421,7 +435,7 @@ export async function confirmReceipt(ctx: HumanCtx, settlementId: string): Promi
   if (partyOf(s, ctx.accountId) !== 'buyer') {
     throw Object.assign(new Error('only the buyer confirms receipt'), { notFound: true });
   }
-  if (s.state === 'confirmed') return s; // idempotent: capture retry path
+  if (s.state === 'confirmed') return s; // idempotent: transfer retry path
   await writeConsentEvent({
     event: 'settlement-receipt-confirmed',
     settlement_id: settlementId,
@@ -442,7 +456,7 @@ export async function openDispute(ctx: HumanCtx, settlementId: string): Promise<
   const s = await getSettlement(settlementId);
   if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
   partyOf(s, ctx.accountId);
-  if (s.state === 'disputed') return s; // idempotent: cancel retry path
+  if (s.state === 'disputed') return s; // idempotent: refund retry path
   await writeConsentEvent({
     event: 'settlement-disputed',
     settlement_id: settlementId,
@@ -463,9 +477,10 @@ export async function openDispute(ctx: HumanCtx, settlementId: string): Promise<
 // Webhook transitions (verified Stripe events only).
 // ---------------------------------------------------------------------------
 
-/** The buyer's hold landed (checkout.session.completed or
- *  payment_intent.amount_capturable_updated): approved -> funded. The
- *  webhook handler verifies the payment matches the settlement first. */
+/** The buyer's money landed in the platform balance
+ *  (checkout.session.completed / async_payment_succeeded): approved ->
+ *  funded. The webhook handler verifies the payment matches the settlement
+ *  first. */
 export async function markFunded(
   ctx: WebhookCtx,
   settlementId: string,
@@ -480,13 +495,14 @@ export async function markFunded(
   return applyTransition(ctx, settlementId, ['approved'], 'funded', 'funded_at');
 }
 
-/** payment_intent.succeeded (capture landed): confirmed -> released. */
+/** transfer.created (the seller's money left the platform balance):
+ *  confirmed -> released. */
 export async function markReleased(ctx: WebhookCtx, settlementId: string): Promise<SettlementRow> {
   assertTransitionContext(ctx);
   return applyTransition(ctx, settlementId, ['confirmed'], 'released', 'released_at');
 }
 
-/** payment_intent.canceled / charge.refunded: disputed -> refunded. */
+/** charge.refunded: disputed -> refunded. */
 export async function markRefunded(ctx: WebhookCtx, settlementId: string): Promise<SettlementRow> {
   assertTransitionContext(ctx);
   return applyTransition(ctx, settlementId, ['disputed'], 'refunded', 'refunded_at');

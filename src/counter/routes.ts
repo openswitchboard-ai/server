@@ -60,13 +60,13 @@ import * as ops from '../domain/counterOps.js';
 import * as agentKeys from '../domain/agentKeys.js';
 import * as settlements from '../domain/settlements.js';
 import {
-  cancelPaymentForSettlement,
-  capturePaymentForSettlement,
   checkoutUrlForSettlement,
   ensureSellerStripeAccount,
+  refundPaymentForSettlement,
   sellerAccountReady,
   sellerOnboardingLink,
   sellerStripeAccountId,
+  transferToSellerForSettlement,
 } from '../domain/settlementStripe.js';
 import {
   evidenceViewLinks,
@@ -74,6 +74,7 @@ import {
   writeEvidenceManifest,
 } from '../domain/evidence.js';
 import { settlementsConfigured } from '../config.js';
+import { formatMinor, settlementFeeMinor, toMinorUnits } from '../stripe.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
@@ -131,6 +132,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
 
     const html = (reply: FastifyReply, body: string, code = 200) =>
       reply.code(code).type('text/html').send(body);
+
+    /** The introductory fee on a settlement, written out for a human. The
+     *  buyer pays the agreed amount exactly; the seller receives it less this. */
+    const settlementFeeLine = (row: { amount: string; ccy: string }): string =>
+      formatMinor(settlementFeeMinor(toMinorUnits(Number(row.amount), row.ccy), cfg), row.ccy);
 
     // A failed send (SES congestion, sandbox quota) still shows the code page:
     // the code is still required, and the honest note says the email may lag.
@@ -649,12 +655,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return { error: `This settlement is ${s.state} — nothing to decide.` };
         }
         const m = await getMatch(s.match_id);
+        const fee = settlementFeeLine(s);
+        const amountMinor = toMinorUnits(Number(s.amount), s.ccy);
         facts.push(
           {
             k: party === 'buyer' ? 'You would pay' : 'You would be paid',
-            v: `${Number(s.amount)} ${s.ccy}`,
+            v:
+              party === 'buyer'
+                ? `${Number(s.amount)} ${s.ccy}`
+                : formatMinor(amountMinor - settlementFeeMinor(amountMinor, cfg), s.ccy),
           },
           { k: 'For', v: m ? categoryLeafLabel(m.category) : 'your match' },
+          {
+            k: 'Introductory fee',
+            v: `${fee}, taken from the amount released to the seller`,
+          },
           {
             k: 'How it works',
             v: party === 'buyer' ? 'held until you confirm receipt' : 'held until the buyer confirms receipt',
@@ -867,7 +882,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           // Seller onboarding starts at first settlement approval: make sure
           // the connected account exists the moment the seller says yes.
           if (r.row.seller_account === s.accountId && settlementsConfigured(cfg)) {
-            await ensureSellerStripeAccount(cfg, s.accountId!, refId);
+            await ensureSellerStripeAccount(cfg, s.accountId!, r.row);
           }
           return reply.redirect(`/settlements/${refId}`, 303);
         }
@@ -951,6 +966,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         role,
         state: row.state,
         amount: `${Number(row.amount)} ${row.ccy}`,
+        fee: settlementFeeLine(row),
         category: m ? categoryLeafLabel(m.category) : 'your match',
         descriptionText: row.description?.text,
         myApprovalPending:
@@ -959,6 +975,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         needsPaymentSetup,
         canLockEvidence: role === 'seller' && row.state === 'funded',
         canConfirm: role === 'buyer' && row.state === 'evidence-locked',
+        // The release did not go through the first time (the transfer was
+        // refused, so nothing moved): the buyer can send it again from here.
+        canRetryRelease: role === 'buyer' && row.state === 'confirmed',
         canDispute: ['funded', 'evidence-locked'].includes(row.state),
         evidence: showEvidence ? await evidenceViewLinks(cfg, row.id) : [],
         hasPasskey: await wa.accountHasPasskey(accountId),
@@ -980,8 +999,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       );
     });
 
-    // Buyer starts the hosted payment. The card page is Stripe's; the money
-    // is authorised and HELD (manual capture) with the seller as destination.
+    // Buyer starts the hosted payment. The payment page is Stripe's; the
+    // money is taken and HELD by the switchboard until the buyer confirms
+    // receipt, and only then transferred on to the seller.
     counter.post('/settlements/:id/pay', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
@@ -998,7 +1018,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           409,
         );
       }
-      const url = await checkoutUrlForSettlement(cfg, found.row, sellerId);
+      const url = await checkoutUrlForSettlement(cfg, found.row);
       return reply.redirect(url, 303);
     });
 
@@ -1011,7 +1031,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (found.role !== 'seller' || !settlementsConfigured(cfg)) {
         return html(reply, pages.messagePage('Not yet', '<p>Payment setup is the seller&#39;s step.</p>'), 409);
       }
-      const acctId = await ensureSellerStripeAccount(cfg, s.accountId!, found.row.id);
+      const acctId = await ensureSellerStripeAccount(cfg, s.accountId!, found.row);
       const url = await sellerOnboardingLink(cfg, acctId, found.row.id);
       return reply.redirect(url, 303);
     });
@@ -1083,8 +1103,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // Buyer confirms receipt (PIN/passkey ceremony) — this is what releases
-    // the held payment: the same signed request starts the capture, and the
-    // 'released' state lands when Stripe's webhook reports it.
+    // the held payment: the same signed request starts the transfer to the
+    // seller, and the 'released' state lands when Stripe's webhook reports
+    // the transfer. Confirming is idempotent, so this route doubles as the
+    // retry when a transfer was refused (an unfunded platform balance, a
+    // seller account whose capability lapsed) and nothing moved.
     counter.post('/settlements/:id/confirm', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
@@ -1092,9 +1115,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!found) return settlementNotFound(reply);
       const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
+      let row: settlements.SettlementRow;
       try {
-        const row = await settlements.confirmReceipt(settlements.counterAction(s.accountId!), found.row.id);
-        await capturePaymentForSettlement(row);
+        row = await settlements.confirmReceipt(settlements.counterAction(s.accountId!), found.row.id);
       } catch (e) {
         if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
@@ -1104,6 +1127,27 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           );
         }
         throw e;
+      }
+      try {
+        await transferToSellerForSettlement(cfg, row);
+      } catch (e: any) {
+        // The receipt is confirmed and stays confirmed; the money simply did
+        // not move. Say so plainly rather than pretending it is on its way.
+        req.log.error(
+          { err: e?.message, settlement_id: row.id },
+          'settlement release transfer failed',
+        );
+        return html(
+          reply,
+          pages.messagePage(
+            'Receipt confirmed',
+            `<p>Your confirmation is recorded. The payment to the seller did not go through
+this time, and nothing has moved. Try sending it again from the settlement page.</p>`,
+            `/settlements/${row.id}`,
+            'Back to this settlement',
+          ),
+          502,
+        );
       }
       return html(
         reply,
@@ -1123,7 +1167,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!found) return settlementNotFound(reply);
       try {
         const row = await settlements.openDispute(settlements.counterAction(s.accountId!), found.row.id);
-        await cancelPaymentForSettlement(row);
+        await refundPaymentForSettlement(row);
       } catch (e) {
         if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(

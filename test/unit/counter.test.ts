@@ -37,6 +37,7 @@ const cfg: Config = {
   quotas: { maxOpenCards: 5, maxPublishesPerDay: 10, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
   settlementFeePercent: 0,
+  settlementFeeFlatMinor: 100,
 };
 
 let app: FastifyInstance;
@@ -295,6 +296,27 @@ import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 const SLUG = 'goods.bicycle.mountain';
 const LABEL = categoryLeafLabel(SLUG);
 
+/** A settlement page view, with only the interesting parts named. */
+const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.SettlementView => ({
+  id: 's-1',
+  role: 'buyer',
+  state: 'approved',
+  amount: '87.65 AUD',
+  fee: '1.00 AUD',
+  category: LABEL,
+  myApprovalPending: false,
+  canPay: false,
+  needsPaymentSetup: false,
+  canLockEvidence: false,
+  canConfirm: false,
+  canRetryRelease: false,
+  canDispute: false,
+  evidence: [],
+  hasPasskey: false,
+  elevated: false,
+  ...over,
+});
+
 describe('counter pages: copy-cull render suite', () => {
   const allPages = (): { name: string; html: string }[] => [
     { name: 'landing', html: cpages.landingPage() },
@@ -342,6 +364,36 @@ describe('counter pages: copy-cull render suite', () => {
         elevated: false,
         postPath: '/approve',
       }),
+    },
+    {
+      name: 'approval-settlement',
+      html: cpages.approvalPage({
+        action: 'settlement-approve',
+        refId: 's-1',
+        facts: [
+          { k: 'You would pay', v: '87.65 AUD' },
+          { k: 'For', v: LABEL },
+          { k: 'Introductory fee', v: '1.00 AUD, taken from the amount released to the seller' },
+          { k: 'How it works', v: 'held until you confirm receipt' },
+        ],
+        anomalies: [],
+        hasPasskey: false,
+        elevated: false,
+        postPath: '/approve',
+      }),
+    },
+    { name: 'settlement-buyer-pay', html: cpages.settlementPage(settlementView({ canPay: true })) },
+    {
+      name: 'settlement-buyer-confirm',
+      html: cpages.settlementPage(settlementView({ state: 'evidence-locked', canConfirm: true, canDispute: true })),
+    },
+    {
+      name: 'settlement-buyer-retry-release',
+      html: cpages.settlementPage(settlementView({ state: 'confirmed', canRetryRelease: true })),
+    },
+    {
+      name: 'settlement-seller-setup',
+      html: cpages.settlementPage(settlementView({ role: 'seller', needsPaymentSetup: true })),
     },
     { name: 'shared-profile-empty', html: chome.sharedProfilePage({ firstName: '', locality: '' }) },
     {
@@ -490,6 +542,30 @@ describe('counter pages: copy-cull render suite', () => {
   it('the taxonomy maps the test slug to a human label', () => {
     expect(LABEL).toBe('Mountain bikes');
     expect(LABEL).not.toContain('.');
+  });
+
+  // The fee is charged to the seller, so BOTH humans are told about it in the
+  // same words, on the page where they act.
+  it('every settlement page says the fee and which side it comes off', () => {
+    for (const role of ['buyer', 'seller'] as const) {
+      const html = cpages.settlementPage(settlementView({ role, canPay: role === 'buyer' }));
+      expect(html, role).toContain('Introductory fee');
+      expect(html, role).toContain('1.00 AUD');
+      expect(html, role).toContain('taken from the amount released to the seller');
+    }
+  });
+
+  it('the buyer is told they pay the agreed amount exactly', () => {
+    const html = cpages.settlementPage(settlementView({ canPay: true }));
+    expect(html).toContain('You pay 87.65 AUD exactly');
+  });
+
+  it('confirming says what the seller actually receives', () => {
+    const html = cpages.settlementPage(
+      settlementView({ state: 'evidence-locked', canConfirm: true }),
+    );
+    expect(html).toContain('less the introductory');
+    expect(html).toContain('1.00 AUD');
   });
 
   for (const p of allPages()) {
