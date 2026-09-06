@@ -395,7 +395,7 @@ export async function pendingOffers(accountId: string): Promise<PendingOffer[]> 
   const r = await getPool().query(
     `SELECT o.id AS offer_id, o.match_id, o.amount, o.ccy, m.category, o.proposer_account
      FROM offers o JOIN matches m ON m.id = o.match_id
-     WHERE o.state = 'awaiting-human' AND o.proposer_account <> $1
+     WHERE o.state IN ('proposed', 'awaiting-human') AND o.proposer_account <> $1
        AND (m.account_want = $1 OR m.account_have = $1) AND m.state = 'open'
        AND o.expiry > now()
      ORDER BY o.created_at DESC LIMIT 20`,

@@ -299,15 +299,13 @@ export async function acceptOfferByHuman(
   recordedVia: string,
 ) {
   const o = await loadOffer(offerId);
-  // A human reaches this from their own page, so a wrong-state offer is a
-  // "not yet" to explain, never a 500. Declining from either state stays
-  // legal; accepting waits for the agent to bring the offer to them.
-  if (o.state !== 'awaiting-human') {
+  // Humans hold every gate. A live offer is theirs to accept from their own
+  // page whether or not their agent has brought it to them yet — the parking
+  // step (send_to_human) is the agent's advice arriving, never a lock on the
+  // human's yes. Anything past live is a "not yet" to explain, never a 500.
+  if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action:
-        o.state === 'proposed'
-          ? 'This offer has not been brought to you yet. Ask your assistant to pass it on, and it will be here to accept.'
-          : `This offer is no longer open to accept (it is ${o.state}).`,
+      human_action: `This offer is no longer open to accept (it is ${o.state}).`,
     });
   }
   const m = await getMatch(o.match_id);

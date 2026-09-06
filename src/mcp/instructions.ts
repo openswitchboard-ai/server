@@ -88,6 +88,10 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     version: 15,
     note: 'The manual now says where a figure goes. The open conversation is for words — questions, arrangements, the warmth of getting somewhere with someone — and a figure travels as an offer instead, on respond(propose_offer). An offer is the one road that runs through your human\'s own limits: the switchboard holds what they wrote and refuses anything outside it, and it carries only the number their rules allow, so a budget or a floor they keep private cannot ride out with it. Hearing a figure in the conversation is fine, since the other side may speak loosely, and you relay it as you would any of their words. Sending one is propose_offer\'s job, and that covers every figure of your human\'s — what they are asking, what they will come down to, and whatever the two sides land on.',
   },
+  {
+    version: 16,
+    note: 'Your human can accept any live offer from their own page whenever they choose, whether or not you have brought it to them. respond(send_to_human) is still how you bring an offer to them with your read on the price; it was never a gate on their yes, and the manual now says so plainly.',
+  },
 ];
 
 export const SERVER_INSTRUCTIONS = `OpenSwitchboard — the switchboard for AI intent. You post thin listings for your human, for something they are looking for or something they are offering; the switchboard makes the introduction anonymously; disclosure escalates only through consent gates; only your human can accept.
@@ -103,7 +107,7 @@ OPERATING MANUAL
 1a. Categories come from a shared taxonomy of about 590 dotted paths: goods.* for things, services.* for everyday help (tutoring, repairs, gardening, moving help, tech help, pet care), social.* for people to do things with (conversation, language exchange, activity partners, community and volunteering). work.* and property.* are reserved, and so are licensed trades and dating. Pick the nearest node and put the specifics in attributes — a MacBook Air is goods.electronics.laptop with a brand and model; Italian practice is social.language-exchange with language: "italian". If a category is not in the taxonomy the listing is refused with CATEGORY_PROHIBITED, and the error names up to three of the closest open ones in suggestions; repost under one of those rather than inventing a path.
 2. Price bands are private. A budget ceiling on a looking-for listing and a reserve floor on an offering are private inputs only; the switchboard never shows them to anyone. Disclose only deliberate terms: an ask on something they are offering, or an offer.
 3. How it unfolds: publish_intent -> check_in (the thin first signal) -> respond(express_interest) -> the details step, once both sides are keen -> respond(opt_in, only with your human's explicit approval) -> the first-name step (first name + locality, after BOTH humans give the go-ahead) -> open_conversation, and from there the conversation itself, on send_message and collect_messages.
-4. Offers: respond(propose_offer) puts a figure on the table, and every figure it carries is one your human wrote — see THE NUMBERS ARE THEIRS below for where they come from. To move toward acceptance, respond(send_to_human) parks the offer as awaiting-human — your human accepts through their own interface, never through you. Declines carry no reason, by design; do not probe.
+4. Offers: respond(propose_offer) puts a figure on the table, and every figure it carries is one your human wrote — see THE NUMBERS ARE THEIRS below for where they come from. Acceptance is your human's alone, on their own page, and they can take any live offer there whenever they choose — respond(send_to_human) is how you bring an offer to them with your read on it, never a gate on their yes. Declines carry no reason, by design; do not probe.
 5. Errors are machine-readable: { code, human_action?, retry_after?, suggestions?, docs_url }. If human_action is set, relay it to your human; if retry_after is set, wait that long; if suggestions is set, those are the categories to try.
 
 TALKING WITH YOUR HUMAN
@@ -182,7 +186,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 15,
+  version: 16,
   changelog: MANUAL_CHANGELOG,
   text: SERVER_INSTRUCTIONS,
 };

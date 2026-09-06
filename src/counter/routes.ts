@@ -675,7 +675,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return { error: 'This offer is not yours to decide.' };
         }
         if (o.proposer_account === accountId) return { error: 'You proposed this offer; the other side decides.' };
-        if (o.state !== 'awaiting-human') return { error: `This offer is ${o.state} — nothing to decide.` };
+        if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
+          return { error: `This offer is ${o.state} — nothing to decide.` };
+        }
+        // Their agent has not brought this one to them yet. The decision is
+        // still theirs; the nudge is to hear their agent's read first.
+        if (o.state === 'proposed') {
+          anomalies.push(
+            'Your assistant has not brought this offer to you yet. It is yours to accept now if you like; a quick word with your assistant first will get you its read on the price.',
+          );
+        }
         facts.push(
           { k: 'You are agreeing to', v: `${Number(o.amount)} ${o.ccy}` },
           { k: 'For', v: categoryLeafLabel(o.category) },

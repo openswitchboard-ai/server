@@ -871,9 +871,11 @@ describe('the operating manual', () => {
     expect(SERVER_INSTRUCTIONS).toContain('approval page');
   });
 
-  it('keeps the acceptance guidance it already had', () => {
+  it('keeps the acceptance guidance it already had, and says the human never needs a gate', () => {
     expect(SERVER_INSTRUCTIONS).toContain('send_to_human');
-    expect(SERVER_INSTRUCTIONS).toContain('awaiting-human');
+    // Version 16: parking an offer is the agent's advice arriving, never a
+    // lock on the human's yes — any live offer is theirs to take.
+    expect(SERVER_INSTRUCTIONS).toContain('never a gate on their yes');
     expect(SERVER_INSTRUCTIONS).toContain('Declines carry no reason');
     expect(SERVER_INSTRUCTIONS).toContain('accepting an offer is still theirs');
   });
