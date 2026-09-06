@@ -93,7 +93,15 @@ export async function runAutoReleaseSweep(
         result.skipped += 1;
         continue;
       }
-      throw e;
+      // Anything else is this settlement's problem and not the sweep's: the
+      // row stays in 'evidence-locked' with its clock still past, so the next
+      // tick tries again, and the others in this batch are not held up by it.
+      result.failed += 1;
+      log('settlement auto-release refused; the settlement stands', {
+        settlement_id: s.id,
+        error: e?.message,
+      });
+      continue;
     }
     try {
       await transferToSellerForSettlement(cfg, confirmed);
@@ -104,8 +112,8 @@ export async function runAutoReleaseSweep(
         auto_release_at: s.auto_release_at,
       });
     } catch (e: any) {
-      // The confirmation stands and the money simply did not move. Both
-      // humans still have the retry on the settlement page.
+      // The confirmation stands and the money simply did not move. The next
+      // pass picks it up in the retry above.
       result.failed += 1;
       log('settlement auto-release transfer failed; nothing moved', {
         settlement_id: s.id,

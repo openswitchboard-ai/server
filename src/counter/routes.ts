@@ -1024,6 +1024,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated,
         autoReleaseDays: cfg.settlementAutoReleaseDays,
+        autoReleased: row.auto_released === true,
         handover,
       };
     };
