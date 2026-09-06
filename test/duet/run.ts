@@ -270,18 +270,22 @@ async function sweepApprovals(
     // The human's own rule on a figure: Priya at or above her floor, Marlowe at
     // or below his budget. Nothing else about the number is considered.
     const yes = side.id === 'priya' ? o.amount >= 400 : o.amount <= 420;
-    // An ACCEPT is only legal once the counterparty's agent has parked the
-    // offer for its human — proposed -> awaiting-human, the send_to_human
-    // transition in domain/offers.ts, which is the whole point of the gate. A
-    // DECLINE is legal from either state, so a no goes straight out.
+    // Run 8 deadlocked here, with both humans agreed on $420 and nobody able
+    // to click. The press fired at round 5 while the offer was still
+    // 'proposed', the server of the day refused it, and the one-shot guard was
+    // set BEFORE the request went out — so a press that changed nothing
+    // counted as this human having taken their turn. Eight rounds later the
+    // offer really did reach 'awaiting-human', sat there for twenty-five more,
+    // and was never pressed again.
     //
-    // Run 8 deadlocked here. The press fired while the offer was still
-    // 'proposed', the server refused it, and the one-shot guard below counted
-    // that doomed press as the human's turn — so when the offer really did
-    // reach awaiting-human eight rounds later, with both humans agreed on
-    // $420, nobody ever clicked. Waiting for the state is the fix; not
-    // spending a press on a refusal is the other half of it.
-    if (yes && o.state !== 'awaiting-human') continue;
+    // The harness deliberately does NOT encode which states a human may accept
+    // from. That question is the product's to answer and it has moved: parking
+    // an offer for its human was a precondition, and is now a courtesy the
+    // page suggests rather than a gate. A harness that hard-codes either
+    // answer silently tests the wrong thing the day the other one is true. So
+    // it presses whatever is live and lets the server decide, and simply does
+    // not spend the human's turn on an answer of "not yet" — three tries, so a
+    // standing refusal cannot become a loop.
     const key = `offer:${side.id}:${o.id}`;
     const n = attempts.get(key) ?? 0;
     if (n >= 3) continue;
