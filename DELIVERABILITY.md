@@ -1,13 +1,13 @@
 # DELIVERABILITY.md — email runbook (phase 0.E)
 
-State of the world (2026-09-05): our own account's SES production request
-was DENIED (2026-09-02; the e2e lanes had hard-bounced hundreds of test
-addresses on our domain, since fixed). **Prod mail now goes out AS the Smart
-Centric Home Automation account** (same organisation, SES production in
-ap-southeast-2): the task assumes `osb-prod-email-sender` there and sends
-from `openswitchboard.ai` verified in that account (own DKIM, MAIL FROM
-`bounce.openswitchboard.ai`, DMARC `p=quarantine`). See
-`infra/host-ses/README.md`. Dev stays in our own sandbox (us-east-1, MAIL
+State of the world (2026-09-06): **prod mail goes out from our own account,
+in us-west-2**, where SES production access was granted this morning (case
+178835342000717: 50,000 a day, 14/s) after a first request was denied on
+2026-09-02. Identity `openswitchboard.ai` verified there with its own DKIM
+and MAIL FROM `mail-w.openswitchboard.ai`, DMARC `p=quarantine`; the task
+sends with its own credentials, no assumed role. The borrowed path through
+the Smart Centric Home Automation account is dormant but still wired — see
+`infra/host-ses/README.md`. Dev stays in our own us-east-1 sandbox (MAIL
 FROM `mail.openswitchboard.ai`, simulator recipients). All sends carry the
 `osb-<env>-email` configuration set, From
 `OpenSwitchboard <board@openswitchboard.ai>`, reply-to
@@ -89,7 +89,7 @@ except at iCloud, and every verification code observed to arrive.
 
 ### Procedure
 
-1. `AWS_PROFILE=openswitchboard AWS_REGION=ap-southeast-2 SES_ASSUME_ROLE_ARN=arn:aws:iam::968431686951:role/osb-prod-email-sender npx tsx scripts/send-samples.ts --env prod --config-set osb-prod-email --to <gmail>`
+1. `AWS_PROFILE=openswitchboard AWS_REGION=us-west-2 npx tsx scripts/send-samples.ts --env prod --config-set osb-prod-email --to <gmail>`
    and the same for an Outlook.com and an iCloud address (3 mailboxes you
    control), prefix stays `[SAMPLE]`. Prod sends are paced 20 s apart.
 2. Score: each of the ~10 sample messages must land in the PRIMARY inbox

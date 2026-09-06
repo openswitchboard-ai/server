@@ -2,13 +2,15 @@
  * Send the [SAMPLE] set for visual review / the inbox-placement gate:
  *   dev (sandbox, recipient must be verified):
  *     AWS_PROFILE=openswitchboard npx tsx scripts/send-samples.ts --to you@example.com
- *   prod (production sending from the host account, see infra/host-ses):
- *     AWS_PROFILE=openswitchboard AWS_REGION=ap-southeast-2 \
- *       SES_ASSUME_ROLE_ARN=arn:aws:iam::968431686951:role/osb-prod-email-sender \
+ *   prod (our own production access, us-west-2):
+ *     AWS_PROFILE=openswitchboard AWS_REGION=us-west-2 \
  *       npx tsx scripts/send-samples.ts --to you@example.com --env prod --config-set osb-prod-email
+ * SES_ASSUME_ROLE_ARN still works, for the borrowed path in infra/host-ses.
  * Sends every sample template through SES with the env's configuration set,
  * the production From/reply-to and the RFC 8058 headers (sample token), each
  * subject prefixed "[SAMPLE]". Prints SES message IDs for the phase report.
+ * --only <name> sends one template instead of the set, which is what a
+ * pipeline check wants: one message to a simulator address, not ten.
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { fromTemporaryCredentials } from '@aws-sdk/credential-providers';
@@ -45,7 +47,12 @@ async function main() {
       .Parameter!.Value!;
 
   const unsubUrl = `${humanOrigin(envName)}/email/unsub?t=sample`;
-  for (const s of sampleSet(envName)) {
+  const only = arg('only', '');
+  const set = only ? sampleSet(envName).filter((s) => s.name === only) : sampleSet(envName);
+  if (only && set.length === 0) {
+    throw new Error(`no sample named ${only}: ${sampleSet(envName).map((s) => s.name).join(', ')}`);
+  }
+  for (const s of set) {
     const r = await ses.send(
       new SendEmailCommand({
         FromEmailAddress: 'OpenSwitchboard <board@openswitchboard.ai>',
