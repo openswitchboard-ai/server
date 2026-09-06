@@ -56,6 +56,9 @@ async function notifyBothParties(
         template,
         settlementId: s.id,
         role,
+        // The release mail says which road it took, because "the window ran
+        // out" and "you confirmed" are different pieces of news.
+        auto: template === 'released' ? s.auto_released === true : undefined,
       });
     }
   }

@@ -7,15 +7,26 @@
  *   either human may decline while unfunded; declined / released / refunded
  *   are TERMINAL.
  *
+ * 'evidence-locked' is the seller declaring handover, and it starts the
+ * buyer's window: SETTLEMENT_AUTO_RELEASE_DAYS to confirm receipt or dispute.
+ * Confirming and disputing both end the window. Silence ends it too, and the
+ * held payment goes to the seller — the same road confirmReceipt takes, walked
+ * by the sweep in workers/settlementAutoRelease.ts.
+ *
  * STRUCTURAL RULE (tested in test/unit/settlements.test.ts): every state
  * change flows through applyTransition(), the single place that writes
  * `UPDATE settlements ... state`, and applyTransition demands a transition
- * context minted in THIS module: either
+ * context minted in THIS module. There are three kinds and no more:
  *   - a human-action context (counterAction), minted only by the approval
- *     page's session-authenticated routes, or
+ *     page's session-authenticated routes;
  *   - a webhook context (webhookAction), minted only by the verified Stripe
- *     webhook handler after signature verification.
- * There is no ops-queue, admin or agent code path that can mint either; the
+ *     webhook handler after signature verification;
+ *   - a scheduled context (scheduledAction), minted only by the auto-release
+ *     sweep in workers/settlementAutoRelease.ts, and good for exactly ONE
+ *     transition, evidence-locked -> confirmed, when the buyer's window has
+ *     run out. applyTransition refuses it for anything else, so the third
+ *     kind buys the clock its single step and buys nothing else.
+ * There is no admin or agent code path that can mint any of the three; the
  * agent-facing surface (proposeSettlement / settlement reads) never
  * transitions past 'proposed'.
  */
@@ -28,13 +39,15 @@ import type { Config } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Transition contexts. The brand symbols never leave this module, so a
-// context cannot be forged with an object literal: only counterAction() and
-// webhookAction() can mint one, and the unit suite asserts (by source scan)
-// that those constructors are called only from the counter route class and
-// the verified webhook handler respectively.
+// context cannot be forged with an object literal: only counterAction(),
+// webhookAction() and scheduledAction() can mint one, and the unit suite
+// asserts (by source scan) that those constructors are called only from the
+// counter route class, the verified webhook handler and the auto-release
+// sweep respectively.
 // ---------------------------------------------------------------------------
 const HUMAN_BRAND = Symbol('osb-settlement-human-action');
 const WEBHOOK_BRAND = Symbol('osb-settlement-webhook-event');
+const SCHEDULED_BRAND = Symbol('osb-settlement-scheduled-action');
 
 export interface HumanCtx {
   kind: 'human';
@@ -48,7 +61,12 @@ export interface WebhookCtx {
   eventType: string;
 }
 
-export type TransitionCtx = HumanCtx | WebhookCtx;
+export interface ScheduledCtx {
+  kind: 'scheduled';
+  job: 'auto-release';
+}
+
+export type TransitionCtx = HumanCtx | WebhookCtx | ScheduledCtx;
 
 /** Mint a human-action context. Call ONLY from the human page routes with a
  *  session-authenticated human. */
@@ -66,14 +84,25 @@ export function webhookAction(eventId: string, eventType: string): WebhookCtx {
   return ctx;
 }
 
+/** Mint a scheduled context. Call ONLY from the auto-release sweep. It is
+ *  good for one transition — evidence-locked -> confirmed, once the buyer's
+ *  window has run out — and applyTransition refuses it for anything else. */
+export function scheduledAction(): ScheduledCtx {
+  const ctx: ScheduledCtx = { kind: 'scheduled', job: 'auto-release' };
+  Object.defineProperty(ctx, SCHEDULED_BRAND, { value: true, enumerable: false });
+  return ctx;
+}
+
 function assertTransitionContext(ctx: unknown): asserts ctx is TransitionCtx {
   const branded =
     !!ctx &&
     typeof ctx === 'object' &&
-    ((ctx as any)[HUMAN_BRAND] === true || (ctx as any)[WEBHOOK_BRAND] === true);
+    ((ctx as any)[HUMAN_BRAND] === true ||
+      (ctx as any)[WEBHOOK_BRAND] === true ||
+      (ctx as any)[SCHEDULED_BRAND] === true);
   if (!branded) {
     throw new Error(
-      'settlement transition requires a human-action or verified-webhook context',
+      'settlement transition requires a human-action, verified-webhook or scheduled context',
     );
   }
 }
@@ -122,6 +151,17 @@ export interface SettlementRow {
   /** The release transfer to the seller, recorded when it is created. */
   stripe_transfer_id: string | null;
   evidence_manifest_key: string | null;
+  /** When the seller declared the handover (the evidence-lock step). */
+  handed_over_at: Date | null;
+  /** The live clock: when the held payment goes to the seller on its own.
+   *  Set at handover, and NULL again the moment the window ends, whichever
+   *  way it ended — confirmed, disputed, or auto-released. */
+  auto_release_at: Date | null;
+  /** Which road this settlement took to 'confirmed': 'buyer-confirm' or
+   *  'auto-release'. Null until it gets there. */
+  confirmed_via: string | null;
+  /** True when the window ran out and the clock released the payment. */
+  auto_released: boolean;
 }
 
 export async function getSettlement(id: string): Promise<SettlementRow | undefined> {
@@ -156,9 +196,37 @@ export function serializeSettlement(s: SettlementRow) {
     state: s.state,
   };
   if (s.description) payload.description = s.description;
+  // The live clock, while there is one. It is NULL on every settlement whose
+  // window has ended, so the field's presence is the window itself.
+  if (s.auto_release_at) payload.auto_release_at = new Date(s.auto_release_at).toISOString();
   // Outbound-validated; declines stay reason-less as a server invariant on
   // top of the schema's additionalProperties:false.
   return assertReasonless(assertOutbound('settlement', payload));
+}
+
+/** A date an agent can say out loud: "Saturday 13 September". */
+function plainDate(d: Date): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(d);
+}
+
+/**
+ * The switchboard's own words about the clock, for the agent to relay. Written
+ * here so every read of a settlement in its window says the same thing, and
+ * undefined when no window is running.
+ */
+export function autoReleaseNote(s: SettlementRow): string | undefined {
+  if (!s.auto_release_at || !s.handed_over_at) return undefined;
+  return (
+    `Handed over on ${plainDate(new Date(s.handed_over_at))}; ` +
+    'unless your human confirms or raises a problem, the payment releases to the seller on ' +
+    `${plainDate(new Date(s.auto_release_at))}. Confirming and raising a problem both happen ` +
+    'on their own approval page.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +241,17 @@ async function applyTransition(
   stamp?: string,
 ): Promise<SettlementRow> {
   assertTransitionContext(ctx);
+  // The scheduled context buys the clock exactly one step and nothing else.
+  // Widening this is a deliberate edit with a test to match, never a side
+  // effect of adding a transition somewhere.
+  if (ctx.kind === 'scheduled') {
+    const onlyStep = to === 'confirmed' && from.length === 1 && from[0] === 'evidence-locked';
+    if (!onlyStep) {
+      throw new Error(
+        'a scheduled context allows only evidence-locked -> confirmed',
+      );
+    }
+  }
   const allowedStamps = [
     'buyer_approved_at',
     'seller_approved_at',
@@ -186,8 +265,20 @@ async function applyTransition(
   ];
   if (stamp && !allowedStamps.includes(stamp)) throw new Error(`bad stamp ${stamp}`);
   const stampSql = stamp ? `, ${stamp} = now()` : '';
+  // The auto-release clock lives and dies here, alongside the state it hangs
+  // off. Reaching 'confirmed' or 'disputed' ends the buyer's window, so the
+  // clock is cleared in the same statement that ends it: there is no moment
+  // where the state says the window is over and the clock says it is running.
+  const clockSql =
+    to === 'confirmed'
+      ? ctx.kind === 'scheduled'
+        ? `, auto_release_at = NULL, confirmed_via = 'auto-release', auto_released = true`
+        : `, auto_release_at = NULL, confirmed_via = 'buyer-confirm'`
+      : to === 'disputed'
+        ? ', auto_release_at = NULL'
+        : '';
   const r = await getPool().query(
-    `UPDATE settlements SET state = $2, updated_at = now()${stampSql}
+    `UPDATE settlements SET state = $2, updated_at = now()${stampSql}${clockSql}
      WHERE id = $1 AND state = ANY($3::text[])
      RETURNING *`,
     [settlementId, to, from],
@@ -302,14 +393,25 @@ export async function listSettlementsForAgent(
      ORDER BY created_at DESC LIMIT 50`,
     params,
   );
-  return (r.rows as SettlementRow[]).map(serializeSettlement);
+  return (r.rows as SettlementRow[]).map(withAutoReleaseNote);
 }
 
 export async function getSettlementForAgent(accountId: string, settlementId: string) {
   const s = await getSettlement(settlementId);
   if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
   partyOf(s, accountId);
-  return serializeSettlement(s);
+  return withAutoReleaseNote(s);
+}
+
+/** The wire payload, plus the switchboard's plain sentence about the clock
+ *  when one is running. The note rides beside the validated payload rather
+ *  than inside it: it is the switchboard talking to the agent about the
+ *  settlement, and the settlement message itself stays exactly what the
+ *  schema says it is. */
+function withAutoReleaseNote(s: SettlementRow) {
+  const payload = serializeSettlement(s);
+  const text = autoReleaseNote(s);
+  return text ? { ...payload, note: { text, provenance: 'switchboard-system' as const } } : payload;
 }
 
 async function notifyHumansOfProposal(
@@ -420,13 +522,33 @@ export async function declineSettlement(ctx: HumanCtx, settlementId: string): Pr
   );
 }
 
-/** Seller freezes the handover evidence: funded -> evidence-locked. */
+/**
+ * The seller declares the handover: funded -> evidence-locked. Photos are
+ * welcome and optional; what the step means is "this changed hands", and it
+ * is what starts the buyer's clock.
+ *
+ * handed_over_at and auto_release_at are written in the same statement as the
+ * manifest key, immediately before the state moves, so a settlement that
+ * reaches 'evidence-locked' always has a clock on it. autoReleaseDays comes
+ * from config (SETTLEMENT_AUTO_RELEASE_DAYS) and is interpolated as an
+ * integer number of days after a range check — never as free text.
+ *
+ * The state name stays 'evidence-locked'. Only the label the humans read
+ * changed.
+ */
 export async function lockEvidence(
   ctx: HumanCtx,
   settlementId: string,
   manifestKey: string,
+  autoReleaseDays: number,
 ): Promise<SettlementRow> {
   assertTransitionContext(ctx);
+  // Checked before any database access: the window is interpolated into SQL
+  // as an integer, so it is a whole number of days in a sane range or the
+  // handover does not happen at all.
+  if (!Number.isInteger(autoReleaseDays) || autoReleaseDays < 1 || autoReleaseDays > 90) {
+    throw new Error(`bad auto-release window ${autoReleaseDays}`);
+  }
   const s = await getSettlement(settlementId);
   if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
   if (partyOf(s, ctx.accountId) !== 'seller') {
@@ -438,11 +560,14 @@ export async function lockEvidence(
     match_id: s.match_id,
     account_id: ctx.accountId,
     manifest_key: manifestKey,
+    auto_release_days: autoReleaseDays,
     recorded_via: ctx.recordedVia,
   });
   await getPool().query(
-    `UPDATE settlements SET evidence_manifest_key = $2, updated_at = now() WHERE id = $1`,
-    [settlementId, manifestKey],
+    `UPDATE settlements SET evidence_manifest_key = $2, handed_over_at = now(),
+       auto_release_at = now() + make_interval(days => $3::int), updated_at = now()
+     WHERE id = $1 AND state = 'funded'`,
+    [settlementId, manifestKey, autoReleaseDays],
   );
   return applyTransition(ctx, settlementId, ['funded'], 'evidence-locked', 'evidence_locked_at');
 }
@@ -472,7 +597,11 @@ export async function confirmReceipt(ctx: HumanCtx, settlementId: string): Promi
 
 /** Either human disputes a held payment: funded/evidence-locked -> disputed.
  *  The money then flows BACK to the buyer (the safe direction); 'refunded'
- *  is recorded only from Stripe's webhook. */
+ *  is recorded only from Stripe's webhook.
+ *
+ *  A dispute inside the buyer's window wins: this path is unchanged by the
+ *  auto-release clock, and the transition clears auto_release_at as it lands,
+ *  so the sweep can never find a disputed settlement to release. */
 export async function openDispute(ctx: HumanCtx, settlementId: string): Promise<SettlementRow> {
   assertTransitionContext(ctx);
   const s = await getSettlement(settlementId);
@@ -493,6 +622,75 @@ export async function openDispute(ctx: HumanCtx, settlementId: string): Promise<
     'disputed',
     'disputed_at',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled transition (the auto-release sweep only).
+// ---------------------------------------------------------------------------
+
+/**
+ * Settlements whose window has run out: 'evidence-locked', a clock that is
+ * past, and a payment still sitting in the platform balance. A dispute or a
+ * confirmation clears auto_release_at as it lands, so a settlement that moved
+ * on is already out of this set by construction and the state check is the
+ * belt to that brace.
+ *
+ * SKIP LOCKED is not what makes this safe under concurrent sweeps. The
+ * transition itself is: applyTransition's `WHERE state = ANY(...)` is a
+ * compare-and-swap, so of two sweeps looking at the same row exactly one wins
+ * and the other is told the settlement is no longer 'evidence-locked'. On top
+ * of that the release transfer carries the settlement id as its idempotency
+ * key, so even a transfer attempted twice pays the seller once.
+ */
+export async function settlementsDueForAutoRelease(limit = 50): Promise<SettlementRow[]> {
+  const r = await getPool().query(
+    `SELECT * FROM settlements
+     WHERE state = 'evidence-locked'
+       AND auto_release_at IS NOT NULL
+       AND auto_release_at <= now()
+     ORDER BY auto_release_at
+     LIMIT $1`,
+    [limit],
+  );
+  return r.rows;
+}
+
+/**
+ * The buyer's window ran out: evidence-locked -> confirmed, on the clock
+ * rather than on anyone's word. The release transfer is started by the sweep
+ * right after this, exactly as the buyer's own confirm route does it, and
+ * 'released' still lands only from the transfer.created webhook.
+ *
+ * The row records which road it took — auto_released, confirmed_via — so a
+ * settlement read afterwards says plainly that nobody pressed the button.
+ */
+export async function autoReleaseSettlement(
+  ctx: ScheduledCtx,
+  settlementId: string,
+): Promise<SettlementRow> {
+  assertTransitionContext(ctx);
+  // Belt to applyTransition's brace: this road is the clock's alone, so a
+  // human or webhook context is refused at the door rather than at the
+  // UPDATE. Checked before any database access.
+  if (ctx.kind !== 'scheduled') {
+    throw new Error('auto-release requires a scheduled context');
+  }
+  const s = await getSettlement(settlementId);
+  if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
+  if (s.state === 'confirmed') return s; // idempotent: transfer retry path
+  await writeConsentEvent({
+    event: 'settlement-auto-released',
+    settlement_id: settlementId,
+    match_id: s.match_id,
+    account_id: s.buyer_account,
+    party: 'buyer',
+    amount: Number(s.amount),
+    ccy: s.ccy,
+    handed_over_at: s.handed_over_at ? new Date(s.handed_over_at).toISOString() : null,
+    auto_release_at: s.auto_release_at ? new Date(s.auto_release_at).toISOString() : null,
+    recorded_via: ctx.job,
+  });
+  return applyTransition(ctx, settlementId, ['evidence-locked'], 'confirmed', 'confirmed_at');
 }
 
 // ---------------------------------------------------------------------------
@@ -532,12 +730,13 @@ export async function markRefunded(ctx: WebhookCtx, settlementId: string): Promi
 
 /** Registry the property suite enumerates: every exported function that can
  *  change settlement state, with the context class it demands. */
-export const SETTLEMENT_TRANSITIONS: Record<string, 'human' | 'webhook'> = {
+export const SETTLEMENT_TRANSITIONS: Record<string, 'human' | 'webhook' | 'scheduled'> = {
   approveSettlement: 'human',
   declineSettlement: 'human',
   lockEvidence: 'human',
   confirmReceipt: 'human',
   openDispute: 'human',
+  autoReleaseSettlement: 'scheduled',
   markFunded: 'webhook',
   markReleased: 'webhook',
   markRefunded: 'webhook',

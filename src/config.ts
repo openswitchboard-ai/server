@@ -85,6 +85,11 @@ export interface Config {
   /** Stripe's fixed per-charge amount, in the settlement currency's minor
    *  unit (30 = $0.30). The other half of the same recovery. */
   settlementProcessingFixedMinor: number;
+  /** How long the buyer has to confirm receipt or dispute after the seller
+   *  declares handover. When the window runs out the held payment goes to the
+   *  seller on the server's own clock. Both humans are told the date at
+   *  handover and see it on the settlement page throughout. */
+  settlementAutoReleaseDays: number;
 }
 
 export function loadConfig(): Config {
@@ -132,6 +137,7 @@ export function loadConfig(): Config {
     settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
     settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),
     settlementProcessingFixedMinor: Number(process.env.SETTLEMENT_PROCESSING_FIXED_MINOR ?? 30),
+    settlementAutoReleaseDays: Number(process.env.SETTLEMENT_AUTO_RELEASE_DAYS ?? 7),
   };
 }
 

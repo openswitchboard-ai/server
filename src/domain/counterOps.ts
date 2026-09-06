@@ -543,6 +543,38 @@ export interface ArchivedConnection {
   counterparty?: { first_name: string; locality: string };
 }
 
+/**
+ * The counterparty's disclosed first name, for a page that reads better with
+ * it than with "the seller". Both first names are already mutually shared by
+ * the time a settlement exists (settle needs the names step), so this releases
+ * nothing new; it is the same envelope the archive view opens, under a purpose
+ * of its own.
+ *
+ * Every decryption writes an audit line, so callers ask only where the name
+ * changes what the page says — the settlement's handover notice, and not every
+ * render of every settlement. Undefined when the profile has since been
+ * cleared, and the page falls back to the role.
+ */
+export async function disclosedFirstName(
+  viewerAccountId: string,
+  counterpartyAccountId: string,
+  refs: { settlement_id: string },
+): Promise<string | undefined> {
+  const account = await getAccount(counterpartyAccountId);
+  if (!account?.first_name_enc) return undefined;
+  try {
+    const fields = await decryptFields(
+      counterpartyAccountId,
+      account.data_key_enc,
+      { first_name: account.first_name_enc },
+      { purpose: 'settlement-handover-view', actor: viewerAccountId, refs },
+    );
+    return fields.first_name.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** This human's archived (finished) connections, newest first, with retained
  *  details. Reads the counterparty's disclosed name/area straight from the
  *  envelope the same way the stage-3 builder does; a match that never reached

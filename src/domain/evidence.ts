@@ -100,6 +100,13 @@ export interface EvidenceObject {
  * Verify the uploaded objects and write the manifest snapshot into the WORM
  * bucket. Returns the manifest key. Objects that were presigned but never
  * uploaded are dropped from the manifest (and their rows deleted).
+ *
+ * PHOTOS ARE OPTIONAL. The step this manifest belongs to is the seller saying
+ * the thing changed hands, and that declaration is worth freezing whether or
+ * not they took a picture of it: an empty object list is an honest record of a
+ * handover declared with no photos, and it is what starts the buyer's window.
+ * Refusing the lock for want of a photo would have kept the payment held with
+ * neither side able to move it.
  */
 export async function writeEvidenceManifest(
   cfg: Config,
@@ -125,9 +132,6 @@ export async function writeEvidenceManifest(
     } catch {
       await getPool().query('DELETE FROM settlement_evidence WHERE s3_key = $1', [r.s3_key]);
     }
-  }
-  if (!objects.length) {
-    throw Object.assign(new Error('add at least one photo before locking'), { validation: true });
   }
   const manifest = {
     kind: 'settlement-evidence-manifest',

@@ -313,11 +313,66 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         links,
       ),
     },
+    // The handover mails, with and without the clock the deployment runs.
+    {
+      name: 'settlement-handover-window-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        {
+          event: 'handover-window',
+          role: 'buyer',
+          blind: false,
+          settlementUrl: `${COUNTER}/settlements/x`,
+          counterUrl: `${COUNTER}/`,
+          deadline: new Date('2026-09-12T02:00:00.000Z'),
+        },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-handover-window-buyer-no-clock',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'handover-window', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-confirm-receipt-request-seller-clock',
+      blind: false,
+      content: renderSettlementUpdate(
+        {
+          event: 'confirm-receipt-request',
+          role: 'seller',
+          blind: false,
+          settlementUrl: `${COUNTER}/settlements/x`,
+          counterUrl: `${COUNTER}/`,
+          deadline: new Date('2026-09-12T02:00:00.000Z'),
+        },
+        links,
+      ),
+    },
     {
       name: 'settlement-released-seller',
       blind: false,
       content: renderSettlementUpdate(
         { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-released-auto-seller',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/`, auto: true },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-released-auto-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'released', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/`, auto: true },
         links,
       ),
     },
