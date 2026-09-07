@@ -25,8 +25,11 @@
  *   I9   no agent-reachable tool can approve, confirm, release or refund
  *   I10  the release transfer is the agreed amount EXACTLY, and the buyer's
  *        charge is the three persisted lines added up
- *   I11  a dispute refunds the buyer's whole total, once, with no transfer
+ *   I11  a refund is the agreed amount, once, with no transfer beside it
  *   I12  a settle proposal from the wrong side or the wrong stage is refused
+ *   I13  the $1 and the processing line are never refunded, on any road
+ *   I14  a refund and a release together never exceed what was held
+ *   I15  a frozen payment moves nothing inside its fourteen days
  */
 
 export interface Violation {
@@ -379,39 +382,199 @@ export function checkReleaseAmounts(f: ReleaseFacts, where: string): Violation[]
 }
 
 /**
- * I11 — a dispute costs the buyer nothing, and costs them nothing twice.
+ * I11 — a refund is the AGREED AMOUNT, once, and never a fee.
  *
- * The refund is of the WHOLE buyer total, our fee included: a person who
- * disputes gets every cent back and the platform wears Stripe's cut on the
- * round trip. Pressing dispute again must add no second refund, and no
- * transfer may exist on a settlement that went back.
+ * This rule used to say the opposite: it held the refund to the whole buyer
+ * total, fees included, because a dispute used to end a settlement by sending
+ * everything back. That behaviour handed a buyer holding the goods a free way
+ * to keep them, and it is not what the terms say. A dispute now freezes; the
+ * refunding roads out of it move the agreed amount or part of it, and the $1
+ * and the processing line stay paid in every outcome because the processor
+ * keeps its fee on a refund.
+ *
+ * Pressing the same button again must add no second refund.
  */
 export interface RefundFacts {
   settlementId: string;
   state: string;
+  /** From the settlement row. */
+  agreedMinor: number;
+  feeMinor: number | null;
+  processingMinor: number | null;
   buyerTotalMinor: number | null;
+  /** What the row says was meant to go back. */
+  refundMinor: number | null;
+  /** What Stripe actually gave back. */
   refundedMinor: number;
   /** How many refund objects Stripe holds against the charge. */
   refundCount: number;
-  /** The settlement row's transfer id, which must still be null. */
+  /** The settlement row's transfer id. Null on every road that only refunds. */
   transferId: string | null;
-  /** HTTP status of the second, idempotent dispute press. */
-  secondDisputeStatus?: number;
+  /** HTTP status of a second, idempotent press of whatever caused this. */
+  secondPressStatus?: number;
 }
 
 export function checkRefundOnceAndWhole(f: RefundFacts, where: string): Violation[] {
   const out: Violation[] = [];
   const v = (detail: string) => out.push({ invariant: 'I11', detail, where });
-  if (f.state !== 'refunded') v(`settlement ${f.settlementId} disputed but its state is '${f.state}'`);
-  if (f.buyerTotalMinor === null) {
-    v('the settlement row has no persisted buyer total, so "in full" cannot be checked');
-  } else if (f.refundedMinor !== f.buyerTotalMinor) {
-    v(`the buyer got ${f.refundedMinor} back, not their whole total of ${f.buyerTotalMinor}`);
+  if (f.state !== 'refunded') v(`settlement ${f.settlementId} was refunded but its state is '${f.state}'`);
+  if (f.refundedMinor !== f.agreedMinor) {
+    v(`the buyer got ${f.refundedMinor} back; the agreed amount is ${f.agreedMinor}`);
   }
-  if (f.refundCount !== 1) v(`Stripe holds ${f.refundCount} refunds against the charge; a dispute refunds once`);
+  if (f.refundMinor !== null && f.refundMinor !== f.refundedMinor) {
+    v(`the row says ${f.refundMinor} went back but Stripe gave back ${f.refundedMinor}`);
+  }
+  if (f.refundCount !== 1) v(`Stripe holds ${f.refundCount} refunds against the charge; each road refunds once`);
   if (f.transferId) v(`a transfer (${f.transferId}) exists on a settlement that was refunded`);
-  if (f.secondDisputeStatus !== undefined && f.secondDisputeStatus >= 500) {
-    v(`the second, idempotent dispute press answered ${f.secondDisputeStatus} rather than settling quietly`);
+  if (f.secondPressStatus !== undefined && f.secondPressStatus >= 500) {
+    v(`the second, idempotent press answered ${f.secondPressStatus} rather than settling quietly`);
+  }
+  return out;
+}
+
+/**
+ * I13 — the fees never come back.
+ *
+ * The one line the public terms are most exposed on: "The $1 and the
+ * processing cost are kept in every outcome, including a refund, because the
+ * processor keeps its fee on a refund and we pass it on rather than absorb it
+ * into the price." So on every settlement that refunded anything, what Stripe
+ * gave back is at most the agreed amount, and the two fee lines are still
+ * ours. A refund equal to the buyer total is the exact defect this catches,
+ * and it is the behaviour that shipped before the dispute flow existed.
+ */
+export interface FeeFacts {
+  settlementId: string;
+  agreedMinor: number;
+  feeMinor: number | null;
+  processingMinor: number | null;
+  buyerTotalMinor: number | null;
+  /** What Stripe says came back against the charge, in total. */
+  refundedMinor: number;
+}
+
+export function checkFeesNeverRefunded(f: FeeFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I13', detail, where });
+  if (f.refundedMinor > f.agreedMinor) {
+    v(
+      `${f.refundedMinor} went back on settlement ${f.settlementId} but only ${f.agreedMinor} was ever held; ` +
+        'a fee line was refunded',
+    );
+  }
+  if (f.buyerTotalMinor !== null && f.refundedMinor === f.buyerTotalMinor && f.buyerTotalMinor > f.agreedMinor) {
+    v(`the whole buyer total (${f.buyerTotalMinor}) went back on settlement ${f.settlementId}`);
+  }
+  if (f.feeMinor !== null && f.processingMinor !== null) {
+    const kept = (f.buyerTotalMinor ?? 0) - f.refundedMinor;
+    if (kept < f.feeMinor + f.processingMinor) {
+      v(
+        `settlement ${f.settlementId} kept ${kept} of a ${f.feeMinor} + ${f.processingMinor} fee ` +
+          'and processing line',
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * I14 — nothing leaves a settlement but what it holds.
+ *
+ * A settlement holds the agreed amount. Whatever roads out of it — a refund, a
+ * release, or both halves of a split the two humans agreed — the two figures
+ * added together can never exceed it. A split that adds up to more than the
+ * hold is money the platform pays out of its own pocket, and the arithmetic
+ * that prevents it is one line, so it is worth a rule of its own.
+ */
+export interface SplitFacts {
+  settlementId: string;
+  agreedMinor: number;
+  /** What Stripe says went back to the buyer, and out to the seller. */
+  refundedMinor: number;
+  transferMinor: number;
+  /** The two figures the row recorded, where a split was agreed. */
+  rowRefundMinor?: number | null;
+  rowReleaseMinor?: number | null;
+  /** The state the settlement finished in. */
+  state?: string;
+}
+
+export function checkSplitInsideTheHold(f: SplitFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I14', detail, where });
+  const moved = f.refundedMinor + f.transferMinor;
+  if (moved > f.agreedMinor) {
+    v(
+      `settlement ${f.settlementId} moved ${f.refundedMinor} back and ${f.transferMinor} out, ` +
+        `which is ${moved} against a hold of ${f.agreedMinor}`,
+    );
+  }
+  if (f.rowRefundMinor != null && f.rowReleaseMinor != null) {
+    if (f.rowRefundMinor + f.rowReleaseMinor !== f.agreedMinor) {
+      v(
+        `the agreed split on settlement ${f.settlementId} is ${f.rowRefundMinor} + ${f.rowReleaseMinor}, ` +
+          `which is not the ${f.agreedMinor} held`,
+      );
+    }
+    if (f.rowRefundMinor !== f.refundedMinor || f.rowReleaseMinor !== f.transferMinor) {
+      v(
+        `the agreed split says ${f.rowRefundMinor}/${f.rowReleaseMinor} but Stripe moved ` +
+          `${f.refundedMinor}/${f.transferMinor}`,
+      );
+    }
+  }
+  if (f.state === 'settled-split' && moved !== f.agreedMinor) {
+    v(`settlement ${f.settlementId} settled by agreement having moved ${moved} of ${f.agreedMinor}`);
+  }
+  return out;
+}
+
+/**
+ * I15 — a frozen payment stays frozen.
+ *
+ * A dispute beats every clock for the whole of the fourteen days the terms
+ * promise. Nothing releases inside that window: not the handover clock (which
+ * the dispute clears as it lands), not the default rule (whose own clock has
+ * not run out), not a sweep run against a settlement whose handover clock was
+ * wound into the past. What the sweep is allowed to do to a settlement in
+ * dispute before deadlock_at is nothing at all.
+ */
+export interface FrozenFacts {
+  settlementId: string;
+  /** The state before the sweep, and after it. */
+  stateBefore: string;
+  stateAfter: string;
+  /** The handover clock, which a dispute clears as it lands. */
+  autoReleaseAtSet: boolean;
+  /** The dispute's own clock, and whether it has run out yet. */
+  deadlockAtSet: boolean;
+  deadlockPassed: boolean;
+  /** Stripe's word on whether anything moved. */
+  transferId: string | null;
+  refundedMinor: number;
+}
+
+export function checkFrozenStaysFrozen(f: FrozenFacts, where: string): Violation[] {
+  const out: Violation[] = [];
+  const v = (detail: string) => out.push({ invariant: 'I15', detail, where });
+  const frozen = ['disputed', 'resolution-proposed'];
+  if (!frozen.includes(f.stateBefore)) return out; // not this rule's business
+  if (f.autoReleaseAtSet) {
+    v(`settlement ${f.settlementId} is '${f.stateBefore}' with the handover clock still running`);
+  }
+  if (!f.deadlockAtSet) {
+    v(`settlement ${f.settlementId} is '${f.stateBefore}' with no date for the default rule`);
+  }
+  if (f.deadlockPassed) return out; // past the fourteen days, the rule may act
+  if (f.stateAfter !== f.stateBefore) {
+    v(
+      `a frozen settlement moved from '${f.stateBefore}' to '${f.stateAfter}' before its ` +
+        'fourteen days were up',
+    );
+  }
+  if (f.transferId) v(`settlement ${f.settlementId} paid out (${f.transferId}) while frozen`);
+  if (f.refundedMinor > 0) {
+    v(`settlement ${f.settlementId} refunded ${f.refundedMinor} while frozen and inside its window`);
   }
   return out;
 }

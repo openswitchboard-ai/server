@@ -184,6 +184,17 @@ export function toMinorUnits(amount: number, ccy: string): number {
 }
 
 /**
+ * Back the other way, for a figure going out on the wire beside `amount`,
+ * which is in whole currency. Zero is a perfectly good answer here — one side
+ * of an agreed split is often nothing — so this is not toMinorUnits' inverse
+ * in its refusals, only in its arithmetic.
+ */
+export function fromMinorUnits(minor: number, ccy: string): number {
+  if (!Number.isFinite(minor)) throw new Error(`bad minor amount ${minor}`);
+  return ZERO_DECIMAL.has(ccy.toUpperCase()) ? minor : minor / 100;
+}
+
+/**
  * The percentage part of the fee, in minor units. Kept as a parameter and set
  * to 0 by default; the introductory fee is the flat one below.
  */

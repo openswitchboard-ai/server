@@ -90,6 +90,18 @@ export interface Config {
    *  seller on the server's own clock. Both humans are told the date at
    *  handover and see it on the settlement page throughout. */
   settlementAutoReleaseDays: number;
+  /** How long a frozen payment waits for the two humans to sort it out before
+   *  the default rule decides it. Measured from the moment the dispute landed,
+   *  and never restarted, so adding delivery tracking on day six leaves eight
+   *  days rather than winding the clock back. */
+  settlementDisputeDeadlockDays: number;
+  /** How long the seller has to confirm they got a returned item back before
+   *  silence refunds the buyer. Measured from the buyer marking it sent. */
+  settlementReturnSilenceDays: number;
+  /** How long a seller has to add delivery tracking after a dispute on the
+   *  ground that a posted item never arrived. No tracking by then refunds the
+   *  buyer the agreed amount. */
+  settlementTrackingGraceDays: number;
 }
 
 export function loadConfig(): Config {
@@ -138,6 +150,9 @@ export function loadConfig(): Config {
     settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),
     settlementProcessingFixedMinor: Number(process.env.SETTLEMENT_PROCESSING_FIXED_MINOR ?? 30),
     settlementAutoReleaseDays: Number(process.env.SETTLEMENT_AUTO_RELEASE_DAYS ?? 7),
+    settlementDisputeDeadlockDays: Number(process.env.SETTLEMENT_DISPUTE_DEADLOCK_DAYS ?? 14),
+    settlementReturnSilenceDays: Number(process.env.SETTLEMENT_RETURN_SILENCE_DAYS ?? 7),
+    settlementTrackingGraceDays: Number(process.env.SETTLEMENT_TRACKING_GRACE_DAYS ?? 7),
   };
 }
 

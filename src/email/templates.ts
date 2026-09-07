@@ -656,7 +656,10 @@ export type SettlementUpdateEvent =
   | 'handover-window'
   | 'confirm-receipt-request'
   | 'released'
-  | 'refund';
+  | 'refund'
+  | 'disputed'
+  | 'resolution-proposed'
+  | 'split';
 
 /** "Saturday 13 September" — a date a person reads without decoding it. */
 function plainDay(d: Date): string {
@@ -703,8 +706,8 @@ export function renderSettlementUpdate(
         : 'OpenSwitchboard: handed over — confirm or raise a problem',
       heading: 'The seller says it has changed hands.',
       buyer: by
-        ? `Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, raise a dispute instead and the whole of what you paid comes back to you. You have until ${by}; after that the held payment is released to the seller on its own.`
-        : 'Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, raise a dispute instead and the whole of what you paid comes back to you.',
+        ? `Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, say so on the settlement page instead and the payment freezes while the two of you sort it out. You have until ${by}; after that the held payment is released to the seller on its own.`
+        : 'Confirm receipt once everything is in your hands and as described, and the held payment goes to the seller. If something is wrong, say so on the settlement page instead and the payment freezes while the two of you sort it out.',
       seller: by
         ? `You have declared the handover. The buyer has until ${by} to confirm receipt or raise a problem, and the held payment comes to you on that date if they do neither.`
         : 'You have declared the handover, and the buyer has been asked to confirm receipt.',
@@ -735,8 +738,38 @@ export function renderSettlementUpdate(
     refund: {
       subject: 'OpenSwitchboard: payment returned',
       heading: 'The payment went back.',
-      buyer: 'The held payment was returned to you in full. This settlement is closed.',
-      seller: 'The held payment was returned to the buyer. This settlement is closed.',
+      buyer:
+        'The agreed amount was returned to you. The introductory fee and the card processing stay paid, because the card processor keeps its own fee on a refund. This settlement is closed.',
+      seller: 'The agreed amount was returned to the buyer. This settlement is closed.',
+      buttonLabel: 'See the settlement',
+    },
+    // Somebody said something is wrong. Nothing has moved; the payment is
+    // simply frozen, and both people are told what they can do about it.
+    disputed: {
+      subject: 'OpenSwitchboard: the payment is on hold',
+      heading: 'The payment is frozen.',
+      buyer:
+        'The payment is held where it is while the two of you sort this out. You can agree a split of the held amount, or send the item back with tracking and say so on the settlement page. If neither of you does anything for fourteen days, the payment goes to whichever side can show where the item went.',
+      seller:
+        'The payment is held where it is while the two of you sort this out. Add the tracking that shows where the item went, and you can agree a split of the held amount. If neither of you does anything for fourteen days, the payment goes to whichever side can show where the item went.',
+      buttonLabel: 'Open the settlement',
+    },
+    'resolution-proposed': {
+      subject: 'OpenSwitchboard: a way to settle this is waiting',
+      heading: 'There is a split on the table.',
+      buyer:
+        'The seller has proposed how to divide the held amount. Have a look, and the money moves once you have both agreed to the same two figures.',
+      seller:
+        'The buyer has proposed how to divide the held amount. Have a look, and the money moves once you have both agreed to the same two figures.',
+      buttonLabel: 'See what was proposed',
+    },
+    split: {
+      subject: 'OpenSwitchboard: settled between you',
+      heading: 'You both agreed, and the money has moved.',
+      buyer:
+        'You both approved the same split of the held amount, and your part is on its way back to you. The introductory fee and the card processing stay paid. This settlement is closed.',
+      seller:
+        'You both approved the same split of the held amount, and your part is on its way to you. This settlement is closed.',
       buttonLabel: 'See the settlement',
     },
   };
@@ -759,7 +792,7 @@ export function renderSettlementUpdate(
   const html = shell(
     h1(c.heading) + para(esc(line)) + center(button(v.settlementUrl, c.buttonLabel)),
     f,
-    v.event === 'refund' ? WANT : HAVE,
+    v.event === 'refund' || v.event === 'disputed' ? WANT : HAVE,
   );
   const text = `${line}\n\n${c.buttonLabel}:\n${v.settlementUrl}\n\n` + footerText(f);
   return { subject: c.subject, html, text };

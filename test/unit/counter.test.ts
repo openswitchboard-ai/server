@@ -317,6 +317,14 @@ const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.Settl
   hasPasskey: false,
   elevated: false,
   autoReleaseDays: 7,
+  inDispute: false,
+  canAddTracking: false,
+  canMarkReturned: false,
+  canConfirmReturn: false,
+  canProposeSplit: false,
+  canApproveSplit: false,
+  agreedMinor: 8765,
+  ccy: 'AUD',
   ...over,
 });
 
@@ -423,9 +431,46 @@ describe('counter pages: copy-cull render suite', () => {
       ),
     },
     {
+      name: 'settlement-buyer-frozen',
+      html: cpages.settlementPage(
+        settlementView({
+          state: 'disputed',
+          inDispute: true,
+          disputeGround: 'not_as_described',
+          canProposeSplit: true,
+          canMarkReturned: true,
+          deadlockByDay: 'Saturday 19 September',
+        }),
+      ),
+    },
+    {
+      name: 'settlement-seller-frozen',
+      html: cpages.settlementPage(
+        settlementView({
+          role: 'seller',
+          state: 'resolution-proposed',
+          inDispute: true,
+          disputeGround: 'not_arrived',
+          canAddTracking: true,
+          canProposeSplit: true,
+          canApproveSplit: true,
+          trackingGraceByDay: 'Saturday 12 September',
+          deadlockByDay: 'Saturday 19 September',
+          split: {
+            refundMinor: 2000,
+            releaseMinor: 6765,
+            refund: '20.00 AUD',
+            release: '67.65 AUD',
+            mine: false,
+            theirs: true,
+          },
+        }),
+      ),
+    },
+    {
       name: 'settlement-seller-declare-handover',
       html: cpages.settlementPage(
-        settlementView({ role: 'seller', state: 'funded', canLockEvidence: true, canDispute: true }),
+        settlementView({ role: 'seller', state: 'funded', canLockEvidence: true, canDispute: true, canAddTracking: true }),
       ),
     },
     {
@@ -618,7 +663,8 @@ describe('counter pages: copy-cull render suite', () => {
     const html = cpages.settlementPage(
       settlementView({ state: 'evidence-locked', canConfirm: true }),
     );
-    expect(html).toContain('Confirming releases 87.65 AUD to the seller');
+    expect(html).toContain('<h2>It arrived as agreed</h2>');
+    expect(html).toContain('Saying so releases 87.65 AUD to the seller');
     expect(html).toContain('nothing comes off the seller');
   });
 
@@ -632,12 +678,12 @@ describe('counter pages: copy-cull render suite', () => {
       }),
     );
     expect(html).toContain('Priya says it was handed over on Saturday 5 September.');
-    expect(html).toContain("Confirm when you're happy, or raise a dispute.");
-    expect(html).toContain('releases to\nPriya automatically on Saturday 12 September');
+    expect(html).toContain('Say it arrived as agreed when you\'re happy, or say something is wrong.');
+    expect(html).toContain('payment releases to Priya on its own on Saturday 12 September');
     // The two dates are on the facts list too, in the same words.
     expect(html).toContain('Handed over');
     expect(html).toContain('Releases on its own');
-    // And the dispute fold says the clock stops.
+    // And the fold says the clock stops.
     expect(html).toContain('nothing is released on Saturday 12 September');
   });
 
@@ -646,9 +692,139 @@ describe('counter pages: copy-cull render suite', () => {
       settlementView({ role: 'seller', state: 'evidence-locked', handover: HANDOVER }),
     );
     expect(html).toContain('You declared the handover on Saturday 5 September.');
-    expect(html).toContain('until Saturday 12 September');
+    expect(html).toContain('until\nSaturday 12 September');
     // The seller's own name is never read back to them.
     expect(html).not.toContain('Priya');
+  });
+
+  // -------------------------------------------------------------------------
+  // The frozen half. Every one of these is a step only a human takes, on their
+  // own page, and the copy has to say plainly what it does to the money.
+  // -------------------------------------------------------------------------
+  it('saying something is wrong holds the payment, and asks which of the two things it was', () => {
+    const html = cpages.settlementPage(
+      settlementView({ state: 'evidence-locked', canConfirm: true, canDispute: true }),
+    );
+    expect(html).toContain('Something is wrong');
+    expect(html).toContain('This freezes the payment where it is. Nothing goes anywhere');
+    expect(html).toContain('value="not_arrived"');
+    expect(html).toContain('value="not_as_described"');
+    expect(html).toContain('It never arrived');
+    expect(html).toContain('It arrived and something is wrong with it');
+    // An in-person handover has no parcel, so the page says which one to pick.
+    expect(html).toContain('there is no parcel to go astray');
+    // And the promise the terms make about the two fee lines.
+    expect(html).toContain('processor keeps its own fee on a refund');
+    // Nothing on this page offers to send the whole payment back any more.
+    expect(html).not.toContain('send the payment back');
+  });
+
+  it('a frozen payment says what happens if neither of them does anything', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        state: 'disputed',
+        inDispute: true,
+        canProposeSplit: true,
+        disputeGround: 'not_as_described',
+        deadlockByDay: 'Saturday 19 September',
+      }),
+    );
+    expect(html).toContain('The payment is on hold');
+    expect(html).toContain('the payment goes on Saturday 19 September');
+    expect(html).toContain('whichever\nside can show where the item went');
+    expect(html).toContain('The rule decides on');
+  });
+
+  it('the seller is asked for tracking, with the day it stops helping', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        role: 'seller',
+        state: 'disputed',
+        inDispute: true,
+        disputeGround: 'not_arrived',
+        canAddTracking: true,
+        canProposeSplit: true,
+        trackingGraceByDay: 'Saturday 12 September',
+        deadlockByDay: 'Saturday 19 September',
+      }),
+    );
+    expect(html).toContain('<h2>Add tracking</h2>');
+    expect(html).toContain('The buyer says it never arrived.');
+    expect(html).toContain('delivered by Saturday 12 September');
+  });
+
+  it('the buyer sends it back tracked, and is told what the seller has to do', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        state: 'disputed',
+        inDispute: true,
+        canMarkReturned: true,
+        canProposeSplit: true,
+      }),
+    );
+    expect(html).toContain("<h2>I've sent it back</h2>");
+    expect(html).toContain('87.65 AUD comes back to you');
+    // Postage is outside the hold, and the page says so where it matters.
+    expect(html).toContain('Postage is between the two of you');
+  });
+
+  it('the seller closes a return, and the copy keeps the fees where they are', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        role: 'seller',
+        state: 'disputed',
+        inDispute: true,
+        canConfirmReturn: true,
+        canProposeSplit: true,
+        returnedOnDay: 'Saturday 12 September',
+        returnTracking: 'AP 7XY441',
+        returnSilenceByDay: 'Saturday 19 September',
+      }),
+    );
+    expect(html).toContain("<h2>I've got it back</h2>");
+    expect(html).toContain('sends 87.65 AUD back to the buyer');
+    expect(html).toContain('processor keeps its own fee on a refund');
+    expect(html).toContain('Sent back on Saturday 12 September');
+    expect(html).toContain('says nothing by Saturday 19 September');
+  });
+
+  it('a split on the table shows both figures and who has agreed', () => {
+    const html = cpages.settlementPage(
+      settlementView({
+        state: 'resolution-proposed',
+        inDispute: true,
+        canProposeSplit: true,
+        canApproveSplit: true,
+        split: {
+          refundMinor: 2000,
+          releaseMinor: 6765,
+          refund: '20.00 AUD',
+          release: '67.65 AUD',
+          mine: false,
+          theirs: true,
+        },
+      }),
+    );
+    expect(html).toContain('<h2>On the table</h2>');
+    expect(html).toContain('20.00 AUD back to the buyer and 67.65 AUD to the seller');
+    expect(html).toContain('You have not agreed to this yet.');
+    expect(html).toContain('The other side has agreed.');
+    expect(html).toContain('Agree to this split');
+    // The figures the human is agreeing to ride with the press, so a split
+    // that changed underneath them cannot be approved by accident.
+    expect(html).toContain('name="refund_minor" value="2000"');
+    expect(html).toContain('name="release_minor" value="6765"');
+  });
+
+  it('the split form says the two figures have to add up to what is held', () => {
+    const html = cpages.settlementPage(
+      settlementView({ state: 'disputed', inDispute: true, canProposeSplit: true }),
+    );
+    expect(html).toContain('<h2>Propose a split</h2>');
+    expect(html).toContain('the 87.65 AUD being held');
+    expect(html).toContain('have to add up to\nexactly that');
+    expect(html).toContain('name="refund_to_buyer"');
+    expect(html).toContain('name="release_to_seller"');
   });
 
   it("the seller's handover step is named for what it is, and photos are optional", () => {

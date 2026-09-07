@@ -240,7 +240,7 @@ d('the settlement money shape against the Stripe sandbox', () => {
     sellerAccountIdStored = preVerifiedSeller;
   }, 120_000);
 
-  it('puts the whole buyer total back on a refund, both fee lines included', async () => {
+  it('refunds the agreed amount and keeps both fee lines, once, however often it is called', async () => {
     const s = settlementRow();
     const { url, sessionId } = await stripeDomain.createCheckoutForSettlement(cfg, s);
     await payHostedCheckout(url);
@@ -248,18 +248,80 @@ d('the settlement money shape against the Stripe sandbox', () => {
     const paid = await stripe.checkout.sessions.retrieve(sessionId);
     s.stripe_payment_intent = String(paid.payment_intent);
 
-    await stripeDomain.refundPaymentForSettlement(s);
+    await stripeDomain.refundAgreedAmountForSettlement(s, AMOUNT_MINOR);
     // Called twice: still one refund.
-    await stripeDomain.refundPaymentForSettlement(s);
+    await stripeDomain.refundAgreedAmountForSettlement(s, AMOUNT_MINOR);
 
     const pi = await stripe.paymentIntents.retrieve(String(s.stripe_payment_intent), {
       expand: ['latest_charge'],
     });
     const charge = pi.latest_charge as any;
-    expect(charge.refunded).toBe(true);
-    expect(charge.amount_refunded).toBe(BUYER_TOTAL_MINOR);
+    // The AGREED amount went back and the buyer's two fee lines did not: the
+    // charge is partly refunded, never wholly.
+    expect(charge.amount_refunded).toBe(AMOUNT_MINOR);
+    expect(charge.refunded).toBe(false);
+    expect(BUYER_TOTAL_MINOR - charge.amount_refunded).toBe(FEE_MINOR + PROCESSING_MINOR);
     const refunds = await stripe.refunds.list({ charge: charge.id });
     expect(refunds.data).toHaveLength(1);
+  }, 600_000);
+
+  it('refuses to send back more than the settlement ever held', async () => {
+    const s = settlementRow();
+    s.stripe_payment_intent = 'pi_never_used';
+    // The buyer total is the figure a careless caller would reach for, and it
+    // is exactly the one that must be refused: the fee lines are not ours to
+    // give back.
+    for (const bad of [BUYER_TOTAL_MINOR, AMOUNT_MINOR + 1, 0, -1, 12.5]) {
+      await expect(stripeDomain.refundAgreedAmountForSettlement(s, bad)).rejects.toThrow(
+        /is not inside the agreed/,
+      );
+    }
+  });
+
+  it('refuses to release more than the settlement ever held', async () => {
+    const s = settlementRow();
+    sellerAccountIdStored = preVerifiedSeller;
+    for (const bad of [BUYER_TOTAL_MINOR, AMOUNT_MINOR + 1, 0, -1]) {
+      await expect(stripeDomain.transferToSellerForSettlement(cfg, s, bad)).rejects.toThrow(
+        /is not inside the agreed/,
+      );
+    }
+  }, 120_000);
+
+  it('moves both legs of an agreed split, and refuses a split that does not add up', async () => {
+    const s = settlementRow();
+    const { url, sessionId } = await stripeDomain.createCheckoutForSettlement(cfg, s);
+    await payHostedCheckout(url);
+    const stripe = await getStripe();
+    const paid = await stripe.checkout.sessions.retrieve(sessionId);
+    s.stripe_payment_intent = String(paid.payment_intent);
+    sellerAccountIdStored = preVerifiedSeller;
+
+    // A split that does not add up never reaches Stripe.
+    s.refund_minor = 1000;
+    s.release_minor = AMOUNT_MINOR; // one thousand too many
+    await expect(stripeDomain.moveSplitForSettlement(cfg, s)).rejects.toThrow(/does not add up/);
+
+    // One that does: a partial refund and a transfer, adding to the agreed
+    // amount exactly, with the fee lines untouched.
+    const refundPart = 1500;
+    const releasePart = AMOUNT_MINOR - refundPart;
+    s.refund_minor = refundPart;
+    s.release_minor = releasePart;
+    await stripeDomain.moveSplitForSettlement(cfg, s);
+
+    const pi = await stripe.paymentIntents.retrieve(String(s.stripe_payment_intent), {
+      expand: ['latest_charge'],
+    });
+    const charge = pi.latest_charge as any;
+    expect(charge.amount_refunded).toBe(refundPart);
+    const transfers = await stripe.transfers.list({ transfer_group: s.id });
+    expect(transfers.data).toHaveLength(1);
+    expect(transfers.data[0].amount).toBe(releasePart);
+    expect(charge.amount_refunded + transfers.data[0].amount).toBe(AMOUNT_MINOR);
+    expect(BUYER_TOTAL_MINOR - charge.amount_refunded).toBeGreaterThanOrEqual(
+      FEE_MINOR + PROCESSING_MINOR,
+    );
   }, 600_000);
 
   it('the fee is the flat introductory one, whatever the settlement is worth', () => {

@@ -10,15 +10,21 @@ import {
   AgentReachFacts,
   FundedFacts,
   LadderTracker,
+  FeeFacts,
+  FrozenFacts,
   ProposalAttempt,
   RefundFacts,
   ReleaseFacts,
+  SplitFacts,
   Violation,
+  checkFeesNeverRefunded,
+  checkFrozenStaysFrozen,
   checkFundedNeedsBothApprovals,
   checkNoAgentMoneyPath,
   checkProposalGuards,
   checkRefundOnceAndWhole,
   checkReleaseAmounts,
+  checkSplitInsideTheHold,
   scanArchivedEntry,
   scanDeclineReasonless,
   scanForbidden,
@@ -102,5 +108,20 @@ export class Checker {
 
   proposalGuards(attempts: ProposalAttempt[], where: string): void {
     this.add(checkProposalGuards(attempts, where));
+  }
+
+  /** I13: the $1 and the processing line stay paid, whatever happened. */
+  fees(f: FeeFacts, where: string): void {
+    this.add(checkFeesNeverRefunded(f, where));
+  }
+
+  /** I14: nothing leaves a settlement but the amount it holds. */
+  split(f: SplitFacts, where: string): void {
+    this.add(checkSplitInsideTheHold(f, where));
+  }
+
+  /** I15: a frozen payment moves nothing inside its fourteen days. */
+  frozen(f: FrozenFacts, where: string): void {
+    this.add(checkFrozenStaysFrozen(f, where));
   }
 }

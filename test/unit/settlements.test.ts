@@ -25,7 +25,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import Stripe from 'stripe';
 import * as settlements from '../../src/domain/settlements.js';
-import { SETTLEMENT_TRANSITIONS } from '../../src/domain/settlements.js';
+import {
+  SETTLEMENT_RECORD_WRITERS,
+  SETTLEMENT_TRANSITIONS,
+} from '../../src/domain/settlements.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { buildApp } from '../../src/app.js';
 import {
@@ -67,6 +70,9 @@ const baseCfg: Config = {
   settlementProcessingPercent: 1.7,
   settlementProcessingFixedMinor: 30,
   settlementAutoReleaseDays: 7,
+  settlementDisputeDeadlockDays: 14,
+  settlementReturnSilenceDays: 7,
+  settlementTrackingGraceDays: 7,
 };
 
 const srcRoot = join(__dirname, '..', '..', 'src');
@@ -101,16 +107,29 @@ describe('escrow state machine: no reachable money transition without a human si
     declineSettlement: ['sid'],
     lockEvidence: ['sid', 'manifest-key', 7],
     confirmReceipt: ['sid'],
-    openDispute: ['sid'],
+    openDispute: ['sid', 'not_as_described', 14],
+    proposeResolution: ['sid', 2000, 6765],
+    approveResolution: ['sid', 2000, 6765],
     autoReleaseSettlement: ['sid'],
+    deadlockReleaseSettlement: ['sid'],
     markFunded: ['sid', { checkoutSession: 'cs_x', paymentIntent: 'pi_x' }],
     markReleased: ['sid'],
     markRefunded: ['sid'],
+    markSplitLeg: ['sid', 'refund'],
+    // The record writers move no state, and they demand a minted context all
+    // the same. Same guard, same forged-context sweep.
+    addDeliveryTracking: ['sid', 'AP 7XY441'],
+    markReturned: ['sid', 'AP 7XY441'],
+    confirmReturnReceived: ['sid'],
+    recordRuleRefund: ['sid'],
   };
 
   it('the registry names every exported transition and nothing is missing', () => {
     // Every registry entry is a real exported function...
-    for (const name of Object.keys(SETTLEMENT_TRANSITIONS)) {
+    for (const name of [
+      ...Object.keys(SETTLEMENT_TRANSITIONS),
+      ...Object.keys(SETTLEMENT_RECORD_WRITERS),
+    ]) {
       expect(typeof (settlements as any)[name], name).toBe('function');
       expect(args[name], `test args for ${name}`).toBeTruthy();
     }
@@ -132,7 +151,10 @@ describe('escrow state machine: no reachable money transition without a human si
     }
   });
 
-  for (const [name, kind] of Object.entries(SETTLEMENT_TRANSITIONS)) {
+  for (const [name, kind] of [
+    ...Object.entries(SETTLEMENT_TRANSITIONS),
+    ...Object.entries(SETTLEMENT_RECORD_WRITERS),
+  ]) {
     it(`${name} (${kind}) refuses every forged context before touching anything`, async () => {
       const fn = (settlements as any)[name] as (...a: any[]) => Promise<unknown>;
       for (const forged of forgedContexts) {
@@ -190,24 +212,55 @@ describe('escrow state machine: no reachable money transition without a human si
     }
   });
 
-  it('no transition but evidence-locked -> confirmed accepts a scheduled context', () => {
-    // The registry names exactly one scheduled transition...
+  it('the scheduled context buys exactly two steps, both of them a clock running out', () => {
+    // The registry names the scheduled transitions...
     const scheduled = Object.entries(SETTLEMENT_TRANSITIONS)
       .filter(([, kind]) => kind === 'scheduled')
-      .map(([name]) => name);
-    expect(scheduled).toEqual(['autoReleaseSettlement']);
-    // ...and it is the only exported function that names the scheduled
-    // context type at all.
+      .map(([name]) => name)
+      .sort();
+    expect(scheduled).toEqual(['autoReleaseSettlement', 'deadlockReleaseSettlement']);
+    // ...and those, plus the one record writer the rules use to note the
+    // figures before a refund, are the only exported functions that name the
+    // scheduled context type at all.
     const src = read('domain/settlements.ts');
-    const users = [...src.matchAll(/export async function (\w+)\(\s*ctx: ScheduledCtx/g)].map(
-      (m) => m[1],
+    const users = [...src.matchAll(/export async function (\w+)\(\s*ctx: ScheduledCtx/g)]
+      .map((m) => m[1])
+      .sort();
+    expect(users).toEqual([
+      'autoReleaseSettlement',
+      'deadlockReleaseSettlement',
+      'recordRuleRefund',
+    ]);
+    // The allowlist itself, written out where the single state writer reads
+    // it. Both steps land on 'confirmed' — the state a transfer goes out of —
+    // and NOTHING in it reaches a refunding state, because a refund needs no
+    // scheduled step: the sweep moves the money and 'refunded' still lands
+    // from the verified charge event.
+    const listStart = src.indexOf('const SCHEDULED_STEPS');
+    const list = src.slice(listStart, src.indexOf('\n];', listStart));
+    expect(list).toContain("{ from: ['evidence-locked'], to: 'confirmed' }");
+    expect(list).toContain("{ from: ['disputed', 'resolution-proposed'], to: 'confirmed' }");
+    expect(list).not.toContain('refunded');
+    expect(list).not.toContain('settled-split');
+    expect(list).not.toContain('released');
+    // And exactly two of them, so a third cannot arrive unannounced.
+    expect(list.match(/\{ from: \[/g)).toHaveLength(2);
+  });
+
+  it('a scheduled context is refused for anything outside the allowlist', async () => {
+    // Proved through the exported doors rather than by reading the private
+    // guard: a scheduled context handed to a human or webhook transition is
+    // stopped before any row is touched.
+    const scheduled = settlements.scheduledAction();
+    await expect(settlements.markRefunded(scheduled as any, 'sid')).rejects.toThrow(
+      /a scheduled context allows only the steps in SCHEDULED_STEPS/,
     );
-    expect(users).toEqual(['autoReleaseSettlement']);
-    // The single state writer caps that context at one step, whatever anyone
-    // later hands it.
-    expect(src).toContain(
-      "const onlyStep = to === 'confirmed' && from.length === 1 && from[0] === 'evidence-locked';",
+    await expect(settlements.markReleased(scheduled as any, 'sid')).rejects.toThrow(
+      /a scheduled context allows only the steps in SCHEDULED_STEPS/,
     );
+    await expect(
+      settlements.markSplitLeg(scheduled as any, 'sid', 'refund'),
+    ).rejects.toThrow(/db not initialised/); // stamps first, so it stops at the database
   });
 
   it('the internal ops worker mints nothing and knows only the sweep by name', () => {
@@ -606,9 +659,13 @@ describe('the auto-release window', () => {
     const writer = src.slice(src.indexOf('async function applyTransition'));
     expect(writer).toContain("to === 'disputed'\n        ? ', auto_release_at = NULL'");
     expect(writer).toContain(
-      "? `, auto_release_at = NULL, confirmed_via = 'auto-release', auto_released = true`",
+      "? `, auto_release_at = NULL, deadlock_at = NULL, confirmed_via = '${scheduledVia}', auto_released = true`",
     );
-    expect(writer).toContain("`, auto_release_at = NULL, confirmed_via = 'buyer-confirm'`");
+    expect(writer).toContain(
+      "`, auto_release_at = NULL, deadlock_at = NULL, confirmed_via = 'buyer-confirm'`",
+    );
+    // The dispute's own clock dies wherever the dispute dies.
+    expect(writer).toContain("to === 'refunded' || to === 'settled-split'\n          ? ', deadlock_at = NULL'");
     // And the dispute path still starts from evidence-locked, unchanged.
     const dispute = src.slice(src.indexOf('export async function openDispute'));
     expect(dispute).toContain("['funded', 'evidence-locked']");

@@ -2,9 +2,10 @@
  * THE MONEY GROUP — safe hands, checked the way money has to be checked.
  *
  * This is the sim harness's answer to the one part of the product where a
- * wrong answer costs somebody real currency. It drives two whole settlements
+ * wrong answer costs somebody real currency. It drives three whole settlements
  * against LIVE dev and the dev Stripe sandbox — one that releases, one that is
- * disputed and refunded — and holds I8 to I12 against what it finds.
+ * frozen and sent back, one that is frozen and split between the two of them —
+ * and holds I8 to I15 against what it finds.
  *
  * TWO RULES OF EVIDENCE, and they are the reason this group exists at all:
  *
@@ -26,9 +27,10 @@
  * completed in a browser with a test card, and every transition arrives on the
  * live webhook.
  *
- * COST. Two hosted Checkout Sessions in a headless browser, two webhook waits.
- * Budget about six to ten minutes. SIM_SKIP_MONEY=1 leaves it out;
- * SIM_ONLY_MONEY=1 runs it alone (npm run sim:money).
+ * COST. Three hosted Checkout Sessions in a headless browser, and the webhook
+ * waits that go with them. Budget about ten to fifteen minutes.
+ * SIM_SKIP_MONEY=1 leaves it out; SIM_ONLY_MONEY=1 runs it alone
+ * (npm run sim:money).
  */
 import { createHash } from 'node:crypto';
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
@@ -40,7 +42,7 @@ import {
   stripeApi,
   tinyPng,
 } from '../integration/stripeHelpers.js';
-import { ENV_NAME, counterFetch, mcpRpc, minimalHave, minimalWant } from '../integration/helpers.js';
+import { ENV_NAME, counterFetch, mcpRpc, minimalHave, minimalWant, sendOp } from '../integration/helpers.js';
 import type { Checker } from './checker.js';
 import type { AgentMoveAttempt, ProposalAttempt } from './invariants.js';
 import { Harness, SimActor, dbExec, group, groupEnd, log, poll } from './harness.js';
@@ -50,7 +52,7 @@ const CONSENT_BUCKET = `osb-${ENV_NAME}-consent-log-173291123487`;
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
 /**
- * The figure both settlements are for. Deliberately not round: a gross-up on a
+ * The figure every settlement here is for. Deliberately not round: a gross-up on a
  * round number can be right by accident, and $73.40 makes the processing line
  * land on a fraction of a cent that has to be rounded somewhere.
  */
@@ -61,7 +63,7 @@ export interface MoneyResult {
   /** One line per settlement the group drove, for the report. */
   settlements: {
     id: string;
-    kind: 'release' | 'dispute';
+    kind: 'release' | 'return' | 'split';
     finalState: string;
     /** The three lines as persisted, and what Stripe actually took. */
     agreedMinor: number;
@@ -73,7 +75,7 @@ export interface MoneyResult {
     refundedMinor?: number;
   }[];
   /** Each invariant, and whether the group got far enough to check it. */
-  checked: Record<'I8' | 'I9' | 'I10' | 'I11' | 'I12', 'held' | 'violated' | 'not reached'>;
+  checked: Record<'I8' | 'I9' | 'I10' | 'I11' | 'I12' | 'I13' | 'I14' | 'I15', 'held' | 'violated' | 'not reached'>;
   notes: string[];
 }
 
@@ -88,7 +90,9 @@ async function settlementRow(id: string): Promise<Record<string, any>> {
   const rows = await dbExec(
     `SELECT state, amount::text, ccy, fee_amount_minor, processing_fee_minor, buyer_total_minor,
             buyer_approved_at::text, seller_approved_at::text, stripe_payment_intent,
-            stripe_transfer_id, stripe_checkout_session, buyer_account::text, seller_account::text
+            stripe_transfer_id, stripe_checkout_session, buyer_account::text, seller_account::text,
+            refund_minor, release_minor, auto_release_at IS NOT NULL, deadlock_at IS NOT NULL,
+            deadlock_at <= now(), dispute_ground, stripe_refund_id
        FROM settlements WHERE id = :id::uuid`,
     [{ name: 'id', value: id }],
   );
@@ -109,6 +113,27 @@ async function settlementRow(id: string): Promise<Record<string, any>> {
     checkoutSession: r[10] ? String(r[10]) : null,
     buyerAccount: String(r[11]),
     sellerAccount: String(r[12]),
+    refundMinor: num(r[13]),
+    releaseMinor: num(r[14]),
+    autoReleaseAtSet: r[15] === true,
+    deadlockAtSet: r[16] === true,
+    deadlockPassed: r[17] === true,
+    disputeGround: r[18] ? String(r[18]) : null,
+    refundId: r[19] ? String(r[19]) : null,
+  };
+}
+
+/** What Stripe gave back against this settlement's charge, and how often. */
+async function refundFacts(
+  paymentIntent: string,
+): Promise<{ refundedMinor: number; refundCount: number; chargeId: string }> {
+  const charges = await stripeApi(`/v1/charges?payment_intent=${paymentIntent}`);
+  const charge = charges.data[0];
+  const refunds = await stripeApi(`/v1/refunds?charge=${charge.id}&limit=10`);
+  return {
+    refundedMinor: Number(charge.amount_refunded),
+    refundCount: (refunds.data ?? []).length,
+    chargeId: charge.id,
   };
 }
 
@@ -345,7 +370,10 @@ export async function runMoney(
 ): Promise<MoneyResult> {
   const res: MoneyResult = {
     settlements: [],
-    checked: { I8: 'not reached', I9: 'not reached', I10: 'not reached', I11: 'not reached', I12: 'not reached' },
+    checked: {
+      I8: 'not reached', I9: 'not reached', I10: 'not reached', I11: 'not reached',
+      I12: 'not reached', I13: 'not reached', I14: 'not reached', I15: 'not reached',
+    },
     notes: [],
   };
   const before = check.violations.length;
@@ -418,7 +446,7 @@ export async function runMoney(
   // --- Stripe: a pre-verified seller and a platform balance to draw on.
   const sellerStripeId = await createPreVerifiedSeller(matchId.slice(0, 8));
   await attachStripeAccount(seller.accountId, sellerStripeId);
-  await ensurePlatformBalance(AMOUNT_MINOR * 2, 'AUD');
+  await ensurePlatformBalance(AMOUNT_MINOR * 4, 'AUD');
   log(`seller connected account ${sellerStripeId} attached, platform balance topped up`);
 
   // =========================================================================
@@ -558,56 +586,219 @@ export async function runMoney(
   groupEnd();
 
   // =========================================================================
-  // SETTLEMENT TWO: the dispute path.
+  // SETTLEMENT TWO: the payment freezes, the item goes back, the AGREED
+  // AMOUNT follows it. This used to be "dispute -> whole total refunded", and
+  // the change of behaviour is the whole reason I13 and I15 exist.
   // =========================================================================
-  group('settlement 2 of 2: proposed -> funded -> disputed -> refunded');
+  group('settlement 2 of 3: funded -> frozen -> sent back -> refunded');
   const two = await propose(h, buyer, matchId);
-  if (!two.id) throw new Error(`could not propose the dispute-path settlement: ${two.detail}`);
+  if (!two.id) throw new Error(`could not propose the freeze-path settlement: ${two.detail}`);
   const did = two.id;
   await approveOnPage(buyer, did);
   await approveOnPage(seller, did);
   await fund(buyer, did);
-  log(`  settlement ${did.slice(0, 8)} funded; the buyer now disputes`);
+  await lockEvidence(seller, did);
+  await waitState(did, 'evidence-locked', 60_000);
+  log(`  settlement ${did.slice(0, 8)} handed over; the buyer now says something is wrong`);
 
-  const dispute1 = await counterFetch(buyer.jar, `/settlements/${did}/dispute`, form({}));
+  const frozeAt = await counterFetch(
+    buyer.jar,
+    `/settlements/${did}/dispute`,
+    form({ ground: 'not_as_described' }),
+  );
+  log(`  said something is wrong: HTTP ${frozeAt.status}`);
+
+  // I15, the sharpest probe in this group: with the payment frozen and the
+  // fourteen days still running, wind the HANDOVER clock into the past and
+  // run the sweep. Nothing may move.
+  {
+    const before = await settlementRow(did);
+    await dbExec(
+      `UPDATE settlements SET auto_release_at = now() - interval '1 minute' WHERE id = :id::uuid`,
+      [{ name: 'id', value: did }],
+    );
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 20_000));
+    const after = await settlementRow(did);
+    const refunds = await refundFacts(after.paymentIntent);
+    const from = check.violations.length;
+    check.frozen(
+      {
+        settlementId: did,
+        stateBefore: before.state,
+        stateAfter: after.state,
+        autoReleaseAtSet: after.autoReleaseAtSet,
+        deadlockAtSet: after.deadlockAtSet,
+        deadlockPassed: after.deadlockPassed,
+        transferId: after.transferId,
+        refundedMinor: refunds.refundedMinor,
+      },
+      'money group, settlement 2 frozen inside its window',
+    );
+    took('I15', from);
+    log(
+      `  I15: frozen at '${before.state}', still '${after.state}' after a sweep; ` +
+        `transfer ${after.transferId ?? 'null'}, refunded ${refunds.refundedMinor}`,
+    );
+  }
+
+  // The buyer sends it back with tracking; the seller says they have it.
+  const returned = await counterFetch(
+    buyer.jar,
+    `/settlements/${did}/returned`,
+    form({ tracking: 'SIM-RETURN-7XY4410092' }),
+  );
+  const gotItBack = await counterFetch(
+    seller.jar,
+    `/settlements/${did}/return-received`,
+    form({ pin: seller.pin }),
+  );
+  log(`  sent back: HTTP ${returned.status}; seller has it back: HTTP ${gotItBack.status}`);
   await waitState(did, 'refunded');
-  // The idempotency probe: pressing dispute again on a settlement that has
-  // already gone back must not produce a second refund.
-  const dispute2 = await counterFetch(buyer.jar, `/settlements/${did}/dispute`, form({}));
-  log(`  dispute pressed twice: HTTP ${dispute1.status}, then ${dispute2.status}`);
+  // The idempotency probe: pressing it again must not produce a second refund.
+  const secondPress = await counterFetch(
+    seller.jar,
+    `/settlements/${did}/return-received`,
+    form({ pin: seller.pin }),
+  );
 
   {
     const row = await settlementRow(did);
-    const charges = await stripeApi(`/v1/charges?payment_intent=${row.paymentIntent}`);
-    const charge = charges.data[0];
-    const refunds = await stripeApi(`/v1/refunds?charge=${charge.id}&limit=10`);
+    const refunds = await refundFacts(row.paymentIntent);
     const from = check.violations.length;
     check.refund(
       {
         settlementId: did,
         state: row.state,
+        agreedMinor: AMOUNT_MINOR,
+        feeMinor: row.feeMinor,
+        processingMinor: row.processingMinor,
         buyerTotalMinor: row.buyerTotalMinor,
-        refundedMinor: Number(charge.amount_refunded),
-        refundCount: (refunds.data ?? []).length,
+        refundMinor: row.refundMinor,
+        refundedMinor: refunds.refundedMinor,
+        refundCount: refunds.refundCount,
         transferId: row.transferId,
-        secondDisputeStatus: dispute2.status,
+        secondPressStatus: secondPress.status,
       },
       'money group, settlement 2 at refunded',
     );
     took('I11', from);
+    const feeFrom = check.violations.length;
+    check.fees(
+      {
+        settlementId: did,
+        agreedMinor: AMOUNT_MINOR,
+        feeMinor: row.feeMinor,
+        processingMinor: row.processingMinor,
+        buyerTotalMinor: row.buyerTotalMinor,
+        refundedMinor: refunds.refundedMinor,
+      },
+      'money group, settlement 2 at refunded',
+    );
+    took('I13', feeFrom);
     log(
-      `  I11: ${charge.amount_refunded} of ${row.buyerTotalMinor} refunded across ` +
-        `${(refunds.data ?? []).length} refund object(s); transfer id ${row.transferId ?? 'null'}`,
+      `  I11 + I13: ${refunds.refundedMinor} of the agreed ${AMOUNT_MINOR} went back across ` +
+        `${refunds.refundCount} refund object(s); the buyer's total was ${row.buyerTotalMinor}, ` +
+        `so ${(row.buyerTotalMinor ?? 0) - refunds.refundedMinor} stayed with the fee lines`,
     );
     res.settlements.push({
       id: did,
-      kind: 'dispute',
+      kind: 'return',
       finalState: row.state,
       agreedMinor: AMOUNT_MINOR,
       feeMinor: row.feeMinor,
       processingMinor: row.processingMinor,
       buyerTotalMinor: row.buyerTotalMinor,
-      refundedMinor: Number(charge.amount_refunded),
+      refundedMinor: refunds.refundedMinor,
+    });
+  }
+  groupEnd();
+
+  // =========================================================================
+  // SETTLEMENT THREE: the two of them agree a split, and the money follows
+  // the agreement in both directions at once.
+  // =========================================================================
+  group('settlement 3 of 3: funded -> frozen -> split agreed -> settled-split');
+  const three = await propose(h, buyer, matchId);
+  if (!three.id) throw new Error(`could not propose the split-path settlement: ${three.detail}`);
+  const sid3 = three.id;
+  await approveOnPage(buyer, sid3);
+  await approveOnPage(seller, sid3);
+  await fund(buyer, sid3);
+  await lockEvidence(seller, sid3);
+  await waitState(sid3, 'evidence-locked', 60_000);
+  await counterFetch(buyer.jar, `/settlements/${sid3}/dispute`, form({ ground: 'not_as_described' }));
+
+  // A deliberately awkward split: the two figures have to add up to 7340 to
+  // the cent, and neither of them may borrow from a fee line.
+  const REFUND_PART = 1840;
+  const RELEASE_PART = AMOUNT_MINOR - REFUND_PART; // 5500
+  const proposed = await counterFetch(
+    seller.jar,
+    `/settlements/${sid3}/resolution`,
+    form({
+      refund_to_buyer: (REFUND_PART / 100).toFixed(2),
+      release_to_seller: (RELEASE_PART / 100).toFixed(2),
+    }),
+  );
+  const agreed = await counterFetch(
+    buyer.jar,
+    `/settlements/${sid3}/resolution/approve`,
+    form({
+      refund_minor: String(REFUND_PART),
+      release_minor: String(RELEASE_PART),
+      pin: buyer.pin,
+    }),
+  );
+  log(`  split proposed: HTTP ${proposed.status}; agreed: HTTP ${agreed.status}`);
+  await waitState(sid3, 'settled-split');
+
+  {
+    const row = await settlementRow(sid3);
+    const refunds = await refundFacts(row.paymentIntent);
+    const transfer = row.transferId ? await stripeApi(`/v1/transfers/${row.transferId}`) : undefined;
+    const transferMinor = transfer ? Number(transfer.amount) : 0;
+    const from = check.violations.length;
+    check.split(
+      {
+        settlementId: sid3,
+        agreedMinor: AMOUNT_MINOR,
+        refundedMinor: refunds.refundedMinor,
+        transferMinor,
+        rowRefundMinor: row.refundMinor,
+        rowReleaseMinor: row.releaseMinor,
+        state: row.state,
+      },
+      'money group, settlement 3 at settled-split',
+    );
+    took('I14', from);
+    const feeFrom = check.violations.length;
+    check.fees(
+      {
+        settlementId: sid3,
+        agreedMinor: AMOUNT_MINOR,
+        feeMinor: row.feeMinor,
+        processingMinor: row.processingMinor,
+        buyerTotalMinor: row.buyerTotalMinor,
+        refundedMinor: refunds.refundedMinor,
+      },
+      'money group, settlement 3 at settled-split',
+    );
+    if (res.checked.I13 !== 'violated') took('I13', feeFrom);
+    log(
+      `  I14: ${refunds.refundedMinor} back + ${transferMinor} out = ` +
+        `${refunds.refundedMinor + transferMinor} of the ${AMOUNT_MINOR} held`,
+    );
+    res.settlements.push({
+      id: sid3,
+      kind: 'split',
+      finalState: row.state,
+      agreedMinor: AMOUNT_MINOR,
+      feeMinor: row.feeMinor,
+      processingMinor: row.processingMinor,
+      buyerTotalMinor: row.buyerTotalMinor,
+      transferMinor,
+      refundedMinor: refunds.refundedMinor,
     });
   }
   groupEnd();
