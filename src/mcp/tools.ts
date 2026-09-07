@@ -435,7 +435,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'settle',
     description:
-      "Propose an escrowed settlement on an introduction where both humans have shared their first names, or read settlement state. Proposing (intro_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. The payment only ever starts on the buyer's own approval page. The buyer pays the fees, itemised on that hosted page as three lines: the agreed amount, a $1 introductory fee, and the processing charge at the provider's standard rate. The seller receives the agreed amount in full. Once the seller declares handover the settlement carries auto_release_at, the date the held payment goes to the seller on its own if the buyer's human neither confirms receipt nor raises a dispute; relay that date to your human while there is still time to act on it. No agent action moves a settlement past 'proposed'. Pass settlement_id (or intro_id alone) to read state.",
+      "Propose an escrowed settlement on an introduction where both humans have shared their first names, or read settlement state. Proposing (intro_id + amount + ccy) creates a settlement in state 'proposed' and asks both humans to approve it on their approval pages; after both approvals the buyer pays on the payment provider's hosted page and the money is held until the buyer confirms receipt. The payment only ever starts on the buyer's own approval page. The buyer pays the fees, itemised on that hosted page as three lines: the agreed amount, a $1 introductory fee, and the processing charge at the provider's standard rate. The seller receives the agreed amount in full. Once the seller declares handover the settlement carries auto_release_at, the date the held payment goes to the seller on its own if the buyer's human neither confirms receipt nor says something is wrong; relay that date to your human while there is still time to act on it. Saying something is wrong FREEZES the payment where it is and sends nothing back: from there the two humans agree how to split what is held, or the item goes back with a tracking reference, or after fourteen days the payment goes to whichever side can show where the item went. A frozen settlement carries dispute_ground, deadlock_at, the tracking references and any split on the table, and a read of it comes back with a plain sentence saying what is waiting on your human. Every one of those steps is theirs, on their own approval page. No agent action moves a settlement past 'proposed'. Pass settlement_id (or intro_id alone) to read state.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -617,6 +617,21 @@ export async function dispatchTool(
               };
             }
           }
+          // A live protected payment rides the sweep too, with the sentence
+          // that says what is waiting on this agent's human: confirm that it
+          // arrived, say something is wrong, add tracking, agree a split. The
+          // agent relays it and does none of it — every one of those is a
+          // press on the human's own approval page.
+          if (settlementsConfigured(cfg)) {
+            const introIds = (withNotes as any[])
+              .map((m) => m?.intro_id)
+              .filter((id: unknown): id is string => typeof id === 'string');
+            const live = await settlements.liveSettlementsForSweep(cfg, accountId, introIds);
+            for (const m of withNotes as any[]) {
+              const s = live.get(m?.intro_id);
+              if (s) m.settlement = s;
+            }
+          }
           // The standing arrangement rides on every sweep. This is the whole
           // persistence guarantee: an agent that has never spoken to this
           // human before, on a client that has just been installed, still
@@ -677,11 +692,11 @@ export async function dispatchTool(
         const { settlement_id, amount, ccy, description } = args ?? {};
         const match_id = introId(args);
         if (settlement_id) {
-          return ok(await settlements.getSettlementForAgent(accountId, settlement_id));
+          return ok(await settlements.getSettlementForAgent(cfg, accountId, settlement_id));
         }
         if (!match_id) return invalidInput('settle requires intro_id or settlement_id');
         if (amount === undefined && ccy === undefined) {
-          return ok({ settlements: await settlements.listSettlementsForAgent(accountId, match_id) });
+          return ok({ settlements: await settlements.listSettlementsForAgent(cfg, accountId, match_id) });
         }
         if (amount === undefined || ccy === undefined) {
           return invalidInput('proposing a settlement requires both amount and ccy');

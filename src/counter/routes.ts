@@ -62,7 +62,8 @@ import * as settlements from '../domain/settlements.js';
 import {
   checkoutUrlForSettlement,
   ensureSellerStripeAccount,
-  refundPaymentForSettlement,
+  moveSplitForSettlement,
+  refundAgreedAmountForSettlement,
   sellerAccountReady,
   sellerOnboardingLink,
   sellerStripeAccountId,
@@ -987,7 +988,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         canPay = role === 'buyer' && ready;
         needsPaymentSetup = role === 'seller' && !ready;
       }
-      const showEvidence = ['evidence-locked', 'confirmed', 'disputed', 'released', 'refunded'].includes(row.state);
+      const showEvidence = [
+        'evidence-locked',
+        'confirmed',
+        'disputed',
+        'resolution-proposed',
+        'resolved',
+        'released',
+        'refunded',
+        'settled-split',
+      ].includes(row.state);
+      const inDispute = settlements.IN_DISPUTE.includes(row.state);
       const myApproval = role === 'buyer' ? row.buyer_approved_at : row.seller_approved_at;
       // The handover notice, while the clock is running. The seller's first
       // name is decrypted only here, where it changes what the page says.
@@ -1026,6 +1037,58 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         autoReleaseDays: cfg.settlementAutoReleaseDays,
         autoReleased: row.auto_released === true,
         handover,
+        // --- the frozen half: what each of them can do while it is frozen ---
+        inDispute,
+        disputeGround: row.dispute_ground ?? undefined,
+        // The seller adds tracking at the handover as readily as inside a
+        // dispute; it is the same record either way.
+        canAddTracking:
+          role === 'seller' &&
+          ['funded', 'evidence-locked', 'disputed', 'resolution-proposed'].includes(row.state),
+        deliveryTracking: row.delivery_tracking ?? undefined,
+        canMarkReturned: role === 'buyer' && inDispute && !row.returned_at,
+        returnTracking: row.return_tracking ?? undefined,
+        returnedOnDay: row.returned_at ? pages.plainDay(new Date(row.returned_at)) : undefined,
+        returnSilenceByDay: row.returned_at
+          ? pages.plainDay(
+              new Date(
+                new Date(row.returned_at).getTime() +
+                  cfg.settlementReturnSilenceDays * 86_400_000,
+              ),
+            )
+          : undefined,
+        canConfirmReturn: role === 'seller' && inDispute && !!row.returned_at && !row.return_received_at,
+        trackingGraceByDay:
+          row.disputed_at && row.dispute_ground === 'not_arrived' && !row.delivery_tracking
+            ? pages.plainDay(
+                new Date(
+                  new Date(row.disputed_at).getTime() +
+                    cfg.settlementTrackingGraceDays * 86_400_000,
+                ),
+              )
+            : undefined,
+        deadlockByDay: row.deadlock_at ? pages.plainDay(new Date(row.deadlock_at)) : undefined,
+        // The split on the table, if there is one, in the same money words as
+        // every other figure on this page.
+        split:
+          row.refund_minor !== null && row.release_minor !== null
+            ? {
+                refundMinor: row.refund_minor,
+                releaseMinor: row.release_minor,
+                refund: formatMinor(row.refund_minor, row.ccy),
+                release: formatMinor(row.release_minor, row.ccy),
+                mine: role === 'buyer' ? !!row.split_buyer_approved_at : !!row.split_seller_approved_at,
+                theirs: role === 'buyer' ? !!row.split_seller_approved_at : !!row.split_buyer_approved_at,
+              }
+            : undefined,
+        canProposeSplit: inDispute,
+        // Only a split the OTHER side put up is this human's to accept.
+        canApproveSplit:
+          row.state === 'resolution-proposed' &&
+          row.split_proposed_by !== accountId &&
+          !(role === 'buyer' ? row.split_buyer_approved_at : row.split_seller_approved_at),
+        agreedMinor: toMinorUnits(Number(row.amount), row.ccy),
+        ccy: row.ccy,
       };
     };
 
@@ -1213,17 +1276,16 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       );
     });
 
-    // Either human disputes: the held payment goes BACK to the buyer (the
-    // safe direction). Like a decline, no reason is carried.
-    counter.post('/settlements/:id/dispute', async (req, reply) => {
-      const s = await requireSession(req, reply);
-      if (!s) return;
-      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
-      if (!found) return settlementNotFound(reply);
+    // Every step below is a human's, on their own page, and every one of them
+    // reports the same way when the settlement has moved on underneath them.
+    const settlementStep = async (
+      reply: FastifyReply,
+      run: () => Promise<{ title: string; body: string }>,
+    ) => {
       try {
-        const row = await settlements.openDispute(settlements.counterAction(s.accountId!), found.row.id);
-        await refundPaymentForSettlement(row);
-      } catch (e) {
+        const r = await run();
+        return html(reply, pages.messagePage(r.title, r.body));
+      } catch (e: any) {
         if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
             reply,
@@ -1231,15 +1293,206 @@ this time, and nothing has moved. Try sending it again from the settlement page.
             409,
           );
         }
+        if (e?.validation) {
+          return html(reply, pages.messagePage('Not quite', `<p>${pages.esc(String(e.message))}</p>`), 400);
+        }
         throw e;
       }
-      return html(
-        reply,
-        pages.messagePage(
-          'Disputed',
-          '<p>The held payment goes back to the buyer in full. No reason was sent.</p>',
-        ),
-      );
+    };
+
+    // Either human says something is wrong: the held payment FREEZES. Nothing
+    // moves. They pick which of the two things went wrong, and from there the
+    // two of them have the settlement page to sort it out on.
+    counter.post('/settlements/:id/dispute', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const ground = String((req.body as any)?.ground ?? 'not_as_described');
+      if (ground !== 'not_arrived' && ground !== 'not_as_described') {
+        return html(reply, pages.messagePage('Not quite', '<p>Say which of the two things went wrong.</p>'), 400);
+      }
+      return settlementStep(reply, async () => {
+        const row = await settlements.openDispute(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+          ground,
+          cfg.settlementDisputeDeadlockDays,
+        );
+        for (const [accountId, role] of [
+          [row.buyer_account, 'buyer'],
+          [row.seller_account, 'seller'],
+        ] as const) {
+          const email = await ops.accountEmail(accountId, 'settlement-disputed-notification');
+          if (email) {
+            await notifyBestEffort(req, 'settlement-disputed', () =>
+              sendSettlementEmail(cfg, {
+                to: email,
+                accountId,
+                template: 'disputed',
+                settlementId: row.id,
+                role,
+              }),
+            );
+          }
+        }
+        return {
+          title: 'On hold',
+          body:
+            '<p>The payment is frozen where it is. Nothing has moved and nothing will move until the two of you ' +
+            'agree how to settle it, the item goes back, or fourteen days pass and the rule on the settlement page decides.</p>',
+        };
+      });
+    });
+
+    // The seller's tracking reference. It can go on at the handover or inside
+    // a dispute; either way it is the record of where the parcel went.
+    counter.post('/settlements/:id/tracking', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      return settlementStep(reply, async () => {
+        await settlements.addDeliveryTracking(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+          String((req.body as any)?.tracking ?? ''),
+        );
+        return {
+          title: 'Tracking added',
+          body: '<p>Both of you can see it on the settlement page now.</p>',
+        };
+      });
+    });
+
+    // The buyer says it is on its way back.
+    counter.post('/settlements/:id/returned', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      return settlementStep(reply, async () => {
+        await settlements.markReturned(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+          String((req.body as any)?.tracking ?? ''),
+        );
+        return {
+          title: 'Marked as sent back',
+          body:
+            `<p>The seller has been asked to say when they have it. Once they do, the agreed amount comes back to you; ` +
+            `if they say nothing for ${pages.esc(String(cfg.settlementReturnSilenceDays))} days, it comes back anyway.</p>`,
+        };
+      });
+    });
+
+    // The seller says the returned item is back with them: the agreed amount
+    // goes to the buyer. This one moves money, so it takes the PIN ceremony.
+    counter.post('/settlements/:id/return-received', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
+      return settlementStep(reply, async () => {
+        const row = await settlements.confirmReturnReceived(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+        );
+        await refundAgreedAmountForSettlement(row, row.refund_minor!);
+        return {
+          title: 'Sent back to the buyer',
+          body:
+            '<p>The agreed amount is on its way to the buyer. The introductory fee and the card processing stay ' +
+            'paid, because the card processor keeps its own fee on a refund.</p>',
+        };
+      });
+    });
+
+    // Either human proposes how to divide the held amount. Proposing is
+    // agreeing, so this stamps the proposer's own approval; nothing moves
+    // until the other side approves the same two figures.
+    counter.post('/settlements/:id/resolution', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const b: any = req.body ?? {};
+      const money = (raw: unknown) => {
+        const n = Number(String(raw ?? '').trim());
+        if (!Number.isFinite(n) || n < 0) {
+          throw Object.assign(new Error('Both figures have to be amounts of money, and neither can be less than nothing.'), { validation: true });
+        }
+        // A zero side is a perfectly good proposal, so this cannot go through
+        // toMinorUnits, which refuses one.
+        return Math.round(n * (found.row.ccy.toUpperCase() === 'JPY' ? 1 : 100));
+      };
+      return settlementStep(reply, async () => {
+        const row = await settlements.proposeResolution(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+          money(b.refund_to_buyer),
+          money(b.release_to_seller),
+        );
+        const otherAccount = found.role === 'buyer' ? row.seller_account : row.buyer_account;
+        const otherRole = found.role === 'buyer' ? 'seller' : 'buyer';
+        const email = await ops.accountEmail(otherAccount, 'settlement-resolution-notification');
+        if (email) {
+          await notifyBestEffort(req, 'settlement-resolution-proposed', () =>
+            sendSettlementEmail(cfg, {
+              to: email,
+              accountId: otherAccount,
+              template: 'resolution-proposed',
+              settlementId: row.id,
+              role: otherRole,
+            }),
+          );
+        }
+        return {
+          title: 'Put to the other side',
+          body:
+            `<p>${pages.esc(formatMinor(row.refund_minor ?? 0, row.ccy))} back to the buyer and ` +
+            `${pages.esc(formatMinor(row.release_minor ?? 0, row.ccy))} to the seller. The money moves once they agree to the same two figures.</p>`,
+        };
+      });
+    });
+
+    // The other human agrees to the same two figures, and the money moves.
+    // Both legs go out here; 'settled-split' lands from Stripe's own events.
+    counter.post('/settlements/:id/resolution/approve', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
+      const b: any = req.body ?? {};
+      return settlementStep(reply, async () => {
+        const row = await settlements.approveResolution(
+          settlements.counterAction(s.accountId!),
+          found.row.id,
+          Number(b.refund_minor),
+          Number(b.release_minor),
+        );
+        try {
+          await moveSplitForSettlement(cfg, row);
+        } catch (e: any) {
+          req.log.error({ err: e?.message, settlement_id: row.id }, 'settlement split payment failed');
+          return {
+            title: 'Agreed',
+            body:
+              '<p>Your agreement is recorded. The money did not go through this time and nothing has moved. ' +
+              'The switchboard tries again by itself; open the settlement page if it is still waiting tomorrow.</p>',
+          };
+        }
+        return {
+          title: 'Agreed',
+          body:
+            `<p>${pages.esc(formatMinor(row.refund_minor ?? 0, row.ccy))} is on its way back to the buyer and ` +
+            `${pages.esc(formatMinor(row.release_minor ?? 0, row.ccy))} to the seller. Both of you get an email when it lands.</p>`,
+        };
+      });
     });
 
     // ------------------------------------------------------------------

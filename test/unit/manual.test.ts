@@ -125,6 +125,33 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('the seller receives the agreed figure in full');
   });
 
+  it('says what a frozen payment does, and that the human is the one who unfreezes it', () => {
+    // Version 19's whole point, in the manual an agent reads at connect: the
+    // old behaviour sent the money back, and this one sends nothing anywhere.
+    expect(SERVER_INSTRUCTIONS).toContain(
+      'Saying something is wrong freezes the payment where it is and sends nothing back',
+    );
+    // The three roads out, named.
+    expect(SERVER_INSTRUCTIONS).toMatch(/agree how to split what is held/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/goes back with a tracking reference/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/fourteen days the payment goes to whichever side/i);
+    // And the line that keeps the agent out of every one of them.
+    expect(SERVER_INSTRUCTIONS).toContain('relay it and leave the doing to them');
+    expect(SERVER_INSTRUCTIONS).toContain('presses on their own approval page');
+    // The two things a person will ask about the money.
+    expect(SERVER_INSTRUCTIONS).toMatch(/fee and the processing cost stay paid whatever happens/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/postage in either direction is between the two people/i);
+  });
+
+  it('tells a connected agent about the freeze, in version 19', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(19);
+    const nineteen = MANUAL_CHANGELOG.find((c) => c.version === 19)!;
+    expect(nineteen).toBeDefined();
+    expect(nineteen.note).toMatch(/freezes it rather than sending it back/i);
+    expect(nineteen.note).toMatch(/relay it and nothing more/i);
+    expect(nineteen.note).toMatch(/fourteen days/i);
+  });
+
   it('describes unattended work as the human\'s own revocable choice', () => {
     expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
     expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');

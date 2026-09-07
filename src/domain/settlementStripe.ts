@@ -18,10 +18,13 @@
  *     and the settlement id as its idempotency key: the seller receives what
  *     was agreed, in full, and the two fee lines stay in the platform balance
  *     because the buyer put them there.
- *   - Refunding is a refund of the PaymentIntent, the whole buyer total. The
- *     money never left our balance, so nothing has to be reversed; if a
- *     transfer did already go out (a release and a dispute racing), it is
- *     reversed first.
+ *   - Refunding is a refund of the PaymentIntent for part or all of the AGREED
+ *     AMOUNT, never the fee lines: the terms say the $1 and the processing
+ *     cost are kept in every outcome, because the processor keeps its fee on a
+ *     refund. The money never left our balance, so nothing has to be reversed.
+ *   - A dispute resolved by agreement moves both at once: a partial refund of
+ *     the buyer's part and a transfer of the seller's part, the two adding up
+ *     to the agreed amount, either of them possibly zero and then skipped.
  *
  * NOTE these functions move money but never settlement STATE: state changes
  * live exclusively in settlements.ts behind human/webhook contexts. Transfer
@@ -278,6 +281,9 @@ export async function checkoutUrlForSettlement(cfg: Config, s: SettlementRow): P
 export async function transferToSellerForSettlement(
   cfg: Config,
   s: SettlementRow,
+  /** The seller's part of an agreed split. Left out, it is the whole agreed
+   *  amount — every road but a split sends all of it. */
+  partMinor?: number,
 ): Promise<Stripe.Transfer> {
   const sellerId = await sellerStripeAccountId(s.seller_account, s.id);
   if (!sellerId) throw new Error('settlement has no seller connected account');
@@ -285,7 +291,14 @@ export async function transferToSellerForSettlement(
     throw new Error(`seller account ${sellerId} cannot receive transfers`);
   }
   const stripe = await getStripe();
-  const amountMinor = toMinorUnits(Number(s.amount), s.ccy);
+  const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
+  const amountMinor = partMinor ?? agreedMinor;
+  // A settlement holds the agreed amount and nothing else, so no road out of
+  // it can send the seller more than that. Checked here, at the last moment
+  // before the money moves, whatever the caller believed.
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0 || amountMinor > agreedMinor) {
+    throw new Error(`release of ${amountMinor} is not inside the agreed ${agreedMinor}`);
+  }
   const transfer = await stripe.transfers.create(
     {
       amount: amountMinor,
@@ -304,43 +317,104 @@ export async function transferToSellerForSettlement(
 }
 
 /**
- * Refund: the buyer's money goes back in full — the agreed amount, our
- * introductory fee and the processing line, the whole buyer total. A dispute
- * costs the buyer nothing, and the platform wears Stripe's cut on the round
- * trip. The refund carries no amount, which is Stripe's own way of saying
- * "all of it", so it always matches whatever the buyer was actually charged.
+ * Refund: part or all of the AGREED AMOUNT goes back to the buyer, and never a
+ * fee.
+ *
+ * THE FEES ARE NEVER REFUNDED, on any road, and that is a promise the public
+ * terms make rather than a convenience: "The $1 and the processing cost are
+ * kept in every outcome, including a refund, because the processor keeps its
+ * fee on a refund and we pass it on rather than absorb it into the price." So
+ * this always carries an explicit amount — the old refund carried none, which
+ * is Stripe's way of saying "all of it", and all of it is exactly what must
+ * not go back.
+ *
+ * The amount is checked against the agreed amount here, at the last moment
+ * before the money moves: a settlement holds the agreed amount and nothing
+ * else, so no road out of it can send the buyer more than that.
  *
  * The money never left the platform balance, so there is nothing to claw back
- * from the seller. If a transfer did already go out — a confirm and a dispute
- * crossing — it is reversed first (that transfer is the agreed amount, so the
- * reversal brings the agreed amount home and the rest is already here), and
- * only then is the buyer refunded.
+ * from the seller. THERE IS NO TRANSFER REVERSAL HERE ANY MORE, and the reason
+ * is worth writing down: the old refund reversed one in case a release and a
+ * dispute had crossed. They cannot. A dispute is only accepted from 'funded'
+ * or 'evidence-locked' and a transfer only goes out from 'confirmed', and the
+ * single state writer is a compare-and-swap, so of a confirm and a dispute
+ * exactly one wins. Keeping the reversal would have been actively wrong for an
+ * agreed split, where a refund and a transfer are both meant to happen.
+ *
+ * The refund id is written to the row as soon as the API returns, the way the
+ * transfer id is. That mark is also what keeps the sweep's refunding rules
+ * from firing twice on a settlement whose webhook is slow.
  *
  * The 'refunded' state lands from the charge.refunded webhook.
  */
-export async function refundPaymentForSettlement(s: SettlementRow): Promise<void> {
+export async function refundAgreedAmountForSettlement(
+  s: SettlementRow,
+  amountMinor: number,
+): Promise<void> {
   if (!s.stripe_payment_intent) throw new Error('settlement has no payment to refund');
-  const stripe = await getStripe();
-  if (s.stripe_transfer_id) {
-    const transfer = await stripe.transfers.retrieve(s.stripe_transfer_id);
-    if (transfer.amount_reversed < transfer.amount) {
-      await stripe.transfers.createReversal(
-        s.stripe_transfer_id,
-        { metadata: { osb_settlement_id: s.id } },
-        { idempotencyKey: `osb-settlement-reverse-${s.id}` },
-      );
-    }
+  const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0 || amountMinor > agreedMinor) {
+    throw new Error(`refund of ${amountMinor} is not inside the agreed ${agreedMinor}`);
   }
+  const stripe = await getStripe();
   const pi = await stripe.paymentIntents.retrieve(s.stripe_payment_intent);
   const charge = typeof pi.latest_charge === 'string' ? pi.latest_charge : pi.latest_charge?.id;
   if (charge) {
     const existing = await stripe.refunds.list({ charge, limit: 1 });
-    if (existing.data.length) return; // idempotent retry path
+    if (existing.data.length) {
+      // Idempotent retry path: record whatever went out, so the row and Stripe
+      // agree even when the first attempt's response was lost.
+      await getPool().query(
+        `UPDATE settlements SET stripe_refund_id = COALESCE(stripe_refund_id, $2), updated_at = now()
+         WHERE id = $1`,
+        [s.id, existing.data[0].id],
+      );
+      return;
+    }
   }
-  await stripe.refunds.create(
-    { payment_intent: s.stripe_payment_intent, metadata: { osb_settlement_id: s.id } },
+  const refund = await stripe.refunds.create(
+    {
+      payment_intent: s.stripe_payment_intent,
+      amount: amountMinor,
+      metadata: { osb_settlement_id: s.id },
+    },
     { idempotencyKey: `osb-settlement-refund-${s.id}` },
   );
+  await getPool().query(
+    `UPDATE settlements SET stripe_refund_id = $2, updated_at = now() WHERE id = $1`,
+    [s.id, refund.id],
+  );
+}
+
+/**
+ * Both legs of an agreed split, in the order that is safe to be interrupted
+ * in: the buyer's refund first, the seller's transfer second. A crash between
+ * them leaves a buyer part-refunded and a settlement still in 'resolved',
+ * which is visible and recoverable; the other order would leave the seller
+ * paid and the buyer waiting.
+ *
+ * A leg of zero is skipped rather than sent, because Stripe has no zero-amount
+ * refund or transfer and because there is nothing to move. markSplitLeg knows
+ * not to wait for a leg that was never sent.
+ *
+ * Both legs carry the settlement id as their idempotency key, so this whole
+ * function is safe to call again: the buyer is refunded once and the seller is
+ * paid once, however many times anyone presses anything.
+ */
+export async function moveSplitForSettlement(
+  cfg: Config,
+  s: SettlementRow,
+): Promise<void> {
+  const refundMinor = s.refund_minor ?? 0;
+  const releaseMinor = s.release_minor ?? 0;
+  const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
+  if (refundMinor + releaseMinor !== agreedMinor) {
+    throw new Error(
+      `split ${refundMinor} + ${releaseMinor} does not add up to the agreed ${agreedMinor}`,
+    );
+  }
+  if (refundMinor > 0) await refundAgreedAmountForSettlement(s, refundMinor);
+  if (releaseMinor > 0) await transferToSellerForSettlement(cfg, s, releaseMinor);
 }
 
 /**

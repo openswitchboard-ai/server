@@ -20,9 +20,30 @@
  * road it took.
  *
  * G5 (a dispute inside the window wins): a settlement is funded and handed
- * over with its clock live, the buyer disputes, the clock is cleared as the
- * dispute lands, and a sweep run with the clock wound back finds nothing to
- * release.
+ * over with its clock live, the buyer says something is wrong, the clock is
+ * cleared as the dispute lands, and a sweep run with the clock wound back
+ * finds nothing to release. Nothing moves: the payment is frozen, and it stays
+ * frozen for the whole of its fourteen days.
+ *
+ * G6 (a split the two of them agreed): a frozen payment, the seller proposes
+ * how to divide what is held, the buyer approves the same two figures, and
+ * Stripe shows a PARTIAL refund to the buyer and a transfer to the seller
+ * adding up to the agreed amount exactly — with the introductory fee and the
+ * processing line still ours.
+ *
+ * G7 (the item goes back): a frozen payment, the buyer marks it sent back with
+ * a tracking reference, the seller says they have it, and the agreed amount —
+ * and only the agreed amount — is refunded.
+ *
+ * G8 (it never arrived and nobody could show otherwise): a frozen payment on
+ * the 'not_arrived' ground, the seller adds no tracking, the harness winds the
+ * dispute back past the seller's grace, the sweep runs, and the agreed amount
+ * goes back to the buyer.
+ *
+ * G9 (the default rule releases): a frozen payment where the seller DID add
+ * tracking and no return was sent, the harness winds the fourteen days into the
+ * past, the sweep runs, and the agreed amount is released to the seller with
+ * the row saying the rule did it.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
@@ -215,6 +236,92 @@ async function windClockBack(sid: string): Promise<void> {
 }
 
 /**
+ * TEST-ONLY, and the same reach as windClockBack: the dispute's own clocks. A
+ * real dispute runs for fourteen days and a real tracking grace for seven, and
+ * nothing in the product shortens either. Both sweep conditions are
+ * `<stamp> <= now()`, so moving the stamps is all there is to do.
+ */
+async function windDisputeBack(sid: string, days: number): Promise<void> {
+  await dbExec(
+    `UPDATE settlements SET disputed_at = disputed_at - make_interval(days => :d::int),
+       deadlock_at = deadlock_at - make_interval(days => :d::int)
+     WHERE id = :id::uuid AND disputed_at IS NOT NULL`,
+    [
+      { name: 'id', value: sid },
+      { name: 'd', value: days },
+    ],
+  );
+}
+
+/** The frozen half of a settlement row, read as facts. */
+async function disputeOf(sid: string): Promise<{
+  ground: string | null;
+  deadlockRunning: boolean;
+  refundMinor: number | null;
+  releaseMinor: number | null;
+  deliveryTracking: string | null;
+  returnTracking: string | null;
+  refundId: string | null;
+  autoReleased: boolean;
+  confirmedVia: string | null;
+}> {
+  const [[ground, deadlock, refundMinor, releaseMinor, delivery, ret, refundId, auto, via]] =
+    await dbExec(
+      `SELECT dispute_ground, deadlock_at IS NOT NULL, refund_minor, release_minor,
+              delivery_tracking, return_tracking, stripe_refund_id, auto_released, confirmed_via
+       FROM settlements WHERE id = :id::uuid`,
+      [{ name: 'id', value: sid }],
+    );
+  const num = (v: any) => (v === null || v === undefined ? null : Number(v));
+  return {
+    ground: ground === null ? null : String(ground),
+    deadlockRunning: deadlock === true,
+    refundMinor: num(refundMinor),
+    releaseMinor: num(releaseMinor),
+    deliveryTracking: delivery === null ? null : String(delivery),
+    returnTracking: ret === null ? null : String(ret),
+    refundId: refundId === null ? null : String(refundId),
+    autoReleased: auto === true,
+    confirmedVia: via === null ? null : String(via),
+  };
+}
+
+/** What Stripe gave back against a settlement's charge. */
+async function refundsFor(paymentIntent: string): Promise<{ refundedMinor: number; count: number }> {
+  const charges = await stripeApi(`/v1/charges?payment_intent=${paymentIntent}`);
+  const charge = charges.data[0];
+  const refunds = await stripeApi(`/v1/refunds?charge=${charge.id}&limit=10`);
+  return { refundedMinor: Number(charge.amount_refunded), count: (refunds.data ?? []).length };
+}
+
+/**
+ * A funded, handed-over, frozen settlement on a fresh introduction — the
+ * starting position for G6 through G9. Returns the settlement id and its
+ * PaymentIntent.
+ */
+async function frozenSettlement(
+  ground: 'not_arrived' | 'not_as_described',
+): Promise<{ sid: string; piId: string }> {
+  const sid = await proposeSettlement(await newIntroduction());
+  await approveOnCounter(buyer, sid);
+  await approveOnCounter(seller, sid);
+  const piId = await fundAndWait(sid);
+  await declareHandover(sid);
+  const froze = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({ ground }));
+  expect(froze.status, await froze.clone().text()).toBe(200);
+  expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+  // Freezing sends nothing anywhere. This is the whole change of behaviour, so
+  // it is asserted at the start of every gate that depends on it.
+  const stripeSaysNothing = await refundsFor(piId);
+  expect(stripeSaysNothing.refundedMinor).toBe(0);
+  const d = await disputeOf(sid);
+  expect(d.ground).toBe(ground);
+  expect(d.deadlockRunning).toBe(true);
+  expect((await clockOf(sid)).running).toBe(false); // the handover clock is put away
+  return { sid, piId };
+}
+
+/**
  * The buyer's half: the pay action hands back Stripe's hosted session, the
  * session is completed in a browser with a test card, and the verified
  * webhook drives approved -> funded. Returns the PaymentIntent id.
@@ -250,11 +357,11 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     // encryption (production sellers use the hosted account-link flow).
     sellerStripeId = await createPreVerifiedSeller(matchId.slice(0, 8));
     await attachStripeAccount(seller.accountId, sellerStripeId);
-    // Separate charges and transfers draw the release out of the platform's
-    // AVAILABLE balance, and the two refunding gates draw a whole buyer total
-    // out of it as well. Four settlements run here; top up for all of them
-    // before the first one starts.
-    await ensurePlatformBalance((SELLER_MINOR + BUYER_TOTAL_MINOR) * 3, 'AUD');
+    // Separate charges and transfers draw every release and every refund out
+    // of the platform's AVAILABLE balance. Eight settlements run here (G2
+    // through G9, plus the shape probes); top up for all of them before the
+    // first one starts.
+    await ensurePlatformBalance((SELLER_MINOR + BUYER_TOTAL_MINOR) * 9, 'AUD');
   }, 420_000);
 
   it('settle requires stage 3 and refuses a bad proposal shape', async () => {
@@ -364,32 +471,59 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     expect(Number(buyerTotalMinor)).toBe(BUYER_TOTAL_MINOR);
   }, 600_000);
 
-  it('G3: disputed -> refunded, webhook-driven, the buyer made whole in Stripe', async () => {
+  it('G3: saying something is wrong freezes the payment and moves nothing', async () => {
     const sid = await proposeSettlement(await newIntroduction());
     await approveOnCounter(buyer, sid);
     await approveOnCounter(seller, sid);
     const piId = await fundAndWait(sid);
 
-    // Buyer disputes: the held payment goes back; webhook records refunded.
-    const dispute = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({}));
-    expect(dispute.status, await dispute.clone().text()).toBe(200);
-    await poll(
-      async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
-      'settlement to be refunded by webhook',
-      120_000,
+    // The buyer says something is wrong. This used to send the whole buyer
+    // total home — the agreed amount and both fee lines — and it is the
+    // behaviour this gate now exists to prove is gone.
+    const dispute = await counterFetch(
+      buyer.jar,
+      `/settlements/${sid}/dispute`,
+      form({ ground: 'not_as_described' }),
     );
+    expect(dispute.status, await dispute.clone().text()).toBe(200);
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+
+    // Nothing has moved, in either ledger.
     const pi = await stripeApi(`/v1/payment_intents/${piId}`);
-    expect(pi.status).toBe('succeeded'); // the charge stands; the money went back
-    const charges = await stripeApi(`/v1/charges?payment_intent=${piId}`);
-    const charge = charges.data[0];
-    expect(charge.refunded).toBe(true);
-    expect(charge.amount_refunded).toBe(BUYER_TOTAL_MINOR); // everything, both fee lines included
-    // Nothing ever went to the seller on this one.
+    expect(pi.status).toBe('succeeded');
+    expect(pi.amount_received).toBe(BUYER_TOTAL_MINOR);
+    const refunds = await refundsFor(piId);
+    expect(refunds.refundedMinor).toBe(0);
+    expect(refunds.count).toBe(0);
     const [[transferId]] = await dbExec(
       'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
       [{ name: 'id', value: sid }],
     );
     expect(transferId).toBeNull();
+
+    // The row says why it froze and when the rule decides.
+    const d = await disputeOf(sid);
+    expect(d.ground).toBe('not_as_described');
+    expect(d.deadlockRunning).toBe(true);
+    expect(d.refundId).toBeNull();
+
+    // And the agent sees the same thing, with the sentence to relay.
+    const read = await settleRead(buyer.accessToken, sid);
+    expect(read.state).toBe('disputed');
+    expect(read.dispute_ground).toBe('not_as_described');
+    expect(read.deadlock_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(read.note.provenance).toBe('switchboard-system');
+    expect(read.note.text).toContain('frozen');
+    expect(read.note.text).toContain('approval page');
+    // Pressing it again changes nothing.
+    const again = await counterFetch(
+      buyer.jar,
+      `/settlements/${sid}/dispute`,
+      form({ ground: 'not_as_described' }),
+    );
+    expect(again.status).toBe(200);
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
   }, 600_000);
 
   it('G4: handed over -> the window runs out -> released, with nobody confirming', async () => {
@@ -466,45 +600,267 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     expect(transfers.data).toHaveLength(1);
   }, 900_000);
 
-  it('G5: a dispute inside the window wins, and the sweep finds nothing to release', async () => {
-    const sid = await proposeSettlement(await newIntroduction());
-    await approveOnCounter(buyer, sid);
-    await approveOnCounter(seller, sid);
-    const piId = await fundAndWait(sid);
-    await declareHandover(sid);
-    expect((await clockOf(sid)).running).toBe(true);
-
-    // The buyer disputes while the clock is still running.
-    const dispute = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({}));
-    expect(dispute.status, await dispute.clone().text()).toBe(200);
-    // The clock is cleared in the same statement that records the dispute.
-    expect((await clockOf(sid)).running).toBe(false);
+  it('G5: a dispute inside the window wins, and the sweep leaves a frozen payment alone', async () => {
+    const { sid, piId } = await frozenSettlement('not_as_described');
     const read = await settleRead(buyer.accessToken, sid);
     expect(read.auto_release_at).toBeUndefined();
-    expect(read.note).toBeUndefined();
 
-    // Winding a cleared clock back does nothing, and the sweep finds nothing.
+    // Winding the HANDOVER clock back does nothing: the dispute cleared it as
+    // it landed, and the sweep's own condition never sees this settlement.
     await windClockBack(sid);
     await sendOp({ op: 'settlement-auto-release' });
-    await poll(
-      async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
-      'settlement to be refunded by webhook',
-      180_000,
-    );
-    await new Promise((r) => setTimeout(r, 15_000));
-    expect(await settleState(buyer.accessToken, sid)).toBe('refunded');
+    await new Promise((r) => setTimeout(r, 20_000));
+
+    // Still frozen, and still inside its fourteen days. Nothing has moved in
+    // either direction.
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
     const after = await clockOf(sid);
     expect(after.autoReleased).toBe(false);
     expect(after.confirmedVia).toBeNull();
-
-    // The buyer has their whole total back and the seller was never paid.
-    const charges = await stripeApi(`/v1/charges?payment_intent=${piId}`);
-    expect(charges.data[0].amount_refunded).toBe(BUYER_TOTAL_MINOR);
+    expect((await disputeOf(sid)).deadlockRunning).toBe(true);
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
     const [[transferId]] = await dbExec(
       'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
       [{ name: 'id', value: sid }],
     );
     expect(transferId).toBeNull();
+  }, 900_000);
+
+  it('G6: a split the two of them agreed -> settled-split, both legs, fees kept', async () => {
+    const { sid, piId } = await frozenSettlement('not_as_described');
+
+    // Deliberately awkward figures: they have to add up to 8765 to the cent,
+    // and neither may borrow from a fee line.
+    const REFUND_PART = 2140;
+    const RELEASE_PART = AMOUNT_MINOR - REFUND_PART; // 6625
+
+    // A split that does not add up is refused before anything moves.
+    const wrong = await counterFetch(
+      seller.jar,
+      `/settlements/${sid}/resolution`,
+      form({ refund_to_buyer: '21.40', release_to_seller: '80.00' }),
+    );
+    expect(wrong.status).toBe(400);
+    expect(await settleState(seller.accessToken, sid)).toBe('disputed');
+
+    // The seller proposes; proposing is agreeing, so the settlement waits on
+    // the buyer alone.
+    const proposed = await counterFetch(
+      seller.jar,
+      `/settlements/${sid}/resolution`,
+      form({
+        refund_to_buyer: (REFUND_PART / 100).toFixed(2),
+        release_to_seller: (RELEASE_PART / 100).toFixed(2),
+      }),
+    );
+    expect(proposed.status, await proposed.clone().text()).toBe(200);
+    expect(await settleState(seller.accessToken, sid)).toBe('resolution-proposed');
+    // Still nothing moved on one approval — the sharpest probe in this gate.
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
+
+    // The agent read carries the split, in whole currency, for relaying.
+    const read = await settleRead(buyer.accessToken, sid);
+    expect(read.resolution.refund_to_buyer).toBe(REFUND_PART / 100);
+    expect(read.resolution.release_to_seller).toBe(RELEASE_PART / 100);
+    expect(read.resolution.approved_by_seller).toBe(true);
+    expect(read.resolution.approved_by_buyer).toBe(false);
+    expect(read.note.text).toContain('Only your human can accept it');
+
+    // The buyer agrees to the same two figures, with the PIN ceremony.
+    const agreed = await counterFetch(
+      buyer.jar,
+      `/settlements/${sid}/resolution/approve`,
+      form({
+        refund_minor: String(REFUND_PART),
+        release_minor: String(RELEASE_PART),
+        pin: buyer.pin,
+      }),
+    );
+    expect(agreed.status, await agreed.clone().text()).toBe(200);
+    await poll(
+      async () =>
+        (await settleState(buyer.accessToken, sid)) === 'settled-split' ? true : undefined,
+      'settlement to reach settled-split from both verified events',
+      180_000,
+    );
+
+    // Both ledgers. Stripe: a PARTIAL refund and a transfer, adding up to the
+    // agreed amount exactly.
+    const refunds = await refundsFor(piId);
+    expect(refunds.refundedMinor).toBe(REFUND_PART);
+    expect(refunds.count).toBe(1);
+    const [[transferId]] = await dbExec(
+      'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
+      [{ name: 'id', value: sid }],
+    );
+    const transfer = await stripeApi(`/v1/transfers/${transferId}`);
+    expect(transfer.amount).toBe(RELEASE_PART);
+    expect(transfer.destination).toBe(sellerStripeId);
+    expect(transfer.transfer_group).toBe(sid);
+    expect(refunds.refundedMinor + transfer.amount).toBe(AMOUNT_MINOR);
+    // THE FEE LINE: what the buyer paid over the agreed amount stayed here.
+    expect(BUYER_TOTAL_MINOR - refunds.refundedMinor).toBeGreaterThanOrEqual(
+      FEE_MINOR + PROCESSING_MINOR,
+    );
+
+    // The database agrees with Stripe about which two figures moved.
+    const d = await disputeOf(sid);
+    expect(d.refundMinor).toBe(REFUND_PART);
+    expect(d.releaseMinor).toBe(RELEASE_PART);
+    expect(d.deadlockRunning).toBe(false); // the dispute's clock is put away
+    // And the introduction is closed to a fresh protected payment.
+    const again = await mcpCall(buyer.accessToken, 'settle', {
+      intro_id: (await dbExec('SELECT match_id::text FROM settlements WHERE id = :id::uuid', [
+        { name: 'id', value: sid },
+      ]))[0][0],
+      amount: AMOUNT,
+      ccy: 'AUD',
+    });
+    expect(again.isError).toBe(true);
+    expect(JSON.stringify(again.result)).toContain('already finished');
+  }, 900_000);
+
+  it('G7: the item goes back tracked -> the AGREED amount is refunded', async () => {
+    const { sid, piId } = await frozenSettlement('not_as_described');
+
+    // The buyer sends it back with a tracking reference.
+    const returned = await counterFetch(
+      buyer.jar,
+      `/settlements/${sid}/returned`,
+      form({ tracking: 'INTEG-RETURN-7XY4410092' }),
+    );
+    expect(returned.status, await returned.clone().text()).toBe(200);
+    expect((await disputeOf(sid)).returnTracking).toBe('INTEG-RETURN-7XY4410092');
+    // A marked return moves nothing on its own.
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+    // The seller's read says what is waiting on them.
+    const sellerRead = await settleRead(seller.accessToken, sid);
+    expect(sellerRead.return_tracking.text).toBe('INTEG-RETURN-7XY4410092');
+    expect(sellerRead.return_tracking.provenance).toBe('counterparty-untrusted');
+    expect(sellerRead.note.text).toContain('sent it back');
+
+    // The seller says they have it: the agreed amount goes back.
+    const gotItBack = await counterFetch(
+      seller.jar,
+      `/settlements/${sid}/return-received`,
+      form({ pin: seller.pin }),
+    );
+    expect(gotItBack.status, await gotItBack.clone().text()).toBe(200);
+    await poll(
+      async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
+      'settlement to be refunded by webhook',
+      180_000,
+    );
+
+    // The AGREED amount, and not a cent of the two fee lines.
+    const refunds = await refundsFor(piId);
+    expect(refunds.refundedMinor).toBe(AMOUNT_MINOR);
+    expect(refunds.refundedMinor).not.toBe(BUYER_TOTAL_MINOR);
+    expect(refunds.count).toBe(1);
+    expect(BUYER_TOTAL_MINOR - refunds.refundedMinor).toBe(FEE_MINOR + PROCESSING_MINOR);
+    const d = await disputeOf(sid);
+    expect(d.refundMinor).toBe(AMOUNT_MINOR);
+    expect(d.releaseMinor).toBe(0);
+    expect(d.deadlockRunning).toBe(false);
+    // The seller was never paid, and pressing it again refunds nothing twice.
+    const [[transferId]] = await dbExec(
+      'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
+      [{ name: 'id', value: sid }],
+    );
+    expect(transferId).toBeNull();
+    await counterFetch(seller.jar, `/settlements/${sid}/return-received`, form({ pin: seller.pin }));
+    await new Promise((r) => setTimeout(r, 10_000));
+    expect((await refundsFor(piId)).count).toBe(1);
+  }, 900_000);
+
+  it('G8: it never arrived and no tracking was added -> the AGREED amount goes back', async () => {
+    const { sid, piId } = await frozenSettlement('not_arrived');
+    expect((await disputeOf(sid)).deliveryTracking).toBeNull();
+
+    // Inside the grace, the sweep leaves it alone.
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 20_000));
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
+
+    // Wind the dispute past the seller's seven days and run it again.
+    await windDisputeBack(sid, 8);
+    await sendOp({ op: 'settlement-auto-release' });
+    await poll(
+      async () => ((await settleState(buyer.accessToken, sid)) === 'refunded' ? true : undefined),
+      'the never-arrived rule to refund, webhook-driven',
+      180_000,
+    );
+
+    const refunds = await refundsFor(piId);
+    expect(refunds.refundedMinor).toBe(AMOUNT_MINOR);
+    expect(refunds.count).toBe(1);
+    expect(BUYER_TOTAL_MINOR - refunds.refundedMinor).toBe(FEE_MINOR + PROCESSING_MINOR);
+    const d = await disputeOf(sid);
+    expect(d.refundMinor).toBe(AMOUNT_MINOR);
+    expect(d.releaseMinor).toBe(0);
+    expect(String(d.refundId)).toMatch(/^re_/);
+    // A second sweep refunds nothing twice.
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 15_000));
+    expect((await refundsFor(piId)).count).toBe(1);
+  }, 900_000);
+
+  it('G9: the default rule releases to the side that can show where it went', async () => {
+    const { sid, piId } = await frozenSettlement('not_arrived');
+
+    // The seller adds tracking. That answers the ground — the argument is now
+    // about the item rather than the post — and leaves the fourteen days
+    // exactly where they were.
+    const tracked = await counterFetch(
+      seller.jar,
+      `/settlements/${sid}/tracking`,
+      form({ tracking: 'INTEG-DELIVERY-4410092' }),
+    );
+    expect(tracked.status, await tracked.clone().text()).toBe(200);
+    const afterTracking = await disputeOf(sid);
+    expect(afterTracking.deliveryTracking).toBe('INTEG-DELIVERY-4410092');
+    expect(afterTracking.ground).toBe('not_as_described');
+
+    // Past the seller's grace, the never-arrived rule no longer applies: the
+    // ground moved, so nothing refunds.
+    await windDisputeBack(sid, 8);
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 20_000));
+    expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
+
+    // Past the fourteen days, with tracking and no return sent, the payment
+    // goes to the seller.
+    await windDisputeBack(sid, 15);
+    await sendOp({ op: 'settlement-auto-release' });
+    await poll(
+      async () => ((await settleState(buyer.accessToken, sid)) === 'released' ? true : undefined),
+      'the default rule to release, webhook-driven',
+      180_000,
+    );
+
+    const d = await disputeOf(sid);
+    expect(d.releaseMinor).toBe(AMOUNT_MINOR);
+    expect(d.refundMinor).toBe(0);
+    expect(d.autoReleased).toBe(true);
+    expect(d.confirmedVia).toBe('deadlock'); // nobody pressed anything
+    expect(d.deadlockRunning).toBe(false);
+    const [[transferId]] = await dbExec(
+      'SELECT stripe_transfer_id FROM settlements WHERE id = :id::uuid',
+      [{ name: 'id', value: sid }],
+    );
+    const transfer = await stripeApi(`/v1/transfers/${transferId}`);
+    expect(transfer.amount).toBe(SELLER_MINOR);
+    expect(transfer.destination).toBe(sellerStripeId);
+    expect(transfer.transfer_group).toBe(sid);
+    expect((await refundsFor(piId)).refundedMinor).toBe(0);
+    // A second sweep pays nothing twice.
+    await sendOp({ op: 'settlement-auto-release' });
+    await new Promise((r) => setTimeout(r, 15_000));
+    const transfers = await stripeApi(`/v1/transfers?transfer_group=${sid}`);
+    expect(transfers.data).toHaveLength(1);
   }, 900_000);
 
   it('the settlement page renders for both humans', async () => {

@@ -28,6 +28,7 @@ import {
   markFunded,
   markRefunded,
   markReleased,
+  markSplitLeg,
   webhookAction,
   type SettlementRow,
   type WebhookCtx,
@@ -42,7 +43,7 @@ import type { Config } from './config.js';
 async function notifyBothParties(
   cfg: Config,
   s: SettlementRow,
-  template: 'payment-held' | 'released' | 'refund',
+  template: 'payment-held' | 'released' | 'refund' | 'split',
 ): Promise<void> {
   for (const [accountId, role] of [
     [s.buyer_account, 'buyer'],
@@ -187,6 +188,19 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
       }
       const current = await getSettlement(sid);
       if (!current) return; // a transfer unrelated to settlements
+      // A settlement in 'resolved' is an agreed split with both humans behind
+      // it, and this transfer is one of its two legs rather than a release.
+      // 'settled-split' lands once every leg that had money in it has landed.
+      if (current.state === 'resolved') {
+        const row = await markSplitLeg(ctx, sid, 'release');
+        log('settlement split: the seller\'s part went out', {
+          settlement_id: sid,
+          transfer: transfer.id,
+          state: row.state,
+        });
+        if (row.state === 'settled-split') await notifyBothParties(cfg, row, 'split');
+        return;
+      }
       const row = await markReleased(ctx, sid);
       log('settlement released', { settlement_id: sid, transfer: transfer.id });
       await notifyBothParties(cfg, row, 'released');
@@ -200,6 +214,20 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
       if (!piId) return;
       const s = await getSettlementByPaymentIntent(piId);
       if (!s) return;
+      // The same fork as the transfer above: inside an agreed split this is a
+      // leg, and everywhere else it is the whole road ending. The refund is of
+      // the agreed amount or part of it either way — the buyer's two fee lines
+      // were never in it.
+      if (s.state === 'resolved') {
+        const row = await markSplitLeg(ctx, s.id, 'refund');
+        log('settlement split: the buyer\'s part went back', {
+          settlement_id: s.id,
+          charge: charge.id,
+          state: row.state,
+        });
+        if (row.state === 'settled-split') await notifyBothParties(cfg, row, 'split');
+        return;
+      }
       const row = await markRefunded(ctx, s.id);
       log('settlement refunded (charge refunded)', { settlement_id: s.id, charge: charge.id });
       await notifyBothParties(cfg, row, 'refund');

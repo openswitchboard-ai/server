@@ -696,6 +696,41 @@ export interface SettlementView {
     /** "Saturday 13 September" — the day the payment goes on its own. */
     byDay: string;
   };
+  // --- the frozen half -----------------------------------------------------
+  /** The payment is frozen while the two of them sort it out. */
+  inDispute: boolean;
+  /** Which of the two things went wrong, in the disputer's words. */
+  disputeGround?: 'not_arrived' | 'not_as_described';
+  /** seller: the tracking reference can go on now. */
+  canAddTracking: boolean;
+  deliveryTracking?: string;
+  /** buyer, in dispute, nothing sent back yet. */
+  canMarkReturned: boolean;
+  returnTracking?: string;
+  returnedOnDay?: string;
+  /** "Saturday 20 September" — when silence sends the money back anyway. */
+  returnSilenceByDay?: string;
+  /** seller: the buyer says it is back with them. */
+  canConfirmReturn: boolean;
+  /** "Saturday 13 September" — the seller's last day to add tracking on a
+   *  dispute that says nothing arrived. */
+  trackingGraceByDay?: string;
+  /** "Saturday 20 September" — the day the default rule decides. */
+  deadlockByDay?: string;
+  /** The split on the table, and who has said yes to it. */
+  split?: {
+    refundMinor: number;
+    releaseMinor: number;
+    refund: string;
+    release: string;
+    mine: boolean;
+    theirs: boolean;
+  };
+  canProposeSplit: boolean;
+  canApproveSplit: boolean;
+  /** The whole of what is held, in minor units, for the split form's sums. */
+  agreedMinor: number;
+  ccy: string;
 }
 
 /** "Saturday 13 September" — a date a person reads without decoding it. */
@@ -716,11 +751,23 @@ const STATE_LINES: Record<string, string> = {
   funded: 'The payment is held in safe hands.',
   'evidence-locked': 'Handed over. The buyer confirms receipt next.',
   confirmed: 'Receipt confirmed. The release is on its way.',
-  disputed: 'Disputed. The held payment goes back to the buyer.',
+  disputed: 'On hold. The payment stays put while the two of you sort this out.',
+  'resolution-proposed': 'A way to settle this is on the table, waiting for the other side.',
+  resolved: 'Agreed. The money is moving now.',
   released: 'Complete. The payment was released to the seller.',
-  refunded: 'Closed. The payment went back to the buyer.',
+  refunded: 'Closed. The agreed amount went back to the buyer.',
+  'settled-split': 'Closed. You divided it between you, and the money has moved.',
   declined: 'Declined. Nothing was paid.',
 };
+
+/** The PIN box, or the hidden field an already-elevated session needs. Every
+ *  money-moving button on this page carries one. */
+function pinField(elevated: boolean): string {
+  return elevated
+    ? `<input type="hidden" name="pin" value="">`
+    : `<label for="pin">Confirm with your PIN</label>
+         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+}
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
   const facts = [
@@ -738,6 +785,17 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
           { k: 'Releases on its own', v: v.handover.byDay },
         ]
       : []),
+    ...(v.disputeGround
+      ? [
+          {
+            k: 'What went wrong',
+            v: v.disputeGround === 'not_arrived' ? 'It never arrived' : 'Something is wrong with it',
+          },
+        ]
+      : []),
+    ...(v.deliveryTracking ? [{ k: 'Sent with tracking', v: v.deliveryTracking }] : []),
+    ...(v.returnTracking ? [{ k: 'Sent back with tracking', v: v.returnTracking }] : []),
+    ...(v.deadlockByDay && v.inDispute ? [{ k: 'The rule decides on', v: v.deadlockByDay }] : []),
   ]
     .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
     .join('');
@@ -761,10 +819,7 @@ That comes to ${esc(v.buyerTotal)}. The money is held here and moves to the sell
 you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in full.</p>`);
   }
   if (v.canRetryRelease) {
-    const pinBlock = v.elevated
-      ? `<input type="hidden" name="pin" value="">`
-      : `<label for="pin">Confirm with your PIN</label>
-         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+    const pinBlock = pinField(v.elevated);
     blocks.push(`<h2>Send the release again</h2>
 <p>${
       v.autoReleased
@@ -786,34 +841,32 @@ be paid once for this settlement.</p>
     blocks.push(
       v.role === 'buyer'
         ? `<p class="lead">${esc(h.sellerName)} says it was handed over on ${esc(h.onDay)}.
-Confirm when you're happy, or raise a dispute. If you do neither, the payment releases to
-${esc(h.sellerName)} automatically on ${esc(h.byDay)}.</p>`
-        : `<p class="lead">You declared the handover on ${esc(h.onDay)}. The buyer can confirm
-or raise a dispute until ${esc(h.byDay)}; if they do neither, the payment is released to
-you on that day.</p>`,
+Say it arrived as agreed when you're happy, or say something is wrong. If you do neither, the
+payment releases to ${esc(h.sellerName)} on its own on ${esc(h.byDay)}.</p>`
+        : `<p class="lead">You declared the handover on ${esc(h.onDay)}. The buyer has until
+${esc(h.byDay)} to say it arrived as agreed or that something is wrong; if they do neither, the
+payment is released to you on that day.</p>`,
     );
   }
   if (v.canConfirm) {
-    const pinBlock = v.elevated
-      ? `<input type="hidden" name="pin" value="">`
-      : `<label for="pin">Confirm with your PIN</label>
-         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
-    blocks.push(`<h2>Confirm receipt</h2>
-<p>Confirming releases ${esc(v.amount)} to the seller — the whole of what you agreed.
+    blocks.push(`<h2>It arrived as agreed</h2>
+<p>Saying so releases ${esc(v.amount)} to the seller — the whole of what you agreed.
 The introductory fee and the card processing were separate lines on your payment, so
 nothing comes off the seller's side. Do this once the goods are in your hands and as
 described.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm">
-  ${pinBlock}
-  <button type="submit" class="approve">Confirm receipt — release the payment</button>
+  ${pinField(v.elevated)}
+  <button type="submit" class="approve">It arrived as agreed — release the payment</button>
 </form>`);
   }
   if (v.canLockEvidence) {
     blocks.push(`<h2>Handed over</h2>
 <p>Say that it has changed hands, and the buyer is asked to confirm receipt. From that
-moment they have ${esc(String(v.autoReleaseDays))} days to confirm or raise a dispute, and
-the payment is released to you on the ${esc(String(v.autoReleaseDays))}th day if they do
-neither.</p>
+moment they have ${esc(String(v.autoReleaseDays))} days to say it arrived as agreed or that
+something is wrong, and the payment is released to you on the
+${esc(String(v.autoReleaseDays))}th day if they do neither.</p>
+<p>Posted it? Add the tracking above. Every rule here comes out in favour of the person who can
+show where the parcel went.</p>
 <p>Photos are optional and worth adding. Anything you add is frozen in write-once storage
 and shown to the buyer alongside the confirmation request.</p>
 <div id="evlist" class="note" style="display:none"></div>
@@ -864,18 +917,132 @@ evfile.addEventListener('change', async () => {
           .join(''),
     );
   }
+  // ---- while the payment is frozen -----------------------------------------
+  // Everything in this stretch is one of the two people acting on a payment
+  // that is sitting still. Ordered the way a person meets them: what is
+  // happening now, then what they can do about it.
+  if (v.inDispute) {
+    const clock = v.deadlockByDay
+      ? ` If neither of you does anything, the payment goes on ${esc(v.deadlockByDay)} to whichever
+side can show where the item went: the seller with tracking that shows it was delivered and
+nothing sent back, the buyer if it went back tracked, and the buyer if neither of you has
+tracking.`
+      : '';
+    blocks.push(`<p class="lead">The payment is on hold. Nothing has moved and nothing moves until
+the two of you agree how to settle it, the item goes back, or the rule below decides.${clock}</p>`);
+  }
+  if (v.trackingGraceByDay) {
+    blocks.push(
+      v.role === 'seller'
+        ? `<p class="lead">The buyer says it never arrived. Add the tracking that shows it was
+delivered by ${esc(v.trackingGraceByDay)}; with nothing added by then, the agreed amount goes back
+to them.</p>`
+        : `<p class="lead">You have said it never arrived. The seller has until
+${esc(v.trackingGraceByDay)} to add tracking showing it was delivered; with nothing added by then,
+${esc(v.amount)} comes back to you.</p>`,
+    );
+  }
+  if (v.canAddTracking) {
+    blocks.push(`<h2>Add tracking</h2>
+<p>The reference from whoever you posted it with. Both of you can see it, and it is what the
+rule looks at if the two of you never agree.${
+      v.deliveryTracking ? ` You have ${esc(v.deliveryTracking)} on here now.` : ''
+    }</p>
+<form method="POST" action="/settlements/${esc(v.id)}/tracking">
+  <label for="tracking">Tracking reference</label>
+  <input id="tracking" name="tracking" type="text" maxlength="200" required
+         value="${esc(v.deliveryTracking ?? '')}">
+  <button type="submit">Add tracking</button>
+</form>`);
+  }
+  if (v.canMarkReturned) {
+    blocks.push(`<h2>I've sent it back</h2>
+<p>Send it back with tracking and put the reference here. When the seller says they have it,
+${esc(v.amount)} comes back to you; if they say nothing for a week after that, it comes back
+anyway. Postage is between the two of you — the only money held here is ${esc(v.amount)}.</p>
+<form method="POST" action="/settlements/${esc(v.id)}/returned">
+  <label for="rtracking">Tracking reference</label>
+  <input id="rtracking" name="tracking" type="text" maxlength="200" required>
+  <button type="submit">I've sent it back</button>
+</form>`);
+  }
+  if (v.returnedOnDay && !v.canMarkReturned) {
+    blocks.push(
+      `<p class="lead">Sent back on ${esc(v.returnedOnDay)}${
+        v.returnTracking ? `, tracking ${esc(v.returnTracking)}` : ''
+      }.${
+        v.returnSilenceByDay
+          ? ` If the seller says nothing by ${esc(v.returnSilenceByDay)}, ${esc(v.amount)} goes back to the buyer anyway.`
+          : ''
+      }</p>`,
+    );
+  }
+  if (v.canConfirmReturn) {
+    blocks.push(`<h2>I've got it back</h2>
+<p>Saying so sends ${esc(v.amount)} back to the buyer and closes this. The introductory fee and
+the card processing stay paid, because the card processor keeps its own fee on a refund.</p>
+<form method="POST" action="/settlements/${esc(v.id)}/return-received">
+  ${pinField(v.elevated)}
+  <button type="submit" class="approve">I've got it back — send the payment back</button>
+</form>`);
+  }
+  if (v.split && v.inDispute) {
+    const yours = v.split.mine ? 'You have agreed to this.' : 'You have not agreed to this yet.';
+    const them = v.split.theirs ? 'The other side has agreed.' : 'The other side has not agreed yet.';
+    blocks.push(`<h2>On the table</h2>
+<p>${esc(v.split.refund)} back to the buyer and ${esc(v.split.release)} to the seller.
+${esc(yours)} ${esc(them)} The money moves when you both agree to the same two figures.</p>${
+      v.canApproveSplit
+        ? `
+<form method="POST" action="/settlements/${esc(v.id)}/resolution/approve">
+  <input type="hidden" name="refund_minor" value="${esc(String(v.split.refundMinor))}">
+  <input type="hidden" name="release_minor" value="${esc(String(v.split.releaseMinor))}">
+  ${pinField(v.elevated)}
+  <button type="submit" class="approve">Agree to this split</button>
+</form>`
+        : ''
+    }`);
+  }
+  if (v.canProposeSplit) {
+    const held = v.amount;
+    blocks.push(`<h2>Propose a split</h2>
+<p>Say how the ${esc(held)} being held should be divided. The two figures have to add up to
+exactly that, because that is all there is: the introductory fee and the card processing were
+paid to the card processor and are gone. A seller who wants to cover return postage can offer a
+figure that allows for it.</p>
+<p class="small muted">${
+      v.split ? 'Putting up different figures replaces what is on the table now.' : ''
+    }</p>
+<form method="POST" action="/settlements/${esc(v.id)}/resolution">
+  <label for="refund_to_buyer">Back to the buyer (${esc(v.ccy)})</label>
+  <input id="refund_to_buyer" name="refund_to_buyer" type="number" step="0.01" min="0" required>
+  <label for="release_to_seller">To the seller (${esc(v.ccy)})</label>
+  <input id="release_to_seller" name="release_to_seller" type="number" step="0.01" min="0" required>
+  <button type="submit">Propose this split</button>
+</form>`);
+  }
+  // Raising it in the first place stays folded away at the bottom, under the
+  // things this person is more likely to want.
   const dispute = v.canDispute
     ? foldedDetail(
-        'Something is wrong with this',
-        `<p class="small">A dispute returns everything the buyer paid — the agreed amount and
-both fee lines — and closes the settlement. No reason is carried.${
+        'Something is wrong',
+        `<p class="small">This freezes the payment where it is. Nothing goes anywhere: the two of
+you then have this page to agree a split on, or to send the item back on, and after fourteen
+days the payment goes to whichever side can show where the item went.${
           v.handover
-            ? ` It also stops the clock: a settlement in dispute stays put until the two of you
-sort it out, and nothing is released on ${esc(v.handover.byDay)}.`
+            ? ` It also stops the clock, so nothing is released on ${esc(v.handover.byDay)}.`
             : ''
-        }</p>
+        } The introductory fee and the card processing stay paid whatever happens, because the card
+processor keeps its own fee on a refund.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/dispute">
-<button type="submit" class="danger">Dispute — send the payment back</button></form>`,
+  <label for="ground">What went wrong</label>
+  <div class="choice">
+    <label><input type="radio" name="ground" value="not_arrived"> It never arrived</label>
+    <label><input type="radio" name="ground" value="not_as_described" checked> It arrived and something is wrong with it</label>
+  </div>
+  <p class="small muted">Picked it up in person? That is the second one — there is no parcel to go astray.</p>
+  <button type="submit" class="danger">Something is wrong — hold the payment</button>
+</form>`,
       )
     : '';
   return layout('Settlement', `
