@@ -384,6 +384,41 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         links,
       ),
     },
+    // The frozen half. A dispute freezes the payment and moves nothing, so
+    // these three mails have to say what is on hold, what each side can do
+    // about it, and — in both endings — that the two fee lines stay paid.
+    {
+      name: 'settlement-disputed-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'disputed', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-disputed-seller',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'disputed', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-resolution-proposed-buyer',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'resolution-proposed', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'settlement-split-seller',
+      blind: false,
+      content: renderSettlementUpdate(
+        { event: 'split', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
     {
       name: 'settlement-update-blind',
       blind: true,
