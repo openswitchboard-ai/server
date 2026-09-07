@@ -54,7 +54,9 @@ import { ask, readModel } from '../realism/nagatha.js';
 import { Counterpart, NagathaCard } from '../realism/counterpart.js';
 import { OutsiderGuard } from '../realism/outsiderGuard.js';
 import { dbExec, log } from '../sim/harness.js';
-import { resetNagatha } from './box.js';
+import { resetNagatha, plantEvalPersona, restoreRealPersona, readNagathaAuthHeader, setNagathaAuthHeader, parkNagathaState, unparkNagathaState } from './box.js';
+import { bootstrapActor, createAgentKey, setSharedProfile } from '../integration/helpers.js';
+import { randomBytes } from 'node:crypto';
 import { Errand, SCENARIOS, errandNoun } from './attacks.js';
 import { gradeReplies, scenarioPasses } from './grader.js';
 import {
@@ -394,6 +396,7 @@ async function main(): Promise<number> {
   log('=== OpenSwitchboard adversarial-counterparty eval ===');
 
   if (process.env.ADVERSARY_NO_RESET !== '1') {
+    log(`parking her state db (Telegram pairing): ${await parkNagathaState()}`);
     log('resetting Nagatha (sessions, workspace memory, state db)...');
     const status = await resetNagatha();
     log(`gateway: ${status.split('\n').pop()}`);
@@ -403,6 +406,24 @@ async function main(): Promise<number> {
 
   CONFIGURED_MODEL = await readModel().catch(() => 'unknown');
   log(`OpenClaw configured model: ${CONFIGURED_MODEL}`);
+
+  // Her real key and persona are parked for the run and restored at the end,
+  // whatever happens in between. The eval account is disposable.
+  const realHeader = await readNagathaAuthHeader();
+  log(`planting eval persona: ${await plantEvalPersona()}`);
+  const suffix = randomBytes(2).toString('hex');
+  log('provisioning a disposable account for Nagatha on dev…');
+  const evalActor = await bootstrapActor(`Priya${suffix}`, 'Canberra');
+  await setSharedProfile(evalActor.jar, `Priya${suffix}`, 'Canberra');
+  const evalKey = await createAgentKey(evalActor.jar, evalActor.pin, `adv-${suffix}`);
+  log(`  eval account ${evalActor.accountId} key ${evalKey.token.slice(0, 12)}…`);
+  log(`gateway on eval key: ${await setNagathaAuthHeader(`Bearer ${evalKey.token}`)}`);
+  const restoreBox = async () => {
+    log(`restoring her real key: ${await setNagathaAuthHeader(realHeader).catch((e) => e.message)}`);
+    log(`restoring her real persona: ${await restoreRealPersona().catch((e) => e.message)}`);
+    log(`restoring her state db: ${await unparkNagathaState().catch((e) => e.message)}`);
+  };
+  process.on('SIGINT', () => { void restoreBox().finally(() => process.exit(130)); });
 
   const cp = await Counterpart.create();
   const runStart = new Date().toISOString();
@@ -418,7 +439,7 @@ async function main(): Promise<number> {
     nagathaCardIds: [],
     guard: new OutsiderGuard({
       since: runStart,
-      runAccountIds: [cp.actor.accountId],
+      runAccountIds: [cp.actor.accountId, evalActor.accountId],
       declinable: [cp.actor.accountId],
       decline: async (matchId) => !(await cp.decline(matchId)).isError,
       logLine: (m) => log(m),
@@ -496,6 +517,7 @@ async function main(): Promise<number> {
   });
   log(`counterpart teardown: withdrew ${td.cardsWithdrawn} cards, archived ${td.matchesArchived} matches, retired ${td.cardsRetired} left standing`);
   await cleanupNagathaCards(ctx).catch((e) => log(`nagatha card cleanup: ${e.message}`));
+  await restoreBox();
 
   const report = assembleReport(ctx);
   const paths = writeReport(report, REPORTS_DIR);

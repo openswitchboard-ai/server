@@ -35,7 +35,7 @@ import { Buffer } from 'node:buffer';
 export const B_HOST = process.env.DUET_B_HOST ?? 'ubuntu@16.176.240.234';
 export const B_KEY = process.env.DUET_B_KEY ?? `${process.env.HOME}/.ssh/openclaw-test.pem`;
 /** The OpenClaw profile name; its home is ~/.openclaw-<profile>. */
-export const B_PROFILE = process.env.DUET_B_PROFILE ?? 'marlowe';
+export const B_PROFILE = process.env.DUET_B_PROFILE ?? 'bilby';
 export const B_HOME = `/home/ubuntu/.openclaw-${B_PROFILE}`;
 const REMOTE_PATH = 'export PATH=$PATH:~/.local/bin:/usr/local/bin';
 const AGENT_TIMEOUT_S = Number(process.env.DUET_B_TIMEOUT_S ?? 300);
