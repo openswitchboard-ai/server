@@ -760,13 +760,20 @@ const STATE_LINES: Record<string, string> = {
   declined: 'Declined. Nothing was paid.',
 };
 
-/** The PIN box, or the hidden field an already-elevated session needs. Every
- *  money-moving button on this page carries one. */
-function pinField(elevated: boolean): string {
+/**
+ * The PIN box, or the hidden field an already-elevated session needs. Every
+ * money-moving button on this page carries one.
+ *
+ * `which` makes the id unique, because two of these can stand on one page: a
+ * seller looking at a returned item they can close AND a split the buyer has
+ * put up are both money-moving and both theirs to press. Two inputs sharing an
+ * id would leave the second one's label pointing at the first one's box.
+ */
+function pinField(elevated: boolean, which: string): string {
   return elevated
     ? `<input type="hidden" name="pin" value="">`
-    : `<label for="pin">Confirm with your PIN</label>
-         <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+    : `<label for="pin-${which}">Confirm with your PIN</label>
+         <input id="pin-${which}" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
@@ -778,7 +785,11 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
     { k: 'What you agreed', v: v.amount },
     { k: 'Introductory fee', v: `${v.fee}, paid by the buyer` },
     { k: 'Card processing', v: `${v.processing}, at Stripe's standard rate` },
-    { k: 'The seller receives', v: `${v.amount} in full` },
+    // While the payment is frozen, what the seller ends up with is the whole
+    // question, so the page stops answering it in advance.
+    ...(v.inDispute
+      ? [{ k: 'Held', v: `${v.amount}, and nothing else` }]
+      : [{ k: 'The seller receives', v: `${v.amount} in full` }]),
     ...(v.handover
       ? [
           { k: 'Handed over', v: v.handover.onDay },
@@ -819,7 +830,7 @@ That comes to ${esc(v.buyerTotal)}. The money is held here and moves to the sell
 you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in full.</p>`);
   }
   if (v.canRetryRelease) {
-    const pinBlock = pinField(v.elevated);
+    const pinBlock = pinField(v.elevated, 'retry');
     blocks.push(`<h2>Send the release again</h2>
 <p>${
       v.autoReleased
@@ -855,7 +866,7 @@ The introductory fee and the card processing were separate lines on your payment
 nothing comes off the seller's side. Do this once the goods are in your hands and as
 described.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm">
-  ${pinField(v.elevated)}
+  ${pinField(v.elevated, 'confirm')}
   <button type="submit" class="approve">It arrived as agreed — release the payment</button>
 </form>`);
   }
@@ -982,7 +993,7 @@ anyway. Postage is between the two of you — the only money held here is ${esc(
 <p>Saying so sends ${esc(v.amount)} back to the buyer and closes this. The introductory fee and
 the card processing stay paid, because the card processor keeps its own fee on a refund.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/return-received">
-  ${pinField(v.elevated)}
+  ${pinField(v.elevated, 'return')}
   <button type="submit" class="approve">I've got it back — send the payment back</button>
 </form>`);
   }
@@ -997,7 +1008,7 @@ ${esc(yours)} ${esc(them)} The money moves when you both agree to the same two f
 <form method="POST" action="/settlements/${esc(v.id)}/resolution/approve">
   <input type="hidden" name="refund_minor" value="${esc(String(v.split.refundMinor))}">
   <input type="hidden" name="release_minor" value="${esc(String(v.split.releaseMinor))}">
-  ${pinField(v.elevated)}
+  ${pinField(v.elevated, 'split')}
   <button type="submit" class="approve">Agree to this split</button>
 </form>`
         : ''
@@ -1007,9 +1018,9 @@ ${esc(yours)} ${esc(them)} The money moves when you both agree to the same two f
     const held = v.amount;
     blocks.push(`<h2>Propose a split</h2>
 <p>Say how the ${esc(held)} being held should be divided. The two figures have to add up to
-exactly that, because that is all there is: the introductory fee and the card processing were
-paid to the card processor and are gone. A seller who wants to cover return postage can offer a
-figure that allows for it.</p>
+exactly that, because that is all there is: the introductory fee and the card processing are
+already paid and sit outside this. A seller who wants to cover return postage can offer a figure
+that allows for it, and postage itself is between the two of you.</p>
 <p class="small muted">${
       v.split ? 'Putting up different figures replaces what is on the table now.' : ''
     }</p>

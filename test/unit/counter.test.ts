@@ -823,6 +823,7 @@ describe('counter pages: copy-cull render suite', () => {
     expect(html).toContain('<h2>Propose a split</h2>');
     expect(html).toContain('the 87.65 AUD being held');
     expect(html).toContain('have to add up to\nexactly that');
+    expect(html).toContain('postage itself is between the two of you');
     expect(html).toContain('name="refund_to_buyer"');
     expect(html).toContain('name="release_to_seller"');
   });

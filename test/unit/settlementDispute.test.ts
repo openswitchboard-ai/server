@@ -323,6 +323,7 @@ describe('the sweep: three rules, and a refund that is never a fee', () => {
         const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
         // Each due-query is recognised by the condition that makes it itself.
         if (/state = 'confirmed' AND auto_released = true/.test(sql)) return rows([]);
+        if (/state = 'resolved'/.test(sql)) return rows([]);
         if (/state = 'evidence-locked'/.test(sql)) return rows([]);
         if (/returned_at \+ make_interval/.test(sql)) {
           return rows(world.filter((s) => s.due === 'return'));
@@ -472,6 +473,46 @@ describe('the sweep: three rules, and a refund that is never a fee', () => {
         /bad tracking grace window/,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('what rides the check_in sweep', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('carries the live settlement and its sentence, keyed by introduction', async () => {
+    const live = row({ state: 'disputed' });
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async () => ({ rows: [live], rowCount: 1 }),
+    } as any);
+    const map = await settlements.liveSettlementsForSweep(cfg, 'buyer-acct', [live.match_id]);
+    const entry: any = map.get(live.match_id);
+    expect(entry.state).toBe('disputed');
+    expect(entry.note.provenance).toBe('switchboard-system');
+    expect(entry.note.text).toContain('https://my.test/settlements/');
+  });
+
+  it('asks nothing of the database when there is nothing to ask about', async () => {
+    let asked = 0;
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async () => {
+        asked += 1;
+        return { rows: [], rowCount: 0 };
+      },
+    } as any);
+    expect((await settlements.liveSettlementsForSweep(cfg, 'buyer-acct', [])).size).toBe(0);
+    expect(asked).toBe(0);
+  });
+
+  it('leaves a finished settlement out: the sweep is about what is waiting', () => {
+    // Read off the query, because this is a claim about one predicate. The
+    // terminal set is the same one the settle-once guard counts.
+    const src = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '..', '..', 'src', 'domain', 'settlements.ts'),
+      'utf8',
+    );
+    const q = src.slice(src.indexOf('export async function liveSettlementsForSweep'));
+    expect(q.slice(0, q.indexOf('\n}'))).toContain('state <> ALL($3::text[])');
   });
 });
 

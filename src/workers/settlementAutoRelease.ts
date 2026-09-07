@@ -3,6 +3,10 @@
  * Stripe saying so. Four clocks run through here, and every one of them is the
  * same shape — a stretch of time went by and nobody did the thing.
  *
+ * 0. THE RETRIES. A release the clock made, and an agreed split, both have
+ *    nobody left to press anything — so the sweep presses again for them. The
+ *    idempotency keys mean a leg that did go out is never sent twice.
+ *
  * 1. THE BUYER'S WINDOW. The seller declares handover; the buyer gets
  *    SETTLEMENT_AUTO_RELEASE_DAYS to confirm receipt or raise a problem. A
  *    buyer who does neither used to leave the seller's money parked with
@@ -63,9 +67,11 @@ import {
   settlementsDueForDeadlock,
   settlementsDueForNeverArrivedRefund,
   settlementsDueForReturnRefund,
+  splitsAwaitingPayment,
   type SettlementRow,
 } from '../domain/settlements.js';
 import {
+  moveSplitForSettlement,
   refundAgreedAmountForSettlement,
   transferToSellerForSettlement,
 } from '../domain/settlementStripe.js';
@@ -85,6 +91,8 @@ export interface AutoReleaseSweepResult {
   failed: number;
   /** Earlier auto-releases whose transfer went through on this pass. */
   recovered: number;
+  /** Agreed splits whose money did not go out, and went out on this pass. */
+  splitsRecovered: number;
   /** Frozen payments the return-silence rule sent back on this pass. */
   returnRefunded: number;
   /** Frozen payments the never-arrived rule sent back on this pass. */
@@ -104,6 +112,7 @@ export async function runAutoReleaseSweep(
     skipped: 0,
     failed: 0,
     recovered: 0,
+    splitsRecovered: 0,
     returnRefunded: 0,
     neverArrivedRefunded: 0,
     deadlockReleased: 0,
@@ -162,6 +171,23 @@ export async function runAutoReleaseSweep(
     } catch (e: any) {
       result.failed += 1;
       log('settlement release transfer still failing; nothing moved', {
+        settlement_id: stuck.id,
+        error: e?.message,
+      });
+    }
+  }
+
+  // Then the agreed splits whose money did not go out. Both humans have
+  // already said yes to the same two figures, so there is no button left for
+  // either of them to press — the sweep is the retry.
+  for (const stuck of await splitsAwaitingPayment()) {
+    try {
+      await moveSplitForSettlement(cfg, stuck);
+      result.splitsRecovered += 1;
+      log('agreed split paid on a later pass', { settlement_id: stuck.id });
+    } catch (e: any) {
+      result.failed += 1;
+      log('agreed split still not going through; nothing moved', {
         settlement_id: stuck.id,
         error: e?.message,
       });

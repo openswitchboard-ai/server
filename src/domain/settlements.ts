@@ -1278,6 +1278,31 @@ export async function autoReleasesAwaitingTransfer(limit = 50): Promise<Settleme
 }
 
 /**
+ * Splits both humans agreed and whose money did not go out: 'resolved', with a
+ * leg that has something in it and no Stripe object to show for it.
+ *
+ * The buyer's own confirm has a retry button on their page. An agreed split has
+ * none, because the button that would press it is "agree", and they have both
+ * already agreed — pressing it again would be asking two people to consent
+ * twice to the same thing. So the sweep is that retry, the same way it is the
+ * retry for a release the clock made. No state changes here; both legs carry
+ * the settlement id as their idempotency key, so a leg that did go out is never
+ * sent twice.
+ */
+export async function splitsAwaitingPayment(limit = 50): Promise<SettlementRow[]> {
+  const r = await getPool().query(
+    `SELECT * FROM settlements
+     WHERE state = 'resolved'
+       AND ((COALESCE(refund_minor, 0) > 0 AND stripe_refund_id IS NULL)
+         OR (COALESCE(release_minor, 0) > 0 AND stripe_transfer_id IS NULL))
+     ORDER BY resolved_at
+     LIMIT $1`,
+    [limit],
+  );
+  return r.rows;
+}
+
+/**
  * The buyer's window ran out: evidence-locked -> confirmed, on the clock
  * rather than on anyone's word. The release transfer is started by the sweep
  * right after this, exactly as the buyer's own confirm route does it, and
