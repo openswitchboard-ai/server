@@ -140,6 +140,19 @@ export async function writeEvidenceManifest(
     match_id: s.match_id,
     locked_by: lockedBy,
     locked_at: new Date().toISOString(),
+    // Tracking added before the handover was declared belongs to the handover:
+    // the manifest is the snapshot of what the seller was saying at that
+    // moment, and "I posted it, here is the reference" is part of it. The
+    // reference has a frozen record of its own; this names it rather than
+    // replacing it.
+    ...(s.delivery_tracking
+      ? {
+          delivery_tracking: {
+            reference: s.delivery_tracking,
+            record_key: s.delivery_tracking_key ?? null,
+          },
+        }
+      : {}),
     objects,
   };
   const body = JSON.stringify(manifest, null, 2);
@@ -154,6 +167,58 @@ export async function writeEvidenceManifest(
     }),
   );
   return { manifestKey, objects };
+}
+
+/** Which parcel a frozen tracking record is about. */
+export type TrackingKind = 'delivery' | 'return';
+
+/**
+ * Freeze one tracking reference in the WORM bucket, beside the manifest and
+ * under the same settlement prefix. Returns the key.
+ *
+ * WHY THIS EXISTS. The terms promise that handover and return records —
+ * tracking numbers and photos alike — are kept in a store that cannot be
+ * altered for ninety days. The photos and the manifest always were; the two
+ * tracking references were plain columns, which is to say a thing that can be
+ * changed. The column stays, because every page and every sweep reads it and a
+ * bucket round trip is not the place for that. This object is the record of
+ * truth: written once, Object-Locked on arrival, and never touched again.
+ *
+ * A fresh key each time, so a corrected reference is a SECOND record rather
+ * than an edit of the first — the sequence of what was said, in order, is
+ * itself part of what the ninety days are for.
+ */
+export async function freezeTrackingRecord(
+  cfg: Config,
+  s: Pick<SettlementRow, 'id' | 'match_id'>,
+  input: { kind: TrackingKind; reference: string; recordedBy: string },
+): Promise<string> {
+  const bucket = mustBucket(cfg);
+  const record = {
+    record: 'settlement-tracking-record',
+    env: cfg.envName,
+    settlement_id: s.id,
+    match_id: s.match_id,
+    kind: input.kind,
+    reference: input.reference,
+    recorded_by: input.recordedBy,
+    recorded_at: new Date().toISOString(),
+  };
+  const body = JSON.stringify(record, null, 2);
+  // The millisecond alone is not enough to be sure of a fresh key: two
+  // submissions can land inside one, and the second must not land on the
+  // first's key.
+  const key = `settlement-evidence/${cfg.envName}/${s.id}/tracking-${input.kind}-${Date.now()}-${randomUUID().slice(0, 8)}.json`;
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: 'application/json',
+      Body: body,
+      ChecksumSHA256: createHash('sha256').update(body).digest('base64'),
+    }),
+  );
+  return key;
 }
 
 /** Presigned, short-lived view links for the frozen evidence. */

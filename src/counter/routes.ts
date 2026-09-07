@@ -1355,6 +1355,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       return settlementStep(reply, async () => {
         await settlements.addDeliveryTracking(
           settlements.counterAction(s.accountId!),
+          cfg,
           found.row.id,
           String((req.body as any)?.tracking ?? ''),
         );
@@ -1374,6 +1375,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       return settlementStep(reply, async () => {
         await settlements.markReturned(
           settlements.counterAction(s.accountId!),
+          cfg,
           found.row.id,
           String((req.body as any)?.tracking ?? ''),
         );

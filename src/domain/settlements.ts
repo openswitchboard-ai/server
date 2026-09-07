@@ -71,6 +71,7 @@
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, sideOf, type MatchRow } from './matches.js';
+import { freezeTrackingRecord } from './evidence.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import { formatMinor, fromMinorUnits, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import type { Config } from '../config.js';
@@ -281,6 +282,12 @@ export interface SettlementRow {
    *  record, never a lookup. */
   delivery_tracking: string | null;
   return_tracking: string | null;
+  /** Where each reference is frozen: the key of the JSON record written into
+   *  the Object-Lock evidence bucket the moment it was recorded. The columns
+   *  above are the fast read; those objects are the record of truth. NULL on
+   *  anything recorded before migration 025. */
+  delivery_tracking_key: string | null;
+  return_tracking_key: string | null;
   returned_at: Date | null;
   return_received_at: Date | null;
   /** The two figures: a split while one is on the table, the record of what
@@ -973,9 +980,17 @@ export async function openDispute(
  *
  * Moves no state, so it needs no transition beyond the human context that
  * proves whose hand this is.
+ *
+ * THE RECORD IS FROZEN BEFORE THE COLUMN IS WRITTEN. The terms promise these
+ * references are kept where they cannot be altered, so the JSON record goes
+ * into the Object-Lock bucket first and the column follows. A bucket write that
+ * fails leaves nothing recorded anywhere, which is honest; the other order
+ * would leave a reference on the row with no frozen record behind it, and that
+ * is exactly the gap this closes.
  */
 export async function addDeliveryTracking(
   ctx: HumanCtx,
+  cfg: Config,
   settlementId: string,
   tracking: string,
 ): Promise<SettlementRow> {
@@ -986,6 +1001,11 @@ export async function addDeliveryTracking(
   if (partyOf(s, ctx.accountId) !== 'seller') {
     throw Object.assign(new Error('the seller is the one who posted it'), { notFound: true });
   }
+  const recordKey = await freezeTrackingRecord(cfg, s, {
+    kind: 'delivery',
+    reference,
+    recordedBy: ctx.accountId,
+  });
   await writeConsentEvent({
     event: 'settlement-delivery-tracking-added',
     settlement_id: settlementId,
@@ -993,16 +1013,17 @@ export async function addDeliveryTracking(
     account_id: ctx.accountId,
     party: 'seller',
     tracking: reference,
+    record_key: recordKey,
     recorded_via: ctx.recordedVia,
   });
   const r = await getPool().query(
-    `UPDATE settlements SET delivery_tracking = $2,
+    `UPDATE settlements SET delivery_tracking = $2, delivery_tracking_key = $3,
        dispute_ground = CASE WHEN dispute_ground = 'not_arrived' THEN 'not_as_described'
                              ELSE dispute_ground END,
        updated_at = now()
      WHERE id = $1 AND state IN ('funded','evidence-locked','disputed','resolution-proposed')
      RETURNING *`,
-    [settlementId, reference],
+    [settlementId, reference, recordKey],
   );
   return afterSideWrite(r, settlementId);
 }
@@ -1019,6 +1040,7 @@ export async function addDeliveryTracking(
  */
 export async function markReturned(
   ctx: HumanCtx,
+  cfg: Config,
   settlementId: string,
   tracking: string,
 ): Promise<SettlementRow> {
@@ -1029,6 +1051,13 @@ export async function markReturned(
   if (partyOf(s, ctx.accountId) !== 'buyer') {
     throw Object.assign(new Error('the buyer is the one sending it back'), { notFound: true });
   }
+  // Frozen first, for the reason given on addDeliveryTracking: the record of
+  // truth lands before the column that merely points at it.
+  const recordKey = await freezeTrackingRecord(cfg, s, {
+    kind: 'return',
+    reference,
+    recordedBy: ctx.accountId,
+  });
   await writeConsentEvent({
     event: 'settlement-returned',
     settlement_id: settlementId,
@@ -1036,14 +1065,15 @@ export async function markReturned(
     account_id: ctx.accountId,
     party: 'buyer',
     tracking: reference,
+    record_key: recordKey,
     recorded_via: ctx.recordedVia,
   });
   const r = await getPool().query(
-    `UPDATE settlements SET return_tracking = $2,
+    `UPDATE settlements SET return_tracking = $2, return_tracking_key = $3,
        returned_at = COALESCE(returned_at, now()), updated_at = now()
      WHERE id = $1 AND state IN ('disputed','resolution-proposed')
      RETURNING *`,
-    [settlementId, reference],
+    [settlementId, reference, recordKey],
   );
   return afterSideWrite(r, settlementId);
 }
