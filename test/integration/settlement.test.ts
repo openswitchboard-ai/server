@@ -261,17 +261,22 @@ async function disputeOf(sid: string): Promise<{
   releaseMinor: number | null;
   deliveryTracking: string | null;
   returnTracking: string | null;
+  /** The keys of the frozen records in the Object-Lock bucket. */
+  deliveryTrackingKey: string | null;
+  returnTrackingKey: string | null;
   refundId: string | null;
   autoReleased: boolean;
   confirmedVia: string | null;
 }> {
-  const [[ground, deadlock, refundMinor, releaseMinor, delivery, ret, refundId, auto, via]] =
-    await dbExec(
-      `SELECT dispute_ground, deadlock_at IS NOT NULL, refund_minor, release_minor,
-              delivery_tracking, return_tracking, stripe_refund_id, auto_released, confirmed_via
+  const [
+    [ground, deadlock, refundMinor, releaseMinor, delivery, ret, dKey, rKey, refundId, auto, via],
+  ] = await dbExec(
+    `SELECT dispute_ground, deadlock_at IS NOT NULL, refund_minor, release_minor,
+              delivery_tracking, return_tracking, delivery_tracking_key, return_tracking_key,
+              stripe_refund_id, auto_released, confirmed_via
        FROM settlements WHERE id = :id::uuid`,
-      [{ name: 'id', value: sid }],
-    );
+    [{ name: 'id', value: sid }],
+  );
   const num = (v: any) => (v === null || v === undefined ? null : Number(v));
   return {
     ground: ground === null ? null : String(ground),
@@ -280,6 +285,8 @@ async function disputeOf(sid: string): Promise<{
     releaseMinor: num(releaseMinor),
     deliveryTracking: delivery === null ? null : String(delivery),
     returnTracking: ret === null ? null : String(ret),
+    deliveryTrackingKey: dKey === null ? null : String(dKey),
+    returnTrackingKey: rKey === null ? null : String(rKey),
     refundId: refundId === null ? null : String(refundId),
     autoReleased: auto === true,
     confirmedVia: via === null ? null : String(via),
@@ -730,7 +737,9 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       form({ tracking: 'INTEG-RETURN-7XY4410092' }),
     );
     expect(returned.status, await returned.clone().text()).toBe(200);
-    expect((await disputeOf(sid)).returnTracking).toBe('INTEG-RETURN-7XY4410092');
+    const afterReturn = await disputeOf(sid);
+    expect(afterReturn.returnTracking).toBe('INTEG-RETURN-7XY4410092');
+    expect(afterReturn.returnTrackingKey).toContain(`/${sid}/tracking-return-`);
     // A marked return moves nothing on its own.
     expect((await refundsFor(piId)).refundedMinor).toBe(0);
     expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
@@ -822,6 +831,10 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const afterTracking = await disputeOf(sid);
     expect(afterTracking.deliveryTracking).toBe('INTEG-DELIVERY-4410092');
     expect(afterTracking.ground).toBe('not_as_described');
+    // The reference the whole rule turns on is frozen where it cannot be
+    // altered, and the row points at that record: the column is the fast read,
+    // the object in the WORM bucket is the record of truth.
+    expect(afterTracking.deliveryTrackingKey).toContain(`/${sid}/tracking-delivery-`);
 
     // Past the seller's grace, the never-arrived rule no longer applies: the
     // ground moved, so nothing refunds.

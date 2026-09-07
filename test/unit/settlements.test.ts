@@ -118,8 +118,11 @@ describe('escrow state machine: no reachable money transition without a human si
     markSplitLeg: ['sid', 'refund'],
     // The record writers move no state, and they demand a minted context all
     // the same. Same guard, same forged-context sweep.
-    addDeliveryTracking: ['sid', 'AP 7XY441'],
-    markReturned: ['sid', 'AP 7XY441'],
+    // The two tracking writers also freeze the reference in the WORM bucket,
+    // so they take the config that names it. The context guard still fires
+    // before any of that: no bucket, no database, nothing.
+    addDeliveryTracking: [baseCfg, 'sid', 'AP 7XY441'],
+    markReturned: [baseCfg, 'sid', 'AP 7XY441'],
     confirmReturnReceived: ['sid'],
     recordRuleRefund: ['sid'],
   };
