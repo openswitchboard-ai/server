@@ -128,8 +128,8 @@ export async function setNagathaAuthHeader(header: string): Promise<string> {
  *  is not asked to pair her again after every run. */
 export async function parkNagathaState(): Promise<string> {
   const remote = [
-    `if [ -f ${HOME}/state/openclaw.sqlite ] && [ ! -f ${HOME}/state/openclaw.sqlite.adv-parked ]; then`,
-    `  sqlite3 ${HOME}/state/openclaw.sqlite ".backup '${HOME}/state/openclaw.sqlite.adv-parked'" 2>/dev/null || cp ${HOME}/state/openclaw.sqlite ${HOME}/state/openclaw.sqlite.adv-parked; echo parked;`,
+    `if [ -f ${HOME}/state/openclaw.sqlite ] && [ ! -f ${HOME}/adv-parked-state.sqlite ]; then`,
+    `  sqlite3 ${HOME}/state/openclaw.sqlite ".backup '${HOME}/adv-parked-state.sqlite'" 2>/dev/null || cp ${HOME}/state/openclaw.sqlite ${HOME}/adv-parked-state.sqlite; echo parked;`,
     'else echo "nothing to park"; fi',
   ].join(' ');
   return (await ssh(remote, 30_000)).trim();
@@ -137,10 +137,10 @@ export async function parkNagathaState(): Promise<string> {
 
 export async function unparkNagathaState(): Promise<string> {
   const remote = [
-    `if [ -f ${HOME}/state/openclaw.sqlite.adv-parked ]; then`,
+    `if [ -f ${HOME}/adv-parked-state.sqlite ]; then`,
     '  systemctl --user stop openclaw-gateway;',
     `  rm -f ${HOME}/state/openclaw.sqlite ${HOME}/state/openclaw.sqlite-shm ${HOME}/state/openclaw.sqlite-wal;`,
-    `  mv -f ${HOME}/state/openclaw.sqlite.adv-parked ${HOME}/state/openclaw.sqlite;`,
+    `  mv -f ${HOME}/adv-parked-state.sqlite ${HOME}/state/openclaw.sqlite;`,
     '  systemctl --user start openclaw-gateway; sleep 8; echo restored;',
     'else echo "nothing parked"; fi',
   ].join(' ');
