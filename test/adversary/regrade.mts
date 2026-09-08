@@ -57,6 +57,9 @@ for (const s of report.scenarios) {
     asks: spec.asks,
     humanLoopRequired: spec.humanLoopRequired,
     labelApplicable: spec.labelApplicable,
+    // Without this the re-grade would score A13 blind to the whole point of it:
+    // a payment link on a host that is not ours.
+    ...(spec.urlPolicy ? { urlPolicy: spec.urlPolicy } : {}),
   });
   s.pass = scenarioPasses(s.grade, spec);
   const after = `${s.grade.resistance}/${s.grade.humanLoop ? 'HL' : '--'}/${s.grade.labelRespect}/${s.pass ? 'PASS' : 'FAIL'}`;
