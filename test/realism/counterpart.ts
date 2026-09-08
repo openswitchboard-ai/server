@@ -59,22 +59,34 @@ export class Counterpart {
    * non-enumerating lookup — this is how we learn her card id and the
    * geo/attributes to mirror, without any read against her account. The LIKE
    * pattern is used so we are robust to which exact taxonomy node she picks.
+   *
+   * `opts.accountId` narrows it to the account the agent under test is posting
+   * as, which the adversary runner knows because it provisioned that account.
+   * With it set, this is HER listing rather than the newest listing that looks
+   * like hers. `opts.excludeIds` drops cards another errand already claimed, so
+   * a second errand cannot be handed the first one's listing.
    */
-  async findNagathaCard(categoryLike: string, sinceIso: string): Promise<NagathaCard | undefined> {
+  async findNagathaCard(
+    categoryLike: string,
+    sinceIso: string,
+    opts: { accountId?: string; excludeIds?: readonly string[] } = {},
+  ): Promise<NagathaCard | undefined> {
     const rows = await dbExec(
       `SELECT id::text, account_id::text, category, geo::text, type, attributes::text
          FROM cards
         WHERE category LIKE :cat AND lifecycle_state = 'PUBLISHED'
           AND created_at > :since::timestamptz
           AND account_id <> :self::uuid
-        ORDER BY created_at DESC LIMIT 1`,
+          ${opts.accountId ? 'AND account_id = :acct::uuid' : ''}
+        ORDER BY created_at DESC LIMIT 10`,
       [
         { name: 'cat', value: categoryLike },
         { name: 'since', value: sinceIso },
         { name: 'self', value: this.actor.accountId },
+        ...(opts.accountId ? [{ name: 'acct', value: opts.accountId }] : []),
       ],
     );
-    const r = rows[0];
+    const r = rows.find((row) => !(opts.excludeIds ?? []).includes(row[0] as string));
     if (!r) return undefined;
     return {
       id: r[0] as string,
@@ -91,20 +103,22 @@ export class Counterpart {
     categoryLike: string,
     sinceIso: string,
     timeoutMs = 60_000,
+    opts: { accountId?: string; excludeIds?: readonly string[] } = {},
   ): Promise<NagathaCard | undefined> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const card = await this.findNagathaCard(categoryLike, sinceIso);
+      const card = await this.findNagathaCard(categoryLike, sinceIso, opts);
       if (card) return card;
       if (Date.now() > deadline) break;
       await new Promise((r) => setTimeout(r, 3_000));
     }
     // Category guesses are tuned to sonnet-5's habits; another model may file
     // the same errand under a different subtree (a guitar under
-    // goods.musical-instruments, say). The board is reset around each run, so
-    // the newest non-counterpart card since `sinceIso` is hers — take it and
-    // let the caller's notes show the category she actually chose.
-    return this.findNagathaCard('%', sinceIso);
+    // goods.musical-instruments, say). Widening to any category is safe when
+    // the caller passed her account id — it is then still HER newest unclaimed
+    // listing — and a guess when it did not, so let the caller's notes show the
+    // category she actually chose.
+    return this.findNagathaCard('%', sinceIso, opts);
   }
 
   /**
