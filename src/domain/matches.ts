@@ -5,7 +5,12 @@ import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { getCard } from './cards.js';
-import { MAX_THRESHOLD_BUMP, THRESHOLD_BUMP_STEP, categoryLeafLabel } from './matchRules.js';
+import {
+  MAX_THRESHOLD_BUMP,
+  THRESHOLD_BUMP_STEP,
+  categoryLeafLabel,
+  categoryPhrase,
+} from './matchRules.js';
 import {
   counterpartyProfileConsentError,
   profileIsFilled,
@@ -432,6 +437,54 @@ export async function archiveMatch(
   return { intro_id: matchId, state: 'archived', already: false };
 }
 
+/**
+ * File away every open introduction on a listing that has just been taken
+ * down. Taking a listing down is the human saying the thing is gone — the bike
+ * sold, the room filled — and an introduction that keeps advancing on it wastes
+ * the other person's time on something they can no longer have. So the
+ * withdrawal carries them with it: each open introduction on the card becomes
+ * 'archived' with archived_via 'withdrawn', which is enough on its own to stop
+ * the conversation (loadOpenChannel gates on state = 'open') and to keep it out
+ * of both sides' sweeps as something new to act on. Anything uncollected is
+ * expired so the ordinary sweep clears it.
+ *
+ * The record stays, the same way an ordinary archive keeps one: who it was and
+ * what it was about are still there to answer "who was that person again?".
+ *
+ * Best-effort by construction — it is called after the listing is already down,
+ * and returns how many it filed away.
+ */
+export async function archiveOpenIntroductionsOnCard(
+  cardId: string,
+  accountId: string,
+  recordedVia = 'withdrawn',
+): Promise<number> {
+  const r = await getPool().query(
+    `UPDATE matches
+        SET state = 'archived', archived_at = now(), archived_by = $2,
+            archived_via = $3, updated_at = now()
+      WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
+      RETURNING id`,
+    [cardId, accountId, recordedVia],
+  );
+  const ids = (r.rows as { id: string }[]).map((x) => x.id);
+  if (!ids.length) return 0;
+  for (const id of ids) {
+    await writeConsentEvent({
+      event: 'match-archived',
+      match_id: id,
+      account_id: accountId,
+      recorded_via: recordedVia,
+    });
+  }
+  await getPool().query(
+    `UPDATE channel_messages SET expires_at = now()
+      WHERE match_id = ANY($1::uuid[]) AND expires_at > now()`,
+    [ids],
+  );
+  return ids.length;
+}
+
 // ---------------------------------------------------------------------------
 // Stage payload builders. Every payload is validated OUTBOUND against its
 // protocol schema before being returned (assertOutbound) — the disclosure
@@ -455,7 +508,15 @@ async function incomingOffer(
   );
   if (!r.rowCount) return undefined;
   const o = r.rows[0];
-  return { amount: Number(o.amount), ccy: o.ccy as string, message: (o.message ?? null) as string | null };
+  // The message is stored as { text, provenance }; the agent gets the words.
+  // Handing the wrapper across is what put "[object Object]" in front of a
+  // human in the 2026-09-09 rehearsal.
+  const { offerMessageText } = await import('./offers.js');
+  return {
+    amount: Number(o.amount),
+    ccy: o.ccy as string,
+    message: offerMessageText(o.message),
+  };
 }
 
 export async function buildSignal(m: MatchRow, accountId: string) {
@@ -490,16 +551,21 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  *   details_unlocked     both sides interested — attributes are on the entry
  *   awaiting_your_human  a stage-3 opt-in / approval sits with the human
  *   ready_to_talk        both opted in; open the channel (or it is already open)
+ *   deal_agreed          a figure this human proposed has been accepted by the
+ *                        other human; the switchboard's part is finished and
+ *                        the handover is the two people's own to arrange
  *
- * `awaiting_your_human` is not reachable from the row state alone — it is set
- * by checkMatches when a reveal is genuinely waiting on the human's own page.
+ * `awaiting_your_human` and `deal_agreed` are not reachable from the row state
+ * alone — checkMatches sets them, from a reveal genuinely waiting on the
+ * human's own page and from the offers table respectively.
  */
 export type NextAction =
   | 'show_interest'
   | 'awaiting_other_side'
   | 'details_unlocked'
   | 'awaiting_your_human'
-  | 'ready_to_talk';
+  | 'ready_to_talk'
+  | 'deal_agreed';
 
 export function nextAction(m: MatchRow, accountId: string): NextAction {
   const iMine = sideOf(m, accountId) === 'want' ? m.interest_want : m.interest_have;
@@ -797,9 +863,24 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     if (incoming) {
       entry.offer = { amount: incoming.amount, ccy: incoming.ccy, message: incoming.message };
       entry.next = 'awaiting_your_human';
-      entry.offer_note = sbNote(
-        `The person you have been talking to has offered ${incoming.amount} ${incoming.ccy}${incoming.message ? ` — "${incoming.message}"` : ''}. It is yours to weigh up; say the word and I will answer, and nothing is agreed until you say so.`,
-      );
+    }
+    // BOTH sides of the table, most recent first. An agent that only ever saw
+    // the other side's figures had no way to know its own human had typed one
+    // on their approval page, and told them their number never went out.
+    const { offerTable, offerTableNote } = await import('./offers.js');
+    const table = await offerTable(accountId, m.id);
+    if (table.length) {
+      entry.offers = table;
+      // The offer sentence names the thing the way a person would say it in
+      // one — "for your mountain bike" — where the signal sentence wants the
+      // plural it already has.
+      const noteText = offerTableNote(table, categoryPhrase(categoryLeafLabel(m.category)));
+      if (noteText) entry.offer_note = sbNote(noteText);
+      // A figure this human proposed and the other human took: the deal is
+      // agreed and the switchboard has nothing further to do on it.
+      if (table.some((l) => l.side === 'yours' && l.state === 'accepted-by-human')) {
+        entry.next = 'deal_agreed';
+      }
     }
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
     if (m.stage >= 3) {
@@ -845,6 +926,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         entry.note = sbNote(
           "You are connected now — you can message each other through me whenever you like.",
         );
+        break;
+      case 'deal_agreed':
+        // The offer note already says the figure and whose it was, so it is
+        // the whole of what the agent relays here.
+        if (entry.offer_note) entry.note = entry.offer_note;
         break;
     }
     out.push(entry);

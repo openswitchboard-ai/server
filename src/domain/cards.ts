@@ -360,10 +360,17 @@ export async function amendIntent(
   };
 }
 
+/**
+ * Take a listing down. The thing is gone — sold, filled, no longer wanted — so
+ * every open introduction on it is filed away in the same breath: an
+ * introduction on a withdrawn listing must not keep advancing, and must not
+ * surface to either side as something new to act on. The record of who they
+ * got chatting with survives, as it does with any archive.
+ */
 export async function withdrawIntent(
   accountId: string,
   intentId: string,
-): Promise<{ intent_id: string; state: string }> {
+): Promise<{ intent_id: string; state: string; introductions_archived: number }> {
   const card = await getCard(intentId);
   if (!card || card.account_id !== accountId) {
     throw Object.assign(new Error('intent not found'), { notFound: true });
@@ -372,7 +379,11 @@ export async function withdrawIntent(
     `UPDATE cards SET lifecycle_state='WITHDRAWN', updated_at=now() WHERE id=$1`,
     [intentId],
   );
-  return { intent_id: intentId, state: 'WITHDRAWN' };
+  // Dynamic import: matches.ts reads cards, so a static import here would
+  // close a cycle between the two modules.
+  const { archiveOpenIntroductionsOnCard } = await import('./matches.js');
+  const introductions_archived = await archiveOpenIntroductionsOnCard(intentId, accountId);
+  return { intent_id: intentId, state: 'WITHDRAWN', introductions_archived };
 }
 
 /** TTL expiry sweep (EventBridge schedule -> ops queue -> here). */
