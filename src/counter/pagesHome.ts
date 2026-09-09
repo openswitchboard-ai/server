@@ -184,6 +184,8 @@ export interface DashboardWindowItem {
 
 export interface DashboardView {
   firstName?: string;
+  /** One line at the top, e.g. "Google Antigravity is connected." */
+  notice?: string;
   /** "Ana, Fremantle" — what a stage-3 match would see. Absent = not set yet. */
   sharedProfile?: string;
   /** Set when a permanent bounce flagged the account's address unreachable. */
@@ -320,6 +322,7 @@ hold. Re-verify your address to switch it back on.
 
   return layout('Your approval page', `
 <h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your approval page.'}</h1>
+${v.notice ? `<div class="note">${esc(v.notice)}</div>` : ''}
 ${emailBanner}
 <h2>Waiting for you</h2>
 ${nothingWaiting ? `<div class="empty">Nothing is waiting for you.</div>` : ''}
