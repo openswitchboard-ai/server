@@ -16,7 +16,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
-import { getAccount, findAccountByEmail } from '../domain/accounts.js';
+import { getAccount, findAccountByEmail, getHearsVia, setHearsVia } from '../domain/accounts.js';
 import {
   arrangementInPlainWords,
   readArrangement,
@@ -88,6 +88,7 @@ import {
   verifyByLinkToken,
 } from './verification.js';
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
+import { categoryPhrase } from '../email/templates.js';
 import { verifyEmailToken } from '../email/tokens.js';
 import { emailHash } from '../domain/accounts.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
@@ -97,6 +98,14 @@ import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
 import type { Config } from '../config.js';
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+
+/**
+ * A category as it reads inside a sentence: "your mountain bike match", where
+ * a heading or a badge would say "Mountain bikes". Badges keep the label. The
+ * shaping itself is the email templates' categoryPhrase, so a person reading
+ * the email and then the page meets the same words.
+ */
+const phrase = (category: string) => categoryPhrase(categoryLeafLabel(category));
 
 /** Every registered human-page route (method + url), recorded at registration
  *  time so the isolation test can enumerate the ENTIRE route class. */
@@ -248,7 +257,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected, lapsingSoon] = await Promise.all([
+      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
@@ -271,6 +280,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         ),
         ops.screeningRejectedCards(s.accountId),
         ops.cardsLapsingSoon(s.accountId),
+        ops.messagesWaitingFor(s.accountId),
+        ops.agreedOnMatches(s.accountId),
       ]);
       const pendingApprovals = [
         // A card screening turned away is off the board until this person
@@ -279,17 +290,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           href: `/ledger/${c.id}/edit`,
           // The card says what happened; the button below it says what to do,
           // so the label no longer says both.
-          label: `Your ${categoryLeafLabel(c.category)} card didn't pass screening`,
+          label: `Your ${phrase(c.category)} card didn't pass screening`,
           cta: 'See why and fix it',
         })),
         ...offers.map((o) => ({
           href: `/approvals/offer/${o.offer_id}`,
-          label: `Offer on your ${categoryLeafLabel(o.category)} match`,
+          label: `Offer on your ${phrase(o.category)} match`,
           amount: `${Number(o.amount)} ${o.ccy}`,
         })),
         ...disclosures.map((d) => ({
           href: `/approvals/match/${d.match_id}`,
-          label: `Share your details on your ${categoryLeafLabel(d.category)} match?`,
+          label: `Share your details on your ${phrase(d.category)} match?`,
         })),
         ...liveSettlements.rows.map((st: any) => {
           const mine = st.buyer_account === s.accountId ? st.buyer_approved_at : st.seller_approved_at;
@@ -299,7 +310,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             href: needsApproval
               ? `/approvals/settlement/${st.id}`
               : `/settlements/${st.id}`,
-            label: `Settlement on your ${categoryLeafLabel(st.category)} match (${st.state})`,
+            label: `Settlement on your ${phrase(st.category)} match (${st.state})`,
             amount: `${Number(st.amount)} ${st.ccy}`,
           };
         }),
@@ -351,6 +362,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             category: categoryLeafLabel(m.category),
             score: Number(m.score),
             verdict: m.verdict ?? undefined,
+          })),
+          messagesWaiting: messagesWaiting.map((m) => ({
+            matchId: m.match_id,
+            category: categoryLeafLabel(m.category),
+            count: m.count,
+          })),
+          agreed: agreed.map((a) => ({
+            matchId: a.match_id,
+            category: categoryLeafLabel(a.category),
+            amount: `${Number(a.amount)} ${a.ccy}`,
           })),
           collectionWindows: windows.map((w) => ({
             cardId: w.card_id,
@@ -1774,24 +1795,36 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         step: String(b.step ?? ''),
         ccy: String(b.ccy ?? ''),
       };
+      // The same control stands on the offers page, so a save from there comes
+      // back to the match it was set on. Nothing is trusted about the value:
+      // it names a match, and offersView only ever answers for this person's
+      // own matches.
+      const returnTo = String(b.return_to ?? '').trim();
+      const backToMatch = async (error?: string, notice?: string, code = 200) => {
+        const v2 = await offersView(s.accountId!, returnTo);
+        if (!v2) return undefined;
+        return html(reply, home.matchOffersPage({ ...v2, mode }, error, notice), code);
+      };
       const wroteNumbers = [form.open, form.limit, form.step, form.ccy].some((x) => x.trim() !== '');
 
       // Switching to Auto-negotiate without numbers is the one combination
       // that cannot stand: it would leave an agent inside a box with no walls.
       if (mode === 'mandate' && !wroteNumbers && !v.mandate) {
-        return html(
-          reply,
-          home.cardNumbersPage(
-            { ...v, mode, form },
-            'Auto-negotiate needs your numbers. Write at least a limit and a currency.',
-          ),
-          400,
-        );
+        const msg = 'Auto-negotiate needs your numbers. Write at least a limit and a currency.';
+        if (returnTo) {
+          const back = await backToMatch(msg, undefined, 400);
+          if (back) return back;
+        }
+        return html(reply, home.cardNumbersPage({ ...v, mode, form }, msg), 400);
       }
       let mandate: ReturnType<typeof validateMandate> | undefined;
       if (wroteNumbers) {
         mandate = validateMandate(form, v.type);
         if (!mandate.ok) {
+          if (returnTo) {
+            const back = await backToMatch(mandate.error, undefined, 400);
+            if (back) return back;
+          }
           return html(reply, home.cardNumbersPage({ ...v, mode, form }, mandate.error), 400);
         }
       }
@@ -1801,15 +1834,13 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         { mode, ...(mandate?.ok ? { mandate: mandate.value } : {}) },
         'counter',
       );
+      const notice = `Saved. This card negotiates on ${MODE_NAMES[mode]}.`;
+      if (returnTo) {
+        const back = await backToMatch(undefined, notice);
+        if (back) return back;
+      }
       const saved = await numbersView(s.accountId!, id);
-      return html(
-        reply,
-        home.cardNumbersPage(
-          saved!,
-          undefined,
-          `Saved. This card negotiates on ${MODE_NAMES[mode]}.`,
-        ),
-      );
+      return html(reply, home.cardNumbersPage(saved!, undefined, notice));
     });
 
     counter.post('/ledger/:id/numbers/clear', async (req, reply) => {
@@ -1844,20 +1875,33 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!m) return undefined;
       const offers = await ops.offersOnMatch(matchId);
       const draft = await newestOfferDraft(accountId, matchId);
+      const neg = await readNegotiation(accountId, m.card_id, { purpose: 'counter-offers-view' });
       const blocked =
         m.state !== 'open'
           ? 'This match is closed, so no more figures can go across it.'
           : m.stage < 2
             ? 'Offers open once both sides have shown interest.'
             : undefined;
+      // A figure of theirs that is still live: the form has nothing to ask for
+      // until they want to change it.
+      const mine = offers.filter((o) => o.proposer_account === accountId);
+      const live = [...mine]
+        .reverse()
+        .find((o) => o.state === 'proposed' && new Date(o.expiry).getTime() > Date.now());
+      // Accepting is a human act with a PIN behind it, on either side, and it
+      // is the end of the switchboard's part.
+      const agreed = offers.find((o) => o.state === 'accepted-by-human');
       return {
         matchId,
         cardId: m.card_id,
         category: categoryLeafLabel(m.category),
         type: m.card_type,
-        mode: m.negotiation_mode,
+        mode: neg.mode,
         canOffer: !blocked,
         canOfferBlockedBecause: blocked,
+        ...(neg.mandate ? { mandate: neg.mandate } : {}),
+        ...(live ? { myOfferOnTable: `${Number(live.amount)} ${live.ccy}` } : {}),
+        ...(agreed ? { agreedAmount: `${Number(agreed.amount)} ${agreed.ccy}` } : {}),
         ...(draft ? { draft: draftToFields(draft) } : {}),
         offers: offers.map((o) => ({
           amount: `${Number(o.amount)} ${o.ccy}`,
@@ -2193,8 +2237,12 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // send time) and writes to the WORM consent log first.
     // ------------------------------------------------------------------
     const settingsView = async (accountId: string): Promise<home.EmailSettingsView> => {
-      const es = await ops.emailSettings(accountId);
+      const [es, hearsVia] = await Promise.all([
+        ops.emailSettings(accountId),
+        getHearsVia(accountId),
+      ]);
       return {
+        hearsVia,
         blindMode: es.blindMode,
         freqMatches: es.freqMatches,
         freqDigests: es.freqDigests,
@@ -2207,6 +2255,34 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       return html(reply, home.settingsPage(await settingsView(s.accountId!)));
+    });
+
+    // Which way this person hears about their switchboard. It is the one thing
+    // the software cannot work out for itself: an agent that checks on its own
+    // and a chat assistant that waits to be spoken to look identical from
+    // here, and getting it wrong leaves someone waiting on news that a silent
+    // agent was supposed to bring them.
+    counter.post('/settings/hears-via', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const want = String((req.body as any)?.hears_via ?? '');
+      if (want !== 'email' && want !== 'assistant') {
+        return html(
+          reply,
+          home.settingsPage(await settingsView(s.accountId!), 'Pick one of the two.'),
+          400,
+        );
+      }
+      await setHearsVia(s.accountId!, want, 'counter');
+      return html(
+        reply,
+        home.settingsPage(
+          await settingsView(s.accountId!),
+          want === 'assistant'
+            ? 'Saved. Your assistant brings you the news, and email is a backup.'
+            : 'Saved. Every match, reply and step reaches you by email.',
+        ),
+      );
     });
 
     counter.post('/settings/blind-mode', async (req, reply) => {

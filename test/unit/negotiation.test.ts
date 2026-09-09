@@ -844,7 +844,9 @@ describe('the pages say it in plain words', () => {
       collectionWindows: [],
     });
     expect(html).toContain(`/matches/${MATCH}`);
-    expect(html).toContain('Offers &amp; your number');
+    // The button is one word now, so it stays on one line on a phone; the
+    // number a person types lives on the page it opens.
+    expect(html).toContain(`href="/matches/${MATCH}">Offers</a>`);
     expect(html).toContain(`/approvals/offer/${offerId(1)}`);
   });
 

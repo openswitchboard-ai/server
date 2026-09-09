@@ -529,6 +529,64 @@ export async function offersOnMatch(matchId: string): Promise<MatchOfferRow[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Two reads the dashboard needs, and nothing else does.
+//
+// The switchboard CARRIES a conversation and does not KEEP it, so the only
+// thing that can be said about an uncollected message is that it exists, on
+// which introduction, and what that introduction is about. No body, no
+// excerpt, no length — the row is not even decrypted here. The person's own
+// agent is what reads a message out, and the dashboard block says so.
+// ---------------------------------------------------------------------------
+
+export interface MessagesWaiting {
+  match_id: string;
+  category: string;
+  count: number;
+}
+
+/** Conversations holding messages this human's agents have not collected. */
+export async function messagesWaitingFor(accountId: string): Promise<MessagesWaiting[]> {
+  const r = await getPool().query(
+    `SELECT cm.match_id, m.category, count(*)::int AS count
+     FROM channel_messages cm
+     JOIN matches m ON m.id = cm.match_id
+     WHERE cm.recipient_account = $1 AND cm.expires_at > now()
+     GROUP BY cm.match_id, m.category
+     ORDER BY max(cm.created_at) DESC
+     LIMIT 10`,
+    [accountId],
+  );
+  return r.rows;
+}
+
+export interface AgreedMatch {
+  match_id: string;
+  category: string;
+  amount: string;
+  ccy: string;
+}
+
+/**
+ * Matches where a human accepted an offer. 'accepted-by-human' is reachable
+ * from one place only (the approval page's ceremony), so a row here is a deal
+ * a person agreed to with their PIN, on one side or the other.
+ */
+export async function agreedOnMatches(accountId: string): Promise<AgreedMatch[]> {
+  const r = await getPool().query(
+    `SELECT o.match_id, m.category, o.amount, o.ccy
+     FROM offers o
+     JOIN matches m ON m.id = o.match_id
+     WHERE o.state = 'accepted-by-human'
+       AND (m.account_want = $1 OR m.account_have = $1)
+       AND m.state <> 'archived'
+     ORDER BY o.updated_at DESC
+     LIMIT 10`,
+    [accountId],
+  );
+  return r.rows;
+}
+
+// ---------------------------------------------------------------------------
 // Past connections: matches this human filed away as finished. The row and its
 // stage-3 linkage stay after archiving, so this is the retrieval read for the
 // human's own page — the counterparty's disclosed first name and area (where
