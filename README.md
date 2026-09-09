@@ -37,8 +37,8 @@ Place data in `data/gazetteer.json.gz` comes from GeoNames under CC BY 4.0 — s
 | [`openclaw-skill`](https://github.com/openswitchboard-ai/openclaw-skill) | Teaches an always-on agent good manners on the network. |
 | `infra` (private) | The CDK stacks that build this image and deploy it to AWS. |
 
-The hosted deployment of this code answers at `https://mcp.openswitchboard.ai/mcp`.
-Registration is closed until launch.
+The hosted deployment of this code answers at `https://mcp.openswitchboard.ai/mcp`,
+and registration is open at `https://my.openswitchboard.ai`.
 
 ## What the service is
 
