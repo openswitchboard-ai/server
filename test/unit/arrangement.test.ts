@@ -93,6 +93,7 @@ beforeEach(() => {
 });
 
 const FULL: arrangement.Arrangement = {
+  runs_on_its_own: true,
   check_every_minutes: 720,
   interrupt_for: ['a new match', 'a message on a match we are talking on'],
   summarize: 'a round-up on Sunday evening',
@@ -193,6 +194,7 @@ describe('validateArrangement: the caps', () => {
       interrupt_for: Array.from({ length: arrangement.INTERRUPT_MAX_ITEMS }, () =>
         'z'.repeat(arrangement.INTERRUPT_ITEM_MAX),
       ),
+      runs_on_its_own: true,
       check_every_minutes: 720,
       summarize: 'b'.repeat(arrangement.SHORT_FIELD_MAX),
       quiet_hours: 'c'.repeat(arrangement.SHORT_FIELD_MAX),
@@ -224,8 +226,8 @@ describe('validateArrangement: nothing shaped like a way to reach someone', () =
     for (const good of [
       { quiet_hours: '22:00 to 07:00' },
       { quiet_hours: 'after 9pm and before 7am' },
-      { check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MIN },
-      { check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MAX },
+      { runs_on_its_own: true, check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MIN },
+      { runs_on_its_own: true, check_every_minutes: arrangement.CHECK_EVERY_MINUTES_MAX },
       { summarize: 'Sunday 18:00' },
       { notes: 'I travel a lot; timezone AEST' },
     ]) {
@@ -258,8 +260,10 @@ describe('storage', () => {
 
   it('writes one WORM event naming the fields and none of the words', async () => {
     await arrangement.saveArrangement(ANA, FULL, 'counter');
-    expect(vi.mocked(writeConsentEvent)).toHaveBeenCalledTimes(1);
-    const event: any = vi.mocked(writeConsentEvent).mock.calls[0][0];
+    const event: any = vi
+      .mocked(writeConsentEvent)
+      .mock.calls.map((c) => c[0] as any)
+      .find((e) => e.event === 'arrangement-updated');
     expect(event).toMatchObject({
       event: 'arrangement-updated',
       account_id: ANA,
@@ -267,7 +271,15 @@ describe('storage', () => {
       cleared: false,
     });
     expect(event.fields.sort()).toEqual(
-      ['check_every_minutes', 'interrupt_for', 'notes', 'quiet_hours', 'suggestion_appetite', 'summarize'],
+      [
+        'check_every_minutes',
+        'interrupt_for',
+        'notes',
+        'quiet_hours',
+        'runs_on_its_own',
+        'suggestion_appetite',
+        'summarize',
+      ],
     );
     // Not one word of what the arrangement actually says reaches the log.
     const serialised = JSON.stringify(event);
@@ -300,16 +312,16 @@ describe('storage', () => {
 describe('how often to check is a number of minutes, with a floor', () => {
   it('takes a whole number between the floor and a week', () => {
     for (const m of [30, 31, 120, 720, 1440, 10080]) {
-      expect(arrangement.validateArrangement({ check_every_minutes: m }), String(m)).toEqual({
-        ok: true,
-        value: { check_every_minutes: m },
-      });
+      expect(
+        arrangement.validateArrangement({ runs_on_its_own: true, check_every_minutes: m }),
+        String(m),
+      ).toEqual({ ok: true, value: { runs_on_its_own: true, check_every_minutes: m } });
     }
   });
 
   it('refuses anything oftener than every 30 minutes, and names the floor', () => {
     for (const m of [1, 5, 29]) {
-      const r = arrangement.validateArrangement({ check_every_minutes: m });
+      const r = arrangement.validateArrangement({ runs_on_its_own: true, check_every_minutes: m });
       expect(r, String(m)).toMatchObject({ ok: false });
       if (!r.ok) expect(r.error).toContain('No more often than every 30 minutes');
     }
@@ -318,7 +330,7 @@ describe('how often to check is a number of minutes, with a floor', () => {
   it('refuses a fraction and anything past a week', () => {
     for (const bad of [45.5, 10081, 'often']) {
       expect(
-        arrangement.validateArrangement({ check_every_minutes: bad }),
+        arrangement.validateArrangement({ runs_on_its_own: true, check_every_minutes: bad }),
         String(bad),
       ).toMatchObject({ ok: false });
     }
@@ -407,8 +419,14 @@ describe('the standing_arrangement tool', () => {
 
   it('a second set overwrites rather than merges', async () => {
     await call({ action: 'set', arrangement: FULL });
-    await call({ action: 'set', arrangement: { check_every_minutes: 10080 } });
-    expect(body(await call({ action: 'get' })).arrangement).toEqual({ check_every_minutes: 10080 });
+    await call({
+      action: 'set',
+      arrangement: { runs_on_its_own: true, check_every_minutes: 10080 },
+    });
+    expect(body(await call({ action: 'get' })).arrangement).toEqual({
+      runs_on_its_own: true,
+      check_every_minutes: 10080,
+    });
   });
 
   it('refuses a bad arrangement without writing anything', async () => {
@@ -419,7 +437,10 @@ describe('the standing_arrangement tool', () => {
   });
 
   it('a set below the floor is refused, and the refusal names the floor', async () => {
-    const r: any = await call({ action: 'set', arrangement: { check_every_minutes: 5 } });
+    const r: any = await call({
+      action: 'set',
+      arrangement: { runs_on_its_own: true, check_every_minutes: 5 },
+    });
     expect(r.isError).toBe(true);
     const said = JSON.parse(r.content[0].text).message;
     expect(said).toContain('No more often than every 30 minutes');

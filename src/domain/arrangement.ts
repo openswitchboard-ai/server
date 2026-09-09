@@ -32,14 +32,22 @@
  */
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
+import { setHearsVia } from './accounts.js';
 
 export type SuggestionAppetite = 'keen' | 'occasional' | 'big-things-only' | 'never';
 
 export interface Arrangement {
+  /** Whether this agent runs between conversations: it can wake itself, keep a
+   *  cadence, and reach its human without waiting to be spoken to. It is the
+   *  one question that decides who carries the news — an agent that only wakes
+   *  when its human types cannot be the messenger, so the switchboard emails
+   *  them instead. Absent is the same as false. */
+  runs_on_its_own?: boolean;
   /** How often the agent should check the switchboard, in minutes. Minutes are
    *  only the wire format: the human and their agent agree it in words
    *  ("twice a day") and the agent writes the number (720). Absent means
-   *  check when asked and no more. */
+   *  check when asked and no more. A cadence only makes sense for an agent
+   *  that runs on its own, so it is accepted only alongside that. */
   check_every_minutes?: number;
   /** What earns an interruption there and then. */
   interrupt_for?: string[];
@@ -75,7 +83,16 @@ export const CHECK_EVERY_MINUTES_MAX = 10080;
 export const CHECK_EVERY_MINUTES_HELP =
   'No more often than every 30 minutes — a few times a day is plenty.';
 
+/**
+ * What the switchboard says when a cadence arrives from an agent that has not
+ * said it runs between conversations. Said the same way on the page, in the
+ * refusal to an agent, and in the manual.
+ */
+export const CADENCE_NEEDS_RUNS_ON_ITS_OWN =
+  'A checking cadence is for an agent that runs between conversations. If you only act when your human speaks to you, leave it unset; the switchboard will email them instead.';
+
 export const ARRANGEMENT_FIELDS = [
+  'runs_on_its_own',
   'check_every_minutes',
   'interrupt_for',
   'summarize',
@@ -114,7 +131,14 @@ export function looksLikeContactDetail(s: string): boolean {
 
 export type ArrangementValidation =
   | { ok: true; value: Arrangement }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /** Set when the refusal is a thing to say to a person in plain words
+       *  rather than a shape complaint. The agent surface passes it through as
+       *  human_action; the page shows it as the error. */
+      human_action?: string;
+    };
 
 function checkText(
   label: string,
@@ -171,11 +195,39 @@ export function validateArrangement(input: unknown): ArrangementValidation {
     if (r.value) (out as Record<string, unknown>)[field] = r.value;
   }
 
+  // Whether this agent runs between conversations. Absent, empty and false are
+  // all the same thing — an agent that only wakes when spoken to — so only a
+  // true is stored.
+  if (src.runs_on_its_own !== undefined && src.runs_on_its_own !== null) {
+    const raw = src.runs_on_its_own;
+    const truthy = raw === true || (typeof raw === 'string' && /^(true|on|yes|1)$/i.test(raw.trim()));
+    const falsy =
+      raw === false || (typeof raw === 'string' && /^(false|off|no|0|)$/i.test(raw.trim()));
+    if (!truthy && !falsy) {
+      return {
+        ok: false,
+        error: 'Whether you run between conversations is yes or no.',
+      };
+    }
+    if (truthy) out.runs_on_its_own = true;
+  }
+
   if (
     src.check_every_minutes !== undefined &&
     src.check_every_minutes !== null &&
     src.check_every_minutes !== ''
   ) {
+    // A cadence is a promise to check on a schedule, and only an agent that
+    // runs between conversations can keep one. Refused with the sentence that
+    // says what to do instead, so the human is never left believing an agent
+    // is watching for them when nothing is.
+    if (!out.runs_on_its_own) {
+      return {
+        ok: false,
+        error: CADENCE_NEEDS_RUNS_ON_ITS_OWN,
+        human_action: CADENCE_NEEDS_RUNS_ON_ITS_OWN,
+      };
+    }
     const m = Number(src.check_every_minutes);
     if (!Number.isInteger(m)) {
       return {
@@ -283,7 +335,7 @@ export async function saveArrangement(
   accountId: string,
   value: Arrangement,
   recordedVia: string,
-): Promise<{ matchEmailsTurnedOff: boolean }> {
+): Promise<{ matchEmailsTurnedOff: boolean; hearsViaAssistant: boolean }> {
   await writeConsentEvent({
     event: 'arrangement-updated',
     account_id: accountId,
@@ -295,7 +347,19 @@ export async function saveArrangement(
     `UPDATE accounts SET arrangement = $2::jsonb, arrangement_updated_at = now() WHERE id = $1`,
     [accountId, JSON.stringify(value)],
   );
-  return { matchEmailsTurnedOff: await quietMatchEmailsForCadence(accountId, value, recordedVia) };
+  // An agent that runs between conversations AND keeps a cadence is the
+  // messenger from now on, so the account records that this person hears
+  // through their assistant. Saving anything else leaves it alone: turning it
+  // back to email is the person's own call, on their own page.
+  const hearsViaAssistant =
+    value.runs_on_its_own === true && value.check_every_minutes !== undefined;
+  if (hearsViaAssistant) {
+    await setHearsVia(accountId, 'assistant', recordedVia);
+  }
+  return {
+    matchEmailsTurnedOff: await quietMatchEmailsForCadence(accountId, value, recordedVia),
+    hearsViaAssistant,
+  };
 }
 
 /**
@@ -361,6 +425,12 @@ export function cadenceInPlainWords(minutes: number): string {
 /** One line per setting, in the plain words the human's page shows. */
 export function arrangementInPlainWords(a: Arrangement): { k: string; v: string }[] {
   const lines: { k: string; v: string }[] = [];
+  if (a.runs_on_its_own) {
+    lines.push({
+      k: 'Your agent between conversations',
+      v: 'It runs on its own and brings you the news.',
+    });
+  }
   if (a.check_every_minutes !== undefined) {
     lines.push({
       k: 'How often your agents check',
@@ -391,7 +461,7 @@ export function arrangementInPlainWords(a: Arrangement): { k: string; v: string 
 export function arrangementNote(a: Arrangement): { text: string; provenance: string } {
   return {
     text: isEmpty(a)
-      ? `Your human has not saved any standing preferences yet — nothing is on file about how they like to be treated here. When they tell you (how often to check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions), you can save it with standing_arrangement so it carries past this session. Cadence is a number of minutes: ${CHECK_EVERY_MINUTES_HELP}`
+      ? `Your human has not saved any standing preferences yet — nothing is on file about how they like to be treated here. When they tell you (how often to check, what is worth interrupting them for, when to stay quiet, how bold to be with suggestions), you can save it with standing_arrangement so it carries past this session. A cadence goes with runs_on_its_own: set it only if you run between conversations, and give the cadence as a number of minutes. ${CHECK_EVERY_MINUTES_HELP}`
       : a.check_every_minutes === undefined
         ? "Your human's saved preferences, which they can see and change any time on their own page: they have set no checking cadence, so check when they ask you to and no oftener. Save any change they mention with standing_arrangement."
         : `Your human's saved preferences, which they can see and change any time on their own page: they asked you to check ${cadenceInPlainWords(a.check_every_minutes)}. Save any change they mention with standing_arrangement.`,

@@ -1,6 +1,6 @@
 import { createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 import { getPool } from '../db.js';
-import { encryptField, generateAccountDataKey } from '../crypto.js';
+import { encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
 
 export interface Account {
   id: string;
@@ -10,7 +10,24 @@ export interface Account {
   locality_enc: Buffer;
   login_code_hash: string | null;
   status: string;
+  hears_via?: HearsVia;
 }
+
+/**
+ * How this person hears about their own switchboard.
+ *
+ *   'email'     — their assistant only acts when spoken to, so every match,
+ *                 reply, figure on the table and acceptance has to reach them
+ *                 by email or it reaches them the next time they happen to
+ *                 open a chat.
+ *   'assistant' — an always-on agent brings them the news, and email is the
+ *                 backup for the times it cannot get through.
+ *
+ * 'email' is the default because it is the safe one: someone nobody has told
+ * us about gets told rather than left in silence. See migrations/026.
+ */
+export type HearsVia = 'email' | 'assistant';
+export const HEARS_VIA: HearsVia[] = ['email', 'assistant'];
 
 export function emailHash(email: string): string {
   return createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
@@ -79,4 +96,39 @@ export async function findAccountByEmail(email: string): Promise<Account | undef
 export async function getAccount(id: string): Promise<Account | undefined> {
   const r = await getPool().query('SELECT * FROM accounts WHERE id = $1', [id]);
   return r.rows[0];
+}
+
+/**
+ * How this person hears about their switchboard. Falls back to 'email' for an
+ * account that has never said — the safe answer, because the cost of guessing
+ * wrong that way is one email too many, and the cost of guessing wrong the
+ * other way is a person who never learns their bike sold.
+ */
+export async function getHearsVia(accountId: string): Promise<HearsVia> {
+  try {
+    const r = await getPool().query('SELECT hears_via FROM accounts WHERE id = $1', [accountId]);
+    return r.rows[0]?.hears_via === 'assistant' ? 'assistant' : 'email';
+  } catch {
+    return 'email';
+  }
+}
+
+/**
+ * Change it. Consent-logged first, the way every other settings change on this
+ * account is (blind mode, email frequency) — the log names the new value and
+ * who recorded it.
+ */
+export async function setHearsVia(
+  accountId: string,
+  value: HearsVia,
+  recordedVia = 'counter',
+): Promise<void> {
+  if (!HEARS_VIA.includes(value)) throw new Error(`unknown hears_via '${value}'`);
+  await writeConsentEvent({
+    event: 'hears-via-changed',
+    account_id: accountId,
+    hears_via: value,
+    recorded_via: recordedVia,
+  });
+  await getPool().query('UPDATE accounts SET hears_via = $2 WHERE id = $1', [accountId, value]);
 }
