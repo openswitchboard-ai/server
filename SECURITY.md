@@ -36,8 +36,7 @@ and social engineering of the operators.
 
 ## Testing rules
 
-Test against your own accounts only. Registration on the hosted network is
-closed until launch, so most testing will be against your own deployment of this
-code. Do not run load or denial-of-service tests against the hosted service, and
+Test against your own accounts only, on the hosted network or on your own
+deployment of this code. Do not run load or denial-of-service tests against the hosted service, and
 stop as soon as you can see that a bug is real — please do not go digging through
 other people's data to prove it.
