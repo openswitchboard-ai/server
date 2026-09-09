@@ -26,7 +26,7 @@
  * persona, not recollection of a previous eval.
  */
 import { execFile } from 'node:child_process';
-import { NAGATHA_HOST, NAGATHA_KEY } from '../realism/nagatha.js';
+import { nagathaHost, nagathaKey } from '../realism/nagatha.js';
 
 const REMOTE_PATH = 'export PATH=$PATH:~/.local/bin:/usr/local/bin';
 const HOME = '/home/ubuntu/.openclaw';
@@ -35,7 +35,7 @@ function ssh(remoteScript: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       'ssh',
-      ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=20', '-i', NAGATHA_KEY, NAGATHA_HOST, remoteScript],
+      ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=20', '-i', nagathaKey(), nagathaHost(), remoteScript],
       { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err && !stdout) return reject(new Error(`ssh failed: ${err.message}\n${stderr}`));

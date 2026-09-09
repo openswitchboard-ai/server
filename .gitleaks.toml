@@ -1,0 +1,20 @@
+# gitleaks configuration for the OpenSwitchboard server.
+#
+# The default rule set is kept in full; this file only records the one string
+# in the repository that looks like a credential and is not one.
+title = "OpenSwitchboard server"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+The example agent key used by the counter's render tests. It is not a key that
+ever existed: the part after the osb_ak_ prefix is the base64 of the ASCII
+string "example-key-value-for-the-render-suite", chosen so the token has a real
+key's shape and length for the HTML templates under test while saying plainly
+in its own bytes that it is a fixture. It grants nothing, and no deployment has
+ever issued or accepted it.
+"""
+regexes = ['''osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU''']
+paths = ['''test/unit/.*\.test\.ts''']

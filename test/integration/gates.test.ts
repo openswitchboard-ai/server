@@ -48,6 +48,8 @@ import {
 
 const RUN = process.env.RUN_INTEGRATION === '1';
 const d = RUN ? describe : describe.skip;
+/** The legacy-hostname redirect is only testable where a legacy hostname exists. */
+const legacyHostIt = LEGACY_COUNTER_URL ? it : it.skip;
 
 let alice: TestActor; // WANT side
 let bob: TestActor; // HAVE side
@@ -585,11 +587,16 @@ d('integration gates against live deployment', () => {
     expect(stillWrites.result?.code).not.toBe('RATE_LIMITED');
   }, 300_000);
 
-  it('the old /counter paths and the old hostname both 308 to where the page lives now', async () => {
+  it('the old /counter paths 308 to where the page lives now', async () => {
     const prefixed = await fetch(`${COUNTER_URL}/counter/ledger`, { redirect: 'manual' });
     expect(prefixed.status).toBe(308);
     expect(prefixed.headers.get('location')).toBe('/ledger');
+  });
 
+  // Only a deployment that has moved hostnames has an old one to redirect from,
+  // so this runs when OSB_LEGACY_COUNTER_URL names yours and is skipped
+  // otherwise.
+  legacyHostIt('the old hostname 308s to where the page lives now', async () => {
     const oldHost = await fetch(`${LEGACY_COUNTER_URL}/login`, { redirect: 'manual' });
     expect(oldHost.status).toBe(308);
     expect(oldHost.headers.get('location')).toBe(`${COUNTER_URL}/login`);
