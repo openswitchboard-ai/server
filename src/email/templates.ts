@@ -15,6 +15,12 @@
  * here arrives from a SQL count in the digest engine.
  */
 
+import { categoryPhrase } from '../domain/matchRules.js';
+
+// Re-exported so a caller working with email copy has it to hand; the helper
+// itself lives beside the taxonomy labels it phrases.
+export { categoryPhrase };
+
 export interface EmailContent {
   subject: string;
   html: string;
@@ -35,6 +41,17 @@ const esc = (s: string): string =>
   String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
+
+/**
+ * A figure as a person writes it: "$415 AUD", "$415.50 AUD". Whole amounts
+ * lose the cents, because a price nobody typed cents into should not grow
+ * them.
+ */
+export function offerAmountInWords(amount: number, ccy: string): string {
+  const n = Number(amount);
+  const said = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  return `$${said} ${String(ccy).toUpperCase()}`;
+}
 
 // Brand tokens (light palette; email clients get one designed look).
 const PAPER = '#F6F8F7';
@@ -185,30 +202,25 @@ export function renderSummons(
   f: FooterLinks,
 ): EmailContent {
   const subject = 'Your assistant has news';
-  let line: string;
-  if (v.blind) {
-    line = v.count === 1 ? 'Something is waiting for you.' : `${v.count} things are waiting for you.`;
-  } else if (v.count === 1) {
-    line = v.categoryLabel
-      ? `A match is waiting on your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(v.categoryLabel)}</span> card.`
-      : 'A match is waiting for you.';
-  } else {
-    line = `${v.count} matches are waiting for you.`;
-  }
+  const thing = categoryPhrase(v.categoryLabel);
   const textLine = v.blind
     ? v.count === 1
       ? 'Something is waiting for you.'
       : `${v.count} things are waiting for you.`
     : v.count === 1
-      ? v.categoryLabel
-        ? `A match is waiting on your ${v.categoryLabel} card.`
-        : 'A match is waiting for you.'
-      : `${v.count} matches are waiting for you.`;
+      ? thing
+        ? `Someone has come forward about your ${thing}.`
+        : 'Someone has come forward.'
+      : `${v.count} people have come forward.`;
+  const line =
+    !v.blind && v.count === 1 && thing
+      ? `Someone has come forward about your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(thing)}</span>.`
+      : esc(textLine);
   const buttonLabel = v.blind
     ? "See what's waiting"
     : v.count === 1
-      ? 'See the match'
-      : 'See your matches';
+      ? 'See who it is'
+      : 'See who has come forward';
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
       `<tr><td style="font-family:${SANS};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
@@ -238,16 +250,14 @@ export function renderChannelWaiting(
   f: FooterLinks,
 ): EmailContent {
   const subject = 'You have a message waiting';
-  const line = v.blind
-    ? 'Someone has sent you a message. Open your assistant and it will read it to you.'
-    : v.categoryLabel
-      ? `Someone you got talking to about your ${esc(v.categoryLabel)} has sent you a message. Open your assistant and it will read it to you.`
-      : 'Someone you got talking to has sent you a message. Open your assistant and it will read it to you.';
+  const thing = categoryPhrase(v.categoryLabel);
+  const tail = 'Talk to your assistant and it will read it to you, or use the button below.';
   const textLine = v.blind
-    ? 'Someone has sent you a message. Open your assistant and it will read it to you.'
-    : v.categoryLabel
-      ? `Someone you got talking to about your ${v.categoryLabel} has sent you a message. Open your assistant and it will read it to you.`
-      : 'Someone you got talking to has sent you a message. Open your assistant and it will read it to you.';
+    ? `Someone has sent you a message. ${tail}`
+    : thing
+      ? `Someone you got talking to about your ${thing} has sent you a message. ${tail}`
+      : `Someone you got talking to has sent you a message. ${tail}`;
+  const line = esc(textLine);
   const html = shell(
     h1('A message is waiting.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
     f,
@@ -271,16 +281,14 @@ export function renderYourMove(
   f: FooterLinks,
 ): EmailContent {
   const subject = 'It is your turn';
-  const line = v.blind
-    ? 'Someone is ready to hear back from you. Open your assistant to take the next step.'
-    : v.categoryLabel
-      ? `Someone you matched with about your ${esc(v.categoryLabel)} is keen and ready to talk. Open your assistant to take the next step.`
-      : 'Someone you matched with is keen and ready to talk. Open your assistant to take the next step.';
+  const thing = categoryPhrase(v.categoryLabel);
+  const tail = 'Talk to your assistant, or use the button below.';
   const textLine = v.blind
-    ? 'Someone is ready to hear back from you. Open your assistant to take the next step.'
-    : v.categoryLabel
-      ? `Someone you matched with about your ${v.categoryLabel} is keen and ready to talk. Open your assistant to take the next step.`
-      : 'Someone you matched with is keen and ready to talk. Open your assistant to take the next step.';
+    ? `Someone is ready to hear back from you. ${tail}`
+    : thing
+      ? `Someone you got talking to about your ${thing} is keen and ready to talk. ${tail}`
+      : `Someone you got talking to is keen and ready to talk. ${tail}`;
+  const line = esc(textLine);
   const html = shell(
     h1('It is your move.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
     f,
@@ -289,6 +297,96 @@ export function renderYourMove(
   const text =
     `It is your move.\n\n${textLine}\n\n` +
     `Open OpenSwitchboard:\n${v.counterUrl}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c4) A number is on the table. The other person typed a figure on their own
+// approval page, and this human hears about the switchboard by email — their
+// assistant only wakes when they speak to it, so without this mail the figure
+// sits on a page nobody has been told to open. Non-blind names the figure and
+// the thing, because an offer is a deliberate disclosure meant to be seen;
+// blind is a pure pointer. Links to the page where they answer it.
+// ---------------------------------------------------------------------------
+export function renderOfferOnTheTable(
+  v: {
+    amount: number;
+    ccy: string;
+    categoryLabel?: string;
+    blind: boolean;
+    offersUrl: string;
+    counterUrl: string;
+  },
+  f: FooterLinks,
+): EmailContent {
+  const figure = offerAmountInWords(v.amount, v.ccy);
+  const thing = categoryPhrase(v.categoryLabel);
+  const subject = v.blind
+    ? 'OpenSwitchboard: something is waiting for you'
+    : 'A number is on the table';
+  const textLine = v.blind
+    ? 'Someone has answered you. The detail waits behind your sign-in.'
+    : thing
+      ? `Someone you got talking to has offered ${figure} for your ${thing}. Talk to your assistant and it will take you through it, or use the button below.`
+      : `Someone you got talking to has offered ${figure}. Talk to your assistant and it will take you through it, or use the button below.`;
+  const tail = v.blind
+    ? 'Nothing is agreed until you say so.'
+    : 'Nothing is agreed until you say so. You can answer with a number of your own, or leave it.';
+  const html = shell(
+    h1(v.blind ? 'Something is waiting.' : 'There is a number on the table.') +
+      para(esc(textLine)) +
+      center(button(v.blind ? v.counterUrl : v.offersUrl, v.blind ? "See what's waiting" : 'See the offer')) +
+      small(esc(tail)),
+    f,
+    HAVE,
+  );
+  const text =
+    `${textLine}\n\n` +
+    `${v.blind ? "See what's waiting" : 'See the offer'}:\n${v.blind ? v.counterUrl : v.offersUrl}\n\n` +
+    `${tail}\n\n` +
+    footerText(f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c5) The deal is agreed. One human accepted the other's figure on their own
+// page, and this is the mail to the human whose figure it was. It goes to
+// everybody, however they hear about the switchboard: an agreed price is the
+// end of the switchboard's part, and a person is entitled to hear it from the
+// switchboard as well as from their agent. No money moves on this path —
+// settlements are their own thing — so the copy says plainly that the two of
+// them arrange the handover.
+// ---------------------------------------------------------------------------
+export function renderDealAgreed(
+  v: {
+    amount: number;
+    ccy: string;
+    categoryLabel?: string;
+    blind: boolean;
+    matchUrl: string;
+    counterUrl: string;
+  },
+  f: FooterLinks,
+): EmailContent {
+  const figure = offerAmountInWords(v.amount, v.ccy);
+  const thing = categoryPhrase(v.categoryLabel);
+  const subject = v.blind ? 'OpenSwitchboard: something moved on your account' : 'Deal agreed';
+  const textLine = v.blind
+    ? 'Something on your account is agreed. The detail waits behind your sign-in.'
+    : thing
+      ? `Deal: ${figure} agreed for your ${thing}. Sort pickup with them in the conversation; the switchboard's part is done.`
+      : `Deal: ${figure} agreed. Sort pickup with them in the conversation; the switchboard's part is done.`;
+  const html = shell(
+    h1(v.blind ? 'Something moved.' : 'You have a deal.') +
+      para(esc(textLine)) +
+      center(button(v.blind ? v.counterUrl : v.matchUrl, v.blind ? "See what's waiting" : 'See the deal')),
+    f,
+    HAVE,
+  );
+  const text =
+    `${textLine}\n\n` +
+    `${v.blind ? "See what's waiting" : 'See the deal'}:\n${v.blind ? v.counterUrl : v.matchUrl}\n\n` +
     footerText(f);
   return { subject, html, text };
 }
@@ -538,7 +636,8 @@ export function renderScreeningRejected(
     return { subject, html, text };
   }
   const subject = 'OpenSwitchboard: one of your cards needs a change';
-  const which = v.categoryLabel ? `Your ${v.categoryLabel} card` : 'One of your cards';
+  const thing = categoryPhrase(v.categoryLabel);
+  const which = thing ? `What you put up about your ${thing}` : 'One of your cards';
   const html = shell(
     h1('One of your cards needs a change.') +
       para(
