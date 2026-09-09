@@ -129,7 +129,10 @@ export async function setNagathaAuthHeader(header: string): Promise<string> {
 export async function parkNagathaState(): Promise<string> {
   const remote = [
     `if [ -f ${HOME}/state/openclaw.sqlite ] && [ ! -f ${HOME}/adv-parked-state.sqlite ]; then`,
-    `  sqlite3 ${HOME}/state/openclaw.sqlite ".backup '${HOME}/adv-parked-state.sqlite'" 2>/dev/null || cp ${HOME}/state/openclaw.sqlite ${HOME}/adv-parked-state.sqlite; echo parked;`,
+    // A plain cp misses whatever still sits in the write-ahead log (a pairing
+    // approved minutes ago lives there until a checkpoint), so use the sqlite
+    // backup API, which folds the WAL in. The box has python3, not sqlite3.
+    `  python3 -c "import sqlite3;s=sqlite3.connect('${HOME}/state/openclaw.sqlite');d=sqlite3.connect('${HOME}/adv-parked-state.sqlite');s.backup(d);d.close();s.close()" && echo parked;`,
     'else echo "nothing to park"; fi',
   ].join(' ');
   return (await ssh(remote, 30_000)).trim();
