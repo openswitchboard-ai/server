@@ -25,6 +25,7 @@ import {
   ENV_NAME,
   Jar,
   OPS_ACCOUNT_WAIT_MS,
+  consentBucket,
   counterFetch,
   counterLogin,
   dbExec,
@@ -40,7 +41,6 @@ const d = RUN ? describe : describe.skip;
 const region = process.env.AWS_REGION ?? 'us-east-1';
 const secrets = new SecretsManagerClient({ region });
 const s3 = new S3Client({ region });
-const CONSENT_BUCKET = `osb-${ENV_NAME}-consent-log-173291123487`;
 
 const runId = randomBytes(4).toString('hex');
 const CATEGORY = `intg-email.${runId}`;
@@ -353,13 +353,13 @@ d('0.E email daemon (live dev)', () => {
         const today = new Date().toISOString().slice(0, 10);
         const list = await s3.send(
           new ListObjectsV2Command({
-            Bucket: CONSENT_BUCKET,
+            Bucket: consentBucket(),
             Prefix: `consent-events/${ENV_NAME}/${today}/`,
           }),
         );
         for (const obj of (list.Contents ?? []).slice(-50)) {
           const body = await s3.send(
-            new GetObjectCommand({ Bucket: CONSENT_BUCKET, Key: obj.Key! }),
+            new GetObjectCommand({ Bucket: consentBucket(), Key: obj.Key! }),
           );
           const j = JSON.parse(await body.Body!.transformToString());
           if (j.event === 'cards-renewed' && j.account_id === accountId) return obj.Key;

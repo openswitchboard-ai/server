@@ -2,9 +2,12 @@
  * OpenSwitchboard simulation + invariant-checking harness — entrypoint.
  *
  *   RUN_SIM=1 AWS_PROFILE=openswitchboard OSB_RATELIMIT_BYPASS=<token> \
- *     npx tsx test/sim/run.ts
+ *     OSB_CONSENT_BUCKET=<your consent-log bucket> npx tsx test/sim/run.ts
  *
  * Flags / env:
+ *   OSB_CONSENT_BUCKET   the WORM consent-log bucket of the deployment under
+ *                        test; required by the money group, which reads its
+ *                        consent entries back out of S3
  *   --clean              tear down leftover sim cards from prior runs and exit
  *   SIM_ACTORS=<n>       pool size (default 4; needs the bypass token to exceed
  *                        ~5, or the per-IP DCR/email limiter refuses the rest)

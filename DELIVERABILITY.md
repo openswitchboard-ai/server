@@ -1,14 +1,14 @@
 # DELIVERABILITY.md — email runbook (phase 0.E)
 
 State of the world (2026-09-06): **prod mail goes out from our own account,
-in us-west-2**, where SES production access was granted this morning (case
-178835342000717: 50,000 a day, 14/s) after a first request was denied on
-2026-09-02. Identity `openswitchboard.ai` verified there with its own DKIM
-and MAIL FROM `mail-w.openswitchboard.ai`, DMARC `p=quarantine`; the task
-sends with its own credentials, no assumed role. The borrowed path through
-the Smart Centric Home Automation account is dormant but still wired — see
-`infra/host-ses/README.md`. Dev stays in our own us-east-1 sandbox (MAIL
-FROM `mail.openswitchboard.ai`, simulator recipients). All sends carry the
+in us-west-2**, where SES production access was granted this morning (50,000
+a day, 14/s) after a first request was denied on 2026-09-02. Identity
+`openswitchboard.ai` verified there with its own DKIM and MAIL FROM
+`mail-w.openswitchboard.ai`, DMARC `p=quarantine`; the task sends with its
+own credentials, no assumed role. The borrowed path through a separate host
+account is dormant but still wired — see the infra repo's `host-ses` notes.
+Dev stays in our own us-east-1 sandbox (MAIL FROM `mail.openswitchboard.ai`,
+simulator recipients). All sends carry the
 `osb-<env>-email` configuration set, From
 `OpenSwitchboard <board@openswitchboard.ai>`, reply-to
 `info@openswitchboard.ai`, and RFC 8058 one-click List-Unsubscribe headers

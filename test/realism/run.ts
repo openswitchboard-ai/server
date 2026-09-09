@@ -14,7 +14,10 @@
  * ---------------------------------------------------------------------------
  * RUN
  *   RUN_REALISM=1 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
+ *     NAGATHA_HOST=user@your-box NAGATHA_KEY=/path/to/key \
  *     npx tsx test/realism/run.ts
+ *   NAGATHA_HOST / NAGATHA_KEY are required: they point the harness at the
+ *   OpenClaw box you run the agent under test on. There is no default.
  *   Optional: REALISM_ONLY=auto|email   REALISM_REUSE_TOKEN=<osb dev token>
  *             (reuse a counterpart instead of the ~1-5 min bootstrap)
  *
@@ -23,7 +26,7 @@
  *   Change the model OpenClaw serves Nagatha, wait for the gateway to come
  *   back, then re-run this harness:
  *
- *     ssh -i ~/.ssh/openclaw-test.pem ubuntu@16.176.240.234 \
+ *     ssh -i "$NAGATHA_KEY" "$NAGATHA_HOST" \
  *       'export PATH=$PATH:~/.local/bin:/usr/local/bin; \
  *        openclaw config set agents.defaults.model <provider/model-id> && \
  *        systemctl --user restart openclaw-gateway'

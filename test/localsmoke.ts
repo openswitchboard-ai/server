@@ -5,7 +5,8 @@
  * verification -> PIN -> consent), the 0.D OAuth flow (authorize hand-off ->
  * counter approval), route isolation, and MCP via fastify inject/listen. Run:
  *   AWS_PROFILE=openswitchboard DATABASE_URL=postgres://postgres:pw@127.0.0.1:5544/osb \
- *     IDENTITY_KEY_ARN=<dev identity key arn> npx tsx test/localsmoke.ts
+ *     IDENTITY_KEY_ARN=<dev identity key arn> \
+ *     OSB_CONSENT_BUCKET=<dev consent-log bucket> npx tsx test/localsmoke.ts
  */
 import assert from 'node:assert';
 import { createHash, randomBytes } from 'node:crypto';
@@ -14,6 +15,17 @@ import { initEnvelope } from '../src/crypto.js';
 import { initCounterKeys } from '../src/counter/keys.js';
 import { buildApp } from '../src/app.js';
 import type { Config } from '../src/config.js';
+
+/**
+ * The WORM consent-log bucket to write against. Bucket names are globally
+ * unique, so there is nothing to default to: name your own.
+ */
+const consentLogBucket = process.env.OSB_CONSENT_BUCKET;
+if (!consentLogBucket) {
+  throw new Error(
+    'OSB_CONSENT_BUCKET is not set. Export the name of your dev consent-log bucket before running this smoke test.',
+  );
+}
 
 process.env.COUNTER_LINK_HMAC_KEY ??= randomBytes(32).toString('hex');
 process.env.COUNTER_COOKIE_KEY ??= randomBytes(32).toString('hex');
@@ -32,7 +44,7 @@ const cfg: Config = {
   screeningQueueUrl: process.env.SCREENING_QUEUE_URL ?? 'http://unused',
   matchingQueueUrl: process.env.MATCHING_QUEUE_URL ?? 'http://unused',
   opsQueueUrl: process.env.OPS_QUEUE_URL ?? 'http://unused',
-  consentLogBucket: 'osb-dev-consent-log-173291123487',
+  consentLogBucket,
   identityKeyArn: process.env.IDENTITY_KEY_ARN!,
   bedrockModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
   registrationMode: 'dev-bootstrap',

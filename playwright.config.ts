@@ -16,7 +16,7 @@ export default defineConfig({
   outputDir: 'test-results',
   use: {
     viewport: { width: 390, height: 844 }, // phone-first gate
-    baseURL: process.env.OSB_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai',
+    baseURL: process.env.OSB_COUNTER_URL ?? 'https://my-dev.openswitchboard.ai',
     screenshot: 'only-on-failure',
   },
 });

@@ -40,9 +40,13 @@
  * ---------------------------------------------------------------------------
  * RUN
  *   RUN_ADVERSARY=1 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
+ *     NAGATHA_HOST=user@your-box NAGATHA_KEY=/path/to/key \
  *     OSB_RATELIMIT_BYPASS=$(aws ssm get-parameter --name /osb/dev/ratelimit-bypass \
  *       --with-decryption --query Parameter.Value --output text) \
  *     npx tsx test/adversary/run.ts
+ *
+ *   NAGATHA_HOST / NAGATHA_KEY are required: they point the harness at the
+ *   OpenClaw box you run the agent under test on. There is no default.
  *
  *   ADVERSARY_ONLY=A1,A4   run a subset
  *   ADVERSARY_SKIP_WIRE=1  skip the real-relay attempt and use the fallback throughout

@@ -51,8 +51,13 @@
  * ---------------------------------------------------------------------------
  * RUN
  *   RUN_DUET=1 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
+ *     NAGATHA_HOST=user@your-box NAGATHA_KEY=/path/to/key \
+ *     DUET_B_HOST=user@your-box DUET_B_KEY=/path/to/key \
  *     OSB_RATELIMIT_BYPASS=<ssm /osb/dev/ratelimit-bypass> \
  *     npx tsx test/duet/run.ts
+ *
+ *   The four host/key variables are required and have no defaults: they point
+ *   the harness at the OpenClaw box (or boxes) the two agents run on.
  *
  *   Flags: --reuse (run against the pair already in .duet-actors.json)
  *   Knobs: DUET_MAX_ROUNDS (40)  DUET_GAP_MS (90000)

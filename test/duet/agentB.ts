@@ -31,9 +31,12 @@
  */
 import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { requireBoxEnv } from '../realism/nagatha.js';
 
-export const B_HOST = process.env.DUET_B_HOST ?? 'ubuntu@16.176.240.234';
-export const B_KEY = process.env.DUET_B_KEY ?? `${process.env.HOME}/.ssh/openclaw-test.pem`;
+/** SSH destination of the box agent B runs on; set DUET_B_HOST, e.g. `user@host`. */
+export const bHost = (): string => requireBoxEnv('DUET_B_HOST');
+/** Path to the private key that opens it; set DUET_B_KEY. */
+export const bKey = (): string => requireBoxEnv('DUET_B_KEY');
 /** The OpenClaw profile name; its home is ~/.openclaw-<profile>. */
 export const B_PROFILE = process.env.DUET_B_PROFILE ?? 'marlowe';
 export const B_HOME = `/home/ubuntu/.openclaw-${B_PROFILE}`;
@@ -61,8 +64,8 @@ function ssh(remoteScript: string, timeoutMs: number): Promise<string> {
         '-o',
         'ConnectTimeout=20',
         '-i',
-        B_KEY,
-        B_HOST,
+        bKey(),
+        bHost(),
         remoteScript,
       ],
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },

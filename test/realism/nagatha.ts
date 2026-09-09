@@ -14,8 +14,28 @@
 import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 
-export const NAGATHA_HOST = process.env.NAGATHA_HOST ?? 'ubuntu@16.176.240.234';
-export const NAGATHA_KEY = process.env.NAGATHA_KEY ?? `${process.env.HOME}/.ssh/openclaw-test.pem`;
+/**
+ * The box is yours, not ours: these evals drive an OpenClaw install you control
+ * and reach over SSH, so there is no default host or key. The lookup happens at
+ * the first ssh call rather than at import time, so a module that merely
+ * imports this driver (a typecheck, a report reader) does not need the box.
+ */
+export function requireBoxEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `${name} is not set. Set NAGATHA_HOST=user@host and NAGATHA_KEY=/path/to/key ` +
+        `(and DUET_B_HOST / DUET_B_KEY for the duet's second agent) to run the ` +
+        `realism/adversary/duet evals against your own OpenClaw box.`,
+    );
+  }
+  return value;
+}
+
+/** SSH destination of the box Nagatha runs on, e.g. `user@host`. */
+export const nagathaHost = (): string => requireBoxEnv('NAGATHA_HOST');
+/** Path to the private key that opens it. */
+export const nagathaKey = (): string => requireBoxEnv('NAGATHA_KEY');
 const REMOTE_PATH = 'export PATH=$PATH:~/.local/bin:/usr/local/bin';
 const AGENT_TIMEOUT_S = Number(process.env.NAGATHA_TIMEOUT_S ?? 240);
 
@@ -40,8 +60,8 @@ function ssh(remoteScript: string, timeoutMs: number): Promise<string> {
         '-o',
         'ConnectTimeout=20',
         '-i',
-        NAGATHA_KEY,
-        NAGATHA_HOST,
+        nagathaKey(),
+        nagathaHost(),
         remoteScript,
       ],
       { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },

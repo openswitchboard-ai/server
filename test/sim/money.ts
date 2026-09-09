@@ -42,13 +42,19 @@ import {
   stripeApi,
   tinyPng,
 } from '../integration/stripeHelpers.js';
-import { ENV_NAME, counterFetch, mcpRpc, minimalHave, minimalWant, sendOp } from '../integration/helpers.js';
+import {
+  ENV_NAME,
+  consentBucket,
+  counterFetch,
+  mcpRpc,
+  minimalHave,
+  minimalWant,
+  sendOp,
+} from '../integration/helpers.js';
 import type { Checker } from './checker.js';
 import type { AgentMoveAttempt, ProposalAttempt } from './invariants.js';
 import { Harness, SimActor, dbExec, group, groupEnd, log, poll } from './harness.js';
 
-/** The consent log is a WORM bucket, named the same way in every environment. */
-const CONSENT_BUCKET = `osb-${ENV_NAME}-consent-log-173291123487`;
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
 /**
@@ -164,13 +170,13 @@ async function consentApprovals(settlementId: string): Promise<string[]> {
     do {
       const list = await s3.send(
         new ListObjectsV2Command({
-          Bucket: CONSENT_BUCKET,
+          Bucket: consentBucket(),
           Prefix: `consent-events/${ENV_NAME}/${prefix}/`,
           ContinuationToken: token,
         }),
       );
       for (const obj of list.Contents ?? []) {
-        const body = await s3.send(new GetObjectCommand({ Bucket: CONSENT_BUCKET, Key: obj.Key! }));
+        const body = await s3.send(new GetObjectCommand({ Bucket: consentBucket(), Key: obj.Key! }));
         let j: any;
         try {
           j = JSON.parse(await body.Body!.transformToString());

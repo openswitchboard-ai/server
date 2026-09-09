@@ -1,14 +1,34 @@
-import { createHash, randomBytes, scryptSync } from 'node:crypto';
+import { createHash, randomBytes, randomInt, scryptSync } from 'node:crypto';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ExecuteStatementCommand, RDSDataClient } from '@aws-sdk/client-rds-data';
 
 export const BASE_URL = process.env.OSB_BASE_URL ?? 'https://mcp-dev.openswitchboard.ai';
 export const COUNTER_URL = process.env.OSB_COUNTER_URL ?? 'https://my-dev.openswitchboard.ai';
-/** The hostname the human pages used to be on. It still answers, with a 308. */
-export const LEGACY_COUNTER_URL =
-  process.env.OSB_LEGACY_COUNTER_URL ?? 'https://counter-dev.openswitchboard.ai';
+/**
+ * The hostname the human pages used to be on, if this deployment had one; it
+ * still answers, with a 308. Per-deployment and often absent, so it is named
+ * rather than guessed: set OSB_LEGACY_COUNTER_URL to exercise the redirect.
+ */
+export const LEGACY_COUNTER_URL = process.env.OSB_LEGACY_COUNTER_URL;
 export const ENV_NAME = process.env.OSB_TEST_ENV ?? 'dev';
+
+/**
+ * The WORM consent-log bucket for the environment under test. S3 bucket names
+ * are globally unique, so every deployment's is different and there is nothing
+ * sensible to default to — export OSB_CONSENT_BUCKET with the name of yours.
+ * Read at first use so importing this module needs nothing set.
+ */
+export function consentBucket(): string {
+  const name = process.env.OSB_CONSENT_BUCKET;
+  if (!name) {
+    throw new Error(
+      'OSB_CONSENT_BUCKET is not set. Export the name of the consent-log bucket ' +
+        `for the ${ENV_NAME} deployment you are testing against.`,
+    );
+  }
+  return name;
+}
 const region = process.env.AWS_REGION ?? 'us-east-1';
 
 const ssm = new SSMClient({ region });
@@ -16,6 +36,15 @@ const sqs = new SQSClient({ region });
 const rdsData = new RDSDataClient({ region });
 
 export const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
+
+/**
+ * The PIN every account this harness creates is given. Generated once per
+ * process rather than fixed in the source, so nothing that reads like a real
+ * credential is committed and two harnesses running side by side do not share
+ * one. It never leaves the run: the accounts are throwaway and the PIN is only
+ * ever posted back to the deployment under test.
+ */
+export const TEST_PIN = String(randomInt(0, 1_000_000)).padStart(6, '0');
 
 // ---------------------------------------------------------------------------
 // Dev-DB observability via the RDS Data API (SES is in its sandbox, so the
@@ -122,7 +151,7 @@ export async function counterLogin(jar: Jar, email: string): Promise<void> {
 }
 
 /** Ensure the signed-in account has a PIN (sets one if the flow asks for it). */
-export async function ensurePin(jar: Jar, pin = '246810'): Promise<string> {
+export async function ensurePin(jar: Jar, pin = TEST_PIN): Promise<string> {
   const res = await counterFetch(jar, '/');
   if (res.status === 303 && res.headers.get('location')?.includes('/pin')) {
     const set = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
@@ -318,7 +347,7 @@ export async function registerActor(): Promise<TestActor> {
   const v = await counterFetch(jar, '/verify', form({ verification_id: verificationId, code }));
   if (v.status !== 303) throw new Error(`verify failed: ${v.status}`);
 
-  const pin = '246810';
+  const pin = TEST_PIN;
   const setPin = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
   if (setPin.status !== 303) throw new Error(`pin set failed: ${setPin.status}`);
   const consent = await counterFetch(jar, '/consent', form({ adult: 'yes', consent: 'yes' }));
