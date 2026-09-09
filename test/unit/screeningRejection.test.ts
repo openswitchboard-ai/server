@@ -40,6 +40,7 @@ import {
   screeningReasonInPlainWords,
 } from '../../src/domain/screening.js';
 import { categoryLeafLabel } from '../../src/domain/matchRules.js';
+import { categoryPhrase } from '../../src/email/templates.js';
 import * as db from '../../src/db.js';
 import type { Config } from '../../src/config.js';
 
@@ -72,6 +73,8 @@ const ACCOUNT = 'acct-screening-rejection';
 const CARD = '00000000-0000-4000-8000-0000000000c1';
 const SLUG = 'goods.bicycle.mountain';
 const LABEL = categoryLeafLabel(SLUG);
+/** The same label as it reads inside a sentence: "mountain bike". */
+const PHRASE = categoryPhrase(LABEL);
 const REJECTED_AT = '2026-09-02T01:02:03.000Z';
 
 const rejectedRow = () => ({
@@ -180,7 +183,7 @@ describe('approval-page dashboard: a card that failed screening', () => {
     );
     const res = await get('/');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain(`Your ${LABEL} card didn&#39;t pass screening`);
+    expect(res.body).toContain(`Your ${PHRASE} card didn&#39;t pass screening`);
     expect(res.body).toContain(`/ledger/${CARD}/edit`);
     expect(res.body).toContain('See why and fix it');
     // The raw slug and the model's internal note never render.

@@ -426,6 +426,18 @@ describe('local times', () => {
   });
 });
 
+/** The offers page's view, with the parts a given test cares about swapped in. */
+const offersView = (over: Partial<chome.MatchOffersView> = {}): chome.MatchOffersView => ({
+  matchId: 'm-1',
+  cardId: 'c-1',
+  category: LABEL,
+  type: 'HAVE',
+  mode: 'relay',
+  canOffer: true,
+  offers: [],
+  ...over,
+});
+
 describe('counter pages: copy-cull render suite', () => {
   const allPages = (): { name: string; html: string }[] => [
     { name: 'landing', html: cpages.landingPage() },
@@ -669,6 +681,7 @@ describe('counter pages: copy-cull render suite', () => {
     {
       name: 'settings',
       html: chome.settingsPage({
+        hearsVia: 'email',
         blindMode: false,
         freqMatches: 'immediate',
         freqDigests: 'daily',
@@ -717,6 +730,51 @@ describe('counter pages: copy-cull render suite', () => {
         token: 'osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU',
         expires: DAY('2026-11-30T00:00:00.000Z'),
       }),
+    },
+    {
+      name: 'settings-hears-through-assistant',
+      html: chome.settingsPage({
+        hearsVia: 'assistant',
+        blindMode: true,
+        freqMatches: 'immediate',
+        freqDigests: 'daily',
+        complaintSuppressed: false,
+        emailUnreachable: false,
+      }),
+    },
+    { name: 'match-offers', html: chome.matchOffersPage(offersView()) },
+    {
+      name: 'match-offers-mine-on-the-table',
+      html: chome.matchOffersPage(
+        offersView({
+          myOfferOnTable: '400 AUD',
+          offers: [
+            {
+              amount: '400 AUD',
+              mine: true,
+              state: 'proposed',
+              authoredByMe: 'human',
+              expires: cpages.localTime('2026-09-16T10:28:00.000Z'),
+            },
+          ],
+        }),
+      ),
+    },
+    {
+      name: 'match-offers-agreed',
+      html: chome.matchOffersPage(
+        offersView({
+          agreedAmount: '415 AUD',
+          offers: [
+            {
+              amount: '415 AUD',
+              mine: false,
+              state: 'accepted-by-human',
+              expires: cpages.localTime('2026-09-16T10:28:00.000Z'),
+            },
+          ],
+        }),
+      ),
     },
     { name: 'unsub', html: chome.unsubPage('osb_em_tok') },
     { name: 'reverify', html: chome.reverifyCodePage('v-1') },
@@ -1045,6 +1103,231 @@ describe('counter pages: copy-cull render suite', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
     expect(byName['ledger']).toContain('condition: good');
     expect(byName['renew']).toContain('condition: good · frame: large');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Giant Talon rehearsal, 9 September. Two assistants, one real bike and
+// one real inbox, and every assertion below is a line that run found wrong on
+// a page a person was looking at.
+// ---------------------------------------------------------------------------
+
+const settingsView = (hearsVia: chome.HearsVia): chome.EmailSettingsView => ({
+  hearsVia,
+  blindMode: false,
+  freqMatches: 'immediate',
+  freqDigests: 'daily',
+  complaintSuppressed: false,
+  emailUnreachable: false,
+});
+
+describe('how do you want to hear about things?', () => {
+  it('leads the settings page, above the frequency dials and blind mode', () => {
+    const html = chome.settingsPage(settingsView('email'));
+    const ask = html.indexOf('<h2>How do you want to hear about things?</h2>');
+    expect(ask).toBeGreaterThan(-1);
+    expect(html.indexOf('<h2>Email frequency</h2>')).toBeGreaterThan(ask);
+    expect(html.indexOf('<h2>Blind mode</h2>')).toBeGreaterThan(ask);
+  });
+
+  it('puts the two answers in the words a person would use', () => {
+    const html = chome.settingsPage(settingsView('email'));
+    expect(html).toContain('By email.');
+    expect(html).toContain(
+      'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
+    );
+    expect(html).toContain('Through my assistant.');
+    expect(html).toContain('It checks on its own and brings me the news; email is a backup only.');
+    expect(html).toContain('action="/settings/hears-via"');
+  });
+
+  it('shows which of the two is on', () => {
+    const email = chome.settingsPage(settingsView('email'));
+    expect(email).toContain(
+      '<input id="hears_email" name="hears_via" type="radio" value="email" checked>',
+    );
+    expect(email).toContain('Right now everything reaches you by email.');
+    expect(email).not.toContain('value="assistant" checked');
+
+    const assistant = chome.settingsPage(settingsView('assistant'));
+    expect(assistant).toContain(
+      '<input id="hears_assistant" name="hears_via" type="radio" value="assistant" checked>',
+    );
+    expect(assistant).toContain('Right now your assistant brings you the news');
+    expect(assistant).not.toContain('value="email" checked');
+  });
+
+  it('keeps the controls that were already there', () => {
+    const html = chome.settingsPage(settingsView('assistant'));
+    expect(html).toContain('action="/settings/frequency"');
+    expect(html).toContain('action="/settings/blind-mode"');
+  });
+});
+
+describe('the dashboard the rehearsal left notes on', () => {
+  const dash = (over: Partial<chome.DashboardView> = {}): string =>
+    chome.dashboardPage({
+      killSwitchOn: false,
+      cardCounts: { total: 1, published: 1, pending: 0 },
+      pendingApprovals: [],
+      matches: [],
+      collectionWindows: [],
+      ...over,
+    });
+
+  it('says how many messages wait and what they are about, and nothing of what they say', () => {
+    const html = dash({ messagesWaiting: [{ matchId: 'm-1', category: LABEL, count: 1 }] });
+    expect(html).toContain(
+      '1 message on your mountain bike conversation. Ask your assistant and it will read it to you.',
+    );
+    expect(html).toContain('MESSAGES WAITING');
+    expect(html).not.toContain('Nothing is waiting for you.');
+  });
+
+  it('counts the rest of them, and reads them out in the plural', () => {
+    const html = dash({ messagesWaiting: [{ matchId: 'm-1', category: LABEL, count: 3 }] });
+    expect(html).toContain(
+      '3 messages on your mountain bike conversation. Ask your assistant and it will read them to you.',
+    );
+  });
+
+  it('a deal a human accepted says the figure and where the rest of it happens', () => {
+    const html = dash({ agreed: [{ matchId: 'm-1', category: LABEL, amount: '415 AUD' }] });
+    expect(html).toContain(
+      'Agreed at $415 AUD on your mountain bike match. Sort pickup in the conversation; the switchboard&#39;s part is done.',
+    );
+    expect(html).toContain('href="/matches/m-1"');
+    expect(html).not.toContain('Nothing is waiting for you.');
+  });
+
+  it('the verdict is read back in words', () => {
+    const good = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.87, verdict: 'good-call' }] });
+    expect(good).toContain('Your call: <strong>good call</strong>');
+    expect(good).not.toContain('good-call</strong>');
+    const no = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.4, verdict: 'not-for-me' }] });
+    expect(no).toContain('Your call: <strong>not for me</strong>');
+  });
+
+  it('the button to the offers is short enough to stay on one line', () => {
+    const html = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }] });
+    expect(html).toContain('href="/matches/m-1">Offers</a>');
+    expect(html).not.toContain('Offers &amp; your number');
+    // And the row's buttons are told never to wrap, whatever they end up saying.
+    expect(html).toContain('white-space:nowrap');
+  });
+});
+
+describe('the offers page the rehearsal left notes on', () => {
+  it('carries a negotiation control where a badge nobody could press used to be', () => {
+    const html = chome.matchOffersPage(offersView());
+    expect(html).toContain('<h2>How your agent negotiates</h2>');
+    expect(html).toContain('action="/ledger/c-1/numbers"');
+    expect(html).toContain('name="return_to" value="m-1"');
+    expect(html).toContain('Pass on:');
+    expect(html).toContain(
+      'your agent brings every offer to you and sends back the numbers you give it',
+    );
+    expect(html).toContain('Auto-negotiate:');
+    expect(html).toContain('your agent can put figures on the table inside your limits');
+    // The mode is no longer a badge sitting on its own next to the category.
+    expect(html).not.toContain('<span class="badge state">Pass on</span>');
+    // The numbers ride with the control, out of the way until they are wanted.
+    expect(html).toContain('<div id="negnumbers" hidden>');
+    expect(html).toContain('name="limit"');
+    expect(html).toContain('name="step"');
+  });
+
+  it('a card on auto-negotiate shows the limits its agent works inside', () => {
+    const html = chome.matchOffersPage(
+      offersView({ mode: 'mandate', mandate: { limit: 380, step: 10, ccy: 'AUD' } }),
+    );
+    expect(html).toContain('<div id="negnumbers">');
+    expect(html).toContain('id="negmode_mandate" name="mode" type="radio" value="mandate" checked');
+    expect(html).toContain('name="limit" type="number" step="0.01" min="0" value="380"');
+    expect(html).toContain('name="step" type="number" step="0.01" min="0" value="10"');
+    expect(html).toContain('name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="AUD"');
+  });
+
+  it('with nothing sent, the box to type a figure into stands open', () => {
+    const html = chome.matchOffersPage(offersView());
+    expect(html).toContain('<h2>Reply with your number</h2>');
+    expect(html).not.toContain('is on the table.');
+  });
+
+  it('a figure of theirs that is already out there collapses the form to one line', () => {
+    const html = chome.matchOffersPage(
+      offersView({
+        myOfferOnTable: '400 AUD',
+        offers: [
+          {
+            amount: '400 AUD',
+            mine: true,
+            state: 'proposed',
+            authoredByMe: 'human',
+            expires: cpages.localTime('2026-09-16T10:28:00.000Z'),
+          },
+        ],
+      }),
+    );
+    expect(html).toContain('Your $400 AUD is on the table.');
+    expect(html).toContain('Change your number');
+    // Folded away rather than gone: the whole form is still on the page.
+    expect(html).toContain('<details class="more">');
+    expect(html).toContain('name="amount"');
+    expect(html).not.toContain('<h2>Reply with your number</h2>');
+  });
+
+  it('the optional line asks for something a person can fit on it', () => {
+    expect(chome.matchOffersPage(offersView())).toContain(
+      'placeholder="A line to go with it, e.g. can collect Saturday"',
+    );
+  });
+
+  it('an accepted offer reads as a deal, on its row and at the top of the page', () => {
+    const html = chome.matchOffersPage(
+      offersView({
+        agreedAmount: '415 AUD',
+        offers: [
+          {
+            amount: '415 AUD',
+            mine: false,
+            state: 'accepted-by-human',
+            expires: cpages.localTime('2026-09-16T10:28:00.000Z'),
+          },
+        ],
+      }),
+    );
+    expect(html).toContain('<strong>Agreed at $415 AUD</strong>');
+    expect(html).toContain(
+      'Agreed at $415 AUD. Sort pickup in the conversation; the switchboard&#39;s part is done.',
+    );
+    // Nothing asks for another figure once a person has said yes to one.
+    expect(html).not.toContain('<h2>Reply with your number</h2>');
+    // And the row says "agreed" rather than reading its own state back.
+    expect(html).not.toContain('>accepted-by-human<');
+  });
+
+  it('offer states are said in words', () => {
+    const html = chome.matchOffersPage(
+      offersView({
+        offers: [
+          {
+            amount: '400 AUD',
+            mine: true,
+            state: 'proposed',
+            authoredByMe: 'human',
+            expires: cpages.localTime('2026-09-16T10:28:00.000Z'),
+          },
+        ],
+      }),
+    );
+    expect(html).toContain('>on the table<');
+    expect(html).not.toContain('>proposed<');
+  });
+
+  it('the sealed page keeps its own button, named for what is on it', () => {
+    const html = chome.matchOffersPage(offersView());
+    expect(html).toContain('href="/ledger/c-1/numbers">Your limit on this listing</a>');
   });
 });
 

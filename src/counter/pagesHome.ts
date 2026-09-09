@@ -26,6 +26,7 @@ import {
   type Mandate,
   type NegotiationMode,
 } from '../domain/negotiation.js';
+import { categoryPhrase, offerAmountInWords } from '../email/templates.js';
 import {
   counterOfferForm,
   esc,
@@ -36,6 +37,19 @@ import {
   DRAFT_LINE,
   type OfferDraftView,
 } from './pages.js';
+
+/**
+ * A rendered figure ("415 AUD") said the way a person says it ("$415 AUD").
+ *
+ * The views on these pages carry money as text the route has already put
+ * together, so this unpicks it and hands it to the one helper that decides how
+ * a figure is written. Anything it cannot read goes back unchanged.
+ */
+function moneyPhrase(amount: string): string {
+  const m = /^(-?[\d.]+)\s+([A-Za-z]{3})$/.exec(String(amount).trim());
+  if (!m) return String(amount);
+  return offerAmountInWords(Number(m[1]), m[2]!.toUpperCase());
+}
 
 /**
  * What you share on a match. Two boxes, viewable and changeable whenever the
@@ -199,7 +213,36 @@ export interface DashboardView {
   collectionWindows: DashboardWindowItem[];
   /** Cards whose clock runs out within the week, if any do. */
   lapsingSoon?: { count: number; soonest: string };
+  /** Conversations holding messages nobody has collected yet. The count and
+   *  what the conversation is about; never a word of what was said. */
+  messagesWaiting?: DashboardMessagesItem[];
+  /** Matches where a human accepted an offer. The switchboard is finished
+   *  with these, and both sides are told so in the same words. */
+  agreed?: DashboardAgreedItem[];
 }
+
+export interface DashboardMessagesItem {
+  matchId: string;
+  /** The category's own label, e.g. "Mountain bikes". */
+  category: string;
+  count: number;
+}
+
+export interface DashboardAgreedItem {
+  matchId: string;
+  category: string;
+  /** Rendered money, e.g. "415 AUD". */
+  amount: string;
+}
+
+/** The one-tap verdicts, in the words a person would use for them. */
+const VERDICT_WORDS: Record<string, string> = {
+  'good-call': 'good call',
+  'not-for-me': 'not for me',
+};
+
+/** What the two sides say to each other once an offer is accepted. */
+export const DEAL_DONE_LINE = "Sort pickup in the conversation; the switchboard's part is done.";
 
 export function dashboardPage(v: DashboardView): string {
   const kill = v.killSwitchOn
@@ -246,6 +289,35 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     )
     .join('');
 
+  // 2b. Messages nobody has collected. The switchboard carries a conversation
+  //     without keeping it, so this block can say how many and what about, and
+  //     never a word of what is in them. The agent is the one that can read
+  //     them out, so that is what the line asks for.
+  const messages = (v.messagesWaiting ?? [])
+    .map((m) => {
+      const one = m.count === 1;
+      const line =
+        `${m.count} message${one ? '' : 's'} on your ${categoryPhrase(m.category)} conversation. ` +
+        `Ask your assistant and it will read ${one ? 'it' : 'them'} to you.`;
+      return `<div class="todo">
+<span class="badge match">MESSAGES WAITING</span>
+<div class="what">${esc(line)}</div></div>`;
+    })
+    .join('');
+
+  // 2c. Deals done. Nothing is waiting on the switchboard once a human has
+  //     accepted, so the block says what was agreed and where the rest of it
+  //     happens.
+  const agreed = (v.agreed ?? [])
+    .map((a) => {
+      const line = `Agreed at ${moneyPhrase(a.amount)} on your ${categoryPhrase(a.category)} match. ${DEAL_DONE_LINE}`;
+      return `<a class="todo" href="/matches/${esc(a.matchId)}">
+<span class="badge have">AGREED</span>
+<div class="what">${esc(line)}</div>
+<div class="go">See the offers</div></a>`;
+    })
+    .join('');
+
   // 3. Cards whose clock is nearly out.
   const renewals = v.lapsingSoon?.count
     ? `<a class="todo" href="/ledger">
@@ -268,7 +340,7 @@ pairing, and no reason is ever sent to the other side.</p>` +
 <span class="badge state">score ${(m.score * 100).toFixed(0)}%</span></div>
 ${
   m.verdict
-    ? `<div class="kv">Your call: <strong>${esc(m.verdict)}</strong></div>`
+    ? `<div class="kv">Your call: <strong>${esc(VERDICT_WORDS[m.verdict] ?? m.verdict)}</strong></div>`
     : ''
 }
 <div class="row-actions">
@@ -286,7 +358,7 @@ ${
   <button type="submit" class="secondary">Not for me</button>
 </form>`
 }
-<a class="btn secondary" href="/matches/${esc(m.matchId)}">Offers &amp; your number</a>
+<a class="btn secondary" href="/matches/${esc(m.matchId)}">Offers</a>
 </div>
 </div>`,
         )
@@ -294,7 +366,12 @@ ${
     : '';
 
   const nothingWaiting =
-    !v.pendingApprovals.length && !v.collectionWindows.length && !renewals && !v.matches.length;
+    !v.pendingApprovals.length &&
+    !v.collectionWindows.length &&
+    !renewals &&
+    !messages &&
+    !agreed &&
+    !v.matches.length;
 
   const emailBanner = v.emailUnreachable
     ? `<div class="err"><strong>Email to you is bouncing.</strong>
@@ -317,7 +394,7 @@ hold. Re-verify your address to switch it back on.
       : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
   }</span></a>
 <a href="/agent-keys"><span class="nav-t">Agent keys</span><span class="nav-d">Long passwords for agents that cannot sign in through a browser.</span></a>
-<a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How often we may email you, and blind mode.</span></a>
+<a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How you hear about things, how often we may email you, and blind mode.</span></a>
 </div>`;
 
   return layout('Your approval page', `
@@ -327,6 +404,8 @@ ${emailBanner}
 <h2>Waiting for you</h2>
 ${nothingWaiting ? `<div class="empty">Nothing is waiting for you.</div>` : ''}
 ${approvals}
+${agreed}
+${messages}
 ${renewals}
 ${windows}
 ${matchRows}
@@ -630,59 +709,167 @@ export interface MatchOffersView {
   /** A figure this person's agent was refused for on Pass on, prefilled into
    *  the box below so they can check it and send it. */
   draft?: OfferDraftView;
+  /** This card's sealed numbers, so the control on this page can carry them
+   *  through a mode change rather than dropping them. */
+  mandate?: Mandate;
+  /** This person's own live figure, rendered "400 AUD". The form collapses to
+   *  a line about it, because the number is already sent. */
+  myOfferOnTable?: string;
+  /** A figure a human accepted, rendered "415 AUD". The switchboard has done
+   *  its part at that point and the page says so. */
+  agreedAmount?: string;
+}
+
+/** Offer states, in the words the person would use for them. */
+const OFFER_STATE_WORDS: Record<string, string> = {
+  proposed: 'on the table',
+  'awaiting-human': 'waiting for you',
+  'accepted-by-human': 'agreed',
+  declined: 'declined',
+  withdrawn: 'withdrawn',
+};
+
+/**
+ * Who writes this card's figures, asked on the page where the figures are.
+ *
+ * It is the same control as the one on "Your numbers on this card", posting to
+ * the same route with the same field names, so one place in the server writes
+ * a mode and one set of rules validates the numbers. `return_to` brings the
+ * person back here afterwards.
+ */
+function negotiationControl(v: MatchOffersView): string {
+  const m = v.mandate;
+  const val = (n?: number) => (n != null ? String(n) : '');
+  const opt = (
+    mode: NegotiationMode,
+    head: string,
+    rest: string,
+  ) => `<label class="modeopt" for="negmode_${mode}">
+  <input id="negmode_${mode}" name="mode" type="radio" value="${mode}"${v.mode === mode ? ' checked' : ''}>
+  <strong>${esc(head)}</strong>
+  <span class="small muted">${esc(rest)}</span>
+</label>`;
+  return `<h2>How your agent negotiates</h2>
+<form method="POST" action="/ledger/${esc(v.cardId)}/numbers">
+  <input type="hidden" name="return_to" value="${esc(v.matchId)}">
+  <div class="modegrid">
+    ${opt('relay', 'Pass on:', 'your agent brings every offer to you and sends back the numbers you give it')}
+    ${opt('mandate', 'Auto-negotiate:', 'your agent can put figures on the table inside your limits')}
+  </div>
+  <div id="negnumbers"${v.mode === 'mandate' ? '' : ' hidden'}>
+    <p class="small muted">Your limits are kept the way your band is: your agent
+    works inside them and the other side is never told any of it.</p>
+    <label for="neg_open">Open at (optional)</label>
+    <input id="neg_open" name="open" type="number" step="0.01" min="0" value="${esc(val(m?.open))}" placeholder="amount">
+    <label for="neg_limit">${v.type === 'HAVE' ? 'Take no less than' : 'Pay no more than'}</label>
+    <input id="neg_limit" name="limit" type="number" step="0.01" min="0" value="${esc(val(m?.limit))}" placeholder="amount">
+    <label for="neg_step">Move in steps of at least (optional)</label>
+    <input id="neg_step" name="step" type="number" step="0.01" min="0" value="${esc(val(m?.step))}" placeholder="amount">
+    <label for="neg_ccy">Currency</label>
+    <input id="neg_ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(m?.ccy ?? '')}" placeholder="AUD">
+  </div>
+  <button type="submit" class="secondary">Save how it negotiates</button>
+</form>
+<p class="small muted">Accepting an offer comes to you here whichever way this
+is set, with your PIN. Auto-negotiate lets your agent put figures on the table
+between the two you wrote; it agrees nothing.</p>
+<script>
+(function () {
+  var box = document.getElementById('negnumbers');
+  var radios = document.querySelectorAll('input[name="mode"]');
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].addEventListener('change', function () { box.hidden = this.value !== 'mandate'; });
+  }
+})();
+</script>`;
 }
 
 export function matchOffersPage(v: MatchOffersView, error?: string, notice?: string): string {
   const rows = v.offers.length
     ? v.offers
-        .map(
-          (o) => `<div class="card-row"><div class="top">
+        .map((o) => {
+          const agreed = o.state === 'accepted-by-human';
+          const head = agreed
+            ? `<div class="kv"><strong>Agreed at ${esc(moneyPhrase(o.amount))}</strong></div>
+<div class="kv">${esc(DEAL_DONE_LINE)}</div>`
+            : `<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${o.expires}${
+                o.mine && o.authoredByMe
+                  ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
+                  : ''
+              }</div>`;
+          return `<div class="card-row"><div class="top">
 <span class="badge ${o.mine ? 'have' : 'want'}">${o.mine ? 'YOURS' : 'THEIRS'}</span>
-<span class="badge state">${esc(o.state)}</span></div>
-<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${o.expires}${
-            o.mine && o.authoredByMe
-              ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
-              : ''
-          }</div>
+<span class="badge state">${esc(OFFER_STATE_WORDS[o.state] ?? o.state)}</span></div>
+${head}
 ${
-            o.note
-              ? `<div class="kv">${o.mine ? 'Your line:' : 'Their words:'} “${esc(o.note)}”</div>`
-              : ''
-          }
-</div>`,
-        )
+  o.note ? `<div class="kv">${o.mine ? 'Your line:' : 'Their words:'} “${esc(o.note)}”</div>` : ''
+}
+</div>`;
+        })
         .join('')
     : `<div class="empty">No figures on the table yet.</div>`;
   // A resubmitted form beats a draft: what the person just typed is newer than
   // anything their agent left here.
   const useDraft = !v.form && !!v.draft;
+  const form = counterOfferForm(v.matchId, {
+    ccy: useDraft ? v.draft!.ccy : v.form?.ccy,
+    amount: useDraft ? v.draft!.amount : v.form?.amount,
+    note: useDraft ? v.draft!.note : v.form?.note,
+    draft: useDraft,
+    ...(v.myOfferOnTable ? { heading: '' } : {}),
+  });
+  // Three ways this stretch of the page can stand. A deal is done, so there is
+  // nothing to type; a figure of theirs is already out there, so the form
+  // folds down to a line about it; or the box is open with nothing sent.
+  const reply = v.agreedAmount
+    ? `<div class="headline"><div class="k">Agreed</div><div class="v">${esc(moneyPhrase(v.agreedAmount))}</div></div>
+<p class="lead">Agreed at ${esc(moneyPhrase(v.agreedAmount))}. ${esc(DEAL_DONE_LINE)}</p>`
+    : !v.canOffer
+      ? `<p class="note">${esc(v.canOfferBlockedBecause ?? 'Offers are not open on this match yet.')}</p>`
+      : v.myOfferOnTable
+        ? `<p class="lead">Your ${esc(moneyPhrase(v.myOfferOnTable))} is on the table.</p>
+${foldedDetail('Change your number', form)}`
+        : form;
   return layout('Offers on this match', `
 <h1>Offers on this match.</h1>
 <div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${v.type === 'HAVE' ? 'have' : 'want'}">${esc(v.type)}</span>
   <span class="cat">${esc(v.category)}</span>
-  <span class="badge state">${esc(MODE_NAMES[v.mode])}</span>
 </div>
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
-${
-  v.canOffer
-    ? counterOfferForm(v.matchId, {
-        ccy: useDraft ? v.draft!.ccy : v.form?.ccy,
-        amount: useDraft ? v.draft!.amount : v.form?.amount,
-        note: useDraft ? v.draft!.note : v.form?.note,
-        draft: useDraft,
-      })
-    : `<p class="note">${esc(v.canOfferBlockedBecause ?? 'Offers are not open on this match yet.')}</p>`
-}
+${reply}
+${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
-<p class="small muted">${esc(MODE_NAMES[v.mode])} — ${esc(MODE_EXPLANATIONS[v.mode])}</p>
-<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your numbers on this card</a>
+<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this listing</a>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
+/**
+ * How this person hears about things. An always-on agent brings them the news
+ * itself; a chat assistant only acts when it is spoken to, so everything has
+ * to reach them by email. Nothing else on the switchboard can work this out on
+ * its own, so the page asks.
+ */
+export type HearsVia = 'email' | 'assistant';
+
+const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
+  {
+    value: 'email',
+    head: 'By email.',
+    rest: 'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
+  },
+  {
+    value: 'assistant',
+    head: 'Through my assistant.',
+    rest: 'It checks on its own and brings me the news; email is a backup only.',
+  },
+];
+
 export interface EmailSettingsView {
+  /** Which of the two ways this account hears about things right now. */
+  hearsVia: HearsVia;
   blindMode: boolean;
   freqMatches: string;
   freqDigests: string;
@@ -716,10 +903,32 @@ dials below does nothing while the hold is on.
     ? `<div class="err">Email to your address is bouncing — all email is on
 hold. Re-verify from the <a href="/">front page</a>.</div>`
     : '';
+  const hearsVia = HEARS_VIA_OPTIONS.map(
+    (o) => `<label class="modeopt" for="hears_${o.value}">
+  <input id="hears_${o.value}" name="hears_via" type="radio" value="${o.value}"${
+    v.hearsVia === o.value ? ' checked' : ''
+  }>
+  <strong>${esc(o.head)}</strong>
+  <span class="small muted">${esc(o.rest)}</span>
+</label>`,
+  ).join('');
+  const hearsViaNow =
+    v.hearsVia === 'assistant'
+      ? 'Right now your assistant brings you the news, and email is a backup.'
+      : 'Right now everything reaches you by email.';
   return layout('Settings', `
 <h1>Settings.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
+<h2>How do you want to hear about things?</h2>
+<p class="small muted">${esc(hearsViaNow)}</p>
+<form method="POST" action="/settings/hears-via">
+  ${hearsVia}
+  <button type="submit" class="secondary">Save how I hear about things</button>
+</form>
+<p class="small muted">An assistant you talk to when you feel like it cannot
+bring you a match it never saw, so the switchboard emails you every step.
+An agent that checks on its own gets there first, and the emails stand down.</p>
 <h2>Email frequency</h2>
 <form method="POST" action="/settings/frequency">
   <label for="freq_matches">Match summons</label>

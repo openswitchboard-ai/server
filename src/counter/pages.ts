@@ -32,6 +32,7 @@ export function esc(s: string): string {
 export const CONSENT_STATEMENT =
   'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.';
 
+
 /** Where the two Patch images are served from. Long-cached and immutable. */
 export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
@@ -171,7 +172,8 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .row-actions { display:flex; gap:var(--s2); margin-top:var(--s3); flex-wrap:wrap; }
 .row-actions form { margin:0; flex:1 1 7rem; }
 .row-actions > .btn { flex:1 1 7rem; }
-.row-actions .btn, .row-actions button { margin-top:0; padding:.5rem .7rem; font-size:var(--t-sm); }
+.row-actions .btn, .row-actions button { margin-top:0; padding:.5rem .7rem; font-size:var(--t-sm);
+  white-space:nowrap; }
 
 /* ---- Waiting-on-you action cards (the dashboard's first screen) ---- */
 .todo { display:block; border:1.5px solid var(--line); background:var(--card); border-radius:var(--r);
@@ -227,6 +229,10 @@ label.modeopt { display:grid; grid-template-columns:1.2rem 1fr; gap:var(--s2) va
 label.modeopt input { width:1.2rem; height:1.2rem; margin:.2rem 0 0; grid-row:span 2; }
 label.modeopt strong { font-family:var(--sans); font-size:var(--t-md); }
 label.modeopt span { grid-column:2; }
+/* The same two options side by side once there is room for them. */
+.modegrid { display:grid; grid-template-columns:1fr; gap:var(--s2); }
+.modegrid label.modeopt { margin:0; }
+@media (min-width: 27rem) { .modegrid { grid-template-columns:1fr 1fr; } }
 
 /* ---- The kill switch keeps its own frame ---- */
 .kill { border:2px solid var(--danger); border-radius:var(--r); padding:var(--s4); margin:var(--s6) 0 0; }
@@ -526,7 +532,8 @@ still comes back to this page.</p>
   <label for="ccy">Currency</label>
   <input id="ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" required value="${esc(opts.ccy ?? 'AUD')}">
   <label for="note">A line to go with it (optional)</label>
-  <input id="note" name="note" type="text" maxlength="${MANDATE_NOTE_MAX}" value="${esc(opts.note ?? '')}" placeholder="about the terms — keep ways of reaching you out of it">
+  <input id="note" name="note" type="text" maxlength="${MANDATE_NOTE_MAX}" value="${esc(opts.note ?? '')}" placeholder="A line to go with it, e.g. can collect Saturday">
+  <p class="field-help">About the terms. Keep ways of reaching you out of it.</p>
   <label for="good_for">Good for</label>
   <select id="good_for" name="good_for">
     <option value="3">3 days</option>
