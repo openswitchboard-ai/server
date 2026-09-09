@@ -58,7 +58,10 @@ export interface Config {
   bedrockModelId: string;
   /** Titan Text Embeddings v2 (1024-dim) - the matching engine's embedder. */
   bedrockEmbedModelId: string;
-  registrationMode: 'dev-bootstrap' | 'closed';
+  /** 'open': anyone can register on the human pages with a verified email.
+   *  'closed': the pages show "registration opens at launch".
+   *  'dev-bootstrap': open, and the ops queue may also mint accounts (dev only). */
+  registrationMode: 'open' | 'dev-bootstrap' | 'closed';
   region: string;
   quotas: Quotas;
   docsBase: string;
@@ -134,7 +137,7 @@ export function loadConfig(): Config {
     identityKeyArn: required('IDENTITY_KEY_ARN'),
     bedrockModelId: required('BEDROCK_MODEL_ID'),
     bedrockEmbedModelId: process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0',
-    registrationMode: envName === 'prod' ? 'closed' : 'dev-bootstrap',
+    registrationMode: registrationModeFrom(process.env.REGISTRATION_MODE, envName),
     region: process.env.AWS_REGION ?? 'us-east-1',
     quotas: {
       // Newcomer defaults; config-driven via env overrides.
@@ -162,6 +165,16 @@ export function loadConfig(): Config {
  * a deployment that could take payments while unable to lock evidence must
  * not start.
  */
+/** REGISTRATION_MODE wins when set to a known value; otherwise prod is closed
+ *  and every other environment bootstraps. Opening prod is one env change. */
+export function registrationModeFrom(
+  raw: string | undefined,
+  envName: string,
+): 'open' | 'dev-bootstrap' | 'closed' {
+  if (raw === 'open' || raw === 'closed' || raw === 'dev-bootstrap') return raw;
+  return envName === 'prod' ? 'closed' : 'dev-bootstrap';
+}
+
 export function settlementsConfigured(cfg: Config): boolean {
   if (cfg.stripeSecretArn && !cfg.evidenceBucket) {
     throw new Error('STRIPE_SECRET_ARN is set but EVIDENCE_BUCKET is missing');
