@@ -322,7 +322,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (row) {
           notice = row.connected
             ? `${row.client_name} is connected and can work the switchboard for you.`
-            : `You authorised ${row.client_name}. It has not finished connecting yet; give it a moment and refresh.`;
+            : `You authorised ${row.client_name}. It has not finished connecting yet. If the new tab showed you a code, paste it back into ${row.client_name} where it is waiting for it; then refresh this page.`;
         }
       }
       return html(
