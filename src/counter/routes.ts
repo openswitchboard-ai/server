@@ -304,9 +304,31 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           };
         }),
       ];
+      // Sent here by the Authorize page after the agent's callback opened in
+      // its own tab. The agent proves it finished by exchanging its code for a
+      // token, so a fresh token for this client is the "connected" signal.
+      let notice: string | undefined;
+      const authorized = String((req.query as any)?.authorized ?? '');
+      if (/^[0-9a-f-]{36}$/i.test(authorized)) {
+        const c = await getPool().query(
+          `SELECT c.client_name,
+                  EXISTS (SELECT 1 FROM oauth_tokens t
+                           WHERE t.client_id = c.client_id AND t.account_id = $2
+                             AND t.created_at > now() - interval '15 minutes') AS connected
+             FROM oauth_clients c WHERE c.client_id = $1`,
+          [authorized, s.accountId],
+        );
+        const row = c.rows[0];
+        if (row) {
+          notice = row.connected
+            ? `${row.client_name} is connected and can work the switchboard for you.`
+            : `You authorised ${row.client_name}. It has not finished connecting yet; give it a moment and refresh.`;
+        }
+      }
       return html(
         reply,
         home.dashboardPage({
+          notice,
           firstName: profile.firstName || undefined,
           sharedProfile: profileIsFilled(profile)
             ? `${profile.firstName}, ${profile.locality}`
@@ -2393,7 +2415,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       return html(
         reply,
-        pages.authorizePage(v.client!.client_name, '/authorize', {}),
+        pages.authorizePage(v.client!.client_name, '/authorize', {}, v.client!.client_id),
       );
     });
 

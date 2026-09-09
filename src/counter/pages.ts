@@ -646,14 +646,14 @@ document.getElementById('pkapprove').addEventListener('click', async () => {
 </script>` : ''}`);
 }
 
-export function authorizePage(clientName: string, postPath: string, hidden: Record<string, string>): string {
+export function authorizePage(clientName: string, postPath: string, hidden: Record<string, string>, clientId = ''): string {
   const hiddenInputs = Object.entries(hidden)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join('\n');
   return layout('Authorize your agent', `
 <h1>Let this agent work the switchboard for you?</h1>
 <div class="headline"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
-<form method="POST" action="${esc(postPath)}" id="authorize-form">
+<form method="POST" action="${esc(postPath)}" id="authorize-form" data-client="${esc(clientId)}">
 ${hiddenInputs}
   <div class="actions">
   <button type="submit" name="decision" value="approve" formtarget="_blank">Authorize</button>
@@ -670,7 +670,10 @@ this tab comes back to your approval page.</p>
 // lands in the new tab the Authorize button opens; this tab has nothing left
 // to show, so it goes home. Cancel stays in this tab.
 document.getElementById('authorize-form').addEventListener('submit', function (e) {
-  if (e.submitter && e.submitter.value === 'approve') setTimeout(function () { location.assign('/'); }, 400);
+  if (e.submitter && e.submitter.value === 'approve') {
+    var id = this.getAttribute('data-client') || '';
+    setTimeout(function () { location.assign('/?authorized=' + encodeURIComponent(id)); }, 400);
+  }
 });
 </script>`);
 }
