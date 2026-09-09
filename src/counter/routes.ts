@@ -964,7 +964,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return reply.redirect(`/settlements/${refId}`, 303);
         }
         if (action === 'offer-accept') {
-          await acceptOfferByHuman(refId, s.accountId!, 'counter');
+          await acceptOfferByHuman(refId, s.accountId!, 'counter', cfg);
           return html(
             reply,
             pages.messagePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
@@ -2196,6 +2196,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           ? { check_every_minutes: Number(String(b.check_every_minutes).trim()) }
           : {}),
         ...(interruptFor.length ? { interrupt_for: interruptFor } : {}),
+        ...(b.runs_on_its_own ? { runs_on_its_own: String(b.runs_on_its_own) } : {}),
         ...(b.summarize ? { summarize: String(b.summarize) } : {}),
         ...(b.suggestion_appetite ? { suggestion_appetite: String(b.suggestion_appetite) } : {}),
         ...(b.quiet_hours ? { quiet_hours: String(b.quiet_hours) } : {}),

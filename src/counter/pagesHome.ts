@@ -130,7 +130,9 @@ ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${plain}
 <h2>Change it</h2>
 <form method="POST" action="/arrangement">
-  <label for="check_every_minutes">How often should your agents check? In minutes.</label>
+  <label class="check"><input type="checkbox" name="runs_on_its_own" value="on"${a.runs_on_its_own ? ' checked' : ''}>
+    My assistant runs on its own between our conversations. Tick this for an always-on agent; leave it clear for a chat assistant that only acts when you talk to it, and the switchboard will email you instead.</label>
+  <label for="check_every_minutes">How often should your agents check? In minutes. Needs the box above.</label>
   <input id="check_every_minutes" name="check_every_minutes" type="number" inputmode="numeric"
     min="${CHECK_EVERY_MINUTES_MIN}" max="${CHECK_EVERY_MINUTES_MAX}" step="1"
     value="${esc(Number.isFinite(a.check_every_minutes as number) ? String(a.check_every_minutes) : '')}"
