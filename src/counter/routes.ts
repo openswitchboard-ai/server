@@ -440,21 +440,26 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       }
       let account: any = await findAccountByEmail(result.email!);
       if (!account) {
-        if (result.purpose === 'register') {
-          if (cfg.registrationMode === 'closed') return html(reply, pages.registrationClosedPage());
-          account = { id: (await ops.createPendingAccount(result.email!)).id };
-        } else {
+        // A verified address with no account behind it opens one, whichever
+        // door the person came through. Someone sent to "sign in" by their
+        // agent has just proved the address with this code; asking them to
+        // register and prove it again with a second code was a dead end
+        // (the 2026-09-09 rehearsal walked into it). Only a closed deployment
+        // still says no.
+        if (cfg.registrationMode === 'closed') {
+          if (result.purpose === 'register') return html(reply, pages.registrationClosedPage());
           return html(
             reply,
             pages.messagePage(
               'No account for that email',
               `<p>There is no account under that address yet.</p>`,
-              '/register',
-              'Open an account',
+              '/',
+              'Back',
             ),
             404,
           );
         }
+        account = { id: (await ops.createPendingAccount(result.email!)).id };
       }
       const existing = await sess.loadSession(req);
       let s: Session;
