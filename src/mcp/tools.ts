@@ -6,6 +6,7 @@
 import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
+import { getHearsVia } from '../domain/accounts.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
@@ -233,7 +234,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's listings and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, any offer on the table, whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's listings and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -381,7 +382,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'standing_arrangement',
     description:
-      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — how often to check (`check_every_minutes`, a number of minutes with a 30-minute floor), what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. The arrangement is remembered by the switchboard and handed to every agent on every check_in sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or listing content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
+      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — whether you run between conversations (`runs_on_its_own`), how often to check (`check_every_minutes`, a number of minutes with a 30-minute floor, and only alongside `runs_on_its_own: true`), what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on an agent that is not there; say nothing about a cadence and the switchboard emails them instead. The arrangement is remembered by the switchboard and handed to every agent on every check_in sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or listing content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -390,12 +391,17 @@ export const TOOLS: ToolDef[] = [
           type: 'object',
           description: "Required for 'set'. The complete new arrangement; it replaces the old one.",
           properties: {
+            runs_on_its_own: {
+              type: 'boolean',
+              description:
+                'True only if you run between conversations: you can wake yourself on a schedule and reach your human without waiting to be spoken to. False (or left out) if you only exist while your human is typing to you. It is the one setting that decides who carries the news — say false and the switchboard emails your human about anything that needs them.',
+            },
             check_every_minutes: {
               type: 'integer',
               minimum: arrangement.CHECK_EVERY_MINUTES_MIN,
               maximum: arrangement.CHECK_EVERY_MINUTES_MAX,
               description:
-                'How often to check, as a number of MINUTES. Agree it with your human in words and write the number: "twice a day" is 720, "every couple of hours" is 120. The floor is 30 — the switchboard refuses anything more often than every 30 minutes — and the ceiling is 10080 (a week). Leave it out and you check only when your human asks.',
+                'How often to check, as a number of MINUTES, and only alongside runs_on_its_own: true. Agree it with your human in words and write the number: "twice a day" is 720, "every couple of hours" is 120. The floor is 30 — the switchboard refuses anything more often than every 30 minutes — and the ceiling is 10080 (a week). Leave it out and you check only when your human asks.',
             },
             interrupt_for: {
               type: 'array',
@@ -478,9 +484,15 @@ function protocolError(payload: ProtocolError): ToolResult {
   };
 }
 
-function invalidInput(message: string): ToolResult {
+function invalidInput(message: string, humanAction?: string): ToolResult {
+  const payload = {
+    error: 'invalid_input',
+    message,
+    ...(humanAction ? { human_action: humanAction } : {}),
+  };
   return {
-    content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_input', message }) }],
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload,
     isError: true,
   };
 }
@@ -583,7 +595,27 @@ export async function dispatchTool(
         // old visibility spelling are lifted to the wire words here, BEFORE
         // validation — the protocol document only admits the wire words, and
         // the domain translates to its own column values after validating.
-        return ok(await cards.publishIntent(cfg, accountId, wireListing(args?.listing ?? args?.card)));
+        const posted = await cards.publishIntent(
+          cfg,
+          accountId,
+          wireListing(args?.listing ?? args?.card),
+        );
+        // Matching runs in seconds, so the useful thing to say right after
+        // posting is "check again in a minute" — and what comes after that
+        // depends on how this human hears about the switchboard. An agent that
+        // only wakes when spoken to leaves the email to do the work; an agent
+        // that runs between conversations looks again itself.
+        const hearsVia = await getHearsVia(accountId);
+        return ok({
+          ...posted,
+          note: {
+            text:
+              hearsVia === 'email'
+                ? 'It takes a minute or two to be matched. Ask me again then, or I will email you.'
+                : 'It takes a minute or two to be matched; look again after that.',
+            provenance: 'switchboard-system',
+          },
+        });
       }
       case 'list_intents':
         return ok({ intents: await cards.listIntents(accountId) });
@@ -663,7 +695,7 @@ export async function dispatchTool(
         }
         if (action !== 'set') return invalidInput("standing_arrangement action is 'get' or 'set'");
         const checked = arrangement.validateArrangement(args?.arrangement);
-        if (!checked.ok) return invalidInput(checked.error);
+        if (!checked.ok) return invalidInput(checked.error, checked.human_action);
         const saved = await arrangement.saveArrangement(accountId, checked.value, 'agent-attested');
         return ok({
           arrangement: checked.value,
@@ -671,6 +703,9 @@ export async function dispatchTool(
           note: {
             text:
               'Saved. Every agent your human connects will be handed this on its next check, and your human can see and change it on their approval page.' +
+              (saved.hearsViaAssistant
+                ? ' You run between conversations and you check on a schedule, so the switchboard now has you down as how your human hears about all this: the message nudges stop, and you are the one who brings them the news.'
+                : '') +
               (saved.matchEmailsTurnedOff
                 ? ' Because you check on a schedule now, the switchboard has turned off the emails it would send them when someone comes forward — you are the messenger; a tap on their page turns them back on. Tell them so.'
                 : ''),
