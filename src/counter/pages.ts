@@ -653,16 +653,26 @@ export function authorizePage(clientName: string, postPath: string, hidden: Reco
   return layout('Authorize your agent', `
 <h1>Let this agent work the switchboard for you?</h1>
 <div class="headline"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
-<form method="POST" action="${esc(postPath)}">
+<form method="POST" action="${esc(postPath)}" id="authorize-form">
 ${hiddenInputs}
   <div class="actions">
-  <button type="submit" name="decision" value="approve">Authorize</button>
+  <button type="submit" name="decision" value="approve" formtarget="_blank">Authorize</button>
   <button type="submit" name="decision" value="deny" class="secondary">Cancel</button>
   </div>
 </form>
 <p class="small muted">It can post wants &amp; haves as cards, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
-waits for you, here on your approval page.</p>`);
+waits for you, here on your approval page.</p>
+<p class="small muted">Authorising hands the agent its key in a new tab, which you can close;
+this tab comes back to your approval page.</p>
+<script>
+// The agent's callback (often a localhost page the agent is listening on)
+// lands in the new tab the Authorize button opens; this tab has nothing left
+// to show, so it goes home. Cancel stays in this tab.
+document.getElementById('authorize-form').addEventListener('submit', function (e) {
+  if (e.submitter && e.submitter.value === 'approve') setTimeout(function () { location.assign('/'); }, 400);
+});
+</script>`);
 }
 
 export function registrationClosedPage(): string {
