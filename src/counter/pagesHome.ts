@@ -87,13 +87,14 @@ const APPETITE_LABELS: Record<string, string> = {
 
 export function arrangementPage(
   a: Arrangement,
+  // `updated` is localTime() markup, not plain text: it goes in unescaped.
   opts: { error?: string; notice?: string; updated?: string } = {},
 ): string {
   const lines = arrangementInPlainWords(a);
   const plain = lines.length
     ? `<div class="facts">${lines
         .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v" style="font-size:1.05rem">${esc(l.v)}</div></div>`)
-        .join('')}</div>${opts.updated ? `<p class="small muted">Last changed ${esc(opts.updated)}.</p>` : ''}`
+        .join('')}</div>${opts.updated ? `<p class="small muted">Last changed ${opts.updated}.</p>` : ''}`
     : `<div class="note">Nothing is set yet. Until it is, each agent works this
 out with you again from scratch every time it starts up.</div>`;
 
@@ -176,6 +177,7 @@ export interface DashboardWindowItem {
   cardId: string;
   category: string;
   type: string;
+  /** localTime() markup: the moment the window shuts, in the reader's clock. */
   until: string;
   interestedParties: number;
 }
@@ -235,7 +237,7 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
 <span class="badge ${w.type === 'WANT' ? 'want' : 'have'}">${esc(w.type)}</span>
 <span class="cat">${esc(w.category)}</span></div>
 <div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
- — window open until ${esc(w.until)}. Offers and interest keep arriving until then.</div>
+ — window open until ${w.until}. Offers and interest keep arriving until then.</div>
 <form method="POST" action="/collect/${esc(w.cardId)}/close">
   <button type="submit" class="secondary">Close early &amp; choose now</button>
 </form></div>`,
@@ -607,6 +609,7 @@ export interface MatchOfferItem {
   state: string;
   authoredByMe?: 'human' | 'agent';
   note?: string;
+  /** localTime() markup: when the offer lapses, in the reader's clock. */
   expires: string;
 }
 
@@ -633,7 +636,7 @@ export function matchOffersPage(v: MatchOffersView, error?: string, notice?: str
           (o) => `<div class="card-row"><div class="top">
 <span class="badge ${o.mine ? 'have' : 'want'}">${o.mine ? 'YOURS' : 'THEIRS'}</span>
 <span class="badge state">${esc(o.state)}</span></div>
-<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${esc(o.expires)}${
+<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${o.expires}${
             o.mine && o.authoredByMe
               ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
               : ''
@@ -746,6 +749,7 @@ export interface AgentKeyItem {
   keyId: string;
   name: string;
   created: string;
+  /** All three are localTime(d, 'day') markup, inserted without esc(). */
   lastUsed?: string;
   expires: string;
 }
@@ -763,7 +767,7 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
         .map(
           (k) => `<div class="card-row"><div class="top">
 <span class="badge state">KEY</span><span class="cat">${esc(k.name)}</span></div>
-<div class="kv">made ${esc(k.created)} · ${k.lastUsed ? `last used ${esc(k.lastUsed)}` : 'never used yet'} · lapses ${esc(k.expires)}</div>
+<div class="kv">made ${k.created} · ${k.lastUsed ? `last used ${k.lastUsed}` : 'never used yet'} · lapses ${k.expires}</div>
 <div class="row-actions">
 <form method="POST" action="/agent-keys/revoke">
   <input type="hidden" name="key_id" value="${esc(k.keyId)}">
@@ -822,7 +826,7 @@ page is the only place it is ever shown.</p>
 gets away from you, revoke it and make another.</p>
 <p class="small muted">Your agent sends it as a header:</p>
 <div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
-<p class="small muted">It lapses on ${esc(v.expires)}. Revoke it any time from
+<p class="small muted">It lapses on ${v.expires}. Revoke it any time from
 your keys page.</p>
 <a class="btn secondary" href="/agent-keys">Back to my keys</a>
 <script>

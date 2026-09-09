@@ -233,6 +233,32 @@ label.modeopt span { grid-column:2; }
 .kill h2 { margin-top:0; }
 `;
 
+/**
+ * Every <time data-local> the pages print starts as UTC and ends up in the
+ * reader's own timezone here. No suffix is added: once it is their clock, the
+ * words are theirs too.
+ */
+const LOCAL_TIME_SCRIPT = `<script>
+(function () {
+  var shapes = {
+    minute: { dateStyle: 'medium', timeStyle: 'short' },
+    day: { weekday: 'long', day: 'numeric', month: 'long' }
+  };
+  var nodes = document.querySelectorAll('time[data-local]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    var at = new Date(el.getAttribute('datetime'));
+    if (isNaN(at.getTime())) continue;
+    try {
+      el.textContent = new Intl.DateTimeFormat(
+        undefined,
+        shapes[el.getAttribute('data-local')] || shapes.minute
+      ).format(at);
+    } catch (e) {}
+  }
+})();
+</script>`;
+
 export function layout(title: string, body: string, opts: { head?: string } = {}): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -251,7 +277,8 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
 </header>
 ${body}
 <footer>Everything agents must never do, you do here.<br>openswitchboard.ai</footer>
-</div></body></html>`;
+</div>
+${LOCAL_TIME_SCRIPT}</body></html>`;
 }
 
 export const errBox = (msg?: string) => (msg ? `<div class="err">${esc(msg)}</div>` : '');
@@ -687,13 +714,17 @@ export interface SettlementView {
    *  buyer confirming. Changes what the retry block says. */
   autoReleased?: boolean;
   /** evidence-locked: the seller's handover and the clock it started. Both
-   *  sides see the same two dates. */
+   *  sides see the same two dates.
+   *
+   *  Every "…Day" field on this view is localTime(d, 'day') output — a
+   *  <time data-local="day"> element the browser rewrites into the reader's
+   *  own clock — so the page inserts them without esc(). */
   handover?: {
     /** The seller's first name where it is known, "The seller" otherwise. */
     sellerName: string;
-    /** "Saturday 6 September" — the day the seller declared the handover. */
+    /** The day the seller declared the handover, as a localised <time>. */
     onDay: string;
-    /** "Saturday 13 September" — the day the payment goes on its own. */
+    /** The day the payment goes on its own, as a localised <time>. */
     byDay: string;
   };
   // --- the frozen half -----------------------------------------------------
@@ -708,14 +739,14 @@ export interface SettlementView {
   canMarkReturned: boolean;
   returnTracking?: string;
   returnedOnDay?: string;
-  /** "Saturday 20 September" — when silence sends the money back anyway. */
+  /** When silence sends the money back anyway, as a localised <time>. */
   returnSilenceByDay?: string;
   /** seller: the buyer says it is back with them. */
   canConfirmReturn: boolean;
-  /** "Saturday 13 September" — the seller's last day to add tracking on a
-   *  dispute that says nothing arrived. */
+  /** The seller's last day to add tracking on a dispute that says nothing
+   *  arrived, as a localised <time>. */
   trackingGraceByDay?: string;
-  /** "Saturday 20 September" — the day the default rule decides. */
+  /** The day the default rule decides, as a localised <time>. */
   deadlockByDay?: string;
   /** The split on the table, and who has said yes to it. */
   split?: {
@@ -741,6 +772,21 @@ export function plainDay(d: Date): string {
     month: 'long',
     timeZone: 'UTC',
   }).format(d);
+}
+
+/**
+ * A moment on a human page, in the reader's own clock. The browser rewrites
+ * the text on load (see layout()); what the server prints inside is the
+ * fallback, so a page read with no JavaScript still says a true thing, in UTC.
+ *
+ * Returns trusted, server-built HTML: put it into a template directly, never
+ * through esc(). Agent-facing wording stays plain text elsewhere.
+ */
+export function localTime(d: Date | string, mode: 'minute' | 'day' = 'minute'): string {
+  const at = d instanceof Date ? d : new Date(d);
+  const iso = at.toISOString();
+  const fallback = mode === 'minute' ? iso.replace('T', ' ').slice(0, 16) + ' UTC' : plainDay(at);
+  return `<time datetime="${iso}" data-local="${mode}">${esc(fallback)}</time>`;
 }
 
 const STATE_LINES: Record<string, string> = {
@@ -777,7 +823,9 @@ function pinField(elevated: boolean, which: string): string {
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
-  const facts = [
+  // `raw` marks a value the server built as HTML (a localised <time>); every
+  // other value is escaped as before.
+  const factRows: { k: string; v: string; raw?: boolean }[] = [
     { k: 'For', v: v.category },
     { k: 'State', v: v.state },
     { k: 'Your side', v: v.role === 'buyer' ? 'you pay' : 'you are paid' },
@@ -792,8 +840,8 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
       : [{ k: 'The seller receives', v: `${v.amount} in full` }]),
     ...(v.handover
       ? [
-          { k: 'Handed over', v: v.handover.onDay },
-          { k: 'Releases on its own', v: v.handover.byDay },
+          { k: 'Handed over', v: v.handover.onDay, raw: true },
+          { k: 'Releases on its own', v: v.handover.byDay, raw: true },
         ]
       : []),
     ...(v.disputeGround
@@ -806,9 +854,15 @@ export function settlementPage(v: SettlementView, error?: string, notice?: strin
       : []),
     ...(v.deliveryTracking ? [{ k: 'Sent with tracking', v: v.deliveryTracking }] : []),
     ...(v.returnTracking ? [{ k: 'Sent back with tracking', v: v.returnTracking }] : []),
-    ...(v.deadlockByDay && v.inDispute ? [{ k: 'The rule decides on', v: v.deadlockByDay }] : []),
-  ]
-    .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
+    ...(v.deadlockByDay && v.inDispute
+      ? [{ k: 'The rule decides on', v: v.deadlockByDay, raw: true }]
+      : []),
+  ];
+  const facts = factRows
+    .map(
+      (f) =>
+        `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${f.raw ? f.v : esc(f.v)}</div></div>`,
+    )
     .join('');
   // What the person can do right now, above everything describing it.
   const blocks: string[] = [];
@@ -851,11 +905,11 @@ be paid once for this settlement.</p>
     const h = v.handover;
     blocks.push(
       v.role === 'buyer'
-        ? `<p class="lead">${esc(h.sellerName)} says it was handed over on ${esc(h.onDay)}.
+        ? `<p class="lead">${esc(h.sellerName)} says it was handed over on ${h.onDay}.
 Say it arrived as agreed when you're happy, or say something is wrong. If you do neither, the
-payment releases to ${esc(h.sellerName)} on its own on ${esc(h.byDay)}.</p>`
-        : `<p class="lead">You declared the handover on ${esc(h.onDay)}. The buyer has until
-${esc(h.byDay)} to say it arrived as agreed or that something is wrong; if they do neither, the
+payment releases to ${esc(h.sellerName)} on its own on ${h.byDay}.</p>`
+        : `<p class="lead">You declared the handover on ${h.onDay}. The buyer has until
+${h.byDay} to say it arrived as agreed or that something is wrong; if they do neither, the
 payment is released to you on that day.</p>`,
     );
   }
@@ -934,7 +988,7 @@ evfile.addEventListener('change', async () => {
   // happening now, then what they can do about it.
   if (v.inDispute) {
     const clock = v.deadlockByDay
-      ? ` If neither of you does anything, the payment goes on ${esc(v.deadlockByDay)} to whichever
+      ? ` If neither of you does anything, the payment goes on ${v.deadlockByDay} to whichever
 side can show where the item went: the seller with tracking that shows it was delivered and
 nothing sent back, the buyer if it went back tracked, and the buyer if neither of you has
 tracking.`
@@ -946,10 +1000,10 @@ the two of you agree how to settle it, the item goes back, or the rule below dec
     blocks.push(
       v.role === 'seller'
         ? `<p class="lead">The buyer says it never arrived. Add the tracking that shows it was
-delivered by ${esc(v.trackingGraceByDay)}; with nothing added by then, the agreed amount goes back
+delivered by ${v.trackingGraceByDay}; with nothing added by then, the agreed amount goes back
 to them.</p>`
         : `<p class="lead">You have said it never arrived. The seller has until
-${esc(v.trackingGraceByDay)} to add tracking showing it was delivered; with nothing added by then,
+${v.trackingGraceByDay} to add tracking showing it was delivered; with nothing added by then,
 ${esc(v.amount)} comes back to you.</p>`,
     );
   }
@@ -979,11 +1033,11 @@ anyway. Postage is between the two of you — the only money held here is ${esc(
   }
   if (v.returnedOnDay && !v.canMarkReturned) {
     blocks.push(
-      `<p class="lead">Sent back on ${esc(v.returnedOnDay)}${
+      `<p class="lead">Sent back on ${v.returnedOnDay}${
         v.returnTracking ? `, tracking ${esc(v.returnTracking)}` : ''
       }.${
         v.returnSilenceByDay
-          ? ` If the seller says nothing by ${esc(v.returnSilenceByDay)}, ${esc(v.amount)} goes back to the buyer anyway.`
+          ? ` If the seller says nothing by ${v.returnSilenceByDay}, ${esc(v.amount)} goes back to the buyer anyway.`
           : ''
       }</p>`,
     );
@@ -1041,7 +1095,7 @@ that allows for it, and postage itself is between the two of you.</p>
 you then have this page to agree a split on, or to send the item back on, and after fourteen
 days the payment goes to whichever side can show where the item went.${
           v.handover
-            ? ` It also stops the clock, so nothing is released on ${esc(v.handover.byDay)}.`
+            ? ` It also stops the clock, so nothing is released on ${v.handover.byDay}.`
             : ''
         } The introductory fee and the card processing stay paid whatever happens, because the card
 processor keeps its own fee on a refund.</p>

@@ -334,7 +334,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             cardId: w.card_id,
             category: categoryLeafLabel(w.category),
             type: w.type,
-            until: new Date(w.until).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+            until: pages.localTime(w.until),
             interestedParties: w.interested_parties,
           })),
         }),
@@ -1010,8 +1010,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             : undefined;
         handover = {
           sellerName: sellerName ?? 'The seller',
-          onDay: pages.plainDay(new Date(row.handed_over_at)),
-          byDay: pages.plainDay(new Date(row.auto_release_at)),
+          onDay: pages.localTime(row.handed_over_at, 'day'),
+          byDay: pages.localTime(row.auto_release_at, 'day'),
         };
       }
       return {
@@ -1048,26 +1048,28 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         deliveryTracking: row.delivery_tracking ?? undefined,
         canMarkReturned: role === 'buyer' && inDispute && !row.returned_at,
         returnTracking: row.return_tracking ?? undefined,
-        returnedOnDay: row.returned_at ? pages.plainDay(new Date(row.returned_at)) : undefined,
+        returnedOnDay: row.returned_at ? pages.localTime(row.returned_at, 'day') : undefined,
         returnSilenceByDay: row.returned_at
-          ? pages.plainDay(
+          ? pages.localTime(
               new Date(
                 new Date(row.returned_at).getTime() +
                   cfg.settlementReturnSilenceDays * 86_400_000,
               ),
+              'day',
             )
           : undefined,
         canConfirmReturn: role === 'seller' && inDispute && !!row.returned_at && !row.return_received_at,
         trackingGraceByDay:
           row.disputed_at && row.dispute_ground === 'not_arrived' && !row.delivery_tracking
-            ? pages.plainDay(
+            ? pages.localTime(
                 new Date(
                   new Date(row.disputed_at).getTime() +
                     cfg.settlementTrackingGraceDays * 86_400_000,
                 ),
+                'day',
               )
             : undefined,
-        deadlockByDay: row.deadlock_at ? pages.plainDay(new Date(row.deadlock_at)) : undefined,
+        deadlockByDay: row.deadlock_at ? pages.localTime(row.deadlock_at, 'day') : undefined,
         // The split on the table, if there is one, in the same money words as
         // every other figure on this page.
         split:
@@ -1836,7 +1838,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           state: o.state,
           authoredByMe: o.proposer_account === accountId ? o.authored_by : undefined,
           note: o.message?.text,
-          expires: new Date(o.expiry).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+          expires: pages.localTime(o.expiry),
         })),
       };
     };
@@ -1957,7 +1959,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // ------------------------------------------------------------------
     const agentKeysView = async (accountId: string, s: Session): Promise<home.AgentKeysView> => {
       const keys = await agentKeys.listAgentKeys(accountId);
-      const when = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : undefined);
+      const when = (d: Date | null) => (d ? pages.localTime(d, 'day') : undefined);
       return {
         keys: keys.map((k) => ({
           keyId: k.keyId,
@@ -2021,7 +2023,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         home.agentKeyCreatedPage({
           name: made.row.name,
           token: made.token,
-          expires: made.row.expiresAt.toISOString().slice(0, 10),
+          expires: pages.localTime(made.row.expiresAt, 'day'),
         }),
       );
     });
@@ -2098,7 +2100,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     const arrangementView = async (accountId: string) => ({
       arrangement: await readArrangement(accountId),
       updated: await readArrangementUpdatedAt(accountId).then((d) =>
-        d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : undefined,
+        d ? pages.localTime(d) : undefined,
       ),
     });
 

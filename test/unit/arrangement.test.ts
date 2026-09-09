@@ -40,6 +40,7 @@ import { writeConsentEvent } from '../../src/crypto.js';
 import * as db from '../../src/db.js';
 import * as arrangement from '../../src/domain/arrangement.js';
 import * as home from '../../src/counter/pagesHome.js';
+import * as pages from '../../src/counter/pages.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
@@ -459,12 +460,14 @@ describe('every check_in sweep carries it', () => {
 // ---------------------------------------------------------------------------
 describe('the page the human reads it on', () => {
   it('says it back in plain words', () => {
-    const page = home.arrangementPage(FULL, { updated: '2026-09-02 04:00 UTC' });
+    const page = home.arrangementPage(FULL, { updated: pages.localTime('2026-09-02T04:00:00.000Z') });
     expect(page).toContain('How your agents behave');
     expect(page).toContain('every 12 hours');
     expect(page).toContain('a new match');
     expect(page).toContain('Mention something now and then');
-    expect(page).toContain('Last changed 2026-09-02 04:00 UTC');
+    expect(page).toContain(
+      'Last changed <time datetime="2026-09-02T04:00:00.000Z" data-local="minute">2026-09-02 04:00 UTC</time>',
+    );
   });
 
   it('says when nothing is set, and offers no clear control then', () => {
@@ -523,7 +526,7 @@ describe('the page the human reads it on', () => {
   it('passes the banned-phrase lint and never says "the counter"', () => {
     for (const [name, htmlBody] of [
       ['arrangement-empty', home.arrangementPage({})],
-      ['arrangement-filled', home.arrangementPage(FULL, { updated: '2026-09-02 04:00 UTC' })],
+      ['arrangement-filled', home.arrangementPage(FULL, { updated: pages.localTime('2026-09-02T04:00:00.000Z') })],
       ['arrangement-notice', home.arrangementPage(FULL, { notice: 'Saved.' })],
       ['arrangement-error', home.arrangementPage({}, { error: 'Quiet hours runs past 120 characters. A short line is enough.' })],
     ] as const) {
