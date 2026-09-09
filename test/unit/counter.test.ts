@@ -328,12 +328,103 @@ const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.Settl
   ...over,
 });
 
+/** Every day on these pages arrives as localTime() markup: the browser prints
+ *  the reader's own clock, and the UTC day inside is what anything else sees. */
+const DAY = (iso: string) => cpages.localTime(iso, 'day');
+const SEP_5 = DAY('2026-09-05T00:00:00.000Z');
+const SEP_12 = DAY('2026-09-12T00:00:00.000Z');
+const SEP_19 = DAY('2026-09-19T00:00:00.000Z');
+
 /** The buyer's clock, as the page is handed it while the window runs. */
 const HANDOVER = {
   sellerName: 'Priya',
-  onDay: 'Saturday 5 September',
-  byDay: 'Saturday 12 September',
+  onDay: SEP_5,
+  byDay: SEP_12,
 };
+
+// ---------------------------------------------------------------------------
+// Times on the human pages belong to whoever is reading them. The server
+// prints UTC and marks the element; the browser rewrites it into the reader's
+// own clock. Nothing agent-facing changes — an agent relays words, not markup.
+// ---------------------------------------------------------------------------
+describe('local times', () => {
+  it('a minute carries the ISO stamp and a UTC fallback', () => {
+    expect(cpages.localTime('2026-09-09T10:28:00.000Z')).toBe(
+      '<time datetime="2026-09-09T10:28:00.000Z" data-local="minute">2026-09-09 10:28 UTC</time>',
+    );
+  });
+
+  it('a day falls back to the day in plain words', () => {
+    expect(cpages.localTime(new Date('2026-09-13T00:00:00.000Z'), 'day')).toBe(
+      '<time datetime="2026-09-13T00:00:00.000Z" data-local="day">Sunday 13 September</time>',
+    );
+  });
+
+  it('every page carries the one script that localises them', () => {
+    const html = cpages.landingPage();
+    expect(html).toContain("document.querySelectorAll('time[data-local]')");
+    expect(html).toContain('Intl.DateTimeFormat(');
+    // The reader's clock needs no label, so none is appended.
+    expect(html).not.toContain("+ ' UTC'");
+  });
+
+  it('the pages print the markup rather than escaping it', () => {
+    const settlement = cpages.settlementPage(
+      settlementView({ state: 'evidence-locked', canConfirm: true, handover: HANDOVER }),
+    );
+    expect(settlement).toContain('<time datetime="2026-09-05T00:00:00.000Z" data-local="day">');
+    expect(settlement).not.toContain('&lt;time');
+
+    const dashboard = chome.dashboardPage({
+      killSwitchOn: false,
+      cardCounts: { total: 1, published: 1, pending: 0 },
+      pendingApprovals: [],
+      matches: [],
+      collectionWindows: [
+        {
+          cardId: 'c-1',
+          category: LABEL,
+          type: 'WANT',
+          until: cpages.localTime('2026-09-09T10:28:00.000Z'),
+          interestedParties: 2,
+        },
+      ],
+    });
+    expect(dashboard).toContain(
+      'window open until <time datetime="2026-09-09T10:28:00.000Z" data-local="minute">2026-09-09 10:28 UTC</time>',
+    );
+  });
+
+  it('the offer and arrangement pages do the same', () => {
+    const offers = chome.matchOffersPage({
+      matchId: 'm-1',
+      cardId: 'c-1',
+      category: LABEL,
+      type: 'WANT',
+      mode: 'assisted',
+      canOffer: true,
+      offers: [
+        {
+          amount: '620 AUD',
+          mine: false,
+          state: 'open',
+          expires: cpages.localTime('2026-09-09T10:28:00.000Z'),
+        },
+      ],
+    });
+    expect(offers).toContain(
+      'good until <time datetime="2026-09-09T10:28:00.000Z" data-local="minute">2026-09-09 10:28 UTC</time>',
+    );
+
+    const arrangement = chome.arrangementPage(
+      { check_every_minutes: 720 },
+      { updated: cpages.localTime('2026-09-02T04:00:00.000Z') },
+    );
+    expect(arrangement).toContain(
+      'Last changed <time datetime="2026-09-02T04:00:00.000Z" data-local="minute">2026-09-02 04:00 UTC</time>',
+    );
+  });
+});
 
 describe('counter pages: copy-cull render suite', () => {
   const allPages = (): { name: string; html: string }[] => [
@@ -439,7 +530,7 @@ describe('counter pages: copy-cull render suite', () => {
           disputeGround: 'not_as_described',
           canProposeSplit: true,
           canMarkReturned: true,
-          deadlockByDay: 'Saturday 19 September',
+          deadlockByDay: SEP_19,
         }),
       ),
     },
@@ -454,8 +545,8 @@ describe('counter pages: copy-cull render suite', () => {
           canAddTracking: true,
           canProposeSplit: true,
           canApproveSplit: true,
-          trackingGraceByDay: 'Saturday 12 September',
-          deadlockByDay: 'Saturday 19 September',
+          trackingGraceByDay: SEP_12,
+          deadlockByDay: SEP_19,
           split: {
             refundMinor: 2000,
             releaseMinor: 6765,
@@ -513,7 +604,7 @@ describe('counter pages: copy-cull render suite', () => {
         ],
         matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }],
         collectionWindows: [
-          { cardId: 'c-1', category: LABEL, type: 'WANT', until: '2026-09-01 00:00 UTC', interestedParties: 2 },
+          { cardId: 'c-1', category: LABEL, type: 'WANT', until: cpages.localTime('2026-09-01T00:00:00.000Z'), interestedParties: 2 },
         ],
       }),
     },
@@ -608,9 +699,9 @@ describe('counter pages: copy-cull render suite', () => {
             {
               keyId: 'k-1',
               name: 'the laptop agent',
-              created: '2026-09-01',
-              lastUsed: '2026-09-02',
-              expires: '2026-11-30',
+              created: DAY('2026-09-01T00:00:00.000Z'),
+              lastUsed: DAY('2026-09-02T00:00:00.000Z'),
+              expires: DAY('2026-11-30T00:00:00.000Z'),
             },
           ],
           elevated: false,
@@ -624,7 +715,7 @@ describe('counter pages: copy-cull render suite', () => {
       html: chome.agentKeyCreatedPage({
         name: 'the laptop agent',
         token: 'osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU',
-        expires: '2026-11-30',
+        expires: DAY('2026-11-30T00:00:00.000Z'),
       }),
     },
     { name: 'unsub', html: chome.unsubPage('osb_em_tok') },
@@ -677,22 +768,22 @@ describe('counter pages: copy-cull render suite', () => {
         handover: HANDOVER,
       }),
     );
-    expect(html).toContain('Priya says it was handed over on Saturday 5 September.');
+    expect(html).toContain(`Priya says it was handed over on ${SEP_5}.`);
     expect(html).toContain('Say it arrived as agreed when you\'re happy, or say something is wrong.');
-    expect(html).toContain('payment releases to Priya on its own on Saturday 12 September');
+    expect(html).toContain(`payment releases to Priya on its own on ${SEP_12}`);
     // The two dates are on the facts list too, in the same words.
     expect(html).toContain('Handed over');
     expect(html).toContain('Releases on its own');
     // And the fold says the clock stops.
-    expect(html).toContain('nothing is released on Saturday 12 September');
+    expect(html).toContain(`nothing is released on ${SEP_12}`);
   });
 
   it('the seller sees the same clock, from their own side', () => {
     const html = cpages.settlementPage(
       settlementView({ role: 'seller', state: 'evidence-locked', handover: HANDOVER }),
     );
-    expect(html).toContain('You declared the handover on Saturday 5 September.');
-    expect(html).toContain('until\nSaturday 12 September');
+    expect(html).toContain(`You declared the handover on ${SEP_5}.`);
+    expect(html).toContain(`until\n${SEP_12}`);
     // The seller's own name is never read back to them.
     expect(html).not.toContain('Priya');
   });
@@ -726,11 +817,11 @@ describe('counter pages: copy-cull render suite', () => {
         inDispute: true,
         canProposeSplit: true,
         disputeGround: 'not_as_described',
-        deadlockByDay: 'Saturday 19 September',
+        deadlockByDay: SEP_19,
       }),
     );
     expect(html).toContain('The payment is on hold');
-    expect(html).toContain('the payment goes on Saturday 19 September');
+    expect(html).toContain(`the payment goes on ${SEP_19}`);
     expect(html).toContain('whichever\nside can show where the item went');
     expect(html).toContain('The rule decides on');
   });
@@ -744,13 +835,13 @@ describe('counter pages: copy-cull render suite', () => {
         disputeGround: 'not_arrived',
         canAddTracking: true,
         canProposeSplit: true,
-        trackingGraceByDay: 'Saturday 12 September',
-        deadlockByDay: 'Saturday 19 September',
+        trackingGraceByDay: SEP_12,
+        deadlockByDay: SEP_19,
       }),
     );
     expect(html).toContain('<h2>Add tracking</h2>');
     expect(html).toContain('The buyer says it never arrived.');
-    expect(html).toContain('delivered by Saturday 12 September');
+    expect(html).toContain(`delivered by ${SEP_12}`);
   });
 
   it('the buyer sends it back tracked, and is told what the seller has to do', () => {
@@ -776,16 +867,16 @@ describe('counter pages: copy-cull render suite', () => {
         inDispute: true,
         canConfirmReturn: true,
         canProposeSplit: true,
-        returnedOnDay: 'Saturday 12 September',
+        returnedOnDay: SEP_12,
         returnTracking: 'AP 7XY441',
-        returnSilenceByDay: 'Saturday 19 September',
+        returnSilenceByDay: SEP_19,
       }),
     );
     expect(html).toContain("<h2>I've got it back</h2>");
     expect(html).toContain('sends 87.65 AUD back to the buyer');
     expect(html).toContain('processor keeps its own fee on a refund');
-    expect(html).toContain('Sent back on Saturday 12 September');
-    expect(html).toContain('says nothing by Saturday 19 September');
+    expect(html).toContain(`Sent back on ${SEP_12}`);
+    expect(html).toContain(`says nothing by ${SEP_19}`);
   });
 
   it('a split on the table shows both figures and who has agreed', () => {

@@ -26,6 +26,7 @@ import { authenticate, AGENT_KEY_PREFIX } from '../../src/auth/oauth.js';
 import * as agentKeys from '../../src/domain/agentKeys.js';
 import * as ops from '../../src/domain/counterOps.js';
 import * as chome from '../../src/counter/pagesHome.js';
+import * as cpages from '../../src/counter/pages.js';
 import { writeConsentEvent } from '../../src/crypto.js';
 import * as db from '../../src/db.js';
 import type { Config } from '../../src/config.js';
@@ -406,6 +407,8 @@ describe('issuance route: signed-in session plus a PIN ceremony', () => {
 });
 
 describe('agent key pages: copy', () => {
+  // The page is handed localised days, the same as every other human page.
+  const DAY = (day: string) => cpages.localTime(`${day}T00:00:00.000Z`, 'day');
   const rendered = [
     {
       name: 'agent-keys-empty',
@@ -419,11 +422,16 @@ describe('agent key pages: copy', () => {
             {
               keyId: 'k-1',
               name: 'the laptop agent',
-              created: '2026-09-01',
-              lastUsed: '2026-09-02',
-              expires: '2026-11-30',
+              created: DAY('2026-09-01'),
+              lastUsed: DAY('2026-09-02'),
+              expires: DAY('2026-11-30'),
             },
-            { keyId: 'k-2', name: 'the phone agent', created: '2026-09-01', expires: '2026-11-30' },
+            {
+              keyId: 'k-2',
+              name: 'the phone agent',
+              created: DAY('2026-09-01'),
+              expires: DAY('2026-11-30'),
+            },
           ],
           elevated: true,
           atLimit: false,
@@ -444,7 +452,7 @@ describe('agent key pages: copy', () => {
       html: chome.agentKeyCreatedPage({
         name: 'the laptop agent',
         token: 'osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU',
-        expires: '2026-11-30',
+        expires: DAY('2026-11-30'),
       }),
     },
   ];
@@ -471,9 +479,15 @@ describe('agent key pages: copy', () => {
   it('the listing names each key, when it was made, when it was last used and when it lapses', () => {
     const html = rendered.find((p) => p.name === 'agent-keys-list')!.html;
     expect(html).toContain('the laptop agent');
-    expect(html).toContain('made 2026-09-01');
-    expect(html).toContain('last used 2026-09-02');
-    expect(html).toContain('lapses 2026-11-30');
+    expect(html).toContain(
+      'made <time datetime="2026-09-01T00:00:00.000Z" data-local="day">Tuesday 1 September</time>',
+    );
+    expect(html).toContain(
+      'last used <time datetime="2026-09-02T00:00:00.000Z" data-local="day">Wednesday 2 September</time>',
+    );
+    expect(html).toContain(
+      'lapses <time datetime="2026-11-30T00:00:00.000Z" data-local="day">Monday 30 November</time>',
+    );
     expect(html).toContain('never used yet');
     expect(html).toContain('/agent-keys/revoke');
   });

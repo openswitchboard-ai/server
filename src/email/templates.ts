@@ -94,7 +94,7 @@ function shell(bodyRows: string, f: FooterLinks, accent = LINE): string {
 <tr><td align="center" style="padding:28px 14px 36px">
 <table role="presentation" cellpadding="0" cellspacing="0" width="520" style="width:100%;max-width:520px">
 <tr><td style="padding:0 8px 18px;font-family:${SANS};font-size:14px;font-weight:700;color:${INK}">
-<span style="font-size:15px">&#128025;</span>&nbsp; OpenSwitchboard
+<img src="https://openswitchboard.ai/brand/patch-64.png" width="22" height="22" alt="" style="vertical-align:middle;border:0">&nbsp; OpenSwitchboard
 </td></tr>
 <tr><td style="background:${CARD};border:1px solid ${LINE};border-top:3px solid ${accent};border-radius:14px;padding:34px 30px 30px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${bodyRows}</table>
