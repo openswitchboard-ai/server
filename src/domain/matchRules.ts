@@ -659,3 +659,67 @@ export function isLadderPattern(amountsInOrder: number[]): boolean {
   const tail = amountsInOrder.slice(-3);
   return tail[0] < tail[1] && tail[1] < tail[2];
 }
+
+// ---------------------------------------------------------------------------
+// Saying the category the way a person says it mid-sentence.
+//
+// The taxonomy's labels are headings: "Mountain bikes", "Kettles, toasters &
+// benchtop appliances", "Fridges & freezers". Dropped into a sentence they
+// read as a catalogue — "about your Mountain bikes" — which is exactly how a
+// person can tell an email was assembled rather than written. categoryPhrase
+// turns a heading into a lower-case singular noun phrase: the first thing the
+// heading lists, in the singular, so the sentence reads "about your mountain
+// bike".
+//
+// Deliberately small. It is a phrasing helper for one sentence, so a word it
+// gets wrong costs a slightly odd reading and nothing else; no lookup table
+// and no exceptions beyond the words that are already singular with an s.
+// ---------------------------------------------------------------------------
+
+/** Words that end in s and are not plurals; never trimmed. */
+const ALREADY_SINGULAR = new Set([
+  'clothes',
+  'glasses',
+  'headphones',
+  'jeans',
+  'scissors',
+  'shorts',
+  'trousers',
+  'pyjamas',
+  'tennis',
+  'chess',
+  'pilates',
+  'fitness',
+  'news',
+  'series',
+  'species',
+  'gas',
+  'bass',
+]);
+
+function singularise(word: string): string {
+  if (ALREADY_SINGULAR.has(word)) return word;
+  if (/(ss|us|is)$/.test(word)) return word;
+  if (/ies$/.test(word)) return `${word.slice(0, -3)}y`;
+  if (/(ch|sh|s|x|z)es$/.test(word)) return word.slice(0, -2);
+  if (/s$/.test(word)) return word.slice(0, -1);
+  return word;
+}
+
+/**
+ * "Mountain bikes" -> "mountain bike"; "Kettles, toasters & benchtop
+ * appliances" -> "kettle"; "Language exchange" -> "language exchange". Safe on
+ * an empty or missing label, which comes back as an empty string so a caller
+ * can fall back to the sentence that names nothing.
+ */
+export function categoryPhrase(label?: string): string {
+  const first = String(label ?? '')
+    .split(/[,&]/)[0]
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  if (!first) return '';
+  const words = first.split(' ');
+  words[words.length - 1] = singularise(words[words.length - 1]);
+  return words.join(' ');
+}

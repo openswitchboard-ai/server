@@ -10,10 +10,13 @@
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
+  categoryPhrase,
   renderApproval,
   renderChannelWaiting,
+  renderDealAgreed,
   renderDigest,
   renderKillSwitch,
+  renderOfferOnTheTable,
   renderRenewal,
   renderScreeningRejected,
   renderSecurityNotice,
@@ -135,6 +138,66 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       blind: true,
       content: renderYourMove(
         { categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
+        links,
+      ),
+    },
+    {
+      name: 'offer-on-the-table',
+      blind: false,
+      content: renderOfferOnTheTable(
+        {
+          amount: 415,
+          ccy: 'AUD',
+          categoryLabel: LABEL,
+          blind: false,
+          offersUrl: `${COUNTER}/matches/m-1`,
+          counterUrl: `${COUNTER}/`,
+        },
+        links,
+      ),
+    },
+    {
+      name: 'offer-on-the-table-blind',
+      blind: true,
+      content: renderOfferOnTheTable(
+        {
+          amount: 415,
+          ccy: 'AUD',
+          categoryLabel: LABEL,
+          blind: true,
+          offersUrl: `${COUNTER}/matches/m-1`,
+          counterUrl: `${COUNTER}/`,
+        },
+        links,
+      ),
+    },
+    {
+      name: 'deal-agreed',
+      blind: false,
+      content: renderDealAgreed(
+        {
+          amount: 415,
+          ccy: 'AUD',
+          categoryLabel: LABEL,
+          blind: false,
+          matchUrl: `${COUNTER}/matches/m-1`,
+          counterUrl: `${COUNTER}/`,
+        },
+        links,
+      ),
+    },
+    {
+      name: 'deal-agreed-blind',
+      blind: true,
+      content: renderDealAgreed(
+        {
+          amount: 415,
+          ccy: 'AUD',
+          categoryLabel: LABEL,
+          blind: true,
+          matchUrl: `${COUNTER}/matches/m-1`,
+          counterUrl: `${COUNTER}/`,
+        },
         links,
       ),
     },
@@ -482,7 +545,7 @@ describe('email templates: render suite', () => {
     const byName = Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
     const c = byName['card-screening-rejected'];
     for (const part of [c.html, c.text]) {
-      expect(part).toContain(LABEL);
+      expect(part).toContain(categoryPhrase(LABEL));
       expect(part).toContain(REJECTION_REASON);
       expect(part).toContain(`${COUNTER}/ledger/card-1/edit`);
     }

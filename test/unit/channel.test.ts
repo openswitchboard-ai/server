@@ -56,7 +56,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 
 import * as db from '../../src/db.js';
 import * as channel from '../../src/domain/channel.js';
-import { NUDGE_FLOOR_MINUTES } from '../../src/domain/channelNotify.js';
+import { NUDGE_COALESCE_MINUTES } from '../../src/domain/channelNotify.js';
 import { sqs } from '../../src/aws.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { OsbError, validatePayload } from '../../src/protocol.js';
@@ -548,13 +548,13 @@ describe('the waiting-message nudge', () => {
     expect(world.messages).toHaveLength(3); // the messages themselves all landed
   });
 
-  it('re-arms one nudge after the recipient collects and the floor passes', async () => {
+  it('re-arms one nudge after the recipient collects and the window passes', async () => {
     await channel.sendMessage(ANA, MATCH, 'first', nudgeCfg);
     expect(nudges()).toHaveLength(1);
     // The recipient catches up: unread falls to zero and the row re-arms.
     await channel.receiveMessages(BEPPE, MATCH);
     // Past the throttle floor, the next arrival to an empty inbox nudges again.
-    world.clockSkewMs = (NUDGE_FLOOR_MINUTES + 1) * 60_000;
+    world.clockSkewMs = (NUDGE_COALESCE_MINUTES + 1) * 60_000;
     await channel.sendMessage(ANA, MATCH, 'you there?', nudgeCfg);
     const n = nudges();
     expect(n).toHaveLength(2);
@@ -564,8 +564,9 @@ describe('the waiting-message nudge', () => {
   });
 
   it('stays quiet on a rapid back-and-forth even as the recipient keeps reading', async () => {
-    // A turn-by-turn exchange where the recipient collects between each line:
-    // the floor holds it to the single opening nudge rather than one per line.
+    // A burst typed in one breath, with the recipient collecting between each
+    // line: the coalescing window folds it into the single opening nudge
+    // rather than one email per line.
     await channel.sendMessage(ANA, MATCH, 'line 1', nudgeCfg);
     for (let i = 2; i <= 5; i++) {
       await channel.receiveMessages(BEPPE, MATCH); // recipient reads, re-arming unread

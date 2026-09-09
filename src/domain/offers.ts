@@ -117,7 +117,42 @@ export async function proposeOffer(
   // A figure is on the table now, so anything this side's agent parked for
   // the human to check has been answered.
   await clearOfferDrafts(accountId, input.match_id);
+  // A figure the HUMAN typed on their own page has nobody carrying it across:
+  // the other side's agent will find it on its next sweep, and if that agent
+  // only wakes when spoken to, "its next sweep" may be days away. So the other
+  // human is told by email, when email is how they hear about this.
+  if (author === 'human') await notifyCounterpartyOfHumanOffer(cfg, r.rows[0]);
   return serializeOffer(r.rows[0]);
+}
+
+/**
+ * Tell the other human a number is on the table, when email is how they hear
+ * about the switchboard. Best-effort in every direction: the offer is already
+ * on the board and on both agents' next sweep, so a failed send delays
+ * discovery rather than undoing anything.
+ */
+async function notifyCounterpartyOfHumanOffer(cfg: Config, o: OfferRow): Promise<void> {
+  try {
+    const { getHearsVia } = await import('./accounts.js');
+    const m = await getMatch(o.match_id);
+    if (!m) return;
+    const counterparty = o.proposer_account === m.account_want ? m.account_have : m.account_want;
+    if ((await getHearsVia(counterparty)) !== 'email') return; // their agent brings it
+    const { categoryLeafLabel } = await import('./matchRules.js');
+    const { sendOfferOnTheTableEmail } = await import('../counter/email.js');
+    const { accountEmail } = await import('./counterOps.js');
+    const to = await accountEmail(counterparty, 'offer-on-the-table');
+    if (!to) return;
+    await sendOfferOnTheTableEmail(cfg, to, counterparty, {
+      offerId: o.id,
+      matchId: o.match_id,
+      amount: Number(o.amount),
+      ccy: o.ccy,
+      categoryLabel: categoryLeafLabel(m.category),
+    });
+  } catch (err) {
+    console.warn('offer-on-the-table email failed; the offer stands', err);
+  }
 }
 
 /**
@@ -297,6 +332,7 @@ export async function acceptOfferByHuman(
   offerId: string,
   humanAccountId: string,
   recordedVia: string,
+  cfg?: Config,
 ) {
   const o = await loadOffer(offerId);
   // Humans hold every gate. A live offer is theirs to accept from their own
@@ -344,7 +380,146 @@ export async function acceptOfferByHuman(
     `UPDATE offers SET state='accepted-by-human', updated_at=now() WHERE id=$1 RETURNING *`,
     [offerId],
   );
+  // The person whose figure this was is owed the news. It goes however they
+  // hear about the switchboard: their agent may bring it on its next sweep,
+  // and an agreed price is the one moment worth saying twice.
+  if (cfg) await notifyProposerOfAcceptance(cfg, r.rows[0]);
   return serializeOffer(r.rows[0]);
+}
+
+/**
+ * "Deal: $415 AUD agreed for your mountain bike." Sent to the human who made
+ * the offer, once the other human has taken it. Nothing about money moving —
+ * a settlement is a separate thing the two of them may or may not use — so the
+ * copy hands the handover back to the two people. Best-effort: the acceptance
+ * is recorded and stands whatever happens here.
+ */
+async function notifyProposerOfAcceptance(cfg: Config, o: OfferRow): Promise<void> {
+  try {
+    const m = await getMatch(o.match_id);
+    if (!m) return;
+    const { categoryLeafLabel } = await import('./matchRules.js');
+    const { sendDealAgreedEmail } = await import('../counter/email.js');
+    const { accountEmail } = await import('./counterOps.js');
+    const to = await accountEmail(o.proposer_account, 'deal-agreed');
+    if (!to) return;
+    await sendDealAgreedEmail(cfg, to, o.proposer_account, {
+      offerId: o.id,
+      matchId: o.match_id,
+      amount: Number(o.amount),
+      ccy: o.ccy,
+      categoryLabel: categoryLeafLabel(m.category),
+    });
+  } catch (err) {
+    console.warn('deal-agreed email failed; the acceptance stands', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// What check_in shows an agent about the money.
+//
+// The gap this closes: an agent could see a figure the OTHER side had sent and
+// nothing at all about its own human's, because a human types their number on
+// their own approval page and the agent that never saw it typed has no way to
+// learn it happened. In the 2026-09-09 rehearsal that produced an agent
+// telling its human their $420 "never went out" and describing the other
+// side's $415 as unprompted, with the whole exchange sitting in the table all
+// along. Both sides of the table cross now, most recent first.
+// ---------------------------------------------------------------------------
+
+export interface OfferLine {
+  offer_id: string;
+  /** Whose figure it is, said from the reading agent's side. */
+  side: 'yours' | 'theirs';
+  /** 'human' when their human typed it on their own page, 'agent' when an
+   *  agent sent it from inside a mandate. Own-side bookkeeping either way. */
+  authored_by: 'human' | 'agent';
+  amount: number;
+  ccy: string;
+  state: OfferRow['state'];
+  /** The words that rode with the figure, if any — the text and nothing else. */
+  message: string | null;
+  at: string;
+}
+
+/** The note text on an offer message: the words, never the wrapper. A message
+ *  is stored as { text, provenance }, and rendering the object itself is what
+ *  put "[object Object]" in front of a human. */
+export function offerMessageText(message: any): string | null {
+  if (!message) return null;
+  if (typeof message === 'string') return message;
+  const text = (message as any).text;
+  return typeof text === 'string' && text.trim() ? text : null;
+}
+
+/**
+ * Every live figure on an introduction, both sides, most recent first.
+ * Withdrawn and declined offers drop out: they are no longer on the table and
+ * an agent reading them back to its human would be reading history as news.
+ */
+export async function offerTable(accountId: string, matchId: string): Promise<OfferLine[]> {
+  const r = await getPool().query(
+    `SELECT id, proposer_account, amount, ccy, state, message, authored_by, created_at
+       FROM offers
+      WHERE match_id = $1 AND state IN ('proposed', 'awaiting-human', 'accepted-by-human')
+      ORDER BY created_at DESC`,
+    [matchId],
+  );
+  return (r.rows as any[]).map((o) => ({
+    offer_id: o.id as string,
+    side: o.proposer_account === accountId ? ('yours' as const) : ('theirs' as const),
+    authored_by: (o.authored_by === 'human' ? 'human' : 'agent') as 'human' | 'agent',
+    amount: Number(o.amount),
+    ccy: o.ccy as string,
+    state: o.state as OfferRow['state'],
+    message: offerMessageText(o.message),
+    at: new Date(o.created_at).toISOString(),
+  }));
+}
+
+/**
+ * The plain sentence that rides with the table. Written from the reading
+ * agent's side, in the words its human would use, with no figure left
+ * unexplained and no machinery named.
+ *
+ * Three shapes, in the order they matter:
+ *  - the other side has accepted this human's figure: the deal is done, and
+ *    what is left is a handover the two people arrange;
+ *  - both sides have numbers out: say both, so an agent never describes its
+ *    own human's offer as something that never went out;
+ *  - one side has a number out: whose it is, and what happens next.
+ */
+export function offerTableNote(lines: OfferLine[], thing: string): string | undefined {
+  if (!lines.length) return undefined;
+  const said = (l: OfferLine) => `${l.amount} ${l.ccy}`;
+  const mine = lines.filter((l) => l.side === 'yours');
+  const theirs = lines.filter((l) => l.side === 'theirs');
+  const acceptedMine = mine.find((l) => l.state === 'accepted-by-human');
+  const about = thing ? ` for your ${thing}` : '';
+  if (acceptedMine) {
+    return `The other side has accepted your human's ${said(acceptedMine)}${about}. The switchboard's part is done: agree pickup or handover in the conversation.`;
+  }
+  const acceptedTheirs = theirs.find((l) => l.state === 'accepted-by-human');
+  if (acceptedTheirs) {
+    return `Your human has accepted ${said(acceptedTheirs)}${about}. The switchboard's part is done: agree pickup or handover in the conversation.`;
+  }
+  const newestMine = mine[0];
+  const newestTheirs = theirs[0];
+  if (newestMine && newestTheirs) {
+    const earlier = newestMine.at <= newestTheirs.at ? newestMine : newestTheirs;
+    const later = earlier === newestMine ? newestTheirs : newestMine;
+    const clause = (l: OfferLine, isLater: boolean) =>
+      l.side === 'yours'
+        ? `your human ${isLater ? 'came back with' : 'offered'} ${said(l)}${l.authored_by === 'human' ? ' on their approval page' : ''}`
+        : `the other side ${isLater ? 'has answered with' : 'offered'} ${said(l)}`;
+    const both = `${clause(earlier, false)}; ${clause(later, true)}`;
+    return `${both[0].toUpperCase()}${both.slice(1)}. Nothing is agreed until one of the two humans says yes on their own page.`;
+  }
+  if (newestMine) {
+    return `Your human's ${said(newestMine)}${newestMine.authored_by === 'human' ? ', typed on their approval page,' : ''} is on the table${about}. The other side answers when they next hear from their own assistant.`;
+  }
+  const l = newestTheirs!;
+  return `The other side has offered ${said(l)}${about}${l.message ? ` — "${l.message}"` : ''}. It is your human's to weigh up; say the word and I will answer, and nothing is agreed until they say so.`;
 }
 
 export async function listOffers(accountId: string, matchId: string) {

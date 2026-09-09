@@ -8,7 +8,9 @@ import { createHash } from 'node:crypto';
 import { findAccountByEmail } from '../domain/accounts.js';
 import {
   renderApproval,
+  renderDealAgreed,
   renderKillSwitch,
+  renderOfferOnTheTable,
   renderScreeningRejected,
   renderSecurityNotice,
   renderSettlementProposed,
@@ -147,6 +149,74 @@ export async function sendScreeningRejectedEmail(
         reason: input.reason,
         editUrl: `${cfg.counterOrigin}/ledger/${encodeURIComponent(input.cardId)}/edit`,
         blind: ctx.blind,
+        counterUrl: `${cfg.counterOrigin}/`,
+      },
+      ctx.links,
+    ),
+  });
+}
+
+/**
+ * A figure landed on this person's approval page and their assistant is not
+ * the sort that will bring it to them (hears_via = 'email'). The caller checks
+ * that; this only renders and sends.
+ *
+ * TRANSACTIONAL by class: a number waiting for an answer is the switchboard
+ * doing the one job it was asked to do, and it expires. De-duped on the offer,
+ * so one figure raises one mail however many times its caller runs.
+ */
+export async function sendOfferOnTheTableEmail(
+  cfg: Config,
+  to: string,
+  accountId: string,
+  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string },
+): Promise<SendOutcome> {
+  const ctx = await emailAccountContext(cfg, accountId);
+  return sendEmail(cfg, {
+    to,
+    accountId,
+    template: 'offer-on-the-table',
+    kind: 'transactional',
+    dedupeKey: `offer-on-the-table:${input.offerId}:${accountId}`,
+    content: renderOfferOnTheTable(
+      {
+        amount: input.amount,
+        ccy: input.ccy,
+        categoryLabel: ctx.blind ? undefined : input.categoryLabel,
+        blind: ctx.blind,
+        offersUrl: `${cfg.counterOrigin}/matches/${encodeURIComponent(input.matchId)}`,
+        counterUrl: `${cfg.counterOrigin}/`,
+      },
+      ctx.links,
+    ),
+  });
+}
+
+/**
+ * The other human accepted this person's figure. It goes however they hear
+ * about the switchboard: an agreed price ends the switchboard's part, and a
+ * person is owed that from the switchboard as well as from their agent.
+ */
+export async function sendDealAgreedEmail(
+  cfg: Config,
+  to: string,
+  accountId: string,
+  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string },
+): Promise<SendOutcome> {
+  const ctx = await emailAccountContext(cfg, accountId);
+  return sendEmail(cfg, {
+    to,
+    accountId,
+    template: 'deal-agreed',
+    kind: 'transactional',
+    dedupeKey: `deal-agreed:${input.offerId}:${accountId}`,
+    content: renderDealAgreed(
+      {
+        amount: input.amount,
+        ccy: input.ccy,
+        categoryLabel: ctx.blind ? undefined : input.categoryLabel,
+        blind: ctx.blind,
+        matchUrl: `${cfg.counterOrigin}/matches/${encodeURIComponent(input.matchId)}`,
         counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,

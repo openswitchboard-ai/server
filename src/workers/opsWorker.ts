@@ -261,6 +261,10 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   body.offer_id,
                   body.account_id,
                   body.recorded_via ?? 'internal-ops',
+                  // cfg is what lets the acceptance tell the other human their
+                  // figure was taken; without it the deal is recorded and
+                  // nobody is told.
+                  cfg,
                 );
                 log('ops: offer accepted by human', { offer_id: offer.offer_id });
                 break;
