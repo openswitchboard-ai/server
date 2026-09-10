@@ -927,7 +927,7 @@ ${unreachable}${complaint}
 <p class="small muted">${esc(hearsViaNow)}</p>
 <form method="POST" action="/settings/hears-via">
   ${hearsVia}
-  <button type="submit" class="secondary">Save how I hear about things</button>
+  <button type="submit" class="secondary" id="hears-save" hidden>Save how I hear about things</button>
 </form>
 <p class="small muted">An assistant you talk to when you feel like it cannot
 bring you a match it never saw, so the switchboard emails you every step.
@@ -952,12 +952,16 @@ you get are sign-in codes, approval requests and security notices.</p>
 // only mean something when email is how the person hears about things.
 document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
   r.addEventListener('change', function () {
-    var viaAssistant = document.querySelector('input[name="hears_via"]:checked').value === 'assistant';
+    var chosen = document.querySelector('input[name="hears_via"]:checked').value;
+    var viaAssistant = chosen === 'assistant';
     document.getElementById('email-dials').hidden = viaAssistant;
     document.getElementById('email-backup').hidden = !viaAssistant;
+    // The save button only appears once the choice differs from what is saved.
+    document.getElementById('hears-save').hidden = chosen === ${JSON.stringify(v.hearsVia)};
   });
 });
 </script>
+<noscript><style>#hears-save{display:inline-block !important}</style></noscript>
 <h2>Blind mode</h2>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}. When on,
 every email we send you becomes a content-free pointer — "something needs your
