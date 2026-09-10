@@ -284,9 +284,10 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
 <span class="badge ${w.type === 'WANT' ? 'want' : 'have'}">${esc(w.type)}</span>
 <span class="cat">${esc(w.category)}</span></div>
 <div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
- — window open until ${w.until}. Offers and interest keep arriving until then.</div>
+ — window open until ${w.until}.</div>
+<p class="small muted">More than one person wants this, so the switchboard is holding the door open for a while: interest and offers keep arriving, and you can talk to each of them, but you cannot share your name with one or accept a number until the window closes. Nobody on the other side is told there are others. When you have seen enough, close it and choose.</p>
 <form method="POST" action="/collect/${esc(w.cardId)}/close">
-  <button type="submit" class="secondary">Close early &amp; choose now</button>
+  <button type="submit" class="secondary">Close the window now and choose</button>
 </form></div>`,
     )
     .join('');
