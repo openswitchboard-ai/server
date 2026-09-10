@@ -284,13 +284,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         ops.agreedOnMatches(s.accountId),
       ]);
       const pendingApprovals = [
-        // A card screening turned away is off the board until this person
-        // changes it, so it sits at the top of what is waiting for them.
+        // A want or have screening turned away is off the board until this
+        // person changes it, so it sits at the top of what is waiting for them.
         ...rejected.map((c) => ({
           href: `/ledger/${c.id}/edit`,
-          // The card says what happened; the button below it says what to do,
+          // The row says what happened; the button below it says what to do,
           // so the label no longer says both.
-          label: `Your ${phrase(c.category)} card didn't pass screening`,
+          label: `Your ${phrase(c.category)} didn't pass screening`,
           cta: 'See why and fix it',
         })),
         ...offers.map((o) => ({
@@ -1572,7 +1572,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       try {
         await closeCollectionByCard(String((req.params as any).cardId), s.accountId!, 'counter');
       } catch {
-        return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+        return html(reply, pages.messagePage('Not found', '<p>Nothing like that on your ledger.</p>'), 404);
       }
       return reply.redirect('/', 303);
     });

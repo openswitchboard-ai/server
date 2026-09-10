@@ -1,5 +1,5 @@
 /**
- * Counter pages: dashboard, ledger, card edit, settings.
+ * Counter pages: dashboard, ledger, want/have edit, settings.
  *
  * Same shape as pages.ts — ask, act, detail — and the same visual system. The
  * dashboard is the one page that is a list rather than a decision, so it is
@@ -78,8 +78,8 @@ the point of swapping details and then stall there.</div>`
   ${sharedFieldsFieldset(v)}
   <button type="submit">Save</button>
 </form>
-<p class="small muted">That is the whole of what crosses — your email, your cards
-and your prices stay on your side. Keep phone numbers, addresses and links out
+<p class="small muted">That is the whole of what crosses — your email, what you
+have posted and your prices stay on your side. Keep phone numbers, addresses and links out
 of these two boxes; you can swap those in the channel once you have both agreed.</p>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
 }
@@ -250,8 +250,8 @@ export function dashboardPage(v: DashboardView): string {
   const kill = v.killSwitchOn
     ? `<div class="kill">
 <h2>Everything is paused.</h2>
-<p class="small">The kill switch is ON: cards are excluded from matching and your
-agents' tokens are suspended. Turning back on needs your PIN.</p>
+<p class="small">The kill switch is ON: your wants and haves are excluded from
+matching and your agents' tokens are suspended. Turning back on needs your PIN.</p>
 <form method="POST" action="/kill/off">
   <label for="pin">PIN</label>
   <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" maxlength="12" required>
@@ -259,7 +259,7 @@ agents' tokens are suspended. Turning back on needs your PIN.</p>
 </form></div>`
     : `<div class="kill">
 <h2>Kill switch</h2>
-<p class="small">One tap: every card paused, every agent token suspended,
+<p class="small">One tap: every want and have paused, every agent token suspended,
 confirmation email sent. Un-pausing needs your PIN.</p>
 <form method="POST" action="/kill">
   <button type="submit" class="danger">Pause everything now</button>
@@ -321,12 +321,11 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     })
     .join('');
 
-  // 3. Cards whose clock is nearly out.
+  // 3. Wants and haves whose clock is nearly out.
   const renewals = v.lapsingSoon?.count
     ? `<a class="todo" href="/ledger">
 <span class="badge state">LAPSING</span>
-<div class="what">${v.lapsingSoon.count} card${v.lapsingSoon.count === 1 ? '' : 's'} of yours
-${v.lapsingSoon.count === 1 ? 'runs' : 'run'} out by ${esc(v.lapsingSoon.soonest)}</div>
+<div class="what">${v.lapsingSoon.count === 1 ? 'One of your wants and haves runs' : `${v.lapsingSoon.count} of your wants and haves run`} out by ${esc(v.lapsingSoon.soonest)}</div>
 <div class="go">Check they are still true</div></a>`
     : '';
 
@@ -383,7 +382,7 @@ hold. Re-verify your address to switch it back on.
 <form method="POST" action="/reverify"><button type="submit">Re-verify my email</button></form></div>`
     : '';
 
-  const cards = `${v.cardCounts.total} card${v.cardCounts.total === 1 ? '' : 's'} — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.`;
+  const cards = `${v.cardCounts.total === 1 ? '1 want or have' : `${v.cardCounts.total} wants and haves`} — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.`;
   const nav = `<div class="navlist">
 <a href="/ledger"><span class="nav-t">Your ledger</span><span class="nav-d">${esc(cards)}</span></a>
 <a href="/profile"><span class="nav-t">What you share on a match</span><span class="nav-d">${
@@ -422,7 +421,7 @@ export interface LedgerCardView {
   id: string;
   type: 'WANT' | 'HAVE';
   category: string;
-  /** Where the card sits and how far it reaches, in one line: "Canberra,
+  /** Where it sits and how far it reaches, in one line: "Canberra,
    *  Australian Capital Territory, Australia — matching within 150 km", or
    *  "— reaching all of Australia", or "— reaching anywhere". The point of
    *  showing it is that only the person who lives there can tell when it is
@@ -435,12 +434,12 @@ export interface LedgerCardView {
   ask?: string;
   matchSummary: string;
   attributes?: string;
-  /** Who writes this card's negotiating figures. Defaults to Pass on. */
+  /** Who writes its negotiating figures. Defaults to Pass on. */
   mode: NegotiationMode;
 }
 
 /** A finished connection the human filed away — shown in a quiet "past
- *  connections" area, distinct from the live cards above it. */
+ *  connections" area, distinct from the live wants and haves above it. */
 export interface PastConnectionView {
   /** Leaf label of the category, e.g. "book club". */
   category: string;
@@ -480,7 +479,7 @@ ${
 </div>`,
         )
         .join('')
-    : `<div class="empty">No cards yet. Your agent posts them; they all show up here.</div>`;
+    : `<div class="empty">Nothing posted yet. Your agent posts your wants and haves; they all show up here.</div>`;
   const past = pastConnections.length
     ? `<section class="past-connections">
 <h2 class="small-head">Past connections</h2>
@@ -505,10 +504,10 @@ ${rows}
 ${past}
 ${foldedDetail(
   'How the ledger works',
-  `<p class="small">Every card your agent has posted for you. Private price bands
-are shown to you only and never to a counterparty. Edits go back through
-screening; withdrawal is immediate.</p>
-<p class="small">Every card starts on ${esc(MODE_NAMES.relay)}:
+  `<p class="small">Every want and have your agent has posted for you. Private
+price bands are shown to you only and never to a counterparty. Edits go back
+through screening; withdrawal is immediate.</p>
+<p class="small">Every one of them starts on ${esc(MODE_NAMES.relay)}:
 ${esc(MODE_EXPLANATIONS.relay)}</p>`,
 )}
 <a class="btn secondary" href="/">Back</a>`);
@@ -535,19 +534,21 @@ export interface CardEditView {
 }
 
 export function cardEditPage(c: CardEditView, error?: string): string {
+  // The page calls the thing what it is: the person's want, or their have.
+  const thing = c.type === 'WANT' ? 'want' : 'have';
   const opt = (v: string, cur: string) =>
     `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)}</option>`;
   // Screening's verdict, in words the person can act on. The raw code sits
   // small underneath so a support conversation has something exact to quote.
   const rejection = c.screeningRejection
     ? `<div class="err">
-<strong>This card didn&#39;t pass screening.</strong>
+<strong>This ${thing} didn&#39;t pass screening.</strong>
 <p style="margin:.5rem 0 0">${esc(c.screeningRejection.plain)}</p>
 ${c.screeningRejection.code ? `<p class="small muted" style="margin:.5rem 0 0">screening code: ${esc(c.screeningRejection.code)}</p>` : ''}
 </div>`
     : '';
-  return layout('Edit card', `
-<h1>Edit this card.</h1>
+  return layout(`Edit ${thing}`, `
+<h1>Edit this ${thing}.</h1>
 <div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
   <span class="cat">${esc(c.category)}</span>
@@ -576,7 +577,7 @@ ${errBox(error)}
   <label for="collect_window">Collection window, in minutes (optional)</label>
   <input id="collect_window" name="collect_window" type="number" min="1" max="${c.collectWindowDefault}"
    value="${esc(c.collectWindowMinutes ?? '')}" placeholder="${c.collectWindowDefault}">
-  <p class="field-help">When several parties match this card at once, interest is
+  <p class="field-help">When several parties match this ${thing} at once, interest is
 collected this long before you choose. It may only be SHORTER than the default
 ${c.collectWindowDefault}.</p>
   <label for="status">Visibility</label>
@@ -585,14 +586,14 @@ ${c.collectWindowDefault}.</p>
   <input id="ttl_days" name="ttl_days" type="number" min="1" max="365" value="${esc(String(c.ttlDays))}">
   <button type="submit">Save &amp; re-screen</button>
 </form>
-<p class="small muted">Saving sends the card back through screening before it
+<p class="small muted">Saving sends this ${thing} back through screening before it
 returns to the network.</p>
-<a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers on this card</a>
+<a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers on this ${thing}</a>
 <a class="btn secondary" href="/ledger">Cancel</a>`);
 }
 
 // ---------------------------------------------------------------------------
-// Your numbers (1.E). Who writes the figures this card negotiates with. Both
+// Your numbers (1.E). Who writes the figures this want or have negotiates with. Both
 // modes and every number on this page are set here and nowhere else — no agent
 // surface can read or change either, which is what makes "the numbers are
 // yours" a fact about the software rather than a promise about behaviour.
@@ -619,6 +620,7 @@ export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: str
     ccy: v.mandate?.ccy ?? '',
   };
   const selling = v.type === 'HAVE';
+  const thing = selling ? 'have' : 'want';
   const current = v.mandate
     ? `<div class="facts">${mandateInPlainWords(v.mandate, v.type)
         .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v">${esc(l.v)}</div></div>`)
@@ -641,7 +643,7 @@ ${v.draft.note ? `<div class="kv">Your line: &ldquo;${esc(v.draft.note)}&rdquo;<
   <span class="small muted">${esc(MODE_EXPLANATIONS[m])}</span>
 </label>`;
   return layout('Your numbers', `
-<h1>Your numbers on this card.</h1>
+<h1>Your numbers on this ${thing}.</h1>
 <div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
   <span class="badge ${selling ? 'have' : 'want'}">${esc(v.type)}</span>
   <span class="cat">${esc(v.category)}</span>
@@ -649,11 +651,11 @@ ${v.draft.note ? `<div class="kv">Your line: &ldquo;${esc(v.draft.note)}&rdquo;<
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${draft}
-<p class="lead">Every figure this card carries into a negotiation is one you
+<p class="lead">Every figure this ${thing} carries into a negotiation is one you
 wrote. Your agent presents and advises; it never invents a price of its own.</p>
 ${current}
 <form method="POST" action="/ledger/${esc(v.id)}/numbers">
-  <h2>How this card negotiates</h2>
+  <h2>How this ${thing} negotiates</h2>
   ${modeRadio('relay')}
   ${modeRadio('mandate')}
   <h2>Your numbers</h2>
@@ -680,7 +682,7 @@ ${
 <p class="small muted">Whichever way this is set, accepting an offer still
 comes to you here, with your PIN. Auto-negotiate lets your agent put figures on
 the table between the two you wrote; it never agrees anything.</p>
-<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to the card</a>`);
+<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to your ${thing}</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -735,7 +737,7 @@ const OFFER_STATE_WORDS: Record<string, string> = {
 /**
  * Who writes this card's figures, asked on the page where the figures are.
  *
- * It is the same control as the one on "Your numbers on this card", posting to
+ * It is the same control as the one on "Your numbers on this want or have", posting to
  * the same route with the same field names, so one place in the server writes
  * a mode and one set of rules validates the numbers. `return_to` brings the
  * person back here afterwards.
@@ -845,7 +847,7 @@ ${reply}
 ${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
-<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this listing</a>
+<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
 <a class="btn secondary" href="/">Back to your approval page</a>`);
 }
 
@@ -1039,7 +1041,7 @@ ${foldedDetail(
   `<p class="small">Most agents sign in through your browser the first time they
 call the switchboard. A few cannot do that. Give one of those a key instead: a
 long password it sends with every request.</p>
-<p class="small">Anyone holding a key can post cards and negotiate as your
+<p class="small">Anyone holding a key can post wants and haves and negotiate as your
 agent. It still cannot approve anything — approvals only ever happen here, on
 this page, with your PIN. Keep a key somewhere private, and revoke it the
 moment you have finished with it. Keys lapse after 90 days, and the kill switch
@@ -1079,7 +1081,7 @@ document.getElementById('copybtn').addEventListener('click', async () => {
 export interface RenewCardView {
   type: string;
   category: string;
-  /** The card's own attributes, summarised — what tells two same-category cards apart. */
+  /** Its own attributes, summarised — what tells two in the same category apart. */
   attributes?: string;
   expires: string;
   expiringSoon: boolean;
@@ -1098,7 +1100,7 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
     .join('');
   return layout('Still true?', `
 <h1>Still true?</h1>
-<p class="lead">These are your open cards. One tap restarts each card's own clock.</p>
+<p class="lead">These are your open wants and haves. One tap restarts each one's own clock.</p>
 <form method="POST" action="/renew">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Still true — keep them all</button>
@@ -1106,8 +1108,8 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
 <a class="btn secondary" href="/ledger">Review one by one instead</a>
 <h2>What you have open</h2>
 ${rows}
-<p class="small muted">Cards lapse on their own — that rule keeps every want and
-have honest.</p>`);
+<p class="small muted">Wants and haves lapse on their own; that rule keeps every
+one of them honest.</p>`);
 }
 
 // ---------------------------------------------------------------------------

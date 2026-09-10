@@ -240,7 +240,7 @@ export function renderSummons(
 // (c2) Waiting-message nudge. The other side has sent something on an open
 // conversation and it is sitting uncollected; this tells the recipient's human
 // so the exchange does not stall with both sides waiting. Plain and warm, with
-// none of the machinery words (no "channel", "match", "card"): it is simply
+// none of the machinery words (no "channel", "match", "listing"): it is simply
 // their conversation. Non-blind may name the category the way a summons does;
 // blind is a pure pointer. Throttled upstream (domain/channelNotify.ts) so a
 // live back-and-forth never becomes one email per line.
@@ -392,16 +392,16 @@ export function renderDealAgreed(
 }
 
 // ---------------------------------------------------------------------------
-// (d) Activity digest. Items come from the digest engine: per open card cell,
-// counts of new opposite-side cards (cell already clears the k-anonymity
-// floor by construction — see domain/pulse.ts) and the card's own new
+// (d) Activity digest. Items come from the digest engine: per open want-or-have
+// cell, counts of new opposite-side posts (cell already clears the k-anonymity
+// floor by construction — see domain/pulse.ts) and that want or have's own new
 // near-misses. Blind: pointer only.
 // ---------------------------------------------------------------------------
 export interface DigestItem {
   type: 'WANT' | 'HAVE';
   /** Human taxonomy label ("Mountain bikes") — never the raw slug. */
   categoryLabel: string;
-  /** New opposite-side cards in this card's (category, geo) cell since the
+  /** New opposite-side posts in this one's (category, geo) cell since the
    *  last digest. null when the cell is under the k-anonymity floor. */
   newOpposite: number | null;
   nearMisses: number;
@@ -416,13 +416,13 @@ export function renderDigest(
   if (v.blind) {
     const html = shell(
       h1('Your digest is ready.') +
-        para(`There is movement around your cards ${period}. The detail waits behind your sign-in.`) +
+        para(`There is movement around your wants and haves ${period}. The detail waits behind your sign-in.`) +
         center(button(v.counterUrl, "See what's new")),
       f,
       MATCH,
     );
     const text =
-      `Your digest is ready.\n\nThere is movement around your cards ${period}. ` +
+      `Your digest is ready.\n\nThere is movement around your wants and haves ${period}. ` +
       `The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
       footerText(f);
     return { subject, html, text };
@@ -447,7 +447,7 @@ export function renderDigest(
     })
     .join('');
   const html = shell(
-    h1(`Around your cards ${period}.`) +
+    h1(`Around your wants and haves ${period}.`) +
       `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
       center(button(v.counterUrl, "See what's new")) +
       small('Counts are real and current. Near misses stay near misses until the switchboard is sure.'),
@@ -466,16 +466,18 @@ export function renderDigest(
     })
     .join('\n');
   const text =
-    `Around your cards ${period}:\n\n${textRows}\n\n` +
+    `Around your wants and haves ${period}:\n\n${textRows}\n\n` +
     `See what's new:\n${v.counterUrl}\n\n` +
     footerText(f);
   return { subject, html, text };
 }
 
 // ---------------------------------------------------------------------------
-// (e) "Still true?" renewal. Cards expire on their own; this lands 7 days
-// before the next expiry. Lists the account's open cards with one-tap
-// renew-all and a review link. Blind: pointer only.
+// (e) "Still true?" renewal. Wants and haves expire on their own; this lands 7
+// days before the next expiry. Lists the account's open ones with one-tap
+// renew-all and a review link. The lapse date is printed the way a person reads
+// it ("Thursday 11 September") — an email cannot run a script to localise it.
+// Blind: pointer only.
 // ---------------------------------------------------------------------------
 export interface RenewalCardItem {
   type: 'WANT' | 'HAVE';
@@ -494,21 +496,21 @@ export function renderRenewal(
   if (v.blind) {
     const html = shell(
       h1('Still true?') +
-        para('Cards on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go from your ledger.') +
-        center(button(v.counterUrl, 'Review your cards')),
+        para('Wants and haves on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go from your ledger.') +
+        center(button(v.counterUrl, 'Review your wants and haves')),
       f,
       WANT,
     );
     const text =
-      `Still true?\n\nCards on the switchboard lapse on their own. Some of yours ` +
-      `lapse within a week. Review your cards:\n${v.counterUrl}\n\n` +
+      `Still true?\n\nWants and haves on the switchboard lapse on their own. Some of yours ` +
+      `lapse within a week. Review your wants and haves:\n${v.counterUrl}\n\n` +
       footerText(f);
     return { subject, html, text };
   }
   const rows = v.cards
     .map((c) => {
       const badgeColor = c.type === 'WANT' ? WANT : HAVE;
-      const when = c.expiresAt.toISOString().slice(0, 10);
+      const when = plainDay(c.expiresAt);
       return `<tr><td style="padding:9px 0;border-bottom:1px solid ${LINE}">
 <span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${c.type}</span>
 <span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(c.categoryLabel)}</span><br>
@@ -519,13 +521,13 @@ export function renderRenewal(
   const html = shell(
     h1('Still true?') +
       para(
-        `Cards on the switchboard lapse on their own — that is the rule that keeps every want and have honest. ` +
+        `Wants and haves on the switchboard lapse on their own; that is the rule that keeps every one of them honest. ` +
           `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.`,
       ) +
       `<tr><td style="padding-top:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
       center(button(v.renewAllUrl, 'Still true — keep them all')) +
       small(
-        `Renewing restarts each card's own clock. To edit or drop single cards, ` +
+        `Renewing restarts each one's own clock. To edit or drop them one at a time, ` +
           `<a href="${esc(f.ledgerUrl)}" style="color:${MUTED}">review your ledger</a>. ` +
           `Do nothing and they lapse quietly.`,
       ),
@@ -535,12 +537,12 @@ export function renderRenewal(
   const textRows = v.cards
     .map(
       (c) =>
-        `- ${c.type} ${c.categoryLabel}: lapses ${c.expiresAt.toISOString().slice(0, 10)}${c.expiringSoon ? ' (within a week)' : ''}`,
+        `- ${c.type} ${c.categoryLabel}: lapses ${plainDay(c.expiresAt)}${c.expiringSoon ? ' (within a week)' : ''}`,
     )
     .join('\n');
   const text =
-    `Still true?\n\nCards on the switchboard lapse on their own — that is the rule ` +
-    `that keeps every want and have honest. ` +
+    `Still true?\n\nWants and haves on the switchboard lapse on their own; that is the rule ` +
+    `that keeps every one of them honest. ` +
     `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.\n\n` +
     `${textRows}\n\n` +
     `Still true — keep them all:\n${v.renewAllUrl}\n\n` +
@@ -562,7 +564,7 @@ export function renderKillSwitch(
     const html = shell(
       h1('Everything is paused.') +
         para(
-          'The kill switch on your account was just activated. All of your cards are paused and your agents&#39; tokens are suspended. Nothing will match, be disclosed, or be accepted while it is on.',
+          'The kill switch on your account was just activated. All of your wants and haves are paused and your agents&#39; tokens are suspended. Nothing will match, be disclosed, or be accepted while it is on.',
         ) +
         center(button(v.counterUrl, 'Open your account')) +
         small(
@@ -573,7 +575,7 @@ export function renderKillSwitch(
     );
     const text =
       `The kill switch on your OpenSwitchboard account was just activated.\n\n` +
-      `All of your cards are paused and your agents' tokens are suspended. ` +
+      `All of your wants and haves are paused and your agents' tokens are suspended. ` +
       `Nothing will match, be disclosed, or be accepted while it is on.\n\n` +
       `To turn things back on, sign in at ${v.counterUrl} and confirm with your PIN.\n\n` +
       `If you did not do this, your account is already safe — everything is paused. ` +
@@ -585,7 +587,7 @@ export function renderKillSwitch(
   const html = shell(
     h1('Everything is back on.') +
       para(
-        'The kill switch on your account was just turned off with your PIN. Your cards are back in matching and your agents&#39; tokens work again.',
+        'The kill switch on your account was just turned off with your PIN. Your wants and haves are back in matching and your agents&#39; tokens work again.',
       ) +
       center(button(v.counterUrl, 'Open your account')) +
       small('If you did not do this, hit the kill switch again from your account and change your PIN.'),
@@ -594,18 +596,18 @@ export function renderKillSwitch(
   );
   const text =
     `The kill switch on your OpenSwitchboard account was just turned off with your PIN.\n\n` +
-    `Your cards are back in matching and your agents' tokens work again.\n\n` +
+    `Your wants and haves are back in matching and your agents' tokens work again.\n\n` +
     `If you did not do this, hit the kill switch again at ${v.counterUrl} and change your PIN.\n\n` +
     footerText(f);
   return { subject, html, text };
 }
 
 // ---------------------------------------------------------------------------
-// (f2) A card did not pass screening. Transactional: the card is off the board
-// until the person changes it, so this goes out whatever their digest settings
-// say. Non-blind carries the category label and the plain-words reason (both
-// are the person's OWN card — nothing about anybody else is in here). Blind:
-// pointer only.
+// (f2) Something the person posted did not pass screening. Transactional: it is
+// off the board until they change it, so this goes out whatever their digest
+// settings say. Non-blind carries the category label and the plain-words reason
+// (both are the person's OWN want or have — nothing about anybody else is in
+// here). Blind: pointer only.
 // ---------------------------------------------------------------------------
 export function renderScreeningRejected(
   v: {
@@ -613,7 +615,7 @@ export function renderScreeningRejected(
     categoryLabel?: string;
     /** The reason in plain words (domain/screening.ts owns the wording). */
     reason: string;
-    /** Deep link to the card's edit form on the approval page. */
+    /** Deep link to its edit form on the approval page. */
     editUrl: string;
     blind: boolean;
     counterUrl: string;
@@ -635,18 +637,18 @@ export function renderScreeningRejected(
       footerText(f);
     return { subject, html, text };
   }
-  const subject = 'OpenSwitchboard: one of your cards needs a change';
+  const subject = 'OpenSwitchboard: something you posted needs a change';
   const thing = categoryPhrase(v.categoryLabel);
-  const which = thing ? `What you put up about your ${thing}` : 'One of your cards';
+  const which = thing ? `What you put up about your ${thing}` : 'What you posted';
   const html = shell(
-    h1('One of your cards needs a change.') +
+    h1('Something you posted needs a change.') +
       para(
         `${esc(which)} did not pass screening, so it is off the board until you change it. Here is what screening picked up:`,
       ) +
       para(esc(v.reason)) +
-      center(button(v.editUrl, 'Open the card')) +
+      center(button(v.editUrl, 'Open it')) +
       small(
-        'Every card goes through screening before it reaches anyone. Edit this one and save it, and it goes straight back through.',
+        'Everything you post goes through screening before it reaches anyone. Edit this one and save it, and it goes straight back through.',
       ),
     f,
     WANT,
@@ -654,8 +656,8 @@ export function renderScreeningRejected(
   const text =
     `${which} did not pass screening, so it is off the board until you change it.\n\n` +
     `Here is what screening picked up:\n${v.reason}\n\n` +
-    `Open the card:\n${v.editUrl}\n\n` +
-    `Every card goes through screening before it reaches anyone. Edit this one ` +
+    `Open it:\n${v.editUrl}\n\n` +
+    `Everything you post goes through screening before it reaches anyone. Edit this one ` +
     `and save it, and it goes straight back through.\n\n` +
     footerText(f);
   return { subject, html, text };

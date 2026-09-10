@@ -30,7 +30,7 @@ export function esc(s: string): string {
 }
 
 export const CONSENT_STATEMENT =
-  'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.';
+  'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my approval page.';
 
 
 /** Where the two Patch images are served from. Long-cached and immutable. */
@@ -157,7 +157,7 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .anomaly .k { font-size:var(--t-xs); letter-spacing:.06em; text-transform:uppercase; font-weight:600;
   color:var(--want); margin-bottom:2px; }
 
-/* ---- Rows: cards, keys, offers ---- */
+/* ---- Rows: wants and haves, keys, offers ---- */
 .card-row { border:1px solid var(--line); background:var(--card); border-radius:var(--r);
   padding:var(--s4); margin:var(--s3) 0; }
 .card-row .top { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap; }
@@ -175,7 +175,7 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .row-actions .btn, .row-actions button { margin-top:0; padding:.5rem .7rem; font-size:var(--t-sm);
   white-space:nowrap; }
 
-/* ---- Waiting-on-you action cards (the dashboard's first screen) ---- */
+/* ---- Waiting-on-you action tiles (the dashboard's first screen) ---- */
 .todo { display:block; border:1.5px solid var(--line); background:var(--card); border-radius:var(--r);
   padding:var(--s4); margin:var(--s3) 0; text-decoration:none; color:var(--ink); }
 .todo:hover { border-color:var(--accent); }
@@ -310,7 +310,7 @@ everything it never can.</p>
 </div>
 ${foldedDetail(
   'What happens here',
-  `<p class="small">Your agent posts wants &amp; haves as cards, checks matches and
+  `<p class="small">Your agent posts your wants &amp; haves, checks matches and
 negotiates. Opening the account, setting your PIN, approving what gets shared
 or paid, reading the ledger and pulling the plug all happen on this page, with
 you signed in.</p>`,
@@ -512,7 +512,7 @@ export const DRAFT_LINE = 'Your agent brought this number from you — check it 
 
 /**
  * Reply with your own number. This control is where a human's side of a
- * negotiation comes from on a card set to Pass on, and it is deliberately
+ * negotiation comes from on a want or have set to Pass on, and it is deliberately
  * lighter than approving: a proposal binds nothing, so a signed-in session is
  * enough, while accepting one still asks for a PIN or a passkey.
  */
@@ -667,7 +667,7 @@ ${hiddenInputs}
   <button type="submit" name="decision" value="deny" class="secondary">Cancel</button>
   </div>
 </form>
-<p class="small muted">It can post wants &amp; haves as cards, review matches, and negotiate.
+<p class="small muted">It can post wants &amp; haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
 waits for you, here on your approval page.</p>
 <p class="small muted">Authorising hands the agent its key in a new tab, which you can close;
