@@ -104,23 +104,38 @@ const STEP_WORDS: Record<string, string> = {
   '4': 'the talking step',
 };
 
+/**
+ * One word for the thing itself, with the capital of whatever it replaces.
+ * Never shouted: WANT and HAVE are the protocol's nouns and the whole point of
+ * this table is that they do not reach a model.
+ */
+const sideless = (m: string): string => {
+  const said = /s$/i.test(m) ? 'wants and haves' : 'want or have';
+  return /^(?:index\s+)?[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+};
+
 const PLAIN_WORDS: [RegExp, (m: string, ...rest: any[]) => string][] = [
-  [/\b(index\s+)?(card|Card|CARD)(s?)\b/g, (m) => {
-    const plural = m.endsWith('s') || m.endsWith('S');
-    if (/CARD/.test(m)) return plural ? 'LISTINGS' : 'LISTING';
-    if (/Card/.test(m)) return plural ? 'Listings' : 'Listing';
-    return plural ? 'listings' : 'listing';
-  }],
+  // "card" is the schema package's word for the thing. A person's word for it
+  // is their want or their have, and that is the word an agent is handed. The
+  // shouted forms are deliberately not shouted back: WANT and HAVE are the
+  // protocol's own nouns and never go in front of a model.
+  [/\b(index\s+)?(card|Card|CARD)(s?)\b/g, (m) => sideless(m)],
   [/\b(channel|Channel|CHANNEL)(s?)\b/g, (m) => {
     const plural = m.endsWith('s') || m.endsWith('S');
     if (/CHANNEL/.test(m)) return plural ? 'CONVERSATIONS' : 'CONVERSATION';
     if (/Channel/.test(m)) return plural ? 'Conversations' : 'Conversation';
     return plural ? 'conversations' : 'conversation';
   }],
-  // The two sides of a listing, in words a human could overhear. Case-
-  // sensitive, so the everyday verbs "want" and "have" are left alone.
-  [/\bWANT(s?)\b/g, (_m, s) => (s ? 'looking-for listings' : 'looking-for listing')],
-  [/\bHAVE(s?)\b/g, (_m, s) => (s ? 'offering listings' : 'offering listing')],
+  // The two sides, in words a human could overhear. Case-sensitive, so the
+  // everyday verbs "want" and "have" are left alone.
+  [/\bWANT(s?)\b/g, (_m, s) => (s ? 'wants' : 'want')],
+  [/\bHAVE(s?)\b/g, (_m, s) => (s ? 'haves' : 'have')],
+  // "listing" is what the pinned schema package still calls it. A model cannot
+  // say a word it never receives, so the word stops here. The two-sided forms
+  // go first, because each of them has a single plain word of its own.
+  [/\blooking-for listing(s?)\b/gi, (_m, s) => (s ? 'wants' : 'want')],
+  [/\boffering listing(s?)\b/gi, (_m, s) => (s ? 'haves' : 'have')],
+  [/\b(listing|Listing|LISTING)(s?)\b/g, (m) => sideless(m)],
   // A numbered stage first, so "stage 2" becomes the step it means rather
   // than "step 2".
   [/\bstages?\s*([1-4])\b/gi, (_m, n) => STEP_WORDS[n] ?? 'the next step'],
@@ -140,7 +155,11 @@ const PLAIN_WORDS: [RegExp, (m: string, ...rest: any[]) => string][] = [
 
 /** "a introduction" is what a blind word-swap leaves behind. */
 const readable = (s: string): string =>
-  s.replace(/\ba (introduction|offering)\b/g, 'an $1').replace(/\bA (introduction|offering)\b/g, 'An $1');
+  s
+    .replace(/\ba (introduction|offering)\b/g, 'an $1')
+    .replace(/\bA (introduction|offering)\b/g, 'An $1')
+    .replace(/\ban (wants?|haves?)\b/g, 'a $1')
+    .replace(/\bAn (wants?|haves?)\b/g, 'A $1');
 
 function plainVocabulary(node: any): any {
   if (Array.isArray(node)) return node.map(plainVocabulary);
@@ -159,12 +178,12 @@ function plainVocabulary(node: any): any {
 }
 
 /**
- * The two sides of a listing, as the agent writes them against as the schema,
+ * The two sides, as the agent writes them against as the schema,
  * the database and the matcher spell them. The old spellings are still
  * accepted on the way in, so a client holding an older tool schema keeps
  * working; nothing the switchboard sends uses them any more.
  */
-/** The one visibility a listing has, as the agent is shown it. The protocol's
+/** The one visibility it has, as the agent is shown it. The protocol's
  *  own spelling is what goes to the domain and the database. */
 const ANONYMOUS_UNTIL = 'anonymous-until-introduced';
 
@@ -176,7 +195,7 @@ const LISTING_SIDE: Record<string, 'looking_for' | 'offering'> = {
 };
 
 /**
- * Lift a posted listing to the wire's words before it meets the protocol
+ * Lift what was posted to the wire's words before it meets the protocol
  * document: legacy WANT/HAVE and the old visibility spelling become the words
  * the 0.12.0 schema admits. The domain translates to its own column values
  * only after validation has passed.
@@ -192,10 +211,10 @@ export function wireListing(posted: any): any {
 }
 
 /**
- * The listing schema as the agent is shown it: the side enum in the words the
+ * The schema as the agent is shown it: the side enum in the words the
  * switchboard speaks, and the prose to match. Values move by whole quoted
  * token, so nothing but the two enum members and the one const changes; the
- * server still validates a posted listing against the protocol's own document,
+ * server still validates what was posted against the protocol's own document,
  * after the tool layer has translated the side back.
  */
 function agentFacingListing(): any {
@@ -207,7 +226,11 @@ function agentFacingListing(): any {
   // The one description worth writing by hand: a word-swap makes a mess of
   // "WANT: my human is looking for this."
   doc.properties.type.description =
-    'Which side this listing is on. "looking_for" when your human is after something; "offering" when they have something to give, lend or sell.';
+    'Which side this is on. "looking_for" when your human is after something; "offering" when they have something to give, lend or sell.';
+  // The wire keeps the field name `listing`; the words around it say what the
+  // field actually holds.
+  doc.title = 'A want or a have';
+  doc.description = 'The want or have to post.';
   return doc;
 }
 
@@ -217,7 +240,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      'Post a listing for your human: something they are looking for, or something they are offering. Set `type` to "looking_for" or "offering". The listing is validated against the OpenSwitchboard intent schema, screened, and then paired up anonymously. The category is a dotted path from the shared taxonomy: `goods.*` for things, `services.*` for everyday help, `social.*` for people to do things with (`work.*` and `property.*` are reserved, as are licensed trades and dating). Give the nearest node and put the specifics in `attributes` — a MacBook Air is `goods.electronics.laptop` with a brand and model, Italian practice is `social.language-exchange` with `language: "italian"`. A category the taxonomy does not open comes back as CATEGORY_PROHIBITED with up to three of the closest open ones in `suggestions`; repost under one of those. Geo asks two separate things. WHERE THE LISTING IS: give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT"); the switchboard places it, so you never need to invent a location code. HOW FAR YOUR HUMAN WILL MEET SOMEONE: `reach` — leave it out (or "radius") for `radius_km` kilometres from the place, "country" for anywhere in that place\'s own country (something they would post), or "anywhere" for no limit at all (something done online). "I\'ll post it anywhere in Australia" is `place: "Canberra", reach: "country"`, never "Australia" in `place`. Both sides have to reach far enough, so a nationwide offering in Canberra meets a looking-for listing in Perth only when that one reaches nationwide too. It answers with where it put the listing and how far it reaches in `location_resolved`; read that back to your human as you confirm the posting. A bare state or country is refused with LOCATION_UNRESOLVED, and a name several towns share comes back as LOCATION_AMBIGUOUS with the candidates written out — ask which one, then repost with the fuller form it gives you. The price band (a budget ceiling when they are looking, a reserve floor when they are offering) is a private matching input and is never shown to a counterparty.',
+      'Post a want or a have for your human: something they are looking for, or something they are offering. Set `type` to "looking_for" or "offering". It is validated against the OpenSwitchboard intent schema, screened, and then paired up anonymously. The category is a dotted path from the shared taxonomy: `goods.*` for things, `services.*` for everyday help, `social.*` for people to do things with (`work.*` and `property.*` are reserved, as are licensed trades and dating). Give the nearest node and put the specifics in `attributes` — a MacBook Air is `goods.electronics.laptop` with a brand and model, Italian practice is `social.language-exchange` with `language: "italian"`. A category the taxonomy does not open comes back as CATEGORY_PROHIBITED with up to three of the closest open ones in `suggestions`; repost under one of those. Geo asks two separate things. WHERE THE THING IS: give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT"); the switchboard places it, so you never need to invent a location code. HOW FAR YOUR HUMAN WILL MEET SOMEONE: `reach` — leave it out (or "radius") for `radius_km` kilometres from the place, "country" for anywhere in that place\'s own country (something they would post), or "anywhere" for no limit at all (something done online). "I\'ll post it anywhere in Australia" is `place: "Canberra", reach: "country"`, never "Australia" in `place`. Both sides have to reach far enough, so a have in Canberra that reaches nationwide meets a want in Perth only when that one reaches nationwide too. It answers with where it put it and how far it reaches in `location_resolved`; read that back to your human as you confirm the posting. A bare state or country is refused with LOCATION_UNRESOLVED, and a name several towns share comes back as LOCATION_AMBIGUOUS with the candidates written out — ask which one, then repost with the fuller form it gives you. The price band (a budget ceiling when they are looking, a reserve floor when they are offering) is a private matching input and is never shown to a counterparty.',
     inputSchema: {
       type: 'object',
       properties: { listing: intentCardSchema },
@@ -228,17 +251,17 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_intents',
     description:
-      "List your human's own listings and their lifecycle states. Each one comes back with its side — \"looking_for\" or \"offering\" — under `listing.type`.",
+      "List your human's own wants and haves, and their lifecycle states. Each one comes back with its side — \"looking_for\" or \"offering\" — under `listing.type`.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's listings and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
-        intent_id: { type: 'string', format: 'uuid', description: 'Limit to one listing.' },
+        intent_id: { type: 'string', format: 'uuid', description: 'Limit to one want or have.' },
         intro_id: {
           type: 'string',
           format: 'uuid',
@@ -257,7 +280,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every listing starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only a listing they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (your human\'s one-tap call on how good the introduction was: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end your listing\'s collection window early so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent).',
+      'Respond to an introduction or an offer. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only one they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (your human\'s one-tap call on how good the introduction was: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -287,7 +310,7 @@ export const TOOLS: ToolDef[] = [
         offer: {
           type: 'object',
           description:
-            'Required for propose_offer. The amount has to be one your human authored: on a listing set to Auto-negotiate it lives inside the numbers they wrote, and on a listing set to Pass on there is no amount you may send at all.',
+            'Required for propose_offer. The amount has to be one your human authored: on a want or have set to Auto-negotiate it lives inside the numbers they wrote, and on one set to Pass on there is no amount you may send at all.',
           properties: {
             amount: { type: 'number', exclusiveMinimum: 0 },
             ccy: { type: 'string', pattern: '^[A-Z]{3}$' },
@@ -346,7 +369,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'amend_intent',
     description:
-      "Amend one of your human's listings (geo, attributes, ask, urgency, status, ttl_days, price). The side it is on cannot change. The listing is re-validated and re-screened before returning to the network.",
+      "Amend one of your human's wants or haves (geo, attributes, ask, urgency, status, ttl_days, price). The side it is on cannot change. It is re-validated and re-screened before returning to the network.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -371,7 +394,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'withdraw_intent',
-    description: 'Withdraw an intent listing from the network.',
+    description: "Withdraw one of your human's wants or haves from the network.",
     inputSchema: {
       type: 'object',
       properties: { intent_id: { type: 'string', format: 'uuid' } },
@@ -382,7 +405,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'standing_arrangement',
     description:
-      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — whether you run between conversations (`runs_on_its_own`), how often to check (`check_every_minutes`, a number of minutes with a 30-minute floor, and only alongside `runs_on_its_own: true`), what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on an agent that is not there; say nothing about a cadence and the switchboard emails them instead. The arrangement is remembered by the switchboard and handed to every agent on every check_in sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or listing content, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
+      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns the current object; `set` replaces the whole of it. Set it only from what your human has actually told you — whether you run between conversations (`runs_on_its_own`), how often to check (`check_every_minutes`, a number of minutes with a 30-minute floor, and only alongside `runs_on_its_own: true`), what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be with suggestions — and re-send every field you want kept, because a set overwrites. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on an agent that is not there; say nothing about a cadence and the switchboard emails them instead. The arrangement is remembered by the switchboard and handed to every agent on every check_in sweep, so what you save here survives your next restart, a change of model, and any other client your human connects. Preferences only: no names, contact details, addresses or the content of a want or have, and anything shaped like a way to reach someone is refused. Your human sees the whole thing in plain words on their approval page and can edit or clear it there. An arrangement never pre-approves a consent gate — sharing details, accepting an offer and confirming a payment still go to your human every single time.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -589,7 +612,7 @@ export async function dispatchTool(
     if (READ_TOOLS.has(name)) await checkReadRate(accountId);
     switch (name) {
       case 'publish_intent': {
-        // `listing` is the name the agent is given. `card` is still accepted so
+        // `listing` is the wire's name for the field. `card` is still accepted so
         // a client holding the older tool schema keeps working; nothing the
         // switchboard sends uses that word any more. Legacy WANT/HAVE and the
         // old visibility spelling are lifted to the wire words here, BEFORE

@@ -171,11 +171,11 @@ describe('the manual introduces itself', () => {
     // Later retrieval answers the "who was that again?" question, plainly.
     expect(SERVER_INSTRUCTIONS).toContain('who was that book club person again?');
   });
-  it('keeps archiving separate from the listing, with both worked examples in plain voice', () => {
-    // Archiving never assumes the listing's fate; the agent asks, and the two
+  it('keeps archiving separate from what was posted, with both worked examples in plain voice', () => {
+    // Archiving never assumes the fate of the want or have; the agent asks, and the two
     // worked cases (book club stays up, bike gets taken down) are both present.
     expect(SERVER_INSTRUCTIONS).toContain('withdraw_intent');
-    expect(SERVER_INSTRUCTIONS).toMatch(/never pull a listing down/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/never pull a want or have down/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/book club with room/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/bike[\s\S]{0,80}sell/i);
     expect(SERVER_INSTRUCTIONS).toContain('keep the book club open for more people');
@@ -468,7 +468,7 @@ describe('what the switchboard calls things, in front of a model', () => {
     expect(checkIn.inputSchema.properties.step.enum).toEqual(['signal', 'details', 'names']);
   });
 
-  it('offers the two sides of a listing in words a human could overhear', async () => {
+  it('offers the two sides in words a human could overhear', async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     expect(publish.inputSchema.properties.listing.properties.type.enum).toEqual([
@@ -501,7 +501,7 @@ describe('what the switchboard calls things, in front of a model', () => {
     }
   });
 
-  it('asks for a thin post under listing, the word the human approved', async () => {
+  it("asks for a thin post under listing, the wire's own field name", async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     expect(publish.inputSchema.required).toEqual(['listing']);

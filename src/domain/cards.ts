@@ -105,7 +105,7 @@ export async function publishIntent(
 ): Promise<PublishResult> {
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid intent listing: ${v.reasons.join('; ')}`), {
+    throw Object.assign(new Error(`invalid want or have: ${v.reasons.join('; ')}`), {
       validation: v.reasons,
     });
   }
@@ -294,7 +294,7 @@ export async function amendIntent(
   if (next.ask === null || next.ask === undefined) delete next.ask;
   const v = validatePayload('intent-card', next);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid amended listing: ${v.reasons.join('; ')}`), {
+    throw Object.assign(new Error(`invalid amended want or have: ${v.reasons.join('; ')}`), {
       validation: v.reasons,
     });
   }
@@ -361,9 +361,9 @@ export async function amendIntent(
 }
 
 /**
- * Take a listing down. The thing is gone — sold, filled, no longer wanted — so
+ * Take a want or a have down. The thing is gone — sold, filled, no longer wanted — so
  * every open introduction on it is filed away in the same breath: an
- * introduction on a withdrawn listing must not keep advancing, and must not
+ * introduction on a withdrawn want or have must not keep advancing, and must not
  * surface to either side as something new to act on. The record of who they
  * got chatting with survives, as it does with any archive.
  */

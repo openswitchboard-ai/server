@@ -254,7 +254,7 @@ describe('screening reasons in plain words', () => {
 
   it('an unknown code still gets an honest sentence rather than a blank', () => {
     const s = screeningReasonInPlainWords('some-new-check');
-    expect(s).toContain('Screening held this listing back');
+    expect(s).toContain('Screening held this back');
     expect(screeningReasonInPlainWords(undefined)).toBe(s);
   });
 
