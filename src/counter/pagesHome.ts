@@ -859,14 +859,14 @@ export type HearsVia = 'email' | 'assistant';
 
 const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   {
-    value: 'email',
-    head: 'By email.',
-    rest: 'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
-  },
-  {
     value: 'assistant',
     head: 'Through my assistant.',
     rest: 'It checks on its own and brings me the news; email is a backup only.',
+  },
+  {
+    value: 'email',
+    head: 'By email.',
+    rest: 'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
   },
 ];
 
@@ -932,6 +932,7 @@ ${unreachable}${complaint}
 <p class="small muted">An assistant you talk to when you feel like it cannot
 bring you a match it never saw, so the switchboard emails you every step.
 An agent that checks on its own gets there first, and the emails stand down.</p>
+<div id="email-dials"${v.hearsVia === 'assistant' ? ' hidden' : ''}>
 <h2>Email frequency</h2>
 <form method="POST" action="/settings/frequency">
   <label for="freq_matches">Match summons</label>
@@ -943,6 +944,20 @@ An agent that checks on its own gets there first, and the emails stand down.</p>
 <p class="small muted">How often the switchboard may email you. Sign-in codes,
 approval requests and security notices always send. Changes apply immediately
 and land in your consent log.</p>
+</div>
+<p id="email-backup" class="small muted"${v.hearsVia === 'assistant' ? '' : ' hidden'}>With your assistant bringing the news, the only emails
+you get are sign-in codes, approval requests and security notices.</p>
+<script>
+// Choosing "through my assistant" takes the email dials off the page; they
+// only mean something when email is how the person hears about things.
+document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    var viaAssistant = document.querySelector('input[name="hears_via"]:checked').value === 'assistant';
+    document.getElementById('email-dials').hidden = viaAssistant;
+    document.getElementById('email-backup').hidden = !viaAssistant;
+  });
+});
+</script>
 <h2>Blind mode</h2>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}. When on,
 every email we send you becomes a content-free pointer — "something needs your
