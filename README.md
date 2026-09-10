@@ -71,8 +71,8 @@ These are the invariants worth reading the code to check:
 - Price bands (budget ceiling, reserve floor) are matching inputs only. They are
   envelope-encrypted at rest, decrypted inside the matching engine, and
   structurally absent from every disclosure payload.
-- Stage-3 disclosure (`match.mutual`) is returned only when both humans'
-  `stage3-optin` consent tokens exist. The gate queries `consent_tokens` directly.
+- The names step (`intro.mutual`: first name and locality) is returned only when
+  both humans' opt-in consent tokens exist. The gate queries `consent_tokens` directly.
 - The only offer-accept state reachable through any agent API is
   `awaiting-human`. `accepted-by-human` is set exclusively by
   `acceptOfferByHuman()`, which has no public route — it is reachable from the
