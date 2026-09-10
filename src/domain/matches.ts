@@ -131,7 +131,7 @@ async function assertNotCollecting(m: MatchRow, accountId: string): Promise<void
     const secs = Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000));
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
-        'Your collection window is still open on this listing: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
+        'Your collection window is still open on what you posted: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
       retry_after: secs,
     });
   }
@@ -157,7 +157,7 @@ export async function closeCollectionByCard(
 ): Promise<{ closed: boolean }> {
   const card = await getCard(cardId);
   if (!card || card.account_id !== accountId) {
-    throw Object.assign(new Error('listing not found'), { notFound: true });
+    throw Object.assign(new Error('want or have not found'), { notFound: true });
   }
   const r = await getPool().query(
     `UPDATE cards SET collect_closed_at = now(), updated_at = now()
@@ -438,8 +438,8 @@ export async function archiveMatch(
 }
 
 /**
- * File away every open introduction on a listing that has just been taken
- * down. Taking a listing down is the human saying the thing is gone — the bike
+ * File away every open introduction on a want or have that has just been taken
+ * down. Taking one down is the human saying the thing is gone — the bike
  * sold, the room filled — and an introduction that keeps advancing on it wastes
  * the other person's time on something they can no longer have. So the
  * withdrawal carries them with it: each open introduction on the card becomes
@@ -451,7 +451,7 @@ export async function archiveMatch(
  * The record stays, the same way an ordinary archive keeps one: who it was and
  * what it was about are still there to answer "who was that person again?".
  *
- * Best-effort by construction — it is called after the listing is already down,
+ * Best-effort by construction — it is called after it is already down,
  * and returns how many it filed away.
  */
 export async function archiveOpenIntroductionsOnCard(

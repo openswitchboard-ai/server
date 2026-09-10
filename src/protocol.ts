@@ -136,8 +136,8 @@ function wireForm(doc: any, id: string): any {
           .replace(/\bchannel(s?)\b/gi, 'conversation$1')
           .replace(/\bmatch(es)?\b/gi, (m) => (m.toLowerCase().endsWith('es') ? 'introductions' : 'introduction'))
           .replace(/\bmatched\b/gi, 'introduced')
-          .replace(/\bWANT\b/g, 'looking-for listing')
-          .replace(/\bHAVE\b/g, 'offering listing');
+          .replace(/\bWANT\b/g, 'want')
+          .replace(/\bHAVE\b/g, 'have');
       } else prose(v);
     }
   };

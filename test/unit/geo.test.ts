@@ -712,13 +712,13 @@ describe('what the manual tells an agent about places', () => {
     expect(SERVER_INSTRUCTIONS).toContain('LOCATION_AMBIGUOUS');
     // The register: the place goes into what the agent says, in its own voice.
     expect(SERVER_INSTRUCTIONS).toMatch(/say if that's wrong/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/amend the listing there and then/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/amend it there and then/i);
   });
 
   it('teaches place and reach as two different things, with the translation', async () => {
     const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
     expect(SERVER_INSTRUCTIONS).toContain('geo.reach');
-    expect(SERVER_INSTRUCTIONS).toMatch(/the listing lives where the thing lives/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/lives where the thing lives/i);
     // The sentence an agent actually has to translate.
     expect(SERVER_INSTRUCTIONS).toMatch(/I'll post it anywhere in Australia/);
     expect(SERVER_INSTRUCTIONS).toMatch(/"anywhere" for something done online/);
