@@ -276,7 +276,7 @@ describe('Patch, served from the pages that show him', () => {
 describe('consent statement', () => {
   it('is the exact agreed text', () => {
     expect(CONSENT_STATEMENT).toBe(
-      'My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.',
+      'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my approval page.',
     );
   });
 });
@@ -289,7 +289,7 @@ describe('consent statement', () => {
 // ---------------------------------------------------------------------------
 import * as cpages from '../../src/counter/pages.js';
 import * as chome from '../../src/counter/pagesHome.js';
-import { lintEmailCopy } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
 import { categoryLeafLabel } from '../../src/domain/matchRules.js';
 import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 
@@ -609,7 +609,7 @@ describe('counter pages: copy-cull render suite', () => {
         pendingApprovals: [
           {
             href: '/ledger/c-9/edit',
-            label: `Your ${LABEL} card didn't pass screening — see why and fix it`,
+            label: `Your ${LABEL} didn't pass screening — see why and fix it`,
             cta: 'See why and fix it',
           },
           { href: '/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
@@ -990,7 +990,7 @@ describe('counter pages: copy-cull render suite', () => {
   });
 
   for (const p of allPages()) {
-    it(`${p.name}: no "the counter", no raw slugs, passes the banned-phrase lint`, () => {
+    it(`${p.name}: no "the counter", no raw slugs, no "card", passes the banned-phrase lint`, () => {
       const low = p.html.toLowerCase();
       // "the counter" and "your counter" are gone from every page. URLs are
       // fine: route paths are "/...", which never form the phrase.
@@ -1001,8 +1001,11 @@ describe('counter pages: copy-cull render suite', () => {
       expect(low).not.toMatch(/goods\.[a-z]/);
       // Banned jargon stays out of page copy.
       expect(low).not.toContain('safety rail');
-      // VOICE: same antithesis lint the email suite runs.
-      expect(lintEmailCopy(p.html)).toEqual([]);
+      // VOICE: same antithesis lint the email suite runs, plus the
+      // vocabulary rule — one "card" is one want or one have, and from
+      // 2026-09-11 the word a person reads is want or have. CSS hooks
+      // (--card, .card-row, data-card-id) and payment cards are exempt.
+      expect(lintHumanCopy(p.html)).toEqual([]);
     });
   }
 
@@ -1027,7 +1030,7 @@ describe('counter pages: copy-cull render suite', () => {
   it('a rejected card gets its own attention item and its own reason', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
     // Dashboard: the attention item, its own button wording, the edit link.
-    expect(byName['dashboard']).toContain(`Your ${LABEL} card didn&#39;t pass screening`);
+    expect(byName['dashboard']).toContain(`Your ${LABEL} didn&#39;t pass screening`);
     expect(byName['dashboard']).toContain('/ledger/c-9/edit');
     expect(byName['dashboard']).toContain('See why and fix it');
     // Everything else on the dashboard keeps the decide-on-it wording.
@@ -1073,7 +1076,7 @@ describe('counter pages: copy-cull render suite', () => {
     expect(html).toContain('<h2>Waiting for you</h2>');
   });
 
-  it('cards near the end of their clock are something waiting, with no figure in the link', () => {
+  it('wants and haves near the end of their clock are something waiting, with no figure in the link', () => {
     const html = chome.dashboardPage({
       killSwitchOn: false,
       cardCounts: { total: 3, published: 3, pending: 0 },
@@ -1082,10 +1085,10 @@ describe('counter pages: copy-cull render suite', () => {
       collectionWindows: [],
       lapsingSoon: { count: 2, soonest: '2026-09-08' },
     });
-    expect(html).toContain('2 cards of yours');
+    expect(html).toContain('2 of your wants and haves');
     expect(html).toContain('2026-09-08');
     expect(html).not.toContain('Nothing is waiting for you.');
-    expect(lintEmailCopy(html)).toEqual([]);
+    expect(lintHumanCopy(html)).toEqual([]);
   });
 
   it('every page carries the same header and the signature footer line', () => {
@@ -1327,7 +1330,7 @@ describe('the offers page the rehearsal left notes on', () => {
 
   it('the sealed page keeps its own button, named for what is on it', () => {
     const html = chome.matchOffersPage(offersView());
-    expect(html).toContain('href="/ledger/c-1/numbers">Your limit on this listing</a>');
+    expect(html).toContain('href="/ledger/c-1/numbers">Your limit on this have</a>');
   });
 });
 

@@ -87,7 +87,7 @@ export async function loadOpenChannel(
     const card = await getCard(cardId);
     if (!card || card.lifecycle_state === 'WITHDRAWN') {
       throw channelLocked(
-        'This conversation has closed: one of the two listings behind it was withdrawn.',
+        'This conversation has closed: what started it on one side was withdrawn.',
       );
     }
   }

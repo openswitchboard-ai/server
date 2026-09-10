@@ -174,8 +174,8 @@ const get = (url: string) =>
 // ---------------------------------------------------------------------------
 // (1) The dashboard says something is waiting.
 // ---------------------------------------------------------------------------
-describe('approval-page dashboard: a card that failed screening', () => {
-  it('shows an attention item linking to that card&#39;s edit page', async () => {
+describe('approval-page dashboard: something that failed screening', () => {
+  it('shows an attention item linking to its edit page', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(
       fakePool({
         [REJECTED_QUERY]: [{ id: CARD, category: SLUG, screening: rejectedRow().screening }],
@@ -183,7 +183,7 @@ describe('approval-page dashboard: a card that failed screening', () => {
     );
     const res = await get('/');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain(`Your ${PHRASE} card didn&#39;t pass screening`);
+    expect(res.body).toContain(`Your ${PHRASE} didn&#39;t pass screening`);
     expect(res.body).toContain(`/ledger/${CARD}/edit`);
     expect(res.body).toContain('See why and fix it');
     // The raw slug and the model's internal note never render.
@@ -208,7 +208,7 @@ describe('ledger edit page: the reason in plain words', () => {
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({ [LEDGER_QUERY]: [rejectedRow()] }));
     const res = await get(`/ledger/${CARD}/edit`);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('This card didn&#39;t pass screening.');
+    expect(res.body).toContain('This want didn&#39;t pass screening.');
     expect(res.body).toContain('reads like an instruction aimed at an AI');
     expect(res.body).toContain('screening code: prompt-injection');
     // The model's own note is internal and never reaches the page.

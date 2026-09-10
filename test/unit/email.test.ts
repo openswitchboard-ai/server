@@ -28,7 +28,7 @@ import {
   type EmailContent,
   type FooterLinks,
 } from '../../src/email/templates.js';
-import { lintEmailCopy } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
 import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { signEmailToken, verifyEmailToken } from '../../src/email/tokens.js';
@@ -495,7 +495,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
 
 describe('email templates: render suite', () => {
   for (const t of allTemplates()) {
-    it(`${t.name}: renders html + text and passes the banned-phrase lint`, () => {
+    it(`${t.name}: renders html + text and passes the human-copy lint`, () => {
       expect(t.content.subject.length).toBeGreaterThan(3);
       expect(t.content.html).toContain('<!doctype html>');
       expect(t.content.html).toContain('OpenSwitchboard');
@@ -504,9 +504,11 @@ describe('email templates: render suite', () => {
       expect(t.content.html).toContain(links.settingsUrl);
       expect(t.content.html).toContain(links.ledgerUrl);
       expect(t.content.text).toContain(links.settingsUrl);
-      // VOICE: no antithesis, subject + text + html.
+      // VOICE: no antithesis, and no "card" — one "card" is one want or one
+      // have, and from 2026-09-11 the word a person reads is want or have.
+      // Payment cards are exempt; nothing else is.
       for (const part of [t.content.subject, t.content.text, t.content.html]) {
-        expect(lintEmailCopy(part)).toEqual([]);
+        expect(lintHumanCopy(part)).toEqual([]);
       }
       // COPY CULL: "the counter" never appears in email copy (URLs are fine
       // and never contain the phrase), and raw category slugs never render.
@@ -562,6 +564,32 @@ describe('email templates: render suite', () => {
     expect(lintEmailCopy('This is signal — not noise.')).toHaveLength(1);
     expect(lintEmailCopy('We match intent, not just keywords here.')).toHaveLength(2);
     expect(lintEmailCopy('A clean, plain sentence about the counter.')).toHaveLength(0);
+  });
+
+  // The vocabulary rule (2026-09-11). One "card" is one want or one have, and
+  // the word a person reads is want or have. The word survives in three
+  // places only: a payment card, the one simile a document is allowed, and
+  // the markup hooks that happen to share the spelling.
+  it('the lint catches "card" wherever a person would read it', () => {
+    expect(lintHumanCopy('Your card lapses on Thursday.')).toHaveLength(1);
+    expect(lintHumanCopy('Cards on the switchboard lapse on their own.')).toHaveLength(1);
+    expect(lintHumanCopy('Every index card goes through screening.')).toHaveLength(1);
+    expect(lintHumanCopy('Your wants and haves lapse on their own.')).toHaveLength(0);
+  });
+
+  it('the lint leaves payment cards, the one simile and the markup alone', () => {
+    expect(lintHumanCopy('The introductory fee and the card processing stay paid.')).toEqual([]);
+    expect(lintHumanCopy('the card\nprocessor keeps its own fee on a refund')).toEqual([]);
+    expect(lintHumanCopy('It is as thin as an index card.')).toEqual([]);
+    expect(lintHumanCopy('<div class="card-row" data-card-id="x" style="background:var(--card)">')).toEqual([]);
+    expect(lintHumanCopy('<a href="/counter/ledger?card=7">Ledger</a>')).toEqual([]);
+  });
+
+  // The antithesis lint alone is what a shipped manual changelog entry is
+  // held to: an entry that has gone out is never reworded, and the early
+  // ones say "card".
+  it('the antithesis lint on its own says nothing about vocabulary', () => {
+    expect(lintEmailCopy('It covers posting thin cards.')).toEqual([]);
   });
 });
 

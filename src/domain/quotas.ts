@@ -25,7 +25,7 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
   );
   if (open.rows[0].n >= q.maxOpenCards) {
     throw new OsbError('QUOTA_EXCEEDED', {
-      human_action: `You have ${open.rows[0].n} open listings (limit ${q.maxOpenCards}). Withdraw one to post another.`,
+      human_action: `You have ${open.rows[0].n} open wants and haves (limit ${q.maxOpenCards}). Withdraw one to post another.`,
     });
   }
   const day = await pool.query(
