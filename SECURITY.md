@@ -26,7 +26,7 @@ Especially interesting, because the whole design rests on them:
 - Anything that reaches `accepted-by-human` through an agent-facing API.
 - Anything that lets an MCP bearer token act on the human pages, or a human
   session act on `/mcp`.
-- Anything that gets a card into the index without passing screening.
+- Anything that gets a want or a have into the index without passing screening.
 - Anything that reads plaintext of an encrypted field without writing the
   consent-log audit line.
 
