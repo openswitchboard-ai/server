@@ -355,9 +355,9 @@ export function pinSetPage(error?: string): string {
 ${errBox(error)}
 <form method="POST" action="/pin/set">
   <label for="pin">PIN (6+ digits)</label>
-  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
+  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
   <label for="pin2">PIN again</label>
-  <input id="pin2" name="pin2" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+  <input id="pin2" name="pin2" type="password" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
   <button type="submit">Set PIN</button>
 </form>
 <p class="small muted">Disclosures, settlements and turning things back on all ask
