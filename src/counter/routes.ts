@@ -614,7 +614,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (a.status === 'pending') {
         await ops.activateAccountWithConsent(s.accountId!, pages.CONSENT_STATEMENT);
       }
-      return reply.redirect(s.oauthCtx ? '/authorize' : '/', 303);
+      // nextStep rather than a hard-coded target: the onboarding question sits
+      // between here and authorising an agent, and a first-time person passes
+      // it whichever way they arrived.
+      return reply.redirect(await nextStep(s.accountId!, s), 303);
     });
 
     // ------------------------------------------------------------------
@@ -1079,7 +1082,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         await consumeLink(row.id);
         return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
       }
-      q.elevated = sess.isElevated(s as Session);
       if (decision === 'no') {
         await consumeLink(row.id);
         await links.recordLinkDecision(row.id, 'declined');
