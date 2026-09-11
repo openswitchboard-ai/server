@@ -88,9 +88,10 @@ import {
   verifyByLinkToken,
 } from './verification.js';
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
-import { categoryPhrase } from '../email/templates.js';
+import { categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
 import { verifyEmailToken } from '../email/tokens.js';
 import { emailHash } from '../domain/accounts.js';
+import * as links from './links.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
@@ -221,6 +222,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a) return '/login';
       if (!a.pin_hash) return '/pin';
       if (a.status === 'pending') return '/consent';
+      // One page, once, after the PIN and before any agent is authorised: how
+      // this person will hear about things, and what they would share. Every
+      // account that existed before the step did carries a stamp already (see
+      // migrations/027), so nobody is sent back through it.
+      if (!a.onboarded_at) return '/hello';
       if (s.oauthCtx) return '/authorize';
       return '/';
     };
@@ -254,7 +260,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s?.accountId) return html(reply, pages.landingPage());
       const a: any = await getAccount(s.accountId);
       if (!a) return html(reply, pages.landingPage());
-      if (!a.pin_hash || a.status === 'pending') {
+      // The onboarding question sits between the PIN and everything else, so
+      // the front page sends a first-time person there before it renders.
+      if (!a.pin_hash || a.status === 'pending' || !a.onboarded_at) {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       // What this page asks for is what it is going to show: the gates. The
@@ -610,6 +618,70 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // ------------------------------------------------------------------
+    // Hello: the one onboarding question. How this person will hear about
+    // things (hears_via), plus the first name and area they would share.
+    // Skipping leaves hears_via on 'email', the safe answer.
+    // ------------------------------------------------------------------
+    const helloView = async (accountId: string): Promise<home.HelloView> => {
+      const profile = await readSharedProfile(accountId, {
+        purpose: 'onboarding-view',
+        actor: accountId,
+      });
+      return {
+        hearsVia: await getHearsVia(accountId),
+        firstName: profile.firstName,
+        locality: profile.locality,
+      };
+    };
+
+    counter.get('/hello', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const a: any = await getAccount(s.accountId!);
+      if (!a?.pin_hash || a.status === 'pending' || a.onboarded_at) {
+        return reply.redirect(await nextStep(s.accountId!, s), 303);
+      }
+      return html(reply, home.helloPage(await helloView(s.accountId!)));
+    });
+
+    counter.post('/hello', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const a: any = await getAccount(s.accountId!);
+      if (!a?.pin_hash || a.status === 'pending') {
+        return reply.redirect(await nextStep(s.accountId!, s), 303);
+      }
+      const b: any = req.body ?? {};
+      const skipped = String(b.skip ?? '') === 'yes';
+      if (!skipped) {
+        const want = String(b.hears_via ?? '');
+        if (want === 'email' || want === 'assistant') {
+          await setHearsVia(s.accountId!, want, 'counter');
+        }
+        const firstName = String(b.first_name ?? '').trim();
+        const locality = String(b.locality ?? '').trim();
+        // Both boxes or neither. Half a shared profile shares nothing, and the
+        // names step would only ask for the other half later anyway.
+        if (firstName || locality) {
+          const checked = validateSharedProfile({ firstName, locality });
+          if (!checked.ok) {
+            return html(
+              reply,
+              home.helloPage(
+                { hearsVia: await getHearsVia(s.accountId!), firstName, locality },
+                checked.error,
+              ),
+              400,
+            );
+          }
+          await saveSharedProfile(s.accountId!, checked.value, 'counter');
+        }
+      }
+      await ops.markOnboarded(s.accountId!);
+      return reply.redirect(await nextStep(s.accountId!, s), 303);
+    });
+
+    // ------------------------------------------------------------------
     // Login: email + code (re-verification) OR passkey.
     // ------------------------------------------------------------------
     counter.get('/login', async (req, reply) => {
@@ -834,6 +906,109 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       };
     };
 
+    // ------------------------------------------------------------------
+    // The one-question pages. One sentence, two buttons, the PIN ceremony
+    // where identity or money moves. The link is bound to the exact figures
+    // and ids the question names, and the PRESS is what consumes it — so the
+    // page can be re-read, and a second press fails plainly.
+    // ------------------------------------------------------------------
+    const oneQuestionView = async (
+      accountId: string,
+      row: ApprovalLinkRow,
+      token: string,
+    ): Promise<pages.OneQuestionView | { error: string }> => {
+      const figures = links.readPayload(row) ?? {};
+      const base = {
+        token,
+        noLabel: 'Not now',
+        hasPasskey: await wa.accountHasPasskey(accountId),
+        elevated: false,
+      };
+      if (row.action === 'offer-send') {
+        const m = await getMatch(row.ref_id);
+        if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+        try {
+          sideOf(m, accountId);
+        } catch {
+          return { error: 'This introduction is not yours.' };
+        }
+        const other = m.account_want === accountId ? m.account_have : m.account_want;
+        // The other person's first name, once they have both shared it. Before
+        // that there is nobody to name, so the sentence says "the other side".
+        const name =
+          m.stage >= 3
+            ? await ops.disclosedFirstName(
+                accountId,
+                other,
+                { match_id: row.ref_id },
+                'one-question-page',
+              )
+            : undefined;
+        const figure = templateMoney(Number(figures.amount), String(figures.ccy ?? ''));
+        const detail: string[] = [];
+        if (figures.note) detail.push(`With your line: “${String(figures.note)}”.`);
+        detail.push(
+          'It binds nothing — either of you can still say no — and accepting anything comes back to a page like this one.',
+        );
+        return {
+          ...base,
+          question: `Send ${figure} to ${name ?? 'the other side'} for your ${phrase(m.category)}?`,
+          detail,
+          yesLabel: 'Send',
+          needsPin: true,
+        };
+      }
+      if (row.action === 'collection-close') {
+        const r = await getPool().query(
+          `SELECT category, collect_until, collect_closed_at FROM cards
+           WHERE id = $1 AND account_id = $2`,
+          [row.ref_id, accountId],
+        );
+        const card = r.rows[0];
+        if (!card) return { error: 'Nothing like that on your ledger.' };
+        if (card.collect_closed_at || new Date(card.collect_until) <= new Date()) {
+          return { error: 'That window is already closed — you can go ahead with whoever you choose.' };
+        }
+        return {
+          ...base,
+          question: `Close the window on your ${phrase(card.category)} now and choose?`,
+          detail: [
+            'While the window is open you can hear from everyone who has come forward. Closing it lets you go ahead with one of them.',
+          ],
+          yesLabel: 'Yes, close it',
+          needsPin: false,
+        };
+      }
+      // negotiation-auto
+      const r = await getPool().query(
+        'SELECT category, type FROM cards WHERE id = $1 AND account_id = $2',
+        [row.ref_id, accountId],
+      );
+      const card = r.rows[0];
+      if (!card) return { error: 'Nothing like that on your ledger.' };
+      const checked = validateMandate(figures, card.type);
+      if (!checked.ok) return { error: checked.error };
+      const m = checked.value;
+      const bits: string[] = [];
+      if (m.open !== undefined) bits.push(`open at ${templateMoney(m.open, m.ccy)}`);
+      bits.push(
+        card.type === 'HAVE'
+          ? `take no less than ${templateMoney(m.limit, m.ccy)}`
+          : `pay no more than ${templateMoney(m.limit, m.ccy)}`,
+      );
+      if (m.step !== undefined) bits.push(`move in steps of ${templateMoney(m.step, m.ccy)}`);
+      return {
+        ...base,
+        question: `Let your assistant negotiate the ${phrase(card.category)}: ${bits.join(', ')}?`,
+        detail: [
+          'Between those numbers your assistant can put figures on the table without asking you each time. Anything outside them still comes back to you.',
+          'Accepting an offer is still yours, every single time.',
+        ],
+        yesLabel: 'Yes, let it negotiate',
+        needsPin: true,
+      };
+    };
+
     counter.get('/a/:token', async (req, reply) => {
       const token = String((req.params as any).token ?? '');
       const check = await verifyLinkToken(token);
@@ -851,18 +1026,152 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           reply,
           pages.messagePage(
             'Sign in to review this',
-            '<p>Sign in, then open the link from your email again.</p>',
+            '<p>Sign in, then open the link your assistant gave you again.</p>',
             '/login',
             'Sign in',
           ),
           401,
         );
       }
+      if (links.isOneQuestionAction(row.action)) {
+        const q = await oneQuestionView(s.accountId, row, token);
+        if ('error' in q) {
+          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+        }
+        q.elevated = sess.isElevated(s);
+        return html(reply, pages.oneQuestionPage(q));
+      }
       await consumeLink(row.id); // single-use: burns on first authenticated view
       const v = await approvalView(s.accountId, row.action, row.ref_id);
       if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       return html(reply, pages.approvalPage(v));
+    });
+
+    /** The press. Verify, check the PIN, burn the link, then act. */
+    counter.post('/a/:token', async (req, reply) => {
+      const token = String((req.params as any).token ?? '');
+      const check = await verifyLinkToken(token);
+      if (!check.ok) {
+        if (check.reason === 'used') return html(reply, pages.linkDeadPage('used'));
+        if (check.reason === 'expired') return html(reply, pages.linkDeadPage('expired'));
+        return html(reply, pages.linkDeadPage('invalid'), 404);
+      }
+      const row = check.row as ApprovalLinkRow;
+      if (!links.isOneQuestionAction(row.action)) return reply.code(400).send({ error: 'bad_request' });
+      const s = await sess.loadSession(req);
+      if (!s?.accountId || s.accountId !== row.account_id) {
+        return html(
+          reply,
+          pages.messagePage(
+            'Sign in to review this',
+            '<p>Sign in, then open the link your assistant gave you again.</p>',
+            '/login',
+            'Sign in',
+          ),
+          401,
+        );
+      }
+      const b: any = req.body ?? {};
+      const decision = String(b.decision ?? '');
+      const q = await oneQuestionView(s.accountId, row, token);
+      if ('error' in q) {
+        await consumeLink(row.id);
+        return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+      }
+      q.elevated = sess.isElevated(s as Session);
+      if (decision === 'no') {
+        await consumeLink(row.id);
+        await links.recordLinkDecision(row.id, 'declined');
+        return html(
+          reply,
+          pages.messagePage('Not now', '<p>Nothing changed, and no reason was sent.</p>'),
+        );
+      }
+      if (decision !== 'yes') return reply.code(400).send({ error: 'bad_request' });
+      // The PIN comes before the link is burnt: a mistyped PIN must not cost
+      // someone the link their assistant gave them.
+      if (q.needsPin) {
+        const okNow = await pinCeremony(s as Session, reply, String(b.pin ?? ''));
+        if (!okNow) return;
+      }
+      // Single-use, enforced here: whoever wins the UPDATE acts, and a second
+      // press of the same link finds nothing left to burn.
+      if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
+      const figures = links.readPayload(row) ?? {};
+      try {
+        if (row.action === 'offer-send') {
+          await proposeOffer(
+            cfg,
+            s.accountId!,
+            {
+              match_id: row.ref_id,
+              amount: Number(figures.amount),
+              ccy: String(figures.ccy),
+              expiry: new Date(
+                Date.now() + Number(figures.good_for_days ?? 7) * 86_400_000,
+              ).toISOString(),
+              ...(figures.note ? { message: String(figures.note) } : {}),
+            },
+            // The figure came off a link this person's own press authorised,
+            // so it is theirs the same way one typed into their own box is.
+            { author: 'human' },
+          );
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.messagePage('Sent', '<p>Your number is on the table for the other side.</p>'),
+          );
+        }
+        if (row.action === 'collection-close') {
+          await closeCollectionByCard(row.ref_id, s.accountId!, 'counter');
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.messagePage('Closed', '<p>The window is closed. You can go ahead with whoever you choose.</p>'),
+          );
+        }
+        const cardRow = await getPool().query(
+          'SELECT type FROM cards WHERE id = $1 AND account_id = $2',
+          [row.ref_id, s.accountId!],
+        );
+        if (!cardRow.rowCount) {
+          return html(reply, pages.messagePage('Nothing to decide', '<p>Nothing like that on your ledger.</p>'));
+        }
+        const checked = validateMandate(figures, cardRow.rows[0].type);
+        if (!checked.ok) {
+          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(checked.error)}</p>`));
+        }
+        await saveNegotiation(
+          s.accountId!,
+          row.ref_id,
+          { mode: 'mandate', mandate: checked.value },
+          'counter',
+        );
+        await links.recordLinkDecision(row.id, 'approved');
+        return html(
+          reply,
+          pages.messagePage(
+            'Done',
+            `<p>Your assistant can negotiate this one between your numbers. It is on ${pages.esc(MODE_NAMES.mandate)} until you change it.</p>`,
+          ),
+        );
+      } catch (e: any) {
+        if (e instanceof OsbError) {
+          return html(
+            reply,
+            pages.messagePage(
+              'Not yet',
+              `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
+            ),
+            409,
+          );
+        }
+        if (e?.notFound) {
+          return html(reply, pages.messagePage('Nothing to decide', '<p>This is no longer yours to decide.</p>'));
+        }
+        throw e;
+      }
     });
 
     counter.get('/approvals/offer/:id', async (req, reply) => {

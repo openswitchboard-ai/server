@@ -402,7 +402,7 @@ describe('the box opens on the number the agent carried', () => {
     ).rejects.toMatchObject({
       payload: {
         code: 'CONSENT_REQUIRED',
-        human_action: expect.stringContaining('waiting on your approval page'),
+        human_action: expect.stringContaining('one press and it goes'),
       },
     });
     // The refusal names the page the figure is waiting on.
