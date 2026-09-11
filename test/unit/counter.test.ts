@@ -1175,10 +1175,10 @@ describe('how do you want to hear about things?', () => {
     const html = chome.settingsPage(settingsView('email'));
     expect(html).toContain('By email.');
     expect(html).toContain(
-      'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
+      'My assistant can only act when I talk to it. Each match and reply needs to reach me by email.',
     );
     expect(html).toContain('Through my assistant.');
-    expect(html).toContain('It checks on its own and brings me the news; email is a backup only.');
+    expect(html).toContain('My assistant checks on its own and brings me the news. I only need email as a backup.');
     expect(html).toContain('action="/settings/hears-via"');
   });
 

@@ -869,12 +869,12 @@ const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   {
     value: 'assistant',
     head: 'Through my assistant.',
-    rest: 'It checks on its own and brings me the news; email is a backup only.',
+    rest: 'My assistant checks on its own and brings me the news. I only need email as a backup. For always-on agents such as OpenClaw, Grok Bot, Hermes and Meta Muse.',
   },
   {
     value: 'email',
     head: 'By email.',
-    rest: 'My assistant only acts when I talk to it. Every match, reply and step reaches me by email.',
+    rest: 'My assistant can only act when I talk to it. Each match and reply needs to reach me by email. For chat assistants such as ChatGPT, Antigravity and Claude.',
   },
 ];
 
