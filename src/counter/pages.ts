@@ -522,7 +522,7 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   const showPin = v.needsPin && !v.elevated;
   const pinBlock = showPin
     ? `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`
+       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
     : '';
   const passkeyBtn = v.needsPin && v.hasPasskey && !v.elevated
     ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
@@ -664,7 +664,7 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   const pinBlock = v.elevated
     ? `<input type="hidden" name="pin" value="">`
     : `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
   const passkeyBtn = v.hasPasskey && !v.elevated
     ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Approve with passkey instead</button>`
     : '';
@@ -926,7 +926,7 @@ function pinField(elevated: boolean, which: string): string {
   return elevated
     ? `<input type="hidden" name="pin" value="">`
     : `<label for="pin-${which}">Confirm with your PIN</label>
-         <input id="pin-${which}" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+         <input id="pin-${which}" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
