@@ -188,9 +188,12 @@ export async function sendOfferOnTheTableEmail(
 }
 
 /**
- * The other human accepted this person's figure. It goes however they hear
- * about the switchboard: an agreed price ends the switchboard's part, and a
- * person is owed that from the switchboard as well as from their agent.
+ * The other human accepted this person's figure.
+ *
+ * It used to go out however they heard about the switchboard. Under the notice
+ * rule (2026-09-11) it is a notice like the rest, so the one pipeline holds it
+ * back when their own assistant is the one bringing them the news — which it
+ * is, on the next sweep, carrying the same sentence in its own voice.
  */
 export async function sendDealAgreedEmail(
   cfg: Config,
