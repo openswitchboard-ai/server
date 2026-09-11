@@ -95,10 +95,14 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
       // coming forward a minute apart used to produce two identical emails,
       // which reads as a duplicate; "a second person" says what happened.
       const ownCard = accountId === m.account_want ? m.card_want : m.card_have;
+      // Compared inside SQL: a JS Date carries milliseconds, the column carries
+      // microseconds, and a trimmed timestamp excludes the very match being
+      // ranked, which made every arrival read as the first.
       const rank = await getPool().query(
         `SELECT count(*)::int AS n FROM matches
-          WHERE (card_want = $1 OR card_have = $1) AND state = 'open' AND created_at <= $2`,
-        [ownCard, m.created_at],
+          WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
+            AND created_at <= (SELECT created_at FROM matches WHERE id = $2)`,
+        [ownCard, matchId],
       );
       await sendEmail(cfg, {
         to,
