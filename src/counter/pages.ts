@@ -480,6 +480,82 @@ export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
 <a class="btn" href="/">Go to your approval page</a>`);
 }
 
+// ---------------------------------------------------------------------------
+// The one-question page.
+//
+// The assistant does the talking. Where a formality is needed it hands its
+// human a single-use link, and the link opens this: one sentence, two buttons,
+// and the PIN ceremony where identity or money moves. Nothing else is on the
+// page — no navigation, no second decision, no detail to weigh up, because the
+// weighing already happened in the conversation the person was having.
+//
+// The press is what consumes the link, so the figures the page asks about are
+// read back out of the signed row at that moment rather than carried in the
+// form where a person could edit them.
+// ---------------------------------------------------------------------------
+export interface OneQuestionView {
+  /** The link this page was opened with; the form posts it straight back. */
+  token: string;
+  /** The one sentence. It ends in a question mark. */
+  question: string;
+  /** Supporting lines, at most a couple, under the question. */
+  detail?: string[];
+  yesLabel: string;
+  noLabel: string;
+  /** True where identity or money moves: the PIN ceremony rides along. */
+  needsPin: boolean;
+  hasPasskey: boolean;
+  elevated: boolean;
+}
+
+export function oneQuestionPage(v: OneQuestionView, error?: string): string {
+  const showPin = v.needsPin && !v.elevated;
+  const pinBlock = showPin
+    ? `<label for="pin">Confirm with your PIN</label>
+       <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`
+    : '';
+  const passkeyBtn = v.needsPin && v.hasPasskey && !v.elevated
+    ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
+    : '';
+  const detail = (v.detail ?? []).map((d) => `<p class="small muted">${esc(d)}</p>`).join('');
+  return layout(v.question, `
+<h1>${esc(v.question)}</h1>
+${errBox(error)}
+${detail}
+<form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
+  ${pinBlock}
+  <div class="actions">
+  <button type="submit" name="decision" value="yes" class="approve">${esc(v.yesLabel)}</button>
+  <button type="submit" name="decision" value="no" class="secondary" formnovalidate>${esc(v.noLabel)}</button>
+  </div>
+</form>
+${passkeyBtn}
+<p class="small muted">This link works once${showPin ? ', and this step takes your PIN' : ''}. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
+${v.needsPin && v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
+document.getElementById('pkapprove').addEventListener('click', async () => {
+  try {
+    const opts = await postJson('/login/passkey/options');
+    opts.challenge = b64uToBuf(opts.challenge);
+    (opts.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    const body = { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+      response: { clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+                  authenticatorData: bufToB64u(cred.response.authenticatorData),
+                  signature: bufToB64u(cred.response.signature),
+                  userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
+      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true };
+    await postJson('/login/passkey/verify', body);
+    const f = document.getElementById('oneQuestion');
+    const i = document.createElement('input'); i.type='hidden'; i.name='decision'; i.value='yes';
+    f.appendChild(i); f.querySelector('#pin')?.removeAttribute('required'); f.submit();
+  } catch (e) {
+    document.getElementById('pkerr').innerHTML = '<div class="err">Passkey ceremony failed: '
+      + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
+  }
+});
+</script>` : ''}`);
+}
+
 export interface ApprovalView {
   action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
   refId: string;

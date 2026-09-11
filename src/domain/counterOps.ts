@@ -41,6 +41,18 @@ export async function setAccountPin(accountId: string, pinHash: string): Promise
 }
 
 /**
+ * Stamp the onboarding question as answered. Idempotent, and it records only
+ * that the page was passed — what was said on it went through setHearsVia and
+ * saveSharedProfile, each of which writes its own consent event.
+ */
+export async function markOnboarded(accountId: string): Promise<void> {
+  await getPool().query(
+    'UPDATE accounts SET onboarded_at = COALESCE(onboarded_at, now()) WHERE id = $1',
+    [accountId],
+  );
+}
+
+/**
  * The registration consent step: 18+ assertion + the consent statement.
  * WORM event first; only then does the account go live.
  * Returns the WORM object key.
@@ -616,7 +628,8 @@ export interface ArchivedConnection {
 export async function disclosedFirstName(
   viewerAccountId: string,
   counterpartyAccountId: string,
-  refs: { settlement_id: string },
+  refs: Record<string, string>,
+  purpose = 'settlement-handover-view',
 ): Promise<string | undefined> {
   const account = await getAccount(counterpartyAccountId);
   if (!account?.first_name_enc) return undefined;
@@ -625,7 +638,7 @@ export async function disclosedFirstName(
       counterpartyAccountId,
       account.data_key_enc,
       { first_name: account.first_name_enc },
-      { purpose: 'settlement-handover-view', actor: viewerAccountId, refs },
+      { purpose, actor: viewerAccountId, refs },
     );
     return fields.first_name.trim() || undefined;
   } catch {

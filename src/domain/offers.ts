@@ -183,7 +183,25 @@ async function assertAgentMayPropose(
     } catch {
       // The human still gets their link; the box simply opens empty.
     }
-    throw relayRefusal(cfg, matchId);
+    // The link the refusal carries is the one-question page for THIS figure:
+    // "Send $440 AUD to Sam for your mountain bike?", bound to the amount the
+    // agent tried to send, so the person presses once and it goes. A link that
+    // cannot be minted costs the courtesy and nothing else — the refusal still
+    // stands, pointing at the page where they can type the figure themselves.
+    let link: string | undefined;
+    try {
+      const { sendNumberLink } = await import('./humanLinks.js');
+      link = (
+        await sendNumberLink(cfg, accountId, matchId, {
+          amount: input.amount,
+          ccy: input.ccy,
+          ...(input.message ? { message: input.message } : {}),
+        })
+      ).link;
+    } catch {
+      link = undefined;
+    }
+    throw relayRefusal(cfg, matchId, link);
   }
   const neg = await readNegotiation(accountId, cardId, {
     purpose: 'mandate-offer-check',
@@ -285,39 +303,35 @@ export async function agentOfferAction(
   return serializeOffer(r.rows[0]);
 }
 
+/**
+ * An agent parked a figure for its human. They are told, in a notice: no link
+ * and no button, because their own assistant is what hands them the link to
+ * the page that asks whether to accept (respond(request_accept)). The one
+ * pipeline holds the notice back unless email is how they hear about things.
+ */
 async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
-  const { createApprovalLink } = await import('../counter/links.js');
   const { categoryLeafLabel } = await import('./matchRules.js');
   const { sendApprovalEmail } = await import('../counter/email.js');
   const { accountEmail } = await import('./counterOps.js');
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('introduction missing');
   const humanAccount = o.proposer_account === m.account_want ? m.account_have : m.account_want;
-  const { token, id: linkId } = await createApprovalLink({
-    accountId: humanAccount,
-    action: 'offer-accept',
-    refId: o.id,
-    amount: Number(o.amount),
-    ccy: o.ccy,
-    counterpartyAccount: o.proposer_account,
-  });
   const email = await accountEmail(humanAccount, 'approval-notification');
   if (email) {
-    // Category-level only. The amount stays behind auth until approval
-    // (blind mode strips even the category — handled in sendApprovalEmail).
-    // Best-effort: the offer is already parked and shows on the person's
-    // approval page; a failed send delays discovery without undoing it.
+    // Category-level only. The amount stays behind their sign-in (blind mode
+    // strips even the category — handled in sendApprovalEmail). Best-effort:
+    // the offer is already parked and shows on the person's approval page, so
+    // a failed send delays discovery without undoing it.
     try {
       await sendApprovalEmail(
         cfg,
         email,
         humanAccount,
-        linkId,
-        token,
-        `An offer on your ${categoryLeafLabel(m.category)} match is waiting for your decision.`,
+        o.id,
+        `An offer on your ${categoryLeafLabel(m.category)} introduction is waiting for your decision.`,
       );
     } catch (err) {
-      console.warn('approval email failed; offer stays awaiting-human', err);
+      console.warn('approval notice failed; offer stays awaiting-human', err);
     }
   }
 }

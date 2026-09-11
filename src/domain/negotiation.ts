@@ -344,19 +344,26 @@ function withLink(sentence: string, url: string): string {
   return joined.length <= 300 ? joined : sentence;
 }
 
-// The figure the agent was carrying is parked as a draft on the way out of
-// this refusal (see domain/offerDrafts.ts), so the sentence says where it went
-// and what is left to do with it.
+// The figure the agent was carrying comes back as a single-use link to a page
+// that asks one question about that exact figure — "Send $440 AUD to Sam for
+// your mountain bike?" — and it is parked as a draft besides (see
+// domain/offerDrafts.ts), so the person's own box opens on it either way.
 export const RELAY_ACTION =
-  'Your numbers come from you. The figure you gave me is waiting on your approval page — check it and send it, or set your limits there and I can put figures on the table myself:';
+  'Your numbers come from you. Here is the page that asks whether to send the figure you gave me — one press and it goes:';
 
 export const NO_MANDATE_ACTION =
   'What you posted is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your approval page:';
 
-/** relay mode: the agent may not author a figure at all. */
-export function relayRefusal(cfg: Config, matchId: string): OsbError {
+/**
+ * relay mode: the agent may not author a figure at all.
+ *
+ * `sendLink` is the one-question page for the figure that was refused. Without
+ * one the refusal falls back to the introduction's own page, where the box
+ * opens on the parked draft.
+ */
+export function relayRefusal(cfg: Config, matchId: string, sendLink?: string): OsbError {
   return new OsbError('CONSENT_REQUIRED', {
-    human_action: withLink(RELAY_ACTION, matchPageUrl(cfg, matchId)),
+    human_action: withLink(RELAY_ACTION, sendLink ?? matchPageUrl(cfg, matchId)),
   });
 }
 
