@@ -287,9 +287,12 @@ describe('when the other side takes the figure', () => {
       offer({ at: 1, proposer_account: BEPPE, amount: '415', state: 'accepted-by-human' }),
     ];
     const entry = await sweep();
-    expect(entry.next).not.toBe('deal_agreed');
+    // Agreed is agreed from both chairs: the accepting side's agent must not
+    // read 'ready_to_talk' and tell its human the accept is still pending.
+    expect(entry.next).toBe('deal_agreed');
     expect(entry.offer_note.text).toContain('Your human has accepted 415 AUD');
     expect(entry.offer_note.text).toContain("switchboard's part is done");
+    expect(entry.note).toEqual(entry.offer_note);
   });
 
   it('promises no money movement, because settlements are a separate thing', async () => {
