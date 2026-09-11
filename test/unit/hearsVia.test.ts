@@ -499,7 +499,10 @@ describe('an acceptance reaches the person whose figure it was', () => {
     vi.mocked(sendDealAgreedEmail).mockClear();
   });
 
-  it('emails the proposer, however they hear about all this', async () => {
+  // The call site tells the pipeline to send whichever way they hear; the
+  // pipeline itself holds a notice back when their assistant brings the news
+  // (see noticeGate.test.ts). This asserts the call site.
+  it('always tells the proposer, whichever way they hear about all this', async () => {
     for (const how of ['email', 'assistant'] as const) {
       vi.mocked(sendDealAgreedEmail).mockClear();
       world.hearsVia[ANA] = how;
