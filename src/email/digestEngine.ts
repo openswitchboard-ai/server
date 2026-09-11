@@ -21,7 +21,6 @@
 import { getPool } from '../db.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
 import { accountEmail } from '../domain/counterOps.js';
-import { stage3LinkFor } from '../domain/profile.js';
 import {
   renderChannelWaiting,
   renderDigest,
@@ -116,7 +115,6 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
             ordinal: Math.max(1, rank.rows[0]?.n ?? 1),
             categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
             blind: ctx.blind,
-            counterUrl: `${cfg.counterOrigin}/`,
           },
           ctx.links,
         ),
@@ -157,11 +155,7 @@ export async function sendChannelWaitingNudge(
     kind: 'bulk',
     dedupeKey: `channel-waiting:${args.channelId}:${args.recipientAccount}:${args.notifiedAt}`,
     content: renderChannelWaiting(
-      {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
-        blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/`,
-      },
+      { categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category), blind: ctx.blind },
       ctx.links,
     ),
   });
@@ -190,18 +184,9 @@ export async function notifyYourMove(
   if (ctx.freqMatches === 'off') return;
   const to = await accountEmail(recipientAccount, 'your-move');
   if (!to) return;
-  // The step this nudge is about IS the names step: the other side has said
-  // yes to swapping first names and this person has not. That is a gate, so
-  // the email carries the link to it. A link that cannot be minted costs the
-  // button and nothing else — the mail still goes, ending on the assistant.
-  const counterparty =
-    m.account_want === recipientAccount ? m.account_have : m.account_want;
-  let namesUrl: string | undefined;
-  try {
-    namesUrl = await stage3LinkFor(cfg, recipientAccount, matchId, counterparty);
-  } catch {
-    namesUrl = undefined;
-  }
+  // The step this nudge is about is the names step, and that step is reached
+  // through a link the person's own assistant fetches and hands them. So the
+  // mail says what happened and stops there.
   await sendEmail(cfg, {
     to,
     accountId: recipientAccount,
@@ -209,12 +194,7 @@ export async function notifyYourMove(
     kind: 'bulk',
     dedupeKey: `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
-      {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
-        blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/`,
-        ...(namesUrl ? { namesUrl } : {}),
-      },
+      { categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category), blind: ctx.blind },
       ctx.links,
     ),
   });
@@ -255,10 +235,7 @@ export async function runSummonsBatch(cfg: Config, cadence: Cadence): Promise<nu
         template: 'summons',
         kind: 'bulk',
         dedupeKey: `summons-batch:${cadence}:${accountId}:${periodKey(cadence)}`,
-        content: renderSummons(
-          { count: n, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
-          ctx.links,
-        ),
+        content: renderSummons({ count: n, blind: ctx.blind }, ctx.links),
       });
       if (outcome.status === 'sent' || outcome.status === 'sandbox-rejected' || outcome.status === 'duplicate') {
         await pool.query(`UPDATE accounts SET email_last_summons_batch_at = now() WHERE id = $1`, [
@@ -347,10 +324,7 @@ export async function runDigestTick(cfg: Config, cadence: Cadence): Promise<numb
         template: 'digest',
         kind: 'bulk',
         dedupeKey: `digest:${cadence}:${row.id}:${periodKey(cadence)}`,
-        content: renderDigest(
-          { cadence, items, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
-          ctx.links,
-        ),
+        content: renderDigest({ cadence, items, blind: ctx.blind }, ctx.links),
       });
       if (outcome.status === 'sent' || outcome.status === 'sandbox-rejected' || outcome.status === 'duplicate') {
         await pool.query(`UPDATE accounts SET email_last_digest_at = now() WHERE id = $1`, [row.id]);
@@ -402,19 +376,13 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
         expiresAt: new Date(c.expires_at),
         expiringSoon: !!c.expiring_soon,
       }));
-      const renewAllUrl = `${cfg.counterOrigin}/renew?t=${encodeURIComponent(
-        signEmailToken(accountId, 'renew-all'),
-      )}`;
       const outcome = await sendEmail(cfg, {
         to,
         accountId,
         template: 'renewal',
         kind: 'bulk',
         dedupeKey: `renewal:${accountId}:${expiring[0].id}`,
-        content: renderRenewal(
-          { cards: items, renewAllUrl, blind: ctx.blind, counterUrl: `${cfg.counterOrigin}/` },
-          ctx.links,
-        ),
+        content: renderRenewal({ cards: items, blind: ctx.blind }, ctx.links),
       });
       if (outcome.status !== 'failed') {
         await pool.query(

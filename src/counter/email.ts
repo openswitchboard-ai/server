@@ -46,29 +46,28 @@ export async function sendVerificationEmail(
   });
 }
 
+/**
+ * Something is waiting on this person's own page. A NOTICE: no link, no
+ * button, and the one pipeline holds it back unless email is how they hear
+ * about things. Their assistant knows what is waiting and hands them the link
+ * to it.
+ */
 export async function sendApprovalEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  linkId: string,
-  linkToken: string,
+  dedupeOn: string,
   summary?: string,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
-  const link = `${cfg.counterOrigin}/a/${encodeURIComponent(linkToken)}`;
   return sendEmail(cfg, {
     to,
     accountId,
     template: 'approval',
-    kind: 'transactional',
-    dedupeKey: `approval:${linkId}`,
+    kind: 'bulk',
+    dedupeKey: `approval:${dedupeOn}`,
     content: renderApproval(
-      {
-        link,
-        summary: ctx.blind ? undefined : summary,
-        blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/`,
-      },
+      { summary: ctx.blind ? undefined : summary, blind: ctx.blind },
       ctx.links,
     ),
   });
@@ -147,9 +146,7 @@ export async function sendScreeningRejectedEmail(
       {
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         reason: input.reason,
-        editUrl: `${cfg.counterOrigin}/ledger/${encodeURIComponent(input.cardId)}/edit`,
         blind: ctx.blind,
-        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -184,8 +181,6 @@ export async function sendOfferOnTheTableEmail(
         ccy: input.ccy,
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         blind: ctx.blind,
-        offersUrl: `${cfg.counterOrigin}/matches/${encodeURIComponent(input.matchId)}`,
-        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -216,8 +211,6 @@ export async function sendDealAgreedEmail(
         ccy: input.ccy,
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         blind: ctx.blind,
-        matchUrl: `${cfg.counterOrigin}/matches/${encodeURIComponent(input.matchId)}`,
-        counterUrl: `${cfg.counterOrigin}/`,
       },
       ctx.links,
     ),
@@ -234,9 +227,6 @@ export interface SettlementEmailInput {
   accountId: string;
   template: 'settlement-proposed' | SettlementUpdateEvent;
   settlementId: string;
-  /** settlement-proposed only: single-use approval link token + row id. */
-  linkToken?: string;
-  linkId?: string;
   /** settlement-proposed only: category-level summary (blind mode strips it). */
   summary?: string;
   /** update templates only: which side this recipient is on. */
@@ -252,20 +242,15 @@ export async function sendSettlementEmail(
   input: SettlementEmailInput,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, input.accountId);
-  const counterUrl = `${cfg.counterOrigin}/`;
   if (input.template === 'settlement-proposed') {
-    if (!input.linkToken || !input.linkId) {
-      throw new Error('settlement-proposed email requires the approval link');
-    }
-    const link = `${cfg.counterOrigin}/a/${encodeURIComponent(input.linkToken)}`;
     return sendEmail(cfg, {
       to: input.to,
       accountId: input.accountId,
       template: 'settlement-proposed',
-      kind: 'transactional',
-      dedupeKey: `settlement-proposed:${input.linkId}`,
+      kind: 'bulk',
+      dedupeKey: `settlement-proposed:${input.settlementId}:${input.accountId}`,
       content: renderSettlementProposed(
-        { link, summary: ctx.blind ? undefined : input.summary, blind: ctx.blind, counterUrl },
+        { summary: ctx.blind ? undefined : input.summary, blind: ctx.blind },
         ctx.links,
       ),
     });
@@ -275,15 +260,13 @@ export async function sendSettlementEmail(
     to: input.to,
     accountId: input.accountId,
     template: `settlement-${input.template}`,
-    kind: 'transactional',
+    kind: 'bulk',
     dedupeKey: `settlement:${input.template}:${input.settlementId}:${input.accountId}`,
     content: renderSettlementUpdate(
       {
         event: input.template,
         role: input.role,
         blind: ctx.blind,
-        settlementUrl: `${cfg.counterOrigin}/settlements/${input.settlementId}`,
-        counterUrl,
         deadline: input.deadline,
         auto: input.auto,
       },

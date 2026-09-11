@@ -12,6 +12,12 @@
  *    (email_complaint_suppressed_at) withholds all non-transactional mail
  *    until the human re-enables it from the counter.
  *  - VOICE: the banned-phrase lint runs on every subject + body in every env.
+ *  - THE NOTICE RULE (2026-09-11, see the top of templates.ts): everything
+ *    that is not a verification code, a security notice or the kill-switch
+ *    mail is a NOTICE. A notice carries no link and no button beyond the two
+ *    footer controls, and it goes out only when the recipient's hears_via is
+ *    'email'. Both halves are enforced here rather than at each call site, so
+ *    a new template cannot quietly opt itself out.
  *  - HEADERS: SES configuration set (bounce/complaint events), proper From,
  *    reply-to, RFC 8058 one-click List-Unsubscribe (mailto + URL) whenever
  *    the recipient has an account.
@@ -26,10 +32,10 @@
 import { SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { sesv2 } from '../aws.js';
 import { getPool } from '../db.js';
-import { emailHash } from '../domain/accounts.js';
-import { assertEmailCopyClean } from './lint.js';
+import { emailHash, getHearsVia } from '../domain/accounts.js';
+import { assertEmailCopyClean, assertNoticeClean } from './lint.js';
 import { signEmailToken } from './tokens.js';
-import type { EmailContent, FooterLinks } from './templates.js';
+import { EXEMPT_TEMPLATES, type EmailContent, type FooterLinks } from './templates.js';
 import type { Config } from '../config.js';
 
 export type EmailKind = 'transactional' | 'bulk';
@@ -77,10 +83,7 @@ export interface EmailAccountContext {
 }
 
 export function baseFooterLinks(cfg: Config): FooterLinks {
-  return {
-    settingsUrl: `${cfg.counterOrigin}/settings`,
-    ledgerUrl: `${cfg.counterOrigin}/ledger`,
-  };
+  return { settingsUrl: `${cfg.counterOrigin}/settings` };
 }
 
 export async function emailAccountContext(
@@ -186,6 +189,23 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   assertEmailCopyClean(input.content.subject, context);
   assertEmailCopyClean(input.content.text, context);
   assertEmailCopyClean(input.content.html, context);
+
+  // THE NOTICE RULE (see the top of templates.ts). Everything that is not one
+  // of the three exemptions is a notice, and a notice carries no link and no
+  // button beyond the two footer controls, and goes only to someone whose
+  // assistant is not the one bringing them the news.
+  const isNotice = !EXEMPT_TEMPLATES.has(input.template);
+  if (isNotice) {
+    assertNoticeClean(
+      input.content,
+      [`${cfg.counterOrigin}/settings`, `${cfg.counterOrigin}/email/unsub`],
+      context,
+    );
+    if (input.accountId && (await getHearsVia(input.accountId)) !== 'email') {
+      const won = await recordSend(input, 'suppressed', 'their assistant brings them the news');
+      return { status: won ? 'suppressed' : 'duplicate' };
+    }
+  }
 
   // Suppression gates (need an account to have state).
   if (input.accountId) {

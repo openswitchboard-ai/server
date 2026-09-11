@@ -726,22 +726,10 @@ async function notifyHumansOfProposal(
   s: SettlementRow,
   m: MatchRow,
 ): Promise<void> {
-  const { createApprovalLink } = await import('../counter/links.js');
   const { sendSettlementEmail } = await import('../counter/email.js');
   const { accountEmail } = await import('./counterOps.js');
   const { categoryLeafLabel } = await import('./matchRules.js');
-  for (const [accountId, counterparty] of [
-    [s.buyer_account, s.seller_account],
-    [s.seller_account, s.buyer_account],
-  ] as const) {
-    const { token, id: linkId } = await createApprovalLink({
-      accountId,
-      action: 'settlement-approve',
-      refId: s.id,
-      amount: Number(s.amount),
-      ccy: s.ccy,
-      counterpartyAccount: counterparty,
-    });
+  for (const accountId of [s.buyer_account, s.seller_account] as const) {
     const email = await accountEmail(accountId, 'settlement-approval-notification');
     if (email) {
       // Best-effort: the approval also appears on the person's approval page;
@@ -752,9 +740,7 @@ async function notifyHumansOfProposal(
         accountId,
         template: 'settlement-proposed',
         settlementId: s.id,
-        linkToken: token,
-        linkId,
-        summary: `A settlement of ${Number(s.amount)} ${s.ccy} on your ${categoryLeafLabel(m.category)} match is waiting for your approval.`,
+        summary: `A settlement of ${Number(s.amount)} ${s.ccy} on your ${categoryLeafLabel(m.category)} introduction is waiting for your approval.`,
       });
       } catch (err) {
         console.warn('settlement-proposed email failed; settlement stands', err);

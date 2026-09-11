@@ -14,15 +14,35 @@
  * Emails only ever state true things from real rows: every count rendered
  * here arrives from a SQL count in the digest engine.
  *
- * WHEN AN EMAIL CARRIES A BUTTON (2026-09-11). The assistant is where the
- * conversation happens; these emails are notifications. So an email carries a
- * button ONLY when the next step is a gate that lives on the person's own
- * page, and the button goes to that gate: the names step, an offer waiting for
- * their yes, a settlement step, a security notice, a verification. Everything
- * else — a first signal, a message waiting, their move on the way to the names
- * step, a figure they will answer through their assistant — ends on "Ask your
- * assistant." and links nowhere, because telling their assistant is the whole
- * of what they have to do.
+ * THE EMAIL RULE (2026-09-11). The assistant does the talking and the
+ * carrying; the switchboard's own page does the confirming; and whenever a
+ * formality is needed the assistant hands the person a single-use link to a
+ * one-question page, in the conversation they are already having. Email is not
+ * part of that path. So:
+ *
+ *   A NOTICE EMAIL IS SENT ONLY WHEN THE RECIPIENT'S hears_via IS 'email',
+ *   AND IT CARRIES NO LINK AND NO BUTTON. It says what happened in one
+ *   sentence and ends "Ask your assistant."
+ *
+ * The notices are: the summons (including "a second person"), a message
+ * waiting, your move on the way to the names step, a figure on the table, a
+ * deal agreed, the renewal, a screening rejection, the settlement notices
+ * (proposed and every update), and the digest. Every one of them is a person
+ * being told something, and the thing they do about it is speak to their
+ * assistant.
+ *
+ * THREE EXEMPTIONS, and only three. A verification code (it is how someone
+ * signs in, so the link and the code both belong). A security notice (a new
+ * agent, a new key, a changed PIN: the revoke gate keeps its button, the other
+ * two carry the guidance as plain text). The kill-switch mail. Those send
+ * whatever hears_via says, because they are about the account rather than
+ * about the network.
+ *
+ * The footer keeps the unsubscribe link (RFC 8058 one-click) and the
+ * email-settings link, which are required of any sender; nothing else.
+ *
+ * NOTICE_TEMPLATES below is that rule as a list, and email/send.ts enforces
+ * both halves of it on every send.
  */
 
 import { categoryPhrase } from '../domain/matchRules.js';
@@ -37,15 +57,55 @@ export interface EmailContent {
   text: string;
 }
 
-/** Footer links. unsubUrl is present whenever the recipient has an account
- *  (a registration verification for a brand-new address has no subscription
- *  to leave, so its footer carries the settings link only once the account
- *  exists). */
+/**
+ * Footer links, and the only links a notice email carries. Both are required
+ * of any sender: the one-click unsubscribe (RFC 8058) and a place to change
+ * what gets sent. unsubUrl is present whenever the recipient has an account (a
+ * registration verification for a brand-new address has no subscription to
+ * leave, so its footer carries the settings link only once the account
+ * exists).
+ */
 export interface FooterLinks {
   settingsUrl: string;
-  ledgerUrl: string;
   unsubUrl?: string;
 }
+
+/**
+ * The templates the notice rule covers: no link, no button, and sent only to
+ * someone whose hears_via is 'email'. Names match email_sends.template, which
+ * is what send.ts checks.
+ */
+export const NOTICE_TEMPLATES = new Set<string>([
+  'approval',
+  'summons',
+  'channel-waiting',
+  'your-move',
+  'offer-on-the-table',
+  'deal-agreed',
+  'digest',
+  'renewal',
+  'card-screening-rejected',
+  'settlement-proposed',
+  'settlement-payment-held',
+  'settlement-handover-window',
+  'settlement-confirm-receipt-request',
+  'settlement-released',
+  'settlement-refund',
+  'settlement-disputed',
+  'settlement-resolution-proposed',
+  'settlement-split',
+]);
+
+/** The three exemptions, by send-log name: they go out whatever hears_via
+ *  says, and they may carry a link. */
+export const EXEMPT_TEMPLATES = new Set<string>([
+  'verification',
+  'kill-switch-on',
+  'kill-switch-off',
+  'security-agent-authorized',
+  'security-pin-changed',
+  'security-agent-key-created',
+]);
 
 const esc = (s: string): string =>
   String(s).replace(/[&<>"']/g, (c) =>
@@ -88,7 +148,7 @@ function button(href: string, label: string): string {
 function footerHtml(f: FooterLinks): string {
   const link = (href: string, label: string) =>
     `<a href="${esc(href)}" style="color:${MUTED};text-decoration:underline">${esc(label)}</a>`;
-  const parts = [link(f.settingsUrl, 'Email settings'), link(f.ledgerUrl, 'Your ledger')];
+  const parts = [link(f.settingsUrl, 'Email settings')];
   if (f.unsubUrl) parts.push(link(f.unsubUrl, 'Unsubscribe'));
   return `<tr><td style="padding:26px 8px 10px;text-align:center;font-family:${SANS};font-size:12px;line-height:1.7;color:${MUTED}">
 ${parts.join(' &nbsp;·&nbsp; ')}<br>
@@ -98,11 +158,7 @@ You get this email because you hold an OpenSwitchboard account.
 }
 
 function footerText(f: FooterLinks): string {
-  const lines = [
-    '—',
-    `Email settings: ${f.settingsUrl}`,
-    `Your ledger: ${f.ledgerUrl}`,
-  ];
+  const lines = ['—', `Email settings: ${f.settingsUrl}`];
   if (f.unsubUrl) lines.push(`Unsubscribe: ${f.unsubUrl}`);
   lines.push('OpenSwitchboard · openswitchboard.ai');
   lines.push('You get this email because you hold an OpenSwitchboard account.');
@@ -170,40 +226,49 @@ export function renderVerification(
   return { subject, html, text };
 }
 
-// ---------------------------------------------------------------------------
-// (b) Approval request. Non-blind: may carry the caller's category-level
-// summary (never identity, never amounts before approval). Blind: pointer only.
-// ---------------------------------------------------------------------------
-export function renderApproval(
-  v: { link: string; summary?: string; blind: boolean; counterUrl: string },
+/** The closing line on every notice. It is the whole of what to do next. */
+const ASK_YOUR_ASSISTANT = 'Ask your assistant.';
+
+/**
+ * A notice, in one shape: a heading, one sentence, and "Ask your assistant."
+ * No link, no button — the person's assistant hands them a link when a
+ * formality is actually needed, and everything else is a word to it.
+ */
+function notice(
+  v: { heading: string; line: string; accent?: string; eyebrow?: string; extra?: string },
   f: FooterLinks,
-): EmailContent {
-  const subject = 'OpenSwitchboard: something is waiting for your approval';
-  const line = v.blind
-    ? 'Something needs your decision.'
-    : (v.summary ?? 'Your assistant lined something up. It needs your decision.');
+): { html: string; text: string } {
+  const eyebrow = v.eyebrow
+    ? `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${v.accent ?? MATCH};padding-bottom:14px">${esc(v.eyebrow)}</td></tr>`
+    : '';
   const html = shell(
-    h1('Your decision is needed.') +
-      para(esc(line)) +
-      center(button(v.link, 'Review and decide')) +
-      small(
-        `The link works once. ` +
-          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">Sign in</a> any time to review it. ` +
-          `Nothing is shared or accepted until you approve it.`,
-      ),
+    eyebrow +
+      h1(esc(v.heading)) +
+      para(esc(v.line)) +
+      (v.extra ?? '') +
+      small(ASK_YOUR_ASSISTANT),
     f,
-    HAVE,
+    v.accent ?? MATCH,
   );
-  const text =
-    `${line}\n\nReview and decide:\n${v.link}\n\n` +
-    `The link works once. Sign in at ${v.counterUrl} any time to review it.\n\n` +
-    `Nothing is shared or accepted until you approve it.\n\n` +
-    footerText(f);
-  return { subject, html, text };
+  const text = `${v.heading}\n\n${v.line}\n\n${ASK_YOUR_ASSISTANT}\n\n` + footerText(f);
+  return { html, text };
 }
 
-/** The closing line on every email whose next step is a word to an assistant. */
-const ASK_YOUR_ASSISTANT = 'Ask your assistant.';
+// ---------------------------------------------------------------------------
+// (b) Something is waiting on this person's own page. A notice like the rest:
+// their assistant knows what it is and can hand them the link to it.
+// ---------------------------------------------------------------------------
+export function renderApproval(
+  v: { summary?: string; blind: boolean },
+  f: FooterLinks,
+): EmailContent {
+  const subject = 'OpenSwitchboard: something is waiting for you';
+  const line = v.blind
+    ? 'Something needs your decision.'
+    : (v.summary ?? 'Something needs your decision.');
+  const { html, text } = notice({ heading: 'Your decision is needed.', line, accent: HAVE }, f);
+  return { subject, html, text };
+}
 
 // ---------------------------------------------------------------------------
 // (c) Match summons — the screenshot-worthy one. One clear line, and no button:
@@ -220,7 +285,7 @@ function whoCameForward(ordinal: number | undefined): string {
 }
 
 export function renderSummons(
-  v: { count: number; ordinal?: number; categoryLabel?: string; blind: boolean; counterUrl: string },
+  v: { count: number; ordinal?: number; categoryLabel?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const later = (v.ordinal ?? 1) >= 2;
@@ -262,7 +327,7 @@ export function renderSummons(
 // live back-and-forth never becomes one email per line.
 // ---------------------------------------------------------------------------
 export function renderChannelWaiting(
-  v: { categoryLabel?: string; blind: boolean; counterUrl: string },
+  v: { categoryLabel?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'You have a message waiting';
@@ -287,56 +352,21 @@ export function renderChannelWaiting(
 // is already summoned; this covers the later progression, where a passive human
 // would otherwise never learn the ball is in their court.
 //
-// This is the one nudge that can carry a button, because the step it is about
-// can be a gate. When the caller has a names-step approval link for this
-// person, the email is the names-step email: one button, straight to the page
-// where they share a first name and an area. Without one the step is something
-// they say to their assistant, so the email ends the way the rest do.
+// A notice like the rest: the step it is about is one their assistant can hand
+// them a link to, so the email says what happened and stops there.
 // ---------------------------------------------------------------------------
 export function renderYourMove(
-  v: {
-    categoryLabel?: string;
-    blind: boolean;
-    counterUrl: string;
-    /** The approval link for this introduction's names step, when there is one. */
-    namesUrl?: string;
-  },
+  v: { categoryLabel?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'It is your turn';
   const thing = categoryPhrase(v.categoryLabel);
-  const names = !!v.namesUrl;
-  // True at this point and no more than true: they have said yes, and nothing
-  // crosses in either direction until this person says yes as well. Blind mode
-  // says none of it — the link still goes, worded the way a blind approval
-  // email words it.
-  const what =
-    names && !v.blind
-      ? 'They have said yes to swapping first names. Nothing crosses either way until you say yes too.'
-      : '';
-  const textLine = v.blind
+  const line = v.blind
     ? 'Someone is ready to hear back from you.'
     : thing
       ? `Someone you got talking to about your ${thing} is keen and ready to talk.`
       : 'Someone you got talking to is keen and ready to talk.';
-  const body = [textLine, what].filter(Boolean).join(' ');
-  const label = v.blind ? 'Review and decide' : 'Share your first name and area';
-  const html = shell(
-    h1('It is your move.') +
-      para(esc(body)) +
-      (names
-        ? center(button(v.namesUrl!, label)) +
-          small('Nothing is shared until you say so on that page.')
-        : small(ASK_YOUR_ASSISTANT)),
-    f,
-    MATCH,
-  );
-  const text =
-    `It is your move.\n\n${body}\n\n` +
-    (names
-      ? `${label}:\n${v.namesUrl}\n\nNothing is shared until you say so on that page.\n\n`
-      : `${ASK_YOUR_ASSISTANT}\n\n`) +
-    footerText(f);
+  const { html, text } = notice({ heading: 'It is your move.', line, accent: MATCH }, f);
   return { subject, html, text };
 }
 
@@ -348,19 +378,12 @@ export function renderYourMove(
 // the thing, because an offer is a deliberate disclosure meant to be seen;
 // blind is a pure pointer.
 //
-// Saying yes to a figure is a gate that lives on the page, so this email keeps
-// one button and it goes straight to that page. Blind mode has no page to name
-// without naming the thing, so it ends on "Ask your assistant." like the rest.
+// A notice like the rest: answering a figure — taking it, or replying with one
+// of their own — is a sentence to their assistant, which hands them a link to
+// the one page that asks the question when it comes to that.
 // ---------------------------------------------------------------------------
 export function renderOfferOnTheTable(
-  v: {
-    amount: number;
-    ccy: string;
-    categoryLabel?: string;
-    blind: boolean;
-    offersUrl: string;
-    counterUrl: string;
-  },
+  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const figure = offerAmountInWords(v.amount, v.ccy);
@@ -368,68 +391,44 @@ export function renderOfferOnTheTable(
   const subject = v.blind
     ? 'OpenSwitchboard: something is waiting for you'
     : 'A number is on the table';
-  const textLine = v.blind
+  const line = v.blind
     ? 'Someone has answered you.'
     : thing
       ? `Someone you got talking to has offered ${figure} for your ${thing}.`
       : `Someone you got talking to has offered ${figure}.`;
-  const tail = v.blind
-    ? ASK_YOUR_ASSISTANT
-    : 'Nothing is agreed until you say so. You can answer with a number of your own, or leave it. Ask your assistant and it will talk it through with you.';
-  const html = shell(
-    h1(v.blind ? 'Something is waiting.' : 'There is a number on the table.') +
-      para(esc(textLine)) +
-      (v.blind ? '' : center(button(v.offersUrl, 'See the offer'))) +
-      small(esc(tail)),
+  const { html, text } = notice(
+    {
+      heading: v.blind ? 'Something is waiting.' : 'There is a number on the table.',
+      line,
+      accent: HAVE,
+    },
     f,
-    HAVE,
   );
-  const text =
-    `${textLine}\n\n` +
-    (v.blind ? '' : `See the offer:\n${v.offersUrl}\n\n`) +
-    `${tail}\n\n` +
-    footerText(f);
   return { subject, html, text };
 }
 
 // ---------------------------------------------------------------------------
 // (c5) The deal is agreed. One human accepted the other's figure on their own
-// page, and this is the mail to the human whose figure it was. It goes to
-// everybody, however they hear about the switchboard: an agreed price is the
-// end of the switchboard's part, and a person is entitled to hear it from the
-// switchboard as well as from their agent. No money moves on this path —
-// settlements are their own thing — so the copy says plainly that the two of
-// them arrange the handover.
+// page, and this is the mail to the human whose figure it was. No money moves
+// on this path — settlements are their own thing — so the copy hands the
+// handover back to the two people and stops there.
 // ---------------------------------------------------------------------------
 export function renderDealAgreed(
-  v: {
-    amount: number;
-    ccy: string;
-    categoryLabel?: string;
-    blind: boolean;
-    matchUrl: string;
-    counterUrl: string;
-  },
+  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const figure = offerAmountInWords(v.amount, v.ccy);
   const thing = categoryPhrase(v.categoryLabel);
   const subject = v.blind ? 'OpenSwitchboard: something moved on your account' : 'Deal agreed';
-  const textLine = v.blind
-    ? 'Something on your account is agreed. The detail waits behind your sign-in.'
+  const line = v.blind
+    ? 'Something on your account is agreed.'
     : thing
-      ? `Deal: ${figure} agreed for your ${thing}. Sort pickup with them in the conversation; the switchboard's part is done.`
-      : `Deal: ${figure} agreed. Sort pickup with them in the conversation; the switchboard's part is done.`;
-  // A notice, so no button: nothing here needs the page. The next step is a
-  // conversation, and the assistant is where that happens.
-  const html = shell(
-    h1(v.blind ? 'Something moved.' : 'You have a deal.') +
-      para(esc(textLine)) +
-      para('Ask your assistant.'),
+      ? `Deal: ${figure} agreed for your ${thing}. Where and when to hand it over is for the two of you.`
+      : `Deal: ${figure} agreed. Where and when to hand it over is for the two of you.`;
+  const { html, text } = notice(
+    { heading: v.blind ? 'Something moved.' : 'You have a deal.', line, accent: HAVE },
     f,
-    HAVE,
   );
-  const text = `${textLine}\n\nAsk your assistant.\n\n` + footerText(f);
   return { subject, html, text };
 }
 
@@ -450,76 +449,67 @@ export interface DigestItem {
 }
 
 export function renderDigest(
-  v: { cadence: 'daily' | 'weekly'; items: DigestItem[]; blind: boolean; counterUrl: string },
+  v: { cadence: 'daily' | 'weekly'; items: DigestItem[]; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const period = v.cadence === 'daily' ? 'today' : 'this week';
   const subject = `Your ${v.cadence} OpenSwitchboard digest`;
   if (v.blind) {
-    const html = shell(
-      h1('Your digest is ready.') +
-        para(`There is movement around your wants and haves ${period}. The detail waits behind your sign-in.`) +
-        center(button(v.counterUrl, "See what's new")),
+    const { html, text } = notice(
+      {
+        heading: 'Your digest is ready.',
+        line: `There is movement around your wants and haves ${period}.`,
+        accent: MATCH,
+      },
       f,
-      MATCH,
     );
-    const text =
-      `Your digest is ready.\n\nThere is movement around your wants and haves ${period}. ` +
-      `The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
-      footerText(f);
     return { subject, html, text };
   }
+  const bitsOf = (it: DigestItem): string[] => {
+    const bits: string[] = [];
+    if (it.newOpposite !== null && it.newOpposite > 0) {
+      const side = it.type === 'WANT' ? 'have' : 'want';
+      bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
+    }
+    if (it.nearMisses > 0) bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
+    return bits;
+  };
   const rows = v.items
     .map((it) => {
-      const bits: string[] = [];
-      if (it.newOpposite !== null && it.newOpposite > 0) {
-        const side = it.type === 'WANT' ? 'have' : 'want';
-        bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
-      }
-      if (it.nearMisses > 0) {
-        bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
-      }
       const badgeColor = it.type === 'WANT' ? WANT : HAVE;
       return `<tr>
 <td style="padding:10px 0;border-bottom:1px solid ${LINE}">
 <span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${it.type}</span>
 <span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(it.categoryLabel)}</span><br>
-<span style="font-family:${SANS};font-size:15px;color:${MUTED}">${esc(bits.join(' · '))}</span>
+<span style="font-family:${SANS};font-size:15px;color:${MUTED}">${esc(bitsOf(it).join(' · '))}</span>
 </td></tr>`;
     })
     .join('');
-  const html = shell(
-    h1(`Around your wants and haves ${period}.`) +
-      `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
-      center(button(v.counterUrl, "See what's new")) +
-      small('Counts are real and current. Near misses stay near misses until the switchboard is sure.'),
+  // A summary and no links: the digest tells someone what is moving, and what
+  // they do about any of it is a word to their assistant.
+  const { html, text } = notice(
+    {
+      heading: `Around your wants and haves ${period}.`,
+      line: 'Counts are real and current. Near misses stay near misses until the switchboard is sure.',
+      accent: MATCH,
+      extra: `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>`,
+    },
     f,
-    MATCH,
   );
-  const textRows = v.items
-    .map((it) => {
-      const bits: string[] = [];
-      if (it.newOpposite !== null && it.newOpposite > 0) {
-        const side = it.type === 'WANT' ? 'have' : 'want';
-        bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
-      }
-      if (it.nearMisses > 0) bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
-      return `- ${it.type} ${it.categoryLabel}: ${bits.join(', ')}`;
-    })
-    .join('\n');
-  const text =
-    `Around your wants and haves ${period}:\n\n${textRows}\n\n` +
-    `See what's new:\n${v.counterUrl}\n\n` +
-    footerText(f);
-  return { subject, html, text };
+  const textRows = v.items.map((it) => `- ${it.type} ${it.categoryLabel}: ${bitsOf(it).join(', ')}`).join('\n');
+  const fullText = text.replace(
+    'Counts are real and current.',
+    `${textRows}\n\nCounts are real and current.`,
+  );
+  return { subject, html, text: fullText };
 }
 
 // ---------------------------------------------------------------------------
 // (e) "Still true?" renewal. Wants and haves expire on their own; this lands 7
-// days before the next expiry. Lists the account's open ones with one-tap
-// renew-all and a review link. The lapse date is printed the way a person reads
-// it ("Thursday 11 September") — an email cannot run a script to localise it.
-// Blind: pointer only.
+// days before the next expiry, and says which one lapses when. The lapse date
+// is printed the way a person reads it ("Thursday 11 September") — an email
+// cannot run a script to localise it. Renewing and letting go are both a word
+// to their assistant, so the mail carries no link. Blind: pointer only.
 // ---------------------------------------------------------------------------
 export interface RenewalCardItem {
   type: 'WANT' | 'HAVE';
@@ -529,24 +519,24 @@ export interface RenewalCardItem {
   expiringSoon: boolean;
 }
 
+/** The one sentence the renewal ends on, before "Ask your assistant." */
+const RENEWAL_TAIL = 'Ask your assistant to renew or let it go.';
+
 export function renderRenewal(
-  v: { cards: RenewalCardItem[]; renewAllUrl: string; blind: boolean; counterUrl: string },
+  v: { cards: RenewalCardItem[]; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'Still true?';
-  const soon = v.cards.filter((c) => c.expiringSoon).length;
+  const soon = v.cards.filter((c) => c.expiringSoon);
   if (v.blind) {
-    const html = shell(
-      h1('Still true?') +
-        para('Wants and haves on the switchboard lapse on their own. Some of yours lapse within a week. Keep them or let them go from your ledger.') +
-        center(button(v.counterUrl, 'Review your wants and haves')),
+    const { html, text } = notice(
+      {
+        heading: 'Still true?',
+        line: `Wants and haves on the switchboard lapse on their own, and some of yours lapse within a week. ${RENEWAL_TAIL}`,
+        accent: WANT,
+      },
       f,
-      WANT,
     );
-    const text =
-      `Still true?\n\nWants and haves on the switchboard lapse on their own. Some of yours ` +
-      `lapse within a week. Review your wants and haves:\n${v.counterUrl}\n\n` +
-      footerText(f);
     return { subject, html, text };
   }
   const rows = v.cards
@@ -560,21 +550,18 @@ export function renderRenewal(
 </td></tr>`;
     })
     .join('');
-  const html = shell(
-    h1('Still true?') +
-      para(
-        `Wants and haves on the switchboard lapse on their own; that is the rule that keeps every one of them honest. ` +
-          `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.`,
-      ) +
-      `<tr><td style="padding-top:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>` +
-      center(button(v.renewAllUrl, 'Still true — keep them all')) +
-      small(
-        `Renewing restarts each one's own clock. To edit or drop them one at a time, ` +
-          `<a href="${esc(f.ledgerUrl)}" style="color:${MUTED}">review your ledger</a>. ` +
-          `Do nothing and they lapse quietly.`,
-      ),
+  const first = soon[0];
+  const lead = first
+    ? `Your ${first.categoryLabel.toLowerCase()} lapses ${plainDay(first.expiresAt)}. ${RENEWAL_TAIL}`
+    : `Wants and haves on the switchboard lapse on their own. ${RENEWAL_TAIL}`;
+  const { html, text } = notice(
+    {
+      heading: 'Still true?',
+      line: lead,
+      accent: WANT,
+      extra: `<tr><td style="padding-top:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>`,
+    },
     f,
-    WANT,
   );
   const textRows = v.cards
     .map(
@@ -582,16 +569,7 @@ export function renderRenewal(
         `- ${c.type} ${c.categoryLabel}: lapses ${plainDay(c.expiresAt)}${c.expiringSoon ? ' (within a week)' : ''}`,
     )
     .join('\n');
-  const text =
-    `Still true?\n\nWants and haves on the switchboard lapse on their own; that is the rule ` +
-    `that keeps every one of them honest. ` +
-    `${soon === 1 ? 'One of yours lapses' : `${soon} of yours lapse`} within a week.\n\n` +
-    `${textRows}\n\n` +
-    `Still true — keep them all:\n${v.renewAllUrl}\n\n` +
-    `Review one by one:\n${f.ledgerUrl}\n\n` +
-    `Do nothing and they lapse quietly.\n\n` +
-    footerText(f);
-  return { subject, html, text };
+  return { subject, html, text: text.replace(`${lead}\n`, `${lead}\n\n${textRows}\n`) };
 }
 
 // ---------------------------------------------------------------------------
@@ -657,52 +635,35 @@ export function renderScreeningRejected(
     categoryLabel?: string;
     /** The reason in plain words (domain/screening.ts owns the wording). */
     reason: string;
-    /** Deep link to its edit form on the approval page. */
-    editUrl: string;
     blind: boolean;
-    counterUrl: string;
   },
   f: FooterLinks,
 ): EmailContent {
   if (v.blind) {
-    const subject = 'OpenSwitchboard: something needs a change from you';
-    const html = shell(
-      h1('Something needs a change.') +
-        para('Something on your account needs a change from you before it can go back out. The detail waits behind your sign-in.') +
-        center(button(v.counterUrl, "See what's waiting")),
+    const { html, text } = notice(
+      {
+        heading: 'Something needs a change.',
+        line: 'Something on your account needs a change from you before it can go back out.',
+        accent: WANT,
+      },
       f,
-      WANT,
     );
-    const text =
-      `Something on your account needs a change from you before it can go back out. ` +
-      `The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
-      footerText(f);
-    return { subject, html, text };
+    return { subject: 'OpenSwitchboard: something needs a change from you', html, text };
   }
-  const subject = 'OpenSwitchboard: something you posted needs a change';
   const thing = categoryPhrase(v.categoryLabel);
   const which = thing ? `What you put up about your ${thing}` : 'What you posted';
-  const html = shell(
-    h1('Something you posted needs a change.') +
-      para(
-        `${esc(which)} did not pass screening, so it is off the board until you change it. Here is what screening picked up:`,
-      ) +
-      para(esc(v.reason)) +
-      center(button(v.editUrl, 'Open it')) +
-      small(
-        'Everything you post goes through screening before it reaches anyone. Edit this one and save it, and it goes straight back through.',
-      ),
+  // The reason rides along because it is this person's own want or have and
+  // their own words that tripped screening. Fixing it is a word to their
+  // assistant, which can amend it and send it back through.
+  const { html, text } = notice(
+    {
+      heading: 'Something you posted needs a change.',
+      line: `${which} did not pass screening, so it is off the board until you change it. ${v.reason}`,
+      accent: WANT,
+    },
     f,
-    WANT,
   );
-  const text =
-    `${which} did not pass screening, so it is off the board until you change it.\n\n` +
-    `Here is what screening picked up:\n${v.reason}\n\n` +
-    `Open it:\n${v.editUrl}\n\n` +
-    `Everything you post goes through screening before it reaches anyone. Edit this one ` +
-    `and save it, and it goes straight back through.\n\n` +
-    footerText(f);
-  return { subject, html, text };
+  return { subject: 'OpenSwitchboard: something you posted needs a change', html, text };
 }
 
 // ---------------------------------------------------------------------------
@@ -733,64 +694,52 @@ export function renderSecurityNotice(
     'pin-changed': 'The PIN on your account was just changed.',
     'agent-key-created': `A new agent key${namedText} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
   }[v.event];
+  // A security notice is one of the three exemptions: it goes out whatever
+  // hears_via says, because it is about the account rather than the network.
+  // The revoke gate keeps its button — revoking is the thing this mail exists
+  // to make possible — and the other two carry the guidance as plain text.
+  const isRevokeGate = v.event === 'agent-key-created';
   const html = shell(
     h1('A change on your account.') +
       para(line) +
-      center(button(v.counterUrl, 'Review your account')) +
+      (isRevokeGate ? center(button(v.counterUrl, 'Review and revoke')) : '') +
       small(
-        'If this was you, all good. If it was someone else, hit the kill switch — one tap pauses everything.',
+        'If this was you, all good. If it was someone else, hit the kill switch — one tap pauses everything.' +
+          (isRevokeGate ? '' : ` Sign in at <a href="${esc(v.counterUrl)}" style="color:${MUTED}">${esc(v.counterUrl)}</a> to look.`),
       ),
     f,
     WANT,
   );
   const text =
     `${textLine}\n\n` +
-    `Review your account:\n${v.counterUrl}\n\n` +
+    (isRevokeGate ? `Review and revoke:\n${v.counterUrl}\n\n` : '') +
     `If this was you, all good. If it was someone else, hit the kill switch — ` +
-    `one tap pauses everything.\n\n` +
+    `one tap pauses everything.` +
+    (isRevokeGate ? '' : ` Sign in at ${v.counterUrl} to look.`) +
+    `\n\n` +
     footerText(f);
   return { subject, html, text };
 }
 
 // ---------------------------------------------------------------------------
-// (h) Settlement lifecycle (phase 1.A safe hands). settlement-proposed is an
-// approval-style nudge with the single-use link; the update templates track
-// the held payment. Non-blind copy stays category/amount-free below the
-// approval gate: the amount is on the approval page, behind auth. Blind:
-// pointer only.
+// (h) Settlement lifecycle (phase 1.A safe hands). Every one of these is a
+// notice: a held payment moves only through someone's own approval page, and
+// their assistant is what carries them to it. Non-blind copy stays
+// category/amount-free below the approval gate; blind is a pure pointer.
 // ---------------------------------------------------------------------------
 export function renderSettlementProposed(
-  v: { link: string; summary?: string; blind: boolean; counterUrl: string },
+  v: { summary?: string; blind: boolean },
   f: FooterLinks,
 ): EmailContent {
-  // Blind mode: subject and body reveal nothing beyond the pointer (that a
-  // settlement exists is itself content).
+  // Blind mode: subject and body reveal nothing (that a settlement exists is
+  // itself content).
   const subject = v.blind
     ? 'OpenSwitchboard: something is waiting for your approval'
     : 'OpenSwitchboard: a settlement is waiting for your approval';
   const line = v.blind
     ? 'Something needs your decision.'
-    : (v.summary ?? 'Your assistant lined up a settlement. It needs your decision.');
-  const tail = v.blind
-    ? 'Nothing happens until you approve it.'
-    : 'Nothing is paid until you approve it, and the money is held until the buyer confirms receipt.';
-  const html = shell(
-    h1('Your decision is needed.') +
-      para(esc(line)) +
-      center(button(v.link, 'Review and decide')) +
-      small(
-        `The link works once. ` +
-          `<a href="${esc(v.counterUrl)}" style="color:${MUTED}">Sign in</a> any time to review it. ` +
-          esc(tail),
-      ),
-    f,
-    HAVE,
-  );
-  const text =
-    `${line}\n\nReview and decide:\n${v.link}\n\n` +
-    `The link works once. Sign in at ${v.counterUrl} any time to review it.\n\n` +
-    `${tail}\n\n` +
-    footerText(f);
+    : `${v.summary ?? 'A settlement needs your decision.'} Nothing is paid until you approve it, and the money is held until the buyer confirms receipt.`;
+  const { html, text } = notice({ heading: 'Your decision is needed.', line, accent: HAVE }, f);
   return { subject, html, text };
 }
 
@@ -819,8 +768,6 @@ export function renderSettlementUpdate(
     event: SettlementUpdateEvent;
     role: 'buyer' | 'seller';
     blind: boolean;
-    settlementUrl: string;
-    counterUrl: string;
     /** When the held payment releases on its own. Carried by the handover
      *  mails, which are the whole point of saying the date out loud. */
     deadline?: Date;
@@ -830,7 +777,7 @@ export function renderSettlementUpdate(
   f: FooterLinks,
 ): EmailContent {
   const by = v.deadline ? plainDay(v.deadline) : undefined;
-  const copy: Record<SettlementUpdateEvent, { subject: string; heading: string; buyer: string; seller: string; buttonLabel: string }> = {
+  const copy: Record<SettlementUpdateEvent, { subject: string; heading: string; buyer: string; seller: string }> = {
     'payment-held': {
       subject: 'OpenSwitchboard: the payment is held',
       heading: 'The payment is in safe hands.',
@@ -838,7 +785,6 @@ export function renderSettlementUpdate(
         'Your payment went through and is held. It moves to the seller only after you confirm receipt.',
       seller:
         'The buyer paid and the money is held. Hand over the goods, then lock your handover evidence from the settlement page.',
-      buttonLabel: 'Open the settlement',
     },
     // The seller has said the thing changed hands, which starts the buyer's
     // window. This is the buyer's mail: their two ways to end the window, and
@@ -854,7 +800,6 @@ export function renderSettlementUpdate(
       seller: by
         ? `You have declared the handover. The buyer has until ${by} to confirm receipt or raise a problem, and the held payment comes to you on that date if they do neither.`
         : 'You have declared the handover, and the buyer has been asked to confirm receipt.',
-      buttonLabel: 'Open the settlement',
     },
     'confirm-receipt-request': {
       subject: 'OpenSwitchboard: confirm receipt',
@@ -865,7 +810,6 @@ export function renderSettlementUpdate(
       seller: by
         ? `Your handover is recorded and the buyer has been asked to confirm receipt. They have until ${by}; after that the held payment comes to you on its own.`
         : 'Your handover is recorded and the buyer has been asked to confirm receipt.',
-      buttonLabel: 'Open the settlement',
     },
     released: {
       subject: 'OpenSwitchboard: payment released',
@@ -876,7 +820,6 @@ export function renderSettlementUpdate(
       seller: v.auto
         ? "The buyer's window to confirm or raise a problem has run out, so the held payment was released to you. This settlement is complete."
         : 'The buyer confirmed receipt and the held payment was released to you. This settlement is complete.',
-      buttonLabel: 'See the settlement',
     },
     refund: {
       subject: 'OpenSwitchboard: payment returned',
@@ -884,7 +827,6 @@ export function renderSettlementUpdate(
       buyer:
         'The agreed amount was returned to you. The introductory fee and the card processing stay paid, because the card processor keeps its own fee on a refund. This settlement is closed.',
       seller: 'The agreed amount was returned to the buyer. This settlement is closed.',
-      buttonLabel: 'See the settlement',
     },
     // Somebody said something is wrong. Nothing has moved; the payment is
     // simply frozen, and both people are told what they can do about it.
@@ -895,7 +837,6 @@ export function renderSettlementUpdate(
         'The payment is held where it is while the two of you sort this out. You can agree a split of the held amount, or send the item back with tracking and say so on the settlement page. If neither of you does anything for fourteen days, the payment goes to whichever side can show where the item went.',
       seller:
         'The payment is held where it is while the two of you sort this out. Add the tracking that shows where the item went, and you can agree a split of the held amount. If neither of you does anything for fourteen days, the payment goes to whichever side can show where the item went.',
-      buttonLabel: 'Open the settlement',
     },
     'resolution-proposed': {
       subject: 'OpenSwitchboard: a way to settle this is waiting',
@@ -904,7 +845,6 @@ export function renderSettlementUpdate(
         'The seller has proposed how to divide the held amount. Have a look, and the money moves once you have both agreed to the same two figures.',
       seller:
         'The buyer has proposed how to divide the held amount. Have a look, and the money moves once you have both agreed to the same two figures.',
-      buttonLabel: 'See what was proposed',
     },
     split: {
       subject: 'OpenSwitchboard: settled between you',
@@ -913,30 +853,27 @@ export function renderSettlementUpdate(
         'You both approved the same split of the held amount, and your part is on its way back to you. The introductory fee and the card processing stay paid. This settlement is closed.',
       seller:
         'You both approved the same split of the held amount, and your part is on its way to you. This settlement is closed.',
-      buttonLabel: 'See the settlement',
     },
   };
   const c = copy[v.event];
   if (v.blind) {
-    const subject = 'OpenSwitchboard: something moved on your account';
-    const html = shell(
-      h1('Something moved.') +
-        para('Something on your account changed. The detail waits behind your sign-in.') +
-        center(button(v.counterUrl, "See what's waiting")),
+    const { html, text } = notice(
+      {
+        heading: 'Something moved.',
+        line: 'Something on your account changed.',
+        accent: HAVE,
+      },
       f,
-      HAVE,
     );
-    const text =
-      `Something on your account changed. The detail waits behind your sign-in:\n${v.counterUrl}\n\n` +
-      footerText(f);
-    return { subject, html, text };
+    return { subject: 'OpenSwitchboard: something moved on your account', html, text };
   }
-  const line = v.role === 'buyer' ? c.buyer : c.seller;
-  const html = shell(
-    h1(c.heading) + para(esc(line)) + center(button(v.settlementUrl, c.buttonLabel)),
+  const { html, text } = notice(
+    {
+      heading: c.heading,
+      line: v.role === 'buyer' ? c.buyer : c.seller,
+      accent: v.event === 'refund' || v.event === 'disputed' ? WANT : HAVE,
+    },
     f,
-    v.event === 'refund' || v.event === 'disputed' ? WANT : HAVE,
   );
-  const text = `${line}\n\n${c.buttonLabel}:\n${v.settlementUrl}\n\n` + footerText(f);
   return { subject: c.subject, html, text };
 }
