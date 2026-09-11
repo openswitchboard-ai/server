@@ -426,8 +426,8 @@ ${errBox(error)}
   <button type="submit">Open my account</button>
 </form>
 <p class="small muted">Both statements are recorded in a tamper-evident consent log.</p>
-<p class="small muted">If a match ever gets as far as swapping details, we ask you then for a
-first name and a rough area, and those are the only things that cross.</p>`);
+<p class="small muted">Next you choose the first name and rough area your assistant may share.
+Those are the only things that ever cross, and only after both people say yes.</p>`);
 }
 
 export function loginEmailPage(error?: string): string {
