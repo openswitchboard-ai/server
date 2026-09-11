@@ -257,12 +257,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a.pin_hash || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
-      const [profile, arrangement, offers, disclosures, verdictable, windows, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
+      // What this page asks for is what it is going to show: the gates. The
+      // one-tap verdict moved to the introduction's own page, so the front
+      // page no longer reads a list of introductions to browse.
+      const [profile, arrangement, offers, disclosures, windows, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
-        ops.verdictableMatches(s.accountId),
         ops.openCollectionWindows(s.accountId),
         getPool().query(
           `SELECT count(*)::int AS total,
@@ -355,14 +357,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           })(),
           killSwitchOn: !!a.kill_switch_at,
           cardCounts: counts.rows[0],
-          ...(lapsingSoon ? { lapsingSoon } : {}),
+          ...(lapsingSoon
+            ? {
+                lapsingSoon: {
+                  count: lapsingSoon.count,
+                  soonest: pages.localTime(lapsingSoon.soonest, 'day'),
+                },
+              }
+            : {}),
           pendingApprovals,
-          matches: verdictable.map((m) => ({
-            matchId: m.match_id,
-            category: categoryLeafLabel(m.category),
-            score: Number(m.score),
-            verdict: m.verdict ?? undefined,
-          })),
           messagesWaiting: messagesWaiting.map((m) => ({
             matchId: m.match_id,
             category: categoryLeafLabel(m.category),
@@ -1558,12 +1561,16 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (verdict !== 'good-call' && verdict !== 'not-for-me') {
         return reply.code(400).send({ error: 'bad_request' });
       }
+      const matchId = String(b.match_id ?? '');
       try {
-        await recordVerdict(String(b.match_id ?? ''), s.accountId!, verdict as any, 'counter');
+        await recordVerdict(matchId, s.accountId!, verdict as any, 'counter');
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       }
-      return reply.redirect('/', 303);
+      // The ask lives at the foot of the introduction's own page now, so the
+      // answer goes back to the page it was asked on.
+      const back = String(b.return_to ?? '');
+      return reply.redirect(back && back === matchId ? `/matches/${encodeURIComponent(matchId)}` : '/', 303);
     });
 
     counter.post('/collect/:cardId/close', async (req, reply) => {
@@ -1875,6 +1882,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!m) return undefined;
       const offers = await ops.offersOnMatch(matchId);
       const draft = await newestOfferDraft(accountId, matchId);
+      const verdict = await ops.verdictOnMatch(accountId, matchId);
       const neg = await readNegotiation(accountId, m.card_id, { purpose: 'counter-offers-view' });
       const blocked =
         m.state !== 'open'
@@ -1903,6 +1911,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         ...(live ? { myOfferOnTable: `${Number(live.amount)} ${live.ccy}` } : {}),
         ...(agreed ? { agreedAmount: `${Number(agreed.amount)} ${agreed.ccy}` } : {}),
         ...(draft ? { draft: draftToFields(draft) } : {}),
+        ...(verdict ? { verdict } : {}),
         offers: offers.map((o) => ({
           amount: `${Number(o.amount)} ${o.ccy}`,
           mine: o.proposer_account === accountId,

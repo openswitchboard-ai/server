@@ -547,13 +547,13 @@ describe('what the emails say', () => {
     expect(offerAmountInWords(415.5, 'aud')).toBe('$415.50 AUD');
   });
 
-  it('a message waiting points at the assistant first and the button second', () => {
+  it('a message waiting sends them to their assistant and nowhere else', () => {
     const c = renderChannelWaiting(
       { categoryLabel: 'Mountain bikes', blind: false, counterUrl: 'https://my.test/' },
       links,
     );
     expect(c.text).toContain('about your mountain bike');
-    expect(c.text).toContain('Talk to your assistant and it will read it to you, or use the button below.');
+    expect(c.text).toContain('Ask your assistant and it will read it to you.');
     expect(c.text).not.toContain('Mountain bikes');
   });
 
@@ -563,7 +563,7 @@ describe('what the emails say', () => {
       links,
     );
     expect(c.text).toContain('about your mountain bike');
-    expect(c.text).toContain('Talk to your assistant, or use the button below.');
+    expect(c.text).toContain('Ask your assistant.');
     expect(c.text).not.toContain('Open your assistant to take the next step');
   });
 

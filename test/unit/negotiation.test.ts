@@ -750,7 +750,7 @@ describe('the human page class owns both settings', () => {
     expect(res.body).toContain('5000 AUD');
     expect(res.body).toContain('Their words:');
     expect(res.body).toContain('Firm on this one.');
-    expect(res.body).toContain('Reply with your number');
+    expect(res.body).toContain('Put a number on the table');
     // The other side's mode and numbers are no part of this page.
     expect(res.body).not.toContain('authored_by');
   });
@@ -833,21 +833,21 @@ describe('the pages say it in plain words', () => {
     expect(html).toContain('Approve needs your PIN');
   });
 
-  it('the dashboard reaches a negotiation whichever mode the card is on', () => {
+  it('the front page reaches a negotiation through the decision waiting on it', () => {
     const html = chome.dashboardPage({
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [
         { href: `/approvals/offer/${offerId(1)}`, label: 'Offer on your Mountain bikes match', amount: '400 AUD' },
       ],
-      matches: [{ matchId: MATCH, category: 'Mountain bikes', score: 0.8 }],
       collectionWindows: [],
     });
-    expect(html).toContain(`/matches/${MATCH}`);
-    // The button is one word now, so it stays on one line on a phone; the
-    // number a person types lives on the page it opens.
-    expect(html).toContain(`href="/matches/${MATCH}">Offers</a>`);
+    // The offer waiting for a yes is the whole of what the page carries about
+    // this one: the introduction itself is reached from there, and the page
+    // lists no introductions of its own to browse.
     expect(html).toContain(`/approvals/offer/${offerId(1)}`);
+    expect(html).toContain('400 AUD');
+    expect(html).not.toContain(`href="/matches/${MATCH}">Offers</a>`);
   });
 
   it('a set of numbers is shown back to the person who wrote it', () => {

@@ -182,13 +182,6 @@ export interface PendingApprovalItem {
   cta?: string;
 }
 
-export interface DashboardMatchItem {
-  matchId: string;
-  category: string;
-  score: number;
-  verdict?: string;
-}
-
 export interface DashboardWindowItem {
   cardId: string;
   category: string;
@@ -211,9 +204,9 @@ export interface DashboardView {
   killSwitchOn: boolean;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
-  matches: DashboardMatchItem[];
   collectionWindows: DashboardWindowItem[];
-  /** Cards whose clock runs out within the week, if any do. */
+  /** Cards whose clock runs out within the week, if any do. `soonest` is
+   *  localTime(…, 'day') markup, so the day reads in the person's own clock. */
   lapsingSoon?: { count: number; soonest: string };
   /** Conversations holding messages nobody has collected yet. The count and
    *  what the conversation is about; never a word of what was said. */
@@ -242,6 +235,16 @@ const VERDICT_WORDS: Record<string, string> = {
   'good-call': 'good call',
   'not-for-me': 'not for me',
 };
+
+/**
+ * What this page is for, in one line under the greeting.
+ *
+ * The assistant is where the conversation happens, and this page holds the
+ * handful of decisions a person has to make themselves. Saying so at the top
+ * is what stops the page drifting back into a dashboard.
+ */
+export const FRONT_PAGE_LEAD =
+  'Your assistant is where the conversation happens. This page is for the decisions only you can make.';
 
 /** What the two sides say to each other once an offer is accepted. */
 export const DEAL_DONE_LINE = "Sort pickup in the conversation; the switchboard's part is done.";
@@ -321,50 +324,13 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     })
     .join('');
 
-  // 3. Wants and haves whose clock is nearly out.
+  // 3. Wants and haves whose clock is nearly out. The day is markup the
+  //    reader's own clock fills in, so it goes in without esc().
   const renewals = v.lapsingSoon?.count
     ? `<a class="todo" href="/ledger">
 <span class="badge state">LAPSING</span>
-<div class="what">${v.lapsingSoon.count === 1 ? 'One of your wants and haves runs' : `${v.lapsingSoon.count} of your wants and haves run`} out by ${esc(v.lapsingSoon.soonest)}</div>
+<div class="what">${v.lapsingSoon.count === 1 ? 'One of your wants and haves runs' : `${v.lapsingSoon.count} of your wants and haves run`} out by ${v.lapsingSoon.soonest}</div>
 <div class="go">Check they are still true</div></a>`
-    : '';
-
-  // 4. One-tap match feedback. Light, and last: nothing is blocked on it.
-  const matchRows = v.matches.length
-    ? `<h3>Was the switchboard right?</h3>
-<p class="small muted">One tap tunes your matching. "Not for me" also mutes the
-pairing, and no reason is ever sent to the other side.</p>` +
-      v.matches
-        .map(
-          (m) => `<div class="card-row"><div class="top">
-<span class="badge match">MATCH</span>
-<span class="cat">${esc(m.category)}</span>
-<span class="badge state">score ${(m.score * 100).toFixed(0)}%</span></div>
-${
-  m.verdict
-    ? `<div class="kv">Your call: <strong>${esc(VERDICT_WORDS[m.verdict] ?? m.verdict)}</strong></div>`
-    : ''
-}
-<div class="row-actions">
-${
-  m.verdict
-    ? ''
-    : `<form method="POST" action="/verdict">
-  <input type="hidden" name="match_id" value="${esc(m.matchId)}">
-  <input type="hidden" name="verdict" value="good-call">
-  <button type="submit" class="secondary">Good call</button>
-</form>
-<form method="POST" action="/verdict">
-  <input type="hidden" name="match_id" value="${esc(m.matchId)}">
-  <input type="hidden" name="verdict" value="not-for-me">
-  <button type="submit" class="secondary">Not for me</button>
-</form>`
-}
-<a class="btn secondary" href="/matches/${esc(m.matchId)}">Offers</a>
-</div>
-</div>`,
-        )
-        .join('')
     : '';
 
   const nothingWaiting =
@@ -372,8 +338,7 @@ ${
     !v.collectionWindows.length &&
     !renewals &&
     !messages &&
-    !agreed &&
-    !v.matches.length;
+    !agreed;
 
   const emailBanner = v.emailUnreachable
     ? `<div class="err"><strong>Email to you is bouncing.</strong>
@@ -401,6 +366,7 @@ hold. Re-verify your address to switch it back on.
 
   return layout('Your approval page', `
 <h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your approval page.'}</h1>
+<p class="lead">${esc(FRONT_PAGE_LEAD)}</p>
 ${v.notice ? `<div class="note">${esc(v.notice)}</div>` : ''}
 ${emailBanner}
 <h2>Waiting for you</h2>
@@ -410,7 +376,6 @@ ${agreed}
 ${messages}
 ${renewals}
 ${windows}
-${matchRows}
 <h2>Your switchboard</h2>
 ${nav}
 ${kill}
@@ -723,7 +688,40 @@ export interface MatchOffersView {
   /** A figure a human accepted, rendered "415 AUD". The switchboard has done
    *  its part at that point and the page says so. */
   agreedAmount?: string;
+  /** This person's own call on the introduction, if they have made one. The
+   *  ask sits at the foot of this page, where the introduction is. */
+  verdict?: string;
 }
+
+/**
+ * Was this a good one? The quietest thing on the page, at the very foot of it.
+ *
+ * It used to sit on the front page beside a percentage, which made the front
+ * page a place to browse. It belongs here, on the introduction it is about,
+ * asked once and never scored: a person reads no figure about a person.
+ */
+function verdictLine(v: MatchOffersView): string {
+  if (v.verdict) {
+    return `<p class="small muted">Your call on this one: ${esc(
+      VERDICT_WORDS[v.verdict] ?? v.verdict,
+    )}.</p>`;
+  }
+  const btn = (verdict: string, label: string) => `<form method="POST" action="/verdict">
+  <input type="hidden" name="match_id" value="${esc(v.matchId)}">
+  <input type="hidden" name="return_to" value="${esc(v.matchId)}">
+  <input type="hidden" name="verdict" value="${verdict}">
+  <button type="submit" class="secondary">${label}</button>
+</form>`;
+  return `<p class="small muted">Was this a good match?</p>
+<div class="row-actions">${btn('good-call', 'Yes')}${btn('not-for-me', 'No')}</div>
+<p class="small muted">Your answer tunes what comes to you next. "No" also mutes
+this pairing, and no reason is ever sent to the other side.</p>`;
+}
+
+/** The box's heading when the assistant carried the figure here. */
+export const OFFER_HEADING_DRAFT = 'Confirm the number your assistant brought';
+/** And when the box is empty, so the person is opening the bidding. */
+export const OFFER_HEADING_EMPTY = 'Put a number on the table';
 
 /** Offer states, in the words the person would use for them. */
 const OFFER_STATE_WORDS: Record<string, string> = {
@@ -816,12 +814,19 @@ ${
   // A resubmitted form beats a draft: what the person just typed is newer than
   // anything their agent left here.
   const useDraft = !v.form && !!v.draft;
+  // The heading says where the number in the box came from. A figure the
+  // assistant carried is a figure to check and confirm; an empty box is the
+  // person opening the bidding.
   const form = counterOfferForm(v.matchId, {
     ccy: useDraft ? v.draft!.ccy : v.form?.ccy,
     amount: useDraft ? v.draft!.amount : v.form?.amount,
     note: useDraft ? v.draft!.note : v.form?.note,
     draft: useDraft,
-    ...(v.myOfferOnTable ? { heading: '' } : {}),
+    heading: v.myOfferOnTable
+      ? ''
+      : useDraft
+        ? OFFER_HEADING_DRAFT
+        : OFFER_HEADING_EMPTY,
   });
   // Three ways this stretch of the page can stand. A deal is done, so there is
   // nothing to type; a figure of theirs is already out there, so the form
@@ -848,7 +853,8 @@ ${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
 <a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
-<a class="btn secondary" href="/">Back to your approval page</a>`);
+<a class="btn secondary" href="/">Back to your approval page</a>
+${verdictLine(v)}`);
 }
 
 /**

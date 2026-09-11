@@ -13,6 +13,16 @@
  *
  * Emails only ever state true things from real rows: every count rendered
  * here arrives from a SQL count in the digest engine.
+ *
+ * WHEN AN EMAIL CARRIES A BUTTON (2026-09-11). The assistant is where the
+ * conversation happens; these emails are notifications. So an email carries a
+ * button ONLY when the next step is a gate that lives on the person's own
+ * page, and the button goes to that gate: the names step, an offer waiting for
+ * their yes, a settlement step, a security notice, a verification. Everything
+ * else — a first signal, a message waiting, their move on the way to the names
+ * step, a figure they will answer through their assistant — ends on "Ask your
+ * assistant." and links nowhere, because telling their assistant is the whole
+ * of what they have to do.
  */
 
 import { categoryPhrase } from '../domain/matchRules.js';
@@ -192,10 +202,15 @@ export function renderApproval(
   return { subject, html, text };
 }
 
+/** The closing line on every email whose next step is a word to an assistant. */
+const ASK_YOUR_ASSISTANT = 'Ask your assistant.';
+
 // ---------------------------------------------------------------------------
-// (c) Match summons — the screenshot-worthy one. One clear line, one button.
-// count > 1 covers the daily/weekly summons batch. Non-blind may name the
-// category (category-level only). Blind: pointer, nothing else.
+// (c) Match summons — the screenshot-worthy one. One clear line, and no button:
+// the next step is to tell their assistant they are interested, which is a
+// sentence rather than a press. count > 1 covers the daily/weekly summons
+// batch. Non-blind may name the category (category-level only). Blind:
+// pointer, nothing else.
 // ---------------------------------------------------------------------------
 const ORDINALS = ['', '', 'second', 'third', 'fourth', 'fifth'];
 /** "Someone" for the first arrival on a want or have, "A second person" after that. */
@@ -225,23 +240,15 @@ export function renderSummons(
     !v.blind && v.count === 1 && thing
       ? `${who} has come forward about your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(thing)}</span>.`
       : esc(textLine);
-  const buttonLabel = v.blind
-    ? "See what's waiting"
-    : v.count === 1
-      ? later ? 'See who else it is' : 'See who it is'
-      : 'See who has come forward';
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
       `<tr><td style="font-family:${SANS};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">${esc(subject)}.</td></tr>` +
       para(line) +
-      center(button(v.counterUrl, buttonLabel)),
+      small(ASK_YOUR_ASSISTANT),
     f,
     MATCH,
   );
-  const text =
-    `${subject}.\n\n${textLine}\n\n` +
-    `${buttonLabel}:\n${v.counterUrl}\n\n` +
-    footerText(f);
+  const text = `${subject}.\n\n${textLine}\n\n${ASK_YOUR_ASSISTANT}\n\n` + footerText(f);
   return { subject, html, text };
 }
 
@@ -260,52 +267,75 @@ export function renderChannelWaiting(
 ): EmailContent {
   const subject = 'You have a message waiting';
   const thing = categoryPhrase(v.categoryLabel);
-  const tail = 'Talk to your assistant and it will read it to you, or use the button below.';
+  // The switchboard carries the message and the assistant reads it out, so
+  // there is nothing on any page for this person to press.
+  const tail = 'Ask your assistant and it will read it to you.';
   const textLine = v.blind
-    ? `Someone has sent you a message. ${tail}`
+    ? 'Someone has sent you a message.'
     : thing
-      ? `Someone you got talking to about your ${thing} has sent you a message. ${tail}`
-      : `Someone you got talking to has sent you a message. ${tail}`;
+      ? `Someone you got talking to about your ${thing} has sent you a message.`
+      : 'Someone you got talking to has sent you a message.';
   const line = esc(textLine);
-  const html = shell(
-    h1('A message is waiting.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
-    f,
-    MATCH,
-  );
-  const text =
-    `A message is waiting.\n\n${textLine}\n\n` +
-    `Open OpenSwitchboard:\n${v.counterUrl}\n\n` +
-    footerText(f);
+  const html = shell(h1('A message is waiting.') + para(line) + small(tail), f, MATCH);
+  const text = `A message is waiting.\n\n${textLine}\n\n${tail}\n\n` + footerText(f);
   return { subject, html, text };
 }
 
 // ---------------------------------------------------------------------------
-// (c3) "Your move" nudge. The counterparty has stepped forward — opted in and
-// is ready to talk — and it is now this human's turn to reciprocate. New-match
+// (c3) "Your move" nudge. The counterparty has stepped forward — said yes to
+// swapping first names — and it is now this human's turn to answer. New-match
 // is already summoned; this covers the later progression, where a passive human
-// would otherwise never learn the ball is in their court. Same plain register.
+// would otherwise never learn the ball is in their court.
+//
+// This is the one nudge that can carry a button, because the step it is about
+// can be a gate. When the caller has a names-step approval link for this
+// person, the email is the names-step email: one button, straight to the page
+// where they share a first name and an area. Without one the step is something
+// they say to their assistant, so the email ends the way the rest do.
 // ---------------------------------------------------------------------------
 export function renderYourMove(
-  v: { categoryLabel?: string; blind: boolean; counterUrl: string },
+  v: {
+    categoryLabel?: string;
+    blind: boolean;
+    counterUrl: string;
+    /** The approval link for this introduction's names step, when there is one. */
+    namesUrl?: string;
+  },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'It is your turn';
   const thing = categoryPhrase(v.categoryLabel);
-  const tail = 'Talk to your assistant, or use the button below.';
+  const names = !!v.namesUrl;
+  // True at this point and no more than true: they have said yes, and nothing
+  // crosses in either direction until this person says yes as well. Blind mode
+  // says none of it — the link still goes, worded the way a blind approval
+  // email words it.
+  const what =
+    names && !v.blind
+      ? 'They have said yes to swapping first names. Nothing crosses either way until you say yes too.'
+      : '';
   const textLine = v.blind
-    ? `Someone is ready to hear back from you. ${tail}`
+    ? 'Someone is ready to hear back from you.'
     : thing
-      ? `Someone you got talking to about your ${thing} is keen and ready to talk. ${tail}`
-      : `Someone you got talking to is keen and ready to talk. ${tail}`;
-  const line = esc(textLine);
+      ? `Someone you got talking to about your ${thing} is keen and ready to talk.`
+      : 'Someone you got talking to is keen and ready to talk.';
+  const body = [textLine, what].filter(Boolean).join(' ');
+  const label = v.blind ? 'Review and decide' : 'Share your first name and area';
   const html = shell(
-    h1('It is your move.') + para(line) + center(button(v.counterUrl, 'Open OpenSwitchboard')),
+    h1('It is your move.') +
+      para(esc(body)) +
+      (names
+        ? center(button(v.namesUrl!, label)) +
+          small('Nothing is shared until you say so on that page.')
+        : small(ASK_YOUR_ASSISTANT)),
     f,
     MATCH,
   );
   const text =
-    `It is your move.\n\n${textLine}\n\n` +
-    `Open OpenSwitchboard:\n${v.counterUrl}\n\n` +
+    `It is your move.\n\n${body}\n\n` +
+    (names
+      ? `${label}:\n${v.namesUrl}\n\nNothing is shared until you say so on that page.\n\n`
+      : `${ASK_YOUR_ASSISTANT}\n\n`) +
     footerText(f);
   return { subject, html, text };
 }
@@ -316,7 +346,11 @@ export function renderYourMove(
 // assistant only wakes when they speak to it, so without this mail the figure
 // sits on a page nobody has been told to open. Non-blind names the figure and
 // the thing, because an offer is a deliberate disclosure meant to be seen;
-// blind is a pure pointer. Links to the page where they answer it.
+// blind is a pure pointer.
+//
+// Saying yes to a figure is a gate that lives on the page, so this email keeps
+// one button and it goes straight to that page. Blind mode has no page to name
+// without naming the thing, so it ends on "Ask your assistant." like the rest.
 // ---------------------------------------------------------------------------
 export function renderOfferOnTheTable(
   v: {
@@ -335,24 +369,24 @@ export function renderOfferOnTheTable(
     ? 'OpenSwitchboard: something is waiting for you'
     : 'A number is on the table';
   const textLine = v.blind
-    ? 'Someone has answered you. The detail waits behind your sign-in.'
+    ? 'Someone has answered you.'
     : thing
-      ? `Someone you got talking to has offered ${figure} for your ${thing}. Talk to your assistant and it will take you through it, or use the button below.`
-      : `Someone you got talking to has offered ${figure}. Talk to your assistant and it will take you through it, or use the button below.`;
+      ? `Someone you got talking to has offered ${figure} for your ${thing}.`
+      : `Someone you got talking to has offered ${figure}.`;
   const tail = v.blind
-    ? 'Nothing is agreed until you say so.'
-    : 'Nothing is agreed until you say so. You can answer with a number of your own, or leave it.';
+    ? ASK_YOUR_ASSISTANT
+    : 'Nothing is agreed until you say so. You can answer with a number of your own, or leave it. Ask your assistant and it will talk it through with you.';
   const html = shell(
     h1(v.blind ? 'Something is waiting.' : 'There is a number on the table.') +
       para(esc(textLine)) +
-      center(button(v.blind ? v.counterUrl : v.offersUrl, v.blind ? "See what's waiting" : 'See the offer')) +
+      (v.blind ? '' : center(button(v.offersUrl, 'See the offer'))) +
       small(esc(tail)),
     f,
     HAVE,
   );
   const text =
     `${textLine}\n\n` +
-    `${v.blind ? "See what's waiting" : 'See the offer'}:\n${v.blind ? v.counterUrl : v.offersUrl}\n\n` +
+    (v.blind ? '' : `See the offer:\n${v.offersUrl}\n\n`) +
     `${tail}\n\n` +
     footerText(f);
   return { subject, html, text };

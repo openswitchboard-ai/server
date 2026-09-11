@@ -368,7 +368,8 @@ d('integration gates against live deployment', () => {
     const page = await counterFetch(dana.jar, `/matches/${mid}`);
     expect(page.status).toBe(200);
     const matchPage = await page.text();
-    expect(matchPage).toContain('Reply with your number');
+    // The heading says the box is a confirmation of what her assistant carried.
+    expect(matchPage).toContain('Confirm the number your assistant brought');
     expect(matchPage).toContain('Your agent brought this number from you');
     expect(matchPage).toContain('value="500"');
     // A figure never travels in a URL. Every link and form target of our own
