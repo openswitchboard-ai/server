@@ -32,7 +32,6 @@ export function esc(s: string): string {
 export const CONSENT_STATEMENT =
   'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my approval page.';
 
-
 /** Where the two Patch images are served from. Long-cached and immutable. */
 export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
@@ -1230,57 +1229,3 @@ ${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#
 ${dispute}`);
 }
 
-/**
- * Loopback handoff: shown instead of a blind redirect when the agent's
- * callback lives on 127.0.0.1/localhost. The page first tries to deliver the
- * code to the local listener itself; when nothing answers (some CLIs print
- * the sign-in link and exit), it shows the full callback link with a copy
- * button so the person can paste it into their terminal (Claude Code and most
- * CLIs ask for the URL), with the bare code tucked behind a disclosure for
- * clients that take a code. The code is single-use, short-lived,
- * and useless without the client's own PKCE secret.
- */
-export function loopbackHandoffPage(v: { callbackUrl: string; code: string; clientName: string }): string {
-  return layout('Almost connected', `
-<h1>Almost connected</h1>
-<div id="trying">
-  <p class="lead">Handing you back to <b>${esc(v.clientName)}</b>&hellip;</p>
-</div>
-<div id="done" hidden>
-  <p class="lead">Connected. You can close this tab and return to your terminal.</p>
-</div>
-<div id="manual" hidden>
-  <p>${esc(v.clientName)} isn't listening on this computer right now, so finish the sign-in
-  yourself. Go back to the terminal that gave you the link and paste this link where it asks
-  for the URL:</p>
-  <div class="fact"><div class="k">Your sign-in link</div><div class="v" id="urlbox" style="font-size:var(--t-sm)">${esc(v.callbackUrl)}</div></div>
-  <button type="button" id="copyurl" class="approve">Copy the link</button>
-  <p class="small muted">It works once and expires in a few minutes.</p>
-  ${foldedDetail('Your client asked for a code instead?', `
-    <div class="fact"><div class="k">Your one-time code</div><div class="v" id="codebox">${esc(v.code)}</div></div>
-    <button type="button" id="copybtn">Copy the code</button>
-    <p class="small muted">If your client takes a command, it looks like: <code>&hellip; --code '${esc(v.code)}'</code></p>`)}
-</div>
-<script>
-(async () => {
-  const show = (id) => {
-    for (const x of ['trying','done','manual']) document.getElementById(x).hidden = (x !== id);
-  };
-  try {
-    await fetch(${JSON.stringify(v.callbackUrl)}, { mode: 'no-cors' });
-    show('done');
-  } catch {
-    show('manual');
-  }
-})();
-const copier = (id, text) => document.getElementById(id).addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(text);
-    document.getElementById(id).textContent = 'Copied';
-  } catch {}
-});
-copier('copyurl', ${JSON.stringify(v.callbackUrl)});
-copier('copybtn', ${JSON.stringify(v.code)});
-</script>
-`);
-}

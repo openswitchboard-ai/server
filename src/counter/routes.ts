@@ -343,7 +343,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (row) {
           notice = row.connected
             ? `${row.client_name} is connected and can work the switchboard for you.`
-            : `You authorised ${row.client_name}. It has not finished connecting yet. If the new tab showed you a code, paste it back into ${row.client_name} where it is waiting for it; then refresh this page.`;
+            : `You authorised ${row.client_name}. It has not finished connecting yet. If the new tab showed a connection error, paste the address-bar link back into ${row.client_name} where it is waiting for it; then refresh this page.`;
         }
       }
       return html(
@@ -2918,21 +2918,12 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       target.searchParams.set('code', code);
       if (ctx.state) target.searchParams.set('state', ctx.state);
-      // Loopback callbacks get the handoff page: it delivers the code to the
-      // local listener itself, and shows the code for copy-back when no
-      // listener answers (some CLIs print the link and exit). Real https
-      // redirects proceed untouched.
-      const isLoopback = ['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname);
-      if (isLoopback) {
-        return html(
-          reply,
-          pages.loopbackHandoffPage({
-            callbackUrl: target.toString(),
-            code,
-            clientName: v.client!.client_name,
-          }),
-        );
-      }
+      // Plain OAuth redirect, loopback included. A CLI that is listening on
+      // 127.0.0.1 completes at once (top-level navigations are exempt from the
+      // browser's local-network fetch rules, which a probing page is not); one
+      // that printed the link and exited shows a connection error, and the
+      // person pastes the address-bar URL back, which is the loopback
+      // convention every such client already explains.
       return reply.redirect(target.toString(), 303);
     });
   });
