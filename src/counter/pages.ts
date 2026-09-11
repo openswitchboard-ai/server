@@ -286,7 +286,7 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
   <a href="/"><span class="brand">OpenSwitchboard</span><span class="sub">your approval page</span></a>
 </header>
 ${body}
-<footer>Everything agents must never do, you do here.<br>openswitchboard.ai</footer>
+<footer>openswitchboard.ai</footer>
 </div>
 ${LOCAL_TIME_SCRIPT}</body></html>`;
 }

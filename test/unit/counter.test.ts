@@ -1129,11 +1129,11 @@ describe('counter pages: copy-cull render suite', () => {
     expect(lintHumanCopy(html)).toEqual([]);
   });
 
-  it('every page carries the same header and the signature footer line', () => {
+  it('every page carries the same header and the footer', () => {
     for (const p of allPages()) {
       expect(p.html, p.name).toContain('<header class="site">');
       expect(p.html, p.name).toContain('src="/assets/patch.png"');
-      expect(p.html, p.name).toContain('Everything agents must never do, you do here.');
+      expect(p.html, p.name).toContain('<footer>openswitchboard.ai</footer>');
       // Phone first: one column, and a viewport that does not let a page zoom
       // its way out of a 375px screen.
       expect(p.html, p.name).toContain('width=device-width, initial-scale=1');
