@@ -961,6 +961,56 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           needsPin: true,
         };
       }
+      if (row.action === 'offer-accept') {
+        const r = await getPool().query(
+          `SELECT o.*, m.category, m.stage, m.account_want, m.account_have FROM offers o
+           JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
+          [row.ref_id],
+        );
+        const o = r.rows[0];
+        if (!o) return { error: 'That figure is no longer on the table.' };
+        if (o.account_want !== accountId && o.account_have !== accountId) {
+          return { error: 'That figure is not yours to decide.' };
+        }
+        if (o.proposer_account === accountId) {
+          return { error: "That figure is your own side's. Only the other person can accept it." };
+        }
+        if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
+          return { error: `That figure is ${o.state} — there is nothing left to accept.` };
+        }
+        // The amount and currency come off the signed row, so the figure on the
+        // page is the figure the link was minted for.
+        const figure = templateMoney(Number(row.amount), String(row.ccy ?? ''));
+        const name =
+          o.stage >= 3
+            ? await ops.disclosedFirstName(
+                accountId,
+                o.proposer_account,
+                { match_id: o.match_id },
+                'one-question-page',
+              )
+            : undefined;
+        const detail: string[] = [];
+        // Their agent has not weighed in on this one. The nudge offers a second
+        // opinion; the figure is theirs to take now either way.
+        if (o.state === 'proposed') {
+          detail.push(
+            'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details.',
+          );
+        }
+        detail.push('Accepting agrees the number, and your assistant takes it from there.');
+        return {
+          ...base,
+          question: `${name ?? 'The other side'} offers ${figure} for your ${phrase(o.category)}.`,
+          detail,
+          yesLabel: 'Accept',
+          needsPin: true,
+          door: {
+            href: `/matches/${encodeURIComponent(o.match_id)}`,
+            text: 'Or put a different number on the table',
+          },
+        };
+      }
       if (row.action === 'collection-close') {
         const r = await getPool().query(
           `SELECT category, collect_until, collect_closed_at FROM cards
@@ -1102,6 +1152,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
       const figures = links.readPayload(row) ?? {};
       try {
+        if (row.action === 'offer-accept') {
+          await acceptOfferByHuman(row.ref_id, s.accountId!, 'counter', cfg);
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.messagePage('Accepted', '<p>The number is agreed. Your assistant takes it from here.</p>'),
+          );
+        }
         if (row.action === 'offer-send') {
           await proposeOffer(
             cfg,

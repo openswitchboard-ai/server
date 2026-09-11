@@ -31,11 +31,12 @@ export type ApprovalAction =
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
- * and the press itself is what consumes the link. The older three open the
+ * and the press itself is what consumes the link. The two left open the
  * approval page instead, which burns its link on the first authenticated view.
  */
 export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   'offer-send',
+  'offer-accept',
   'collection-close',
   'negotiation-auto',
 ];

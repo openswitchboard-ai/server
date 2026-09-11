@@ -7,9 +7,9 @@
  * and hands it over in the chat. The link opens one page that asks one thing.
  *
  * What is asserted here:
- *  - each of the three new pages mints, renders its one sentence, and its
- *    press does the thing — a figure goes out, a window closes, a want or have
- *    moves to Auto-negotiate;
+ *  - each of the four pages mints, renders its one sentence, and its press does
+ *    the thing — a figure goes out, a figure is taken, a window closes, a want
+ *    or have moves to Auto-negotiate;
  *  - a link is single-use and figure-bound: pressing it twice fails plainly,
  *    and a tampered token is not a link at all;
  *  - the press, never the page view, is what burns a one-question link, so a
@@ -143,6 +143,18 @@ const theMatch = () => ({
   state: world.matchState,
   channel_id: null,
   opened_at: null,
+});
+
+/** The figure the other side has on the table, in whatever state it is in. */
+const theOffer = () => ({
+  id: OFFER,
+  match_id: MATCH,
+  proposer_account: BEPPE,
+  amount: '430',
+  ccy: 'AUD',
+  state: world.offerState,
+  expiry: new Date(Date.now() + 86_400_000),
+  message: null,
 });
 
 function fakePool() {
@@ -335,18 +347,20 @@ function fakePool() {
         const m = theMatch();
         return rows([
           {
-            id: OFFER,
-            match_id: MATCH,
-            proposer_account: BEPPE,
-            amount: '430',
-            ccy: 'AUD',
-            state: world.offerState,
-            expiry: new Date(Date.now() + 86_400_000),
+            ...theOffer(),
             category: m.category,
+            stage: m.stage,
             account_want: ANA,
             account_have: BEPPE,
           },
         ]);
+      }
+      if (/SELECT \* FROM offers WHERE id/.test(sql)) {
+        return params[0] === OFFER ? rows([theOffer()]) : rows([]);
+      }
+      if (/UPDATE offers SET state='accepted-by-human'/.test(sql)) {
+        world.offerState = 'accepted-by-human';
+        return rows([theOffer()]);
       }
       if (/FROM matches/.test(sql) && /^\s*SELECT (\*|m\.\*)/.test(sql)) {
         return rows(world.boardEmpty ? [] : [theMatch()]);
@@ -538,25 +552,105 @@ describe('(b) send a number', () => {
 
 // ---------------------------------------------------------------------------
 describe('(c) accept a number', () => {
-  it('mints for a figure their agent has not weighed in on yet', async () => {
+  beforeEach(() => {
+    // A figure there to take means nothing of this person's is still
+    // collecting: an open window of their own locks acceptance elsewhere.
+    world.collectUntil = null;
+  });
+
+  const mint = () => humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+
+  it('states the figure, offers Accept and Not now, and agrees it on the press', async () => {
     world.offerState = 'proposed';
-    const r = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
-    expect(r.what_it_does).toContain('$430 AUD');
-    expect(r.link).toContain('/a/');
-    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(r.link))}`);
+    const { link, expires_in_minutes, what_it_does } = await mint();
+    expect(expires_in_minutes).toBe(15);
+    expect(what_it_does).toContain('$430 AUD');
+
+    const t = encodeURIComponent(tokenOf(link));
+    const page = await inject('GET', `/a/${t}`);
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('430 AUD');
+    expect(page.body).toContain('Sam offers $430 AUD for your mountain bike.');
+    expect(page.body).toContain('>Accept<');
+    expect(page.body).toContain('>Not now<');
+    expect(page.body).toContain('Confirm with your PIN');
+    // The counter-offer door is a plain line, and pressing nothing here spends
+    // nothing: reading the question does not burn the link.
+    expect(page.body).toContain(`href="/matches/${MATCH}"`);
+    expect(page.body).toContain('Or put a different number on the table');
+    expect(world.links[0].used_at).toBeNull();
+    expect(world.offerState).toBe('proposed');
+
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(200);
+    expect(pressed.body).toContain('The number is agreed.');
+    expect(world.offerState).toBe('accepted-by-human');
+    expect(world.links[0].decision).toBe('approved');
+  });
+
+  it('before the names step it says "the other side" rather than inventing one', async () => {
+    world.stage = 2;
+    const { link } = await mint();
+    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
+    expect(page.body).toContain('The other side offers $430 AUD for your mountain bike.');
+  });
+
+  it('"Not now" agrees nothing and carries no reason', async () => {
+    const { link } = await mint();
+    const r = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, { decision: 'no' });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('Nothing changed, and no reason was sent.');
+    expect(world.offerState).toBe('proposed');
+    expect(world.links[0].decision).toBe('declined');
+  });
+
+  it('a second press fails plainly, and agrees nothing twice', async () => {
+    const { link } = await mint();
+    const t = encodeURIComponent(tokenOf(link));
+    await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(world.offerState).toBe('accepted-by-human');
+    world.offerState = 'proposed'; // whatever the board says, the link is spent
+    const again = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(again.body).toContain('Already used');
+    expect(world.offerState).toBe('proposed');
+  });
+
+  it('a wrong PIN costs the attempt and not the link', async () => {
+    const { link } = await mint();
+    const t = encodeURIComponent(tokenOf(link));
+    const wrong = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '000000' });
+    expect(wrong.statusCode).toBe(401);
+    expect(world.links[0].used_at).toBeNull();
+    expect(world.offerState).toBe('proposed');
+    const right = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(right.statusCode).toBe(200);
+    expect(world.offerState).toBe('accepted-by-human');
+  });
+
+  it('the figure is bound: the page reads it from the row, never the form', async () => {
+    const { link } = await mint();
+    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
+    expect(page.body).toContain('$430 AUD');
+    expect(page.body).not.toContain('$5 AUD');
   });
 
   it('mints for one already parked for them', async () => {
     world.offerState = 'awaiting-human';
-    const r = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+    const r = await mint();
     expect(r.link).toContain('/a/');
+    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(r.link))}`);
+    expect(page.body).toContain('Sam offers $430 AUD for your mountain bike.');
+  });
+
+  it('says nothing is left to accept once the figure has moved on', async () => {
+    const { link } = await mint();
+    world.offerState = 'declined';
+    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
+    expect(page.body).toContain('there is nothing left to accept');
   });
 
   it('refuses a figure that is no longer live, in plain words', async () => {
     world.offerState = 'declined';
-    await expect(humanLinks.acceptNumberLink(cfg, ANA, OFFER)).rejects.toMatchObject({
+    await expect(mint()).rejects.toMatchObject({
       payload: { code: 'NOT_UNLOCKED_YET' },
     });
   });

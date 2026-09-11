@@ -485,6 +485,26 @@ describe('counter pages: copy-cull render suite', () => {
       }),
     },
     {
+      // The accept-number question, on the one-question renderer: one
+      // sentence, Accept and Not now, the PIN, and the counter-offer door as a
+      // plain line under them.
+      name: 'one-question-accept',
+      html: cpages.oneQuestionPage({
+        token: 'tok-1',
+        question: 'Sam offers $430 AUD for your mountain bike.',
+        detail: [
+          'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details.',
+          'Accepting agrees the number, and your assistant takes it from there.',
+        ],
+        yesLabel: 'Accept',
+        noLabel: 'Not now',
+        needsPin: true,
+        door: { href: '/matches/m-1', text: 'Or put a different number on the table' },
+        hasPasskey: false,
+        elevated: false,
+      }),
+    },
+    {
       name: 'approval-stage3-collect',
       html: cpages.approvalPage({
         action: 'stage3-disclosure',
