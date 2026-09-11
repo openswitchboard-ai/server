@@ -824,8 +824,8 @@ describe('the onboarding question, once', () => {
     expect(home.headers.location).toBe('/hello');
     const page = await inject('GET', '/hello');
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('How will you hear about things?');
-    expect(page.body).toContain('Through my assistant.');
+    expect(page.body).toContain('Which kind of assistant do you use?');
+    expect(page.body).toContain('An always-on agent.');
     expect(page.body).toContain('First name');
   });
 
