@@ -420,17 +420,16 @@ export function renderDealAgreed(
     : thing
       ? `Deal: ${figure} agreed for your ${thing}. Sort pickup with them in the conversation; the switchboard's part is done.`
       : `Deal: ${figure} agreed. Sort pickup with them in the conversation; the switchboard's part is done.`;
+  // A notice, so no button: nothing here needs the page. The next step is a
+  // conversation, and the assistant is where that happens.
   const html = shell(
     h1(v.blind ? 'Something moved.' : 'You have a deal.') +
       para(esc(textLine)) +
-      center(button(v.blind ? v.counterUrl : v.matchUrl, v.blind ? "See what's waiting" : 'See the deal')),
+      para('Ask your assistant.'),
     f,
     HAVE,
   );
-  const text =
-    `${textLine}\n\n` +
-    `${v.blind ? "See what's waiting" : 'See the deal'}:\n${v.blind ? v.counterUrl : v.matchUrl}\n\n` +
-    footerText(f);
+  const text = `${textLine}\n\nAsk your assistant.\n\n` + footerText(f);
   return { subject, html, text };
 }
 
