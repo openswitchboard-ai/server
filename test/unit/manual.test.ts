@@ -307,7 +307,13 @@ describe('the sweep carries it, for a day', () => {
     const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: MANUAL.version, manualNotifiedAt: null };
     const r = body(await sweep(session));
     expect(r.manual_update).toBeUndefined();
-    expect(Object.keys(r)).toEqual(['introductions', 'arrangement', 'arrangement_note']);
+    expect(Object.keys(r)).toEqual([
+      'introductions',
+      'arrangement',
+      'arrangement_note',
+      'hears_via',
+      'runs_on_its_own',
+    ]);
     expect(versionWrites).toEqual([]);
   });
 
