@@ -573,7 +573,8 @@ describe('the pages that collect it', () => {
 
   it('the consent page says, in one line, when details ever cross', () => {
     const consent = cpages.consentPage();
-    expect(consent).toMatch(/first name and a rough area/);
+    expect(consent).toMatch(/first name and rough area/);
+    expect(consent).toMatch(/only things that ever cross/);
   });
 
   it('every new page passes the banned-phrase lint and never says "the counter"', () => {
