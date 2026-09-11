@@ -127,6 +127,9 @@ function fakePool(rows: Record<string, any[]>) {
               id: ACCOUNT,
               pin_hash: 'set',
               status: 'active',
+              // Already past the onboarding question, like every account that
+              // existed before the step did.
+              onboarded_at: new Date('2026-01-01'),
               kill_switch_at: null,
               email_unreachable_at: null,
               arrangement: null,
