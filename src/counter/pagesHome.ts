@@ -257,7 +257,7 @@ export function dashboardPage(v: DashboardView): string {
 matching and your agents' tokens are suspended. Turning back on needs your PIN.</p>
 <form method="POST" action="/kill/off">
   <label for="pin">PIN</label>
-  <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" maxlength="12" required>
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>
   <button type="submit">Turn everything back on</button>
 </form></div>`
     : `<div class="kill">
@@ -1072,7 +1072,7 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
   const pinBlock = v.elevated
     ? `<input type="hidden" name="pin" value="">`
     : `<label for="pin">Confirm with your PIN</label>
-  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" pattern="[0-9]{6,12}" maxlength="12" required>`;
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
 
   const createForm = v.atLimit
     ? `<p class="muted small">You are holding as many keys as we allow at once.
