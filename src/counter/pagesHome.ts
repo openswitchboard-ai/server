@@ -878,6 +878,61 @@ const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   },
 ];
 
+/**
+ * The one page a new person passes through, right after they set their PIN and
+ * before their agent is authorised.
+ *
+ * It asks the single thing the software cannot work out for itself — whether
+ * an always-on agent is going to bring them the news, or whether every step has
+ * to reach them by email — and, while it has their attention, the first name
+ * and rough area they would share. Both name boxes may be left blank: the names
+ * step asks for them again when it matters, and a blank answer there costs
+ * nothing but a moment later on.
+ *
+ * Skipping the whole page leaves hears_via on 'email', which is the safe
+ * answer: a person nobody has told us about gets told rather than left in
+ * silence.
+ */
+export interface HelloView {
+  hearsVia: HearsVia;
+  firstName: string;
+  locality: string;
+}
+
+export function helloPage(v: HelloView, error?: string): string {
+  const options = HEARS_VIA_OPTIONS.map(
+    (o) => `<label class="modeopt" for="hello_${o.value}">
+  <input id="hello_${o.value}" name="hears_via" type="radio" value="${o.value}"${
+    v.hearsVia === o.value ? ' checked' : ''
+  }>
+  <strong>${esc(o.head)}</strong>
+  <span class="small muted">${esc(o.rest)}</span>
+</label>`,
+  ).join('');
+  return layout('How will you hear about things?', `
+<h1>How will you hear about things?</h1>
+<p class="lead">Some assistants check on their own and come and tell you. Most
+only wake up when you talk to them, and for those the switchboard emails you
+instead. Say which yours is and the switchboard gets out of the way.</p>
+${errBox(error)}
+<form method="POST" action="/hello">
+  ${options}
+  <h2>What would you share?</h2>
+  <p class="small muted">When two people both say yes, each of them sees a first
+  name and a rough area. That is the whole of it, and you can change both any
+  time. Leave these blank if you would rather decide later — the step that
+  shares them asks again.</p>
+  <label for="first_name">First name</label>
+  <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name"
+    value="${esc(v.firstName)}">
+  <label for="locality">Suburb or area</label>
+  <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2"
+    value="${esc(v.locality)}">
+  <button type="submit">Save and carry on</button>
+  <button type="submit" name="skip" value="yes" class="secondary" formnovalidate>Skip for now</button>
+</form>`);
+}
+
 export interface EmailSettingsView {
   /** Which of the two ways this account hears about things right now. */
   hearsVia: HearsVia;
@@ -949,12 +1004,12 @@ An agent that checks on its own gets there first, and the emails stand down.</p>
   ${freqSelect('freq_digests', 'freq_digests', v.freqDigests)}
   <button type="submit" class="secondary">Save frequency</button>
 </form>
-<p class="small muted">How often the switchboard may email you. Sign-in codes,
-approval requests and security notices always send. Changes apply immediately
-and land in your consent log.</p>
+<p class="small muted">How often the switchboard may email you. Sign-in codes
+and security notices always send. Changes apply immediately and land in your
+consent log.</p>
 </div>
 <p id="email-backup" class="small muted"${v.hearsVia === 'assistant' ? '' : ' hidden'}>With your assistant bringing the news, the only emails
-you get are sign-in codes, approval requests and security notices.</p>
+you get are sign-in codes and security notices.</p>
 <script>
 // Choosing "through my assistant" takes the email dials off the page; they
 // only mean something when email is how the person hears about things.
