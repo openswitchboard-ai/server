@@ -917,19 +917,16 @@ instead. Say which yours is and the switchboard gets out of the way.</p>
 ${errBox(error)}
 <form method="POST" action="/hello">
   ${options}
-  <h2>What would you share?</h2>
-  <p class="small muted">When two people both say yes, each of them sees a first
-  name and a rough area. That is the whole of it, and you can change both any
-  time. Leave these blank if you would rather decide later — the step that
-  shares them asks again.</p>
+  <h2>What your assistant may share</h2>
+  <p class="small muted">A first name and a rough area, shared only after both
+  people say yes. You can change them any time.</p>
   <label for="first_name">First name</label>
-  <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name"
+  <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name" required
     value="${esc(v.firstName)}">
   <label for="locality">Suburb or area</label>
-  <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2"
+  <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2" required
     value="${esc(v.locality)}">
   <button type="submit">Save and carry on</button>
-  <button type="submit" name="skip" value="yes" class="secondary" formnovalidate>Skip for now</button>
 </form>`);
 }
 
