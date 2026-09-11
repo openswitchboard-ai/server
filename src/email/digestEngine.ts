@@ -78,7 +78,7 @@ function logAccountFailure(label: string, accountId: string, e: any): void {
 // ---------------------------------------------------------------------------
 export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<void> {
   const r = await getPool().query(
-    `SELECT account_want, account_have, category FROM matches WHERE id = $1`,
+    `SELECT account_want, account_have, card_want, card_have, category, created_at FROM matches WHERE id = $1`,
     [matchId],
   );
   const m = r.rows[0];
@@ -90,6 +90,15 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
       if (ctx.freqMatches !== 'immediate') continue; // batched or off, by choice
       const to = await accountEmail(accountId, 'match-summons');
       if (!to) continue;
+      // Which arrival this is on the person's own want or have. Two people
+      // coming forward a minute apart used to produce two identical emails,
+      // which reads as a duplicate; "a second person" says what happened.
+      const ownCard = accountId === m.account_want ? m.card_want : m.card_have;
+      const rank = await getPool().query(
+        `SELECT count(*)::int AS n FROM matches
+          WHERE (card_want = $1 OR card_have = $1) AND state = 'open' AND created_at <= $2`,
+        [ownCard, m.created_at],
+      );
       await sendEmail(cfg, {
         to,
         accountId,
@@ -99,6 +108,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
         content: renderSummons(
           {
             count: 1,
+            ordinal: Math.max(1, rank.rows[0]?.n ?? 1),
             categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
             blind: ctx.blind,
             counterUrl: `${cfg.counterOrigin}/`,
