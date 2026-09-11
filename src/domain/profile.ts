@@ -166,8 +166,11 @@ export async function saveSharedProfile(
  * Mint (or re-use) the stage-3 approval link for this human and this match.
  * Re-use matters: an agent that retries must not stack up link rows, and the
  * token is recomputable from the stored row, so the live one comes back.
+ *
+ * The names-step email uses this too: that email is the one nudge whose next
+ * step is a gate, so it carries this link and nothing else.
  */
-async function stage3LinkFor(
+export async function stage3LinkFor(
   cfg: Config,
   accountId: string,
   matchId: string,

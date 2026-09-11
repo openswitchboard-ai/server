@@ -21,6 +21,7 @@
 import { getPool } from '../db.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
 import { accountEmail } from '../domain/counterOps.js';
+import { stage3LinkFor } from '../domain/profile.js';
 import {
   renderChannelWaiting,
   renderDigest,
@@ -175,13 +176,28 @@ export async function notifyYourMove(
   matchId: string,
   recipientAccount: string,
 ): Promise<void> {
-  const r = await getPool().query(`SELECT category FROM matches WHERE id = $1`, [matchId]);
+  const r = await getPool().query(
+    `SELECT category, account_want, account_have FROM matches WHERE id = $1`,
+    [matchId],
+  );
   const m = r.rows[0];
   if (!m) return;
   const ctx = await emailAccountContext(cfg, recipientAccount);
   if (ctx.freqMatches === 'off') return;
   const to = await accountEmail(recipientAccount, 'your-move');
   if (!to) return;
+  // The step this nudge is about IS the names step: the other side has said
+  // yes to swapping first names and this person has not. That is a gate, so
+  // the email carries the link to it. A link that cannot be minted costs the
+  // button and nothing else — the mail still goes, ending on the assistant.
+  const counterparty =
+    m.account_want === recipientAccount ? m.account_have : m.account_want;
+  let namesUrl: string | undefined;
+  try {
+    namesUrl = await stage3LinkFor(cfg, recipientAccount, matchId, counterparty);
+  } catch {
+    namesUrl = undefined;
+  }
   await sendEmail(cfg, {
     to,
     accountId: recipientAccount,
@@ -193,6 +209,7 @@ export async function notifyYourMove(
         categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
         blind: ctx.blind,
         counterUrl: `${cfg.counterOrigin}/`,
+        ...(namesUrl ? { namesUrl } : {}),
       },
       ctx.links,
     ),

@@ -391,6 +391,58 @@ describe('the box opens on the number the agent carried', () => {
     expect(sent.body).not.toContain(cpages.DRAFT_LINE);
   });
 
+  // The whole road, in one test: the person says a figure to their assistant,
+  // the assistant is refused and the figure is parked, their page opens on it
+  // under a heading that says so, and one press puts it on the table as an
+  // offer the HUMAN authored.
+  it('agent carries it, page confirms it, and the offer goes out as theirs', async () => {
+    // 1. "Offer them five hundred and five." The agent tries, and is refused.
+    await expect(
+      agentOffer(505, 'Cash, and I can collect this weekend.'),
+    ).rejects.toMatchObject({
+      payload: {
+        code: 'CONSENT_REQUIRED',
+        human_action: expect.stringContaining('waiting on your approval page'),
+      },
+    });
+    // The refusal names the page the figure is waiting on.
+    expect(world.offers).toHaveLength(0);
+
+    // 2. Their page opens on that number, headed as a confirmation.
+    const page = await inject('GET', `/matches/${MATCH}`);
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain(`<h2>${chome.OFFER_HEADING_DRAFT}</h2>`);
+    expect(page.body).toContain('Confirm the number your assistant brought');
+    expect(page.body).not.toContain(chome.OFFER_HEADING_EMPTY);
+    expect(page.body).toContain('required value="505"');
+    expect(page.body).toContain('value="Cash, and I can collect this weekend."');
+    expect(page.body).toContain('<button type="submit">Send this number</button>');
+
+    // 3. One press.
+    const sent = await inject('POST', `/matches/${MATCH}/offer`, {
+      amount: '505',
+      ccy: 'AUD',
+      note: 'Cash, and I can collect this weekend.',
+      good_for: '7',
+    });
+    expect(sent.statusCode).toBe(200);
+
+    // 4. On the table, in the person's own name, and the draft is spent.
+    expect(world.offers).toHaveLength(1);
+    expect(world.offers[0]).toMatchObject({
+      match_id: MATCH,
+      proposer_account: ANA,
+      amount: 505,
+      ccy: 'AUD',
+      state: 'proposed',
+      authored_by: 'human',
+    });
+    expect(world.draftRows).toHaveLength(0);
+    // And the page comes back with the figure sent rather than the box again.
+    expect(sent.body).toContain('Sent. Your number is on the table for the other side.');
+    expect(sent.body).not.toContain(chome.OFFER_HEADING_DRAFT);
+  });
+
   it('a rejected submission keeps what the person typed over what the agent left', async () => {
     await expect(agentOffer(505)).rejects.toBeInstanceOf(OsbError);
     const bad = await inject('POST', `/matches/${MATCH}/offer`, { amount: '600', ccy: 'AU' });

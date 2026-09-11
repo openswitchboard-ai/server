@@ -142,6 +142,31 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       ),
     },
     {
+      // Blind mode says nothing about which step it is; the link still goes,
+      // worded the way a blind approval email words it.
+      name: 'your-move-names-blind',
+      blind: true,
+      content: renderYourMove(
+        { blind: true, counterUrl: `${COUNTER}/`, namesUrl: `${COUNTER}/a/tok` },
+        links,
+      ),
+    },
+    {
+      // The names step: the one nudge whose next step IS a gate, so it is the
+      // one nudge that carries a button.
+      name: 'your-move-names',
+      blind: false,
+      content: renderYourMove(
+        {
+          categoryLabel: LABEL,
+          blind: false,
+          counterUrl: `${COUNTER}/`,
+          namesUrl: `${COUNTER}/a/tok`,
+        },
+        links,
+      ),
+    },
+    {
       name: 'offer-on-the-table',
       blind: false,
       content: renderOfferOnTheTable(
@@ -590,6 +615,106 @@ describe('email templates: render suite', () => {
   // ones say "card".
   it('the antithesis lint on its own says nothing about vocabulary', () => {
     expect(lintEmailCopy('It covers posting thin cards.')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// When an email carries a button (2026-09-11).
+//
+// The assistant is where the conversation happens and these emails are
+// notifications. So a button appears ONLY when the next step is a gate that
+// lives on the person's own page, and it goes straight to that gate. Everything
+// else ends on "Ask your assistant." and links nowhere.
+// ---------------------------------------------------------------------------
+
+/** The one piece of markup a button is: the padded, dark, centred link. */
+const hasButton = (html: string): boolean => html.includes('padding:14px 34px');
+
+describe('a button only where the next step is a gate', () => {
+  const byName = (): Record<string, EmailContent> =>
+    Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
+
+  // The notifications. Each one's next step is a sentence to an assistant.
+  const NOTIFICATIONS = [
+    'summons',
+    'summons-batch',
+    'summons-blind',
+    'channel-waiting',
+    'channel-waiting-no-label',
+    'channel-waiting-blind',
+    'your-move',
+    'your-move-blind',
+    'offer-on-the-table-blind',
+  ];
+
+  it('a notification carries no button and no link to the front page', () => {
+    const all = byName();
+    for (const name of NOTIFICATIONS) {
+      const c = all[name];
+      expect(hasButton(c.html), name).toBe(false);
+      expect(c.html, name).not.toContain(`href="${COUNTER}/"`);
+      expect(c.text, name).not.toContain(`\n${COUNTER}/\n`);
+      expect(c.text, name).toContain('Ask your assistant');
+    }
+  });
+
+  it('the summons says who came forward, and then to ask', () => {
+    const c = byName()['summons'];
+    expect(c.text).toContain('Someone has come forward about your mountain bike.');
+    expect(c.text.trimEnd()).toContain('Ask your assistant.');
+    expect(c.html).toContain('Ask your assistant.');
+    expect(hasButton(c.html)).toBe(false);
+  });
+
+  it('a waiting message says the assistant will read it out', () => {
+    const c = byName()['channel-waiting'];
+    expect(c.text).toContain('Ask your assistant and it will read it to you.');
+    expect(hasButton(c.html)).toBe(false);
+  });
+
+  it('blind mode keeps the link and says nothing about the step', () => {
+    const c = byName()['your-move-names-blind'];
+    expect(hasButton(c.html)).toBe(true);
+    expect(c.html).toContain(`href="${COUNTER}/a/tok"`);
+    expect(c.html).toContain('Review and decide');
+    expect(c.html).not.toContain('first name');
+    expect(c.text).not.toContain('first name');
+  });
+
+  it('the names step carries one button, to the page that shares the name', () => {
+    const c = byName()['your-move-names'];
+    expect(hasButton(c.html)).toBe(true);
+    expect(c.html).toContain('Share your first name and area');
+    expect(c.html).toContain(`href="${COUNTER}/a/tok"`);
+    expect(c.text).toContain(`Share your first name and area:\n${COUNTER}/a/tok`);
+    expect(c.text).toContain('Nothing is shared until you say so on that page.');
+    // One button, and it is that one.
+    expect(c.html.split('padding:14px 34px')).toHaveLength(2);
+    expect(c.html).not.toContain(`href="${COUNTER}/"`);
+  });
+
+  it('an offer waiting for a yes carries one button, to that offer', () => {
+    const c = byName()['offer-on-the-table'];
+    expect(hasButton(c.html)).toBe(true);
+    expect(c.html).toContain(`href="${COUNTER}/matches/m-1"`);
+    expect(c.html).toContain('See the offer');
+    expect(c.text).toContain('Ask your assistant and it will talk it through with you.');
+    expect(c.html).not.toContain(`href="${COUNTER}/"`);
+  });
+
+  it('the gates keep their buttons', () => {
+    const all = byName();
+    for (const name of [
+      'verification-register',
+      'approval',
+      'approval-blind',
+      'settlement-proposed',
+      'settlement-payment-held-buyer',
+      'security-pin-changed',
+      'card-screening-rejected',
+    ]) {
+      expect(hasButton(all[name].html), name).toBe(true);
+    }
   });
 });
 

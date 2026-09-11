@@ -364,7 +364,9 @@ export async function cardsLapsingSoon(
   );
   const row = r.rows[0];
   if (!row?.n) return undefined;
-  return { count: row.n, soonest: new Date(row.soonest).toISOString().slice(0, 10) };
+  // The whole instant, so the page can print the day in the reader's own clock
+  // rather than in UTC.
+  return { count: row.n, soonest: new Date(row.soonest).toISOString() };
 }
 
 export async function screeningRejectedCards(accountId: string): Promise<RejectedCard[]> {
@@ -426,28 +428,26 @@ export async function pendingDisclosures(accountId: string): Promise<PendingDisc
 }
 
 // ---------------------------------------------------------------------------
-// 0.F: match-quality verdicts + collection windows on the dashboard.
+// 0.F: match-quality verdicts + collection windows.
+//
+// The verdict used to be a list on the front page, every row wearing a
+// percentage. From 2026-09-11 the front page holds gates only, so the ask
+// moved to the introduction's own page and this read is per-introduction.
 // ---------------------------------------------------------------------------
 
-export interface VerdictableMatch {
-  match_id: string;
-  category: string;
-  score: number;
-  stage: number;
-  verdict?: string;
-}
-
-/** Open matches this human can pass a one-tap quality verdict on. */
-export async function verdictableMatches(accountId: string): Promise<VerdictableMatch[]> {
+/**
+ * This person's own call on one introduction, for the quiet line at the foot
+ * of that introduction's page. Undefined until they have made one.
+ */
+export async function verdictOnMatch(
+  accountId: string,
+  matchId: string,
+): Promise<string | undefined> {
   const r = await getPool().query(
-    `SELECT m.id AS match_id, m.category, m.score, m.stage, v.verdict
-     FROM matches m
-     LEFT JOIN match_verdicts v ON v.match_id = m.id AND v.account_id = $1
-     WHERE (m.account_want = $1 OR m.account_have = $1) AND m.state = 'open'
-     ORDER BY m.created_at DESC LIMIT 10`,
-    [accountId],
+    `SELECT verdict FROM match_verdicts WHERE match_id = $1 AND account_id = $2`,
+    [matchId, accountId],
   );
-  return r.rows;
+  return r.rows[0]?.verdict ?? undefined;
 }
 
 export interface OpenWindowView {

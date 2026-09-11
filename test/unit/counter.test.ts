@@ -379,7 +379,6 @@ describe('local times', () => {
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [],
-      matches: [],
       collectionWindows: [
         {
           cardId: 'c-1',
@@ -614,13 +613,12 @@ describe('counter pages: copy-cull render suite', () => {
           },
           { href: '/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
         ],
-        matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }],
         collectionWindows: [
           { cardId: 'c-1', category: LABEL, type: 'WANT', until: cpages.localTime('2026-09-01T00:00:00.000Z'), interestedParties: 2 },
         ],
       }),
     },
-    { name: 'dashboard-kill-on', html: chome.dashboardPage({ killSwitchOn: true, cardCounts: { total: 0, published: 0, pending: 0 }, pendingApprovals: [], matches: [], collectionWindows: [] }) },
+    { name: 'dashboard-kill-on', html: chome.dashboardPage({ killSwitchOn: true, cardCounts: { total: 0, published: 0, pending: 0 }, pendingApprovals: [], collectionWindows: [] }) },
     {
       name: 'ledger',
       html: chome.ledgerPage([
@@ -1053,8 +1051,9 @@ describe('counter pages: copy-cull render suite', () => {
     // rather than a link to a list.
     expect(html.indexOf('class="todo urgent"')).toBeGreaterThan(waiting);
     expect(html.indexOf('class="todo urgent"')).toBeLessThan(nav);
-    // Cards that need a decision come before the one-tap match feedback.
-    expect(html.indexOf('WAITING FOR YOU')).toBeLessThan(html.indexOf('Was the switchboard right?'));
+    // The decisions come first and the quiet half follows them.
+    expect(html.indexOf('WAITING FOR YOU')).toBeGreaterThan(waiting);
+    expect(html.indexOf('WAITING FOR YOU')).toBeLessThan(nav);
     // The quiet half is a list of links rather than a stack of buttons.
     expect(html.indexOf('class="navlist"')).toBeGreaterThan(nav);
     for (const href of ['/ledger', '/profile', '/arrangement', '/agent-keys', '/settings']) {
@@ -1069,7 +1068,6 @@ describe('counter pages: copy-cull render suite', () => {
       killSwitchOn: false,
       cardCounts: { total: 0, published: 0, pending: 0 },
       pendingApprovals: [],
-      matches: [],
       collectionWindows: [],
     });
     expect(html).toContain('Nothing is waiting for you.');
@@ -1081,12 +1079,16 @@ describe('counter pages: copy-cull render suite', () => {
       killSwitchOn: false,
       cardCounts: { total: 3, published: 3, pending: 0 },
       pendingApprovals: [],
-      matches: [],
       collectionWindows: [],
-      lapsingSoon: { count: 2, soonest: '2026-09-08' },
+      lapsingSoon: { count: 2, soonest: cpages.localTime('2026-09-08T00:00:00.000Z', 'day') },
     });
     expect(html).toContain('2 of your wants and haves');
-    expect(html).toContain('2026-09-08');
+    // The day reads as a day, in the reader's own clock: the page prints the
+    // markup rather than escaping it.
+    expect(html).toContain(
+      'out by <time datetime="2026-09-08T00:00:00.000Z" data-local="day">Tuesday 8 September</time>',
+    );
+    expect(html).not.toContain('&lt;time');
     expect(html).not.toContain('Nothing is waiting for you.');
     expect(lintHumanCopy(html)).toEqual([]);
   });
@@ -1173,7 +1175,6 @@ describe('the dashboard the rehearsal left notes on', () => {
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [],
-      matches: [],
       collectionWindows: [],
       ...over,
     });
@@ -1203,20 +1204,33 @@ describe('the dashboard the rehearsal left notes on', () => {
     expect(html).not.toContain('Nothing is waiting for you.');
   });
 
-  it('the verdict is read back in words', () => {
-    const good = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.87, verdict: 'good-call' }] });
-    expect(good).toContain('Your call: <strong>good call</strong>');
-    expect(good).not.toContain('good-call</strong>');
-    const no = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.4, verdict: 'not-for-me' }] });
-    expect(no).toContain('Your call: <strong>not for me</strong>');
+  // 2026-09-11: the page holds the decisions and nothing else. The one-tap
+  // feedback and the percentage beside it made it a place to browse, so the
+  // feedback moved to the introduction it is about and the percentage is gone
+  // from everywhere a person reads.
+  it('says under the greeting what the page is for', () => {
+    const html = dash();
+    expect(html).toContain(chome.FRONT_PAGE_LEAD);
+    expect(html).toContain('Your assistant is where the conversation happens.');
+    expect(html).toContain('This page is for the decisions only you can make.');
   });
 
-  it('the button to the offers is short enough to stay on one line', () => {
-    const html = dash({ matches: [{ matchId: 'm-1', category: LABEL, score: 0.87 }] });
-    expect(html).toContain('href="/matches/m-1">Offers</a>');
-    expect(html).not.toContain('Offers &amp; your number');
-    // And the row's buttons are told never to wrap, whatever they end up saying.
-    expect(html).toContain('white-space:nowrap');
+  it('holds no feedback block and no percentage', () => {
+    const html = dash({
+      agreed: [{ matchId: 'm-1', category: LABEL, amount: '415 AUD' }],
+      messagesWaiting: [{ matchId: 'm-2', category: LABEL, count: 1 }],
+    });
+    expect(html).not.toContain('Was the switchboard right?');
+    expect(html).not.toContain('Good call');
+    expect(html).not.toContain('Not for me');
+    expect(html).not.toContain('action="/verdict"');
+    expect(html).not.toMatch(/score\s*\d+\s*%/i);
+    expect(html).not.toContain('badge state">score');
+  });
+
+  it('an account with nothing to decide still says so', () => {
+    const html = dash();
+    expect(html).toContain('Nothing is waiting for you.');
   });
 });
 
@@ -1253,8 +1267,49 @@ describe('the offers page the rehearsal left notes on', () => {
 
   it('with nothing sent, the box to type a figure into stands open', () => {
     const html = chome.matchOffersPage(offersView());
-    expect(html).toContain('<h2>Reply with your number</h2>');
+    expect(html).toContain(`<h2>${chome.OFFER_HEADING_EMPTY}</h2>`);
+    expect(html).toContain('<h2>Put a number on the table</h2>');
     expect(html).not.toContain('is on the table.');
+  });
+
+  // The assistant carried a figure here, so the box is a confirmation rather
+  // than a blank page: the heading says so above the number already in it.
+  it('a figure the assistant carried is headed as a confirmation', () => {
+    const html = chome.matchOffersPage(
+      offersView({ draft: { amount: '400', ccy: 'AUD', note: 'Can collect Saturday.' } }),
+    );
+    expect(html).toContain('<h2>Confirm the number your assistant brought</h2>');
+    expect(html).toContain(`<h2>${chome.OFFER_HEADING_DRAFT}</h2>`);
+    expect(html).not.toContain(`<h2>${chome.OFFER_HEADING_EMPTY}</h2>`);
+    expect(html).toContain('value="400"');
+    expect(html).toContain('value="Can collect Saturday."');
+    expect(html).toContain('<button type="submit">Send this number</button>');
+  });
+
+  // The one-tap feedback lives here now, at the very foot of the introduction
+  // it is about, with no figure anywhere near it.
+  it('asks once, quietly, at the bottom whether this was a good one', () => {
+    const html = chome.matchOffersPage(offersView());
+    expect(html).toContain('Was this a good match?');
+    expect(html).toContain('action="/verdict"');
+    expect(html).toContain('<input type="hidden" name="verdict" value="good-call">');
+    expect(html).toContain('<input type="hidden" name="verdict" value="not-for-me">');
+    expect(html).toContain('name="return_to" value="m-1"');
+    expect(html).toContain('"No" also mutes');
+    expect(html).not.toMatch(/score\s*\d/i);
+    // Last on the page: everything that asks something of the person is above it.
+    expect(html.indexOf('Was this a good match?')).toBeGreaterThan(
+      html.indexOf('<h2>What has been offered</h2>'),
+    );
+  });
+
+  it('once they have answered, it reads the answer back and stops asking', () => {
+    const good = chome.matchOffersPage(offersView({ verdict: 'good-call' }));
+    expect(good).toContain('Your call on this one: good call.');
+    expect(good).not.toContain('Was this a good match?');
+    expect(good).not.toContain('good-call.');
+    const no = chome.matchOffersPage(offersView({ verdict: 'not-for-me' }));
+    expect(no).toContain('Your call on this one: not for me.');
   });
 
   it('a figure of theirs that is already out there collapses the form to one line', () => {
@@ -1277,7 +1332,7 @@ describe('the offers page the rehearsal left notes on', () => {
     // Folded away rather than gone: the whole form is still on the page.
     expect(html).toContain('<details class="more">');
     expect(html).toContain('name="amount"');
-    expect(html).not.toContain('<h2>Reply with your number</h2>');
+    expect(html).not.toContain(`<h2>${chome.OFFER_HEADING_EMPTY}</h2>`);
   });
 
   it('the optional line asks for something a person can fit on it', () => {
@@ -1305,7 +1360,7 @@ describe('the offers page the rehearsal left notes on', () => {
       'Agreed at $415 AUD. Sort pickup in the conversation; the switchboard&#39;s part is done.',
     );
     // Nothing asks for another figure once a person has said yes to one.
-    expect(html).not.toContain('<h2>Reply with your number</h2>');
+    expect(html).not.toContain(`<h2>${chome.OFFER_HEADING_EMPTY}</h2>`);
     // And the row says "agreed" rather than reading its own state back.
     expect(html).not.toContain('>accepted-by-human<');
   });

@@ -344,8 +344,11 @@ function withLink(sentence: string, url: string): string {
   return joined.length <= 300 ? joined : sentence;
 }
 
+// The figure the agent was carrying is parked as a draft on the way out of
+// this refusal (see domain/offerDrafts.ts), so the sentence says where it went
+// and what is left to do with it.
 export const RELAY_ACTION =
-  'Your numbers come from you — reply to offers on your approval page, or switch what you posted to hands-off negotiation there:';
+  'Your numbers come from you. The figure you gave me is waiting on your approval page — check it and send it, or set your limits there and I can put figures on the table myself:';
 
 export const NO_MANDATE_ACTION =
   'What you posted is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your approval page:';
