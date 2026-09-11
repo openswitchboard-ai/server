@@ -25,10 +25,12 @@ import {
   renderSummons,
   renderVerification,
   renderYourMove,
+  EXEMPT_TEMPLATES,
+  NOTICE_TEMPLATES,
   type EmailContent,
   type FooterLinks,
 } from '../../src/email/templates.js';
-import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy, noticeLinkHits } from '../../src/email/lint.js';
 import { screeningReasonInPlainWords } from '../../src/domain/screening.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { signEmailToken, verifyEmailToken } from '../../src/email/tokens.js';
@@ -36,15 +38,16 @@ import { signEmailToken, verifyEmailToken } from '../../src/email/tokens.js';
 const COUNTER = 'https://my-dev.openswitchboard.ai';
 const links: FooterLinks = {
   settingsUrl: `${COUNTER}/settings`,
-  ledgerUrl: `${COUNTER}/ledger`,
   unsubUrl: `${COUNTER}/email/unsub?t=osb_em_test`,
 };
+/** The two footer controls are the only links a notice may carry. */
+const FOOTER_PREFIXES = [`${COUNTER}/settings`, `${COUNTER}/email/unsub`];
 
 // Raw slugs must NEVER appear in an email — only the taxonomy's human label.
 const SLUG = 'goods.bicycle.mountain';
 const LABEL = 'Mountain bikes';
 const LABEL2 = 'Garden tools';
-const SUMMARY = `An offer on your ${LABEL} match is waiting for your decision.`;
+const SUMMARY = `An offer on your ${LABEL} introduction is waiting for your decision.`;
 // The plain-words rejection sentence the screening domain hands the template.
 const REJECTION_REASON = screeningReasonInPlainWords('pii-in-card');
 
@@ -70,114 +73,58 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
     {
       name: 'approval',
       blind: false,
-      content: renderApproval(
-        { link: `${COUNTER}/a/tok`, summary: SUMMARY, blind: false, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderApproval({ summary: SUMMARY, blind: false }, links),
     },
     {
       name: 'approval-blind',
       blind: true,
-      content: renderApproval(
-        { link: `${COUNTER}/a/tok`, blind: true, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderApproval({ blind: true }, links),
     },
     {
       name: 'summons',
       blind: false,
-      content: renderSummons(
-        { count: 1, categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: false }, links),
     },
     {
       name: 'summons-batch',
       blind: false,
-      content: renderSummons({ count: 3, blind: false, counterUrl: `${COUNTER}/` }, links),
+      content: renderSummons({ count: 3, blind: false }, links),
     },
     {
       name: 'summons-blind',
       blind: true,
-      content: renderSummons(
-        { count: 1, categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: true }, links),
     },
     {
       name: 'channel-waiting',
       blind: false,
-      content: renderChannelWaiting(
-        { categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderChannelWaiting({ categoryLabel: LABEL, blind: false }, links),
     },
     {
       name: 'channel-waiting-no-label',
       blind: false,
-      content: renderChannelWaiting({ blind: false, counterUrl: `${COUNTER}/` }, links),
+      content: renderChannelWaiting({ blind: false }, links),
     },
     {
       name: 'channel-waiting-blind',
       blind: true,
-      content: renderChannelWaiting(
-        { categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderChannelWaiting({ categoryLabel: LABEL, blind: true }, links),
     },
     {
       name: 'your-move',
       blind: false,
-      content: renderYourMove(
-        { categoryLabel: LABEL, blind: false, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderYourMove({ categoryLabel: LABEL, blind: false }, links),
     },
     {
       name: 'your-move-blind',
       blind: true,
-      content: renderYourMove(
-        { categoryLabel: LABEL, blind: true, counterUrl: `${COUNTER}/` },
-        links,
-      ),
-    },
-    {
-      // Blind mode says nothing about which step it is; the link still goes,
-      // worded the way a blind approval email words it.
-      name: 'your-move-names-blind',
-      blind: true,
-      content: renderYourMove(
-        { blind: true, counterUrl: `${COUNTER}/`, namesUrl: `${COUNTER}/a/tok` },
-        links,
-      ),
-    },
-    {
-      // The names step: the one nudge whose next step IS a gate, so it is the
-      // one nudge that carries a button.
-      name: 'your-move-names',
-      blind: false,
-      content: renderYourMove(
-        {
-          categoryLabel: LABEL,
-          blind: false,
-          counterUrl: `${COUNTER}/`,
-          namesUrl: `${COUNTER}/a/tok`,
-        },
-        links,
-      ),
+      content: renderYourMove({ categoryLabel: LABEL, blind: true }, links),
     },
     {
       name: 'offer-on-the-table',
       blind: false,
       content: renderOfferOnTheTable(
-        {
-          amount: 415,
-          ccy: 'AUD',
-          categoryLabel: LABEL,
-          blind: false,
-          offersUrl: `${COUNTER}/matches/m-1`,
-          counterUrl: `${COUNTER}/`,
-        },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false },
         links,
       ),
     },
@@ -185,14 +132,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'offer-on-the-table-blind',
       blind: true,
       content: renderOfferOnTheTable(
-        {
-          amount: 415,
-          ccy: 'AUD',
-          categoryLabel: LABEL,
-          blind: true,
-          offersUrl: `${COUNTER}/matches/m-1`,
-          counterUrl: `${COUNTER}/`,
-        },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: true },
         links,
       ),
     },
@@ -200,14 +140,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'deal-agreed',
       blind: false,
       content: renderDealAgreed(
-        {
-          amount: 415,
-          ccy: 'AUD',
-          categoryLabel: LABEL,
-          blind: false,
-          matchUrl: `${COUNTER}/matches/m-1`,
-          counterUrl: `${COUNTER}/`,
-        },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false },
         links,
       ),
     },
@@ -215,14 +148,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'deal-agreed-blind',
       blind: true,
       content: renderDealAgreed(
-        {
-          amount: 415,
-          ccy: 'AUD',
-          categoryLabel: LABEL,
-          blind: true,
-          matchUrl: `${COUNTER}/matches/m-1`,
-          counterUrl: `${COUNTER}/`,
-        },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: true },
         links,
       ),
     },
@@ -233,7 +159,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         {
           cadence: 'weekly',
           blind: false,
-          counterUrl: `${COUNTER}/`,
           items: [
             { type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 },
             { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 1 },
@@ -249,7 +174,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
         {
           cadence: 'daily',
           blind: true,
-          counterUrl: `${COUNTER}/`,
           items: [{ type: 'WANT', categoryLabel: LABEL, newOpposite: 4, nearMisses: 2 }],
         },
         links,
@@ -261,8 +185,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderRenewal(
         {
           blind: false,
-          counterUrl: `${COUNTER}/`,
-          renewAllUrl: `${COUNTER}/renew?t=tok`,
           cards: [
             { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
             { type: 'HAVE', categoryLabel: LABEL2, expiresAt: new Date('2026-10-20'), expiringSoon: false },
@@ -277,8 +199,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderRenewal(
         {
           blind: true,
-          counterUrl: `${COUNTER}/`,
-          renewAllUrl: `${COUNTER}/renew?t=tok`,
           cards: [
             { type: 'WANT', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
           ],
@@ -331,13 +251,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'card-screening-rejected',
       blind: false,
       content: renderScreeningRejected(
-        {
-          categoryLabel: LABEL,
-          reason: REJECTION_REASON,
-          editUrl: `${COUNTER}/ledger/card-1/edit`,
-          blind: false,
-          counterUrl: `${COUNTER}/`,
-        },
+        { categoryLabel: LABEL, reason: REJECTION_REASON, blind: false },
         links,
       ),
     },
@@ -347,12 +261,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'card-screening-rejected-blind',
       blind: true,
       content: renderScreeningRejected(
-        {
-          reason: REJECTION_REASON,
-          editUrl: `${COUNTER}/ledger/card-1/edit`,
-          blind: true,
-          counterUrl: `${COUNTER}/`,
-        },
+        { reason: REJECTION_REASON, blind: true },
         links,
       ),
     },
@@ -361,10 +270,8 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       blind: false,
       content: renderSettlementProposed(
         {
-          link: `${COUNTER}/a/tok`,
-          summary: `A settlement of 600 AUD on your ${LABEL} match is waiting for your approval.`,
+          summary: `A settlement of 600 AUD on your ${LABEL} introduction is waiting for your approval.`,
           blind: false,
-          counterUrl: `${COUNTER}/`,
         },
         links,
       ),
@@ -372,16 +279,13 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
     {
       name: 'settlement-proposed-blind',
       blind: true,
-      content: renderSettlementProposed(
-        { link: `${COUNTER}/a/tok`, blind: true, counterUrl: `${COUNTER}/` },
-        links,
-      ),
+      content: renderSettlementProposed({ blind: true }, links),
     },
     {
       name: 'settlement-payment-held-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'payment-held', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'payment-held', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -389,7 +293,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-payment-held-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'payment-held', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'payment-held', role: 'seller', blind: false },
         links,
       ),
     },
@@ -397,7 +301,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-confirm-receipt-request',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'confirm-receipt-request', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'confirm-receipt-request', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -410,8 +314,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           event: 'handover-window',
           role: 'buyer',
           blind: false,
-          settlementUrl: `${COUNTER}/settlements/x`,
-          counterUrl: `${COUNTER}/`,
           deadline: new Date('2026-09-12T02:00:00.000Z'),
         },
         links,
@@ -421,7 +323,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-handover-window-buyer-no-clock',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'handover-window', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'handover-window', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -433,8 +335,6 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
           event: 'confirm-receipt-request',
           role: 'seller',
           blind: false,
-          settlementUrl: `${COUNTER}/settlements/x`,
-          counterUrl: `${COUNTER}/`,
           deadline: new Date('2026-09-12T02:00:00.000Z'),
         },
         links,
@@ -444,7 +344,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-released-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'released', role: 'seller', blind: false },
         links,
       ),
     },
@@ -452,7 +352,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-released-auto-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/`, auto: true },
+        { event: 'released', role: 'seller', blind: false, auto: true },
         links,
       ),
     },
@@ -460,7 +360,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-released-auto-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/`, auto: true },
+        { event: 'released', role: 'buyer', blind: false, auto: true },
         links,
       ),
     },
@@ -468,7 +368,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-refund-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'refund', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'refund', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -479,7 +379,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-disputed-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'disputed', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'disputed', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -487,7 +387,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-disputed-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'disputed', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'disputed', role: 'seller', blind: false },
         links,
       ),
     },
@@ -495,7 +395,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-resolution-proposed-buyer',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'resolution-proposed', role: 'buyer', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'resolution-proposed', role: 'buyer', blind: false },
         links,
       ),
     },
@@ -503,15 +403,15 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'settlement-split-seller',
       blind: false,
       content: renderSettlementUpdate(
-        { event: 'split', role: 'seller', blind: false, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'split', role: 'seller', blind: false },
         links,
       ),
     },
     {
-      name: 'settlement-update-blind',
+      name: 'settlement-released-blind',
       blind: true,
       content: renderSettlementUpdate(
-        { event: 'released', role: 'seller', blind: true, settlementUrl: `${COUNTER}/settlements/x`, counterUrl: `${COUNTER}/` },
+        { event: 'released', role: 'seller', blind: true },
         links,
       ),
     },
@@ -525,10 +425,12 @@ describe('email templates: render suite', () => {
       expect(t.content.html).toContain('<!doctype html>');
       expect(t.content.html).toContain('OpenSwitchboard');
       expect(t.content.text.length).toBeGreaterThan(40);
-      // Every email links to the counter and carries the footer controls.
+      // Every email carries the two footer controls and nothing else of the
+      // sort: the one-click unsubscribe and a place to change what is sent.
       expect(t.content.html).toContain(links.settingsUrl);
-      expect(t.content.html).toContain(links.ledgerUrl);
+      expect(t.content.html).toContain(links.unsubUrl!);
       expect(t.content.text).toContain(links.settingsUrl);
+      expect(t.content.html).not.toContain(`${COUNTER}/ledger"`);
       // VOICE: no antithesis, and no "card" — one "card" is one want or one
       // have, and from 2026-09-11 the word a person reads is want or have.
       // Payment cards are exempt; nothing else is.
@@ -568,14 +470,15 @@ describe('email templates: render suite', () => {
     }
   });
 
-  it('the screening-rejection email carries the label, the reason and the edit link', () => {
+  it('the screening-rejection email carries the label and the reason, and no link', () => {
     const byName = Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
     const c = byName['card-screening-rejected'];
     for (const part of [c.html, c.text]) {
       expect(part).toContain(categoryPhrase(LABEL));
       expect(part).toContain(REJECTION_REASON);
-      expect(part).toContain(`${COUNTER}/ledger/card-1/edit`);
+      expect(part).toContain('Ask your assistant');
     }
+    expect(c.html).not.toContain(`${COUNTER}/ledger/card-1/edit`);
     // Blind mode: the pointer, and nothing of why.
     const blind = byName['card-screening-rejected-blind'];
     const both = blind.html + blind.text + blind.subject;
@@ -619,101 +522,122 @@ describe('email templates: render suite', () => {
 });
 
 // ---------------------------------------------------------------------------
-// When an email carries a button (2026-09-11).
+// THE EMAIL RULE (2026-09-11).
 //
-// The assistant is where the conversation happens and these emails are
-// notifications. So a button appears ONLY when the next step is a gate that
-// lives on the person's own page, and it goes straight to that gate. Everything
-// else ends on "Ask your assistant." and links nowhere.
+// The assistant does the talking and the carrying; whenever a formality is
+// needed it hands the person a single-use link to a one-question page, in the
+// conversation they are already having. Email is not part of that path. So a
+// notice email carries NO link and NO button, says what happened in one
+// sentence, and ends "Ask your assistant."
+//
+// Three exemptions, and only three: the verification code, the security
+// notices, and the kill-switch mail. The two footer controls (unsubscribe and
+// email settings) are on every mail, because any sender has to carry them.
 // ---------------------------------------------------------------------------
 
 /** The one piece of markup a button is: the padded, dark, centred link. */
 const hasButton = (html: string): boolean => html.includes('padding:14px 34px');
 
-describe('a button only where the next step is a gate', () => {
+describe('the email rule: a notice carries no link and no button', () => {
   const byName = (): Record<string, EmailContent> =>
     Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
 
-  // The notifications. Each one's next step is a sentence to an assistant.
-  const NOTIFICATIONS = [
-    'summons',
-    'summons-batch',
-    'summons-blind',
-    'channel-waiting',
-    'channel-waiting-no-label',
-    'channel-waiting-blind',
-    'your-move',
-    'your-move-blind',
-    'offer-on-the-table-blind',
-  ];
+  /** Every rendered template that is not one of the three exemptions. */
+  const notices = () =>
+    allTemplates().filter(
+      (t) =>
+        !t.name.startsWith('verification') &&
+        !t.name.startsWith('security') &&
+        !t.name.startsWith('kill-switch'),
+    );
 
-  it('a notification carries no button and no link to the front page', () => {
-    const all = byName();
-    for (const name of NOTIFICATIONS) {
-      const c = all[name];
-      expect(hasButton(c.html), name).toBe(false);
-      expect(c.html, name).not.toContain(`href="${COUNTER}/"`);
-      expect(c.text, name).not.toContain(`\n${COUNTER}/\n`);
-      expect(c.text, name).toContain('Ask your assistant');
+  it('every notice passes the notice lint: nothing but the footer controls', () => {
+    for (const t of notices()) {
+      expect(noticeLinkHits(t.content, FOOTER_PREFIXES), t.name).toEqual([]);
     }
+  });
+
+  it('every notice ends on "Ask your assistant."', () => {
+    for (const t of notices()) {
+      expect(hasButton(t.content.html), t.name).toBe(false);
+      expect(t.content.text, t.name).toContain('Ask your assistant');
+      expect(t.content.html, t.name).toContain('Ask your assistant');
+    }
+  });
+
+  it('the notice list and the exemption list between them cover every template', () => {
+    for (const t of allTemplates()) {
+      // The fixture names carry a suffix ("-blind", "-buyer"); the template
+      // name is the send-log name, and every one of them is in one list.
+      const covered = [...NOTICE_TEMPLATES, ...EXEMPT_TEMPLATES];
+      expect(covered.some((n) => t.name.startsWith(n)), t.name).toBe(true);
+    }
+    // No template is in both.
+    for (const n of NOTICE_TEMPLATES) expect(EXEMPT_TEMPLATES.has(n)).toBe(false);
+  });
+
+  it('the notice lint catches a button and a stray link', () => {
+    expect(
+      noticeLinkHits({ html: '<a style="padding:14px 34px">Go</a>', text: '' }, FOOTER_PREFIXES),
+    ).toHaveLength(1);
+    expect(
+      noticeLinkHits({ html: `<a href="${COUNTER}/a/tok">Go</a>`, text: '' }, FOOTER_PREFIXES),
+    ).toHaveLength(1);
+    expect(noticeLinkHits({ html: '', text: `Open:\n${COUNTER}/a/tok` }, FOOTER_PREFIXES)).toHaveLength(1);
+    expect(
+      noticeLinkHits({ html: `<a href="${links.settingsUrl}">Settings</a>`, text: links.unsubUrl! }, FOOTER_PREFIXES),
+    ).toEqual([]);
   });
 
   it('the summons says who came forward, and then to ask', () => {
     const c = byName()['summons'];
     expect(c.text).toContain('Someone has come forward about your mountain bike.');
     expect(c.text.trimEnd()).toContain('Ask your assistant.');
-    expect(c.html).toContain('Ask your assistant.');
-    expect(hasButton(c.html)).toBe(false);
   });
 
   it('a waiting message says the assistant will read it out', () => {
     const c = byName()['channel-waiting'];
     expect(c.text).toContain('Ask your assistant and it will read it to you.');
-    expect(hasButton(c.html)).toBe(false);
   });
 
-  it('blind mode keeps the link and says nothing about the step', () => {
-    const c = byName()['your-move-names-blind'];
-    expect(hasButton(c.html)).toBe(true);
-    expect(c.html).toContain(`href="${COUNTER}/a/tok"`);
-    expect(c.html).toContain('Review and decide');
-    expect(c.html).not.toContain('first name');
-    expect(c.text).not.toContain('first name');
+  it('your move says whose turn it is, and nothing to press', () => {
+    const c = byName()['your-move'];
+    expect(c.text).toContain('is keen and ready to talk');
+    expect(c.html).not.toContain(`${COUNTER}/a/`);
   });
 
-  it('the names step carries one button, to the page that shares the name', () => {
-    const c = byName()['your-move-names'];
-    expect(hasButton(c.html)).toBe(true);
-    expect(c.html).toContain('Share your first name and area');
-    expect(c.html).toContain(`href="${COUNTER}/a/tok"`);
-    expect(c.text).toContain(`Share your first name and area:\n${COUNTER}/a/tok`);
-    expect(c.text).toContain('Nothing is shared until you say so on that page.');
-    // One button, and it is that one.
-    expect(c.html.split('padding:14px 34px')).toHaveLength(2);
-    expect(c.html).not.toContain(`href="${COUNTER}/"`);
-  });
-
-  it('an offer waiting for a yes carries one button, to that offer', () => {
+  it('a figure on the table names the figure and stops', () => {
     const c = byName()['offer-on-the-table'];
-    expect(hasButton(c.html)).toBe(true);
-    expect(c.html).toContain(`href="${COUNTER}/matches/m-1"`);
-    expect(c.html).toContain('See the offer');
-    expect(c.text).toContain('Ask your assistant and it will talk it through with you.');
-    expect(c.html).not.toContain(`href="${COUNTER}/"`);
+    expect(c.text).toContain('has offered $415 AUD for your mountain bike');
+    expect(c.html).not.toContain(`${COUNTER}/matches/`);
   });
 
-  it('the gates keep their buttons', () => {
+  it('the renewal says the day it lapses and what to ask for', () => {
+    const c = byName()['renewal'];
+    expect(c.text).toContain('lapses Thursday 3 September');
+    expect(c.text).toContain('Ask your assistant to renew or let it go.');
+    expect(c.html).not.toContain('/renew?t=');
+  });
+
+  it('the settlement notices say what moved, and point at no page', () => {
     const all = byName();
-    for (const name of [
-      'verification-register',
-      'approval',
-      'approval-blind',
-      'settlement-proposed',
-      'settlement-payment-held-buyer',
-      'security-pin-changed',
-      'card-screening-rejected',
-    ]) {
+    for (const name of ['settlement-proposed', 'settlement-payment-held-buyer']) {
+      expect(hasButton(all[name].html), name).toBe(false);
+      expect(all[name].html, name).not.toContain(`${COUNTER}/settlements/`);
+      expect(all[name].text, name).toContain('Ask your assistant.');
+    }
+  });
+
+  it('the three exemptions keep their links', () => {
+    const all = byName();
+    for (const name of ['verification-register', 'kill-switch-on', 'security-agent-key-created']) {
       expect(hasButton(all[name].html), name).toBe(true);
+    }
+    // A security notice that is not the revoke gate keeps the guidance as
+    // text, with no button on it.
+    for (const name of ['security-agent-authorized', 'security-pin-changed']) {
+      expect(hasButton(all[name].html), name).toBe(false);
+      expect(all[name].text, name).toContain(`Sign in at ${COUNTER}/ to look.`);
     }
   });
 });

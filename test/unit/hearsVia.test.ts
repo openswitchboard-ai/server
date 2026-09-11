@@ -526,10 +526,7 @@ describe('an acceptance reaches the person whose figure it was', () => {
 
 // ---------------------------------------------------------------------------
 describe('what the emails say', () => {
-  const links: FooterLinks = {
-    settingsUrl: 'https://my.test/settings',
-    ledgerUrl: 'https://my.test/ledger',
-  };
+  const links: FooterLinks = { settingsUrl: 'https://my.test/settings' };
 
   it('says a category the way a person says it mid-sentence', () => {
     expect(categoryPhrase('Mountain bikes')).toBe('mountain bike');
@@ -548,58 +545,40 @@ describe('what the emails say', () => {
   });
 
   it('a message waiting sends them to their assistant and nowhere else', () => {
-    const c = renderChannelWaiting(
-      { categoryLabel: 'Mountain bikes', blind: false, counterUrl: 'https://my.test/' },
-      links,
-    );
+    const c = renderChannelWaiting({ categoryLabel: 'Mountain bikes', blind: false }, links);
     expect(c.text).toContain('about your mountain bike');
     expect(c.text).toContain('Ask your assistant and it will read it to you.');
     expect(c.text).not.toContain('Mountain bikes');
   });
 
   it('your move says the same thing in its own words', () => {
-    const c = renderYourMove(
-      { categoryLabel: 'Mountain bikes', blind: false, counterUrl: 'https://my.test/' },
-      links,
-    );
+    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: false }, links);
     expect(c.text).toContain('about your mountain bike');
     expect(c.text).toContain('Ask your assistant.');
     expect(c.text).not.toContain('Open your assistant to take the next step');
   });
 
-  it('a number on the table names the figure and links to where it is answered', () => {
+  it('a number on the table names the figure, and sends them to their assistant', () => {
     const c = renderOfferOnTheTable(
-      {
-        amount: 415,
-        ccy: 'AUD',
-        categoryLabel: 'Mountain bikes',
-        blind: false,
-        offersUrl: 'https://my.test/matches/m-1',
-        counterUrl: 'https://my.test/',
-      },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false },
       links,
     );
     expect(c.text).toContain('$415 AUD');
     expect(c.text).toContain('for your mountain bike');
-    expect(c.text).toContain('https://my.test/matches/m-1');
-    expect(c.text).toContain('Nothing is agreed until you say so.');
+    // A notice: answering it is a word to their assistant, which hands them
+    // the one-question page when it comes to that.
+    expect(c.text).not.toContain('https://my.test/matches/m-1');
+    expect(c.text).toContain('Ask your assistant.');
     expect(lintEmailCopy(c.text + c.html + c.subject)).toEqual([]);
   });
 
   it('a deal says the deal, and hands the handover back to the two people', () => {
     const c = renderDealAgreed(
-      {
-        amount: 415,
-        ccy: 'AUD',
-        categoryLabel: 'Mountain bikes',
-        blind: false,
-        matchUrl: 'https://my.test/matches/m-1',
-        counterUrl: 'https://my.test/',
-      },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false },
       links,
     );
     expect(c.text).toContain(
-      "Deal: $415 AUD agreed for your mountain bike. Sort pickup with them in the conversation; the switchboard's part is done.",
+      'Deal: $415 AUD agreed for your mountain bike. Where and when to hand it over is for the two of you.',
     );
     expect(lintEmailCopy(c.text + c.html + c.subject)).toEqual([]);
   });
@@ -611,20 +590,11 @@ describe('what the emails say', () => {
         ccy: 'AUD',
         categoryLabel: 'Mountain bikes',
         blind: true,
-        offersUrl: 'https://my.test/matches/m-1',
-        counterUrl: 'https://my.test/',
       },
       links,
     );
     const deal = renderDealAgreed(
-      {
-        amount: 415,
-        ccy: 'AUD',
-        categoryLabel: 'Mountain bikes',
-        blind: true,
-        matchUrl: 'https://my.test/matches/m-1',
-        counterUrl: 'https://my.test/',
-      },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: true },
       links,
     );
     for (const c of [offer, deal]) {
