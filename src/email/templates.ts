@@ -197,40 +197,49 @@ export function renderApproval(
 // count > 1 covers the daily/weekly summons batch. Non-blind may name the
 // category (category-level only). Blind: pointer, nothing else.
 // ---------------------------------------------------------------------------
+const ORDINALS = ['', '', 'second', 'third', 'fourth', 'fifth'];
+/** "Someone" for the first arrival on a want or have, "A second person" after that. */
+function whoCameForward(ordinal: number | undefined): string {
+  if (!ordinal || ordinal < 2) return 'Someone';
+  return ORDINALS[ordinal] ? `A ${ORDINALS[ordinal]} person` : 'Another person';
+}
+
 export function renderSummons(
-  v: { count: number; categoryLabel?: string; blind: boolean; counterUrl: string },
+  v: { count: number; ordinal?: number; categoryLabel?: string; blind: boolean; counterUrl: string },
   f: FooterLinks,
 ): EmailContent {
-  const subject = 'Your assistant has news';
+  const later = (v.ordinal ?? 1) >= 2;
+  const subject = later ? 'Your assistant has more news' : 'Your assistant has news';
   const thing = categoryPhrase(v.categoryLabel);
+  const who = whoCameForward(v.ordinal);
   const textLine = v.blind
     ? v.count === 1
-      ? 'Something is waiting for you.'
+      ? later ? 'Something else is waiting for you.' : 'Something is waiting for you.'
       : `${v.count} things are waiting for you.`
     : v.count === 1
       ? thing
-        ? `Someone has come forward about your ${thing}.`
-        : 'Someone has come forward.'
+        ? `${who} has come forward about your ${thing}.`
+        : `${who} has come forward.`
       : `${v.count} people have come forward.`;
   const line =
     !v.blind && v.count === 1 && thing
-      ? `Someone has come forward about your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(thing)}</span>.`
+      ? `${who} has come forward about your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(thing)}</span>.`
       : esc(textLine);
   const buttonLabel = v.blind
     ? "See what's waiting"
     : v.count === 1
-      ? 'See who it is'
+      ? later ? 'See who else it is' : 'See who it is'
       : 'See who has come forward';
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
-      `<tr><td style="font-family:${SANS};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">Your assistant has news.</td></tr>` +
+      `<tr><td style="font-family:${SANS};font-size:24px;line-height:1.4;color:${INK};padding:2px 0 6px">${esc(subject)}.</td></tr>` +
       para(line) +
       center(button(v.counterUrl, buttonLabel)),
     f,
     MATCH,
   );
   const text =
-    `Your assistant has news.\n\n${textLine}\n\n` +
+    `${subject}.\n\n${textLine}\n\n` +
     `${buttonLabel}:\n${v.counterUrl}\n\n` +
     footerText(f);
   return { subject, html, text };

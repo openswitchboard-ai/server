@@ -283,7 +283,7 @@ export const THRESHOLD_BUMP_STEP = 0.01;
 
 /** Collection-window defaults (minutes). Per-card override may only shorten. */
 export const COLLECT_WINDOW_DEFAULT_MIN = 360; // 6h, goods
-export const COLLECT_WINDOW_URGENT_MIN = 15; // urgency = 'today'
+export const COLLECT_WINDOW_URGENT_MIN = 120; // urgency = 'today' — two hours; people do not watch their inbox by the minute
 
 export function defaultCollectWindowMinutes(urgency: string): number {
   return urgency === 'today' ? COLLECT_WINDOW_URGENT_MIN : COLLECT_WINDOW_DEFAULT_MIN;

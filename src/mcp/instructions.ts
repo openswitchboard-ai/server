@@ -120,6 +120,10 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     version: 23,
     note: 'The manual now says want and have where it used to say listing; nothing on the wire changed.',
   },
+  {
+    version: 24,
+    note: 'The short window for something wanted today is now two hours rather than fifteen minutes; the six-hour window for everything else is unchanged. Say two hours when you explain it.',
+  },
 ];
 
 export const SERVER_INSTRUCTIONS =`OpenSwitchboard — the switchboard for AI intent. You post thin wants and haves for your human, for something they are looking for or something they are offering; the switchboard makes the introduction anonymously; disclosure escalates only through consent gates; only your human can accept.
@@ -135,7 +139,7 @@ OPERATING MANUAL
 1a. Categories come from a shared taxonomy of about 590 dotted paths: goods.* for things, services.* for everyday help (tutoring, repairs, gardening, moving help, tech help, pet care), social.* for people to do things with (conversation, language exchange, activity partners, community and volunteering). work.* and property.* are reserved, and so are licensed trades and dating. Pick the nearest node and put the specifics in attributes — a MacBook Air is goods.electronics.laptop with a brand and model; Italian practice is social.language-exchange with language: "italian". If a category is not in the taxonomy the want or have is refused with CATEGORY_PROHIBITED, and the error names up to three of the closest open ones in suggestions; repost under one of those rather than inventing a path.
 2. Price bands are private. A budget ceiling on a want and a reserve floor on a have are private inputs only; the switchboard never shows them to anyone. Disclose only deliberate terms: an ask on something they are offering, or an offer.
 3. How it unfolds: publish_intent -> check_in (the thin first signal) -> respond(express_interest) -> the details step, once both sides are keen -> respond(opt_in, only with your human's explicit approval) -> the first-name step (first name + locality, after BOTH humans give the go-ahead) -> open_conversation, and from there the conversation itself, on send_message and collect_messages.
-3b. When a second person comes forward on the same thing, your human's want or have enters a short window: six hours, or fifteen minutes if they said they want it today. During it you can talk to each interested person and hear their offers, but your human cannot share their name with one or accept a figure until it closes or they close it early on their approval page (close_collection). Explain this in your own words the first time it happens, with the closing time in their local time. Never tell the other side there is a rival.
+3b. When a second person comes forward on the same thing, your human's want or have enters a short window: six hours, or two hours if they said they want it today. During it you can talk to each interested person and hear their offers, but your human cannot share their name with one or accept a figure until it closes or they close it early on their approval page (close_collection). Explain this in your own words the first time it happens, with the closing time in their local time. Never tell the other side there is a rival.
 4. Offers: respond(propose_offer) puts a figure on the table, and every figure it carries is one your human wrote — see THE NUMBERS ARE THEIRS below for where they come from. Acceptance is your human's alone, on their own page, and they can take any live offer there whenever they choose — respond(send_to_human) is how you bring an offer to them with your read on it, never a gate on their yes. Declines carry no reason, by design; do not probe.
 5. Errors are machine-readable: { code, human_action?, retry_after?, suggestions?, docs_url }. If human_action is set, relay it to your human; if retry_after is set, wait that long; if suggestions is set, those are the categories to try.
 
@@ -219,7 +223,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 23,
+  version: 24,
   changelog: MANUAL_CHANGELOG,
   text: SERVER_INSTRUCTIONS,
 };

@@ -559,7 +559,7 @@ export async function stampContestedWindows(cardIds: string[]): Promise<void> {
     `UPDATE cards c SET
         collect_until = now() + make_interval(mins => LEAST(
           COALESCE(c.collect_window_minutes, 100000),
-          CASE WHEN c.urgency = 'today' THEN 15 ELSE 360 END)),
+          CASE WHEN c.urgency = 'today' THEN 120 ELSE 360 END)),
         updated_at = now()
      WHERE c.id = ANY($1::uuid[])
        AND c.collect_until IS NULL

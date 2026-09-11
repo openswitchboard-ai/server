@@ -854,12 +854,13 @@ describe('candidate prefilter', () => {
 });
 
 describe('collection window + ladder', () => {
-  it('defaults 6h goods / 15min today; overrides only shorten', () => {
+  it('defaults 6h goods / 2h today; overrides only shorten', () => {
     expect(collectWindowMinutes('none', null)).toBe(360);
-    expect(collectWindowMinutes('today', null)).toBe(15);
+    expect(collectWindowMinutes('today', null)).toBe(120);
     expect(collectWindowMinutes('none', 30)).toBe(30);
     expect(collectWindowMinutes('none', 100000)).toBe(360); // cannot lengthen
-    expect(collectWindowMinutes('today', 60)).toBe(15); // cannot lengthen
+    expect(collectWindowMinutes('today', 60)).toBe(60); // may shorten
+    expect(collectWindowMinutes('today', 240)).toBe(120); // cannot lengthen
   });
   it('ladder pattern: >=3 strictly increasing amounts', () => {
     expect(isLadderPattern([100, 110, 120])).toBe(true);
