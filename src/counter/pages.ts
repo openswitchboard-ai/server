@@ -1234,8 +1234,10 @@ ${dispute}`);
  * Loopback handoff: shown instead of a blind redirect when the agent's
  * callback lives on 127.0.0.1/localhost. The page first tries to deliver the
  * code to the local listener itself; when nothing answers (some CLIs print
- * the sign-in link and exit), it shows the code with a copy button so the
- * person can finish in their terminal. The code is single-use, short-lived,
+ * the sign-in link and exit), it shows the full callback link with a copy
+ * button so the person can paste it into their terminal (Claude Code and most
+ * CLIs ask for the URL), with the bare code tucked behind a disclosure for
+ * clients that take a code. The code is single-use, short-lived,
  * and useless without the client's own PKCE secret.
  */
 export function loopbackHandoffPage(v: { callbackUrl: string; code: string; clientName: string }): string {
@@ -1249,11 +1251,15 @@ export function loopbackHandoffPage(v: { callbackUrl: string; code: string; clie
 </div>
 <div id="manual" hidden>
   <p>${esc(v.clientName)} isn't listening on this computer right now, so finish the sign-in
-  yourself: copy this code into the terminal that gave you the link.</p>
-  <div class="fact"><div class="k">Your one-time code</div><div class="v" id="codebox">${esc(v.code)}</div></div>
-  <button type="button" id="copybtn" class="approve">Copy the code</button>
-  <p class="small muted">It works once and expires in a few minutes. If your client takes a
-  command, it looks like: <code>&hellip; --code '${esc(v.code)}'</code></p>
+  yourself. Go back to the terminal that gave you the link and paste this link where it asks
+  for the URL:</p>
+  <div class="fact"><div class="k">Your sign-in link</div><div class="v" id="urlbox" style="font-size:var(--t-sm)">${esc(v.callbackUrl)}</div></div>
+  <button type="button" id="copyurl" class="approve">Copy the link</button>
+  <p class="small muted">It works once and expires in a few minutes.</p>
+  ${foldedDetail('Your client asked for a code instead?', `
+    <div class="fact"><div class="k">Your one-time code</div><div class="v" id="codebox">${esc(v.code)}</div></div>
+    <button type="button" id="copybtn">Copy the code</button>
+    <p class="small muted">If your client takes a command, it looks like: <code>&hellip; --code '${esc(v.code)}'</code></p>`)}
 </div>
 <script>
 (async () => {
@@ -1267,12 +1273,14 @@ export function loopbackHandoffPage(v: { callbackUrl: string; code: string; clie
     show('manual');
   }
 })();
-document.getElementById('copybtn').addEventListener('click', async () => {
+const copier = (id, text) => document.getElementById(id).addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(${JSON.stringify(v.code)});
-    document.getElementById('copybtn').textContent = 'Copied';
+    await navigator.clipboard.writeText(text);
+    document.getElementById(id).textContent = 'Copied';
   } catch {}
 });
+copier('copyurl', ${JSON.stringify(v.callbackUrl)});
+copier('copybtn', ${JSON.stringify(v.code)});
 </script>
 `);
 }
