@@ -213,7 +213,7 @@ describe('approval link signing', () => {
     ccy: 'AUD',
     counterparty_account: 'acct-2',
   };
-  it('binds {account, action, amount, counterparty}: any change breaks the MAC', () => {
+  it('binds {account, action, ref, amount, counterparty, figures}: any change breaks the MAC', () => {
     const token = signLink(row, key);
     expect(token.startsWith(row.id + '.')).toBe(true);
     for (const tampered of [
@@ -222,14 +222,30 @@ describe('approval link signing', () => {
       { ...row, amount: 9999 },
       { ...row, counterparty_account: 'acct-9' },
       { ...row, ref_id: 'offer-2' },
+      // The figures a one-question page asks about are bound too, so a link
+      // cannot be re-pointed at a different opening figure or limit.
+      { ...row, payload: '{"limit":400}' },
     ]) {
       expect(signLink(tampered as any, key)).not.toBe(token);
     }
   });
   it('binding string is stable and complete', () => {
     expect(bindingString(row as any)).toBe(
-      '11111111-1111-1111-1111-111111111111|acct-1|offer-accept|offer-1|620|AUD|acct-2',
+      '11111111-1111-1111-1111-111111111111|acct-1|offer-accept|offer-1|620|AUD|acct-2|',
     );
+    expect(bindingString({ ...row, payload: '{"ccy":"AUD","limit":400}' } as any)).toBe(
+      '11111111-1111-1111-1111-111111111111|acct-1|offer-accept|offer-1|620|AUD|acct-2|{"ccy":"AUD","limit":400}',
+    );
+  });
+
+  // The figures are canonicalised before they are signed, so the same box
+  // written in a different order signs the same way and verifies.
+  it('canonical figures sort their keys and drop an empty payload', async () => {
+    const { canonicalPayload } = await import('../../src/counter/links.js');
+    expect(canonicalPayload({ limit: 400, ccy: 'AUD' })).toBe('{"ccy":"AUD","limit":400}');
+    expect(canonicalPayload({ ccy: 'AUD', limit: 400 })).toBe('{"ccy":"AUD","limit":400}');
+    expect(canonicalPayload({})).toBeNull();
+    expect(canonicalPayload(null)).toBeNull();
   });
 });
 
