@@ -10,6 +10,7 @@ import { getHearsVia } from '../domain/accounts.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
+import * as humanLinks from '../domain/humanLinks.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
@@ -280,11 +281,17 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with their approval link and they type the figure there, and only one they have switched to "Auto-negotiate" on that page lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (your human\'s one-tap call on how good the introduction was: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent).',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (your human\'s one-tap call on how good the introduction was: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step), request_accept (accept a figure that is on the table, offer_id), request_close_window (close the window on one of your human\'s own wants or haves, intent_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
     inputSchema: {
       type: 'object',
       properties: {
         intro_id: { type: 'string', format: 'uuid' },
+        intent_id: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            "Required for request_close_window and request_auto_negotiate: one of your human's own wants or haves.",
+        },
         action: {
           type: 'string',
           enum: [
@@ -299,7 +306,24 @@ export const TOOLS: ToolDef[] = [
             'verdict',
             'close_collection',
             'archive',
+            'request_share_name',
+            'request_accept',
+            'request_close_window',
+            'request_auto_negotiate',
           ],
+        },
+        numbers: {
+          type: 'object',
+          description:
+            "Required for request_auto_negotiate. The box your human described to you, in their words turned into figures: where to open, the limit they will not cross, and the smallest move to make. On something they are offering the limit is the least they will take; on something they are after it is the most they will pay.",
+          properties: {
+            open: { type: 'number', exclusiveMinimum: 0 },
+            limit: { type: 'number', exclusiveMinimum: 0 },
+            step: { type: 'number', exclusiveMinimum: 0 },
+            ccy: { type: 'string', pattern: '^[A-Z]{3}$' },
+          },
+          required: ['limit', 'ccy'],
+          additionalProperties: false,
         },
         verdict: {
           type: 'string',
@@ -321,7 +345,9 @@ export const TOOLS: ToolDef[] = [
           additionalProperties: false,
         },
       },
-      required: ['intro_id', 'action'],
+      // Every action but the two that work on a want or have directly needs an
+      // intro_id, and the server says which when one is missing.
+      required: ['action'],
       additionalProperties: false,
     },
   },
@@ -692,6 +718,12 @@ export async function dispatchTool(
           // human before, on a client that has just been installed, still
           // learns how they want to be treated on its first call.
           const standing = await arrangement.readArrangement(accountId);
+          // The two facts that decide whether you may offer to negotiate at
+          // all: how this human hears about the switchboard, and whether the
+          // agent on this account has said it runs between conversations.
+          // Both have to be true, so both ride the sweep where an agent can
+          // read them without digging.
+          const hearsVia = await getHearsVia(accountId);
           // The manual rides the sweep too, and only when it has changed. An
           // agent that read the manual at connect and never reconnects still
           // hears about an edit, once, on its next check.
@@ -700,6 +732,8 @@ export async function dispatchTool(
             introductions: withNotes,
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),
+            hears_via: hearsVia,
+            runs_on_its_own: standing.runs_on_its_own === true,
             ...(manualUpdate ? { manual_update: manualUpdate } : {}),
           });
         }
@@ -794,6 +828,12 @@ export async function dispatchTool(
         ) {
           return invalidInput('declines carry no reason, by design');
         }
+        // Two of the actions work on a want or have of your human's rather
+        // than on an introduction; everything else needs the introduction.
+        const ON_AN_INTENT = ['request_close_window', 'request_auto_negotiate'];
+        if (!intro_id && !ON_AN_INTENT.includes(String(action))) {
+          return invalidInput(`${action ?? 'respond'} requires intro_id`);
+        }
         switch (action) {
           case 'express_interest': {
             const m = await matches.expressInterest(intro_id, accountId);
@@ -841,6 +881,35 @@ export async function dispatchTool(
           case 'archive': {
             const r = await matches.archiveMatch(intro_id, accountId, 'agent-attested');
             return ok({ intro_id, state: r.state, already_archived: r.already });
+          }
+          // ---------------------------------------------------------------
+          // The link actions. Each one MINTS and RETURNS; none of them acts.
+          // The agent hands the link to its human in the conversation it is
+          // already having, and the person answers one question on one page.
+          // ---------------------------------------------------------------
+          case 'request_share_name':
+            return ok(await humanLinks.shareNameLink(cfg, accountId, intro_id));
+          case 'request_accept': {
+            if (!args?.offer_id) return invalidInput('request_accept requires offer_id');
+            return ok(await humanLinks.acceptNumberLink(cfg, accountId, String(args.offer_id)));
+          }
+          case 'request_close_window': {
+            if (!args?.intent_id) return invalidInput('request_close_window requires intent_id');
+            return ok(await humanLinks.closeWindowLink(cfg, accountId, String(args.intent_id)));
+          }
+          case 'request_auto_negotiate': {
+            if (!args?.intent_id) return invalidInput('request_auto_negotiate requires intent_id');
+            if (!args?.numbers) {
+              return invalidInput('request_auto_negotiate requires the numbers your human gave you');
+            }
+            return ok(
+              await humanLinks.autoNegotiateLink(
+                cfg,
+                accountId,
+                String(args.intent_id),
+                args.numbers,
+              ),
+            );
           }
           default:
             return invalidInput(`unknown action '${action}'`);
