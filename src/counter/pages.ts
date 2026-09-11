@@ -496,7 +496,8 @@ export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
 export interface OneQuestionView {
   /** The link this page was opened with; the form posts it straight back. */
   token: string;
-  /** The one sentence. It ends in a question mark. */
+  /** The one sentence. Mostly a question; where the two buttons already ask it
+   *  — Accept or Not now on a figure — the sentence states the figure instead. */
   question: string;
   /** Supporting lines, at most a couple, under the question. */
   detail?: string[];
@@ -504,6 +505,12 @@ export interface OneQuestionView {
   noLabel: string;
   /** True where identity or money moves: the PIN ceremony rides along. */
   needsPin: boolean;
+  /**
+   * One more way out, as a plain line under the buttons: on a figure, the door
+   * to a number of your own. It binds nothing, so it takes no ceremony and
+   * spends no link — the link is still there to press afterwards.
+   */
+  door?: { href: string; text: string };
   hasPasskey: boolean;
   elevated: boolean;
 }
@@ -531,6 +538,7 @@ ${detail}
 </form>
 ${passkeyBtn}
 <p class="small muted">This link works once${showPin ? ', and this step takes your PIN' : ''}. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
+${v.door ? `<p class="small"><a href="${esc(v.door.href)}">${esc(v.door.text)}</a></p>` : ''}
 ${v.needsPin && v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
 document.getElementById('pkapprove').addEventListener('click', async () => {
   try {
