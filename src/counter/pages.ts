@@ -38,6 +38,10 @@ export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
 
 const CSS = `
+  /* Choose-a-PIN boxes: masked like a password without being one, so no
+     browser offers to invent a password for a six-digit PIN. */
+  .pinbox{-webkit-text-security:disc;text-security:disc;letter-spacing:.25em;}
+
 :root {
   /* Palette — the public site's tokens, light first. */
   --paper:#F6F8F7; --ink:#1C2523; --line:#D3DBD8; --wash:#ECEFEE;
@@ -355,9 +359,9 @@ export function pinSetPage(error?: string): string {
 ${errBox(error)}
 <form method="POST" action="/pin/set">
   <label for="pin">PIN (6+ digits)</label>
-  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
   <label for="pin2">PIN again</label>
-  <input id="pin2" name="pin2" type="password" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+  <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
   <button type="submit">Set PIN</button>
 </form>
 <p class="small muted">Disclosures, settlements and turning things back on all ask
