@@ -551,9 +551,10 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  *   details_unlocked     both sides interested — attributes are on the entry
  *   awaiting_your_human  a stage-3 opt-in / approval sits with the human
  *   ready_to_talk        both opted in; open the channel (or it is already open)
- *   deal_agreed          a figure this human proposed has been accepted by the
- *                        other human; the switchboard's part is finished and
- *                        the handover is the two people's own to arrange
+ *   deal_agreed          a figure on this introduction has been accepted by a
+ *                        human, whichever side proposed it; the switchboard's
+ *                        part is finished and the handover is the two people's
+ *                        own to arrange
  *
  * `awaiting_your_human` and `deal_agreed` are not reachable from the row state
  * alone — checkMatches sets them, from a reveal genuinely waiting on the
@@ -876,9 +877,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // plural it already has.
       const noteText = offerTableNote(table, categoryPhrase(categoryLeafLabel(m.category)));
       if (noteText) entry.offer_note = sbNote(noteText);
-      // A figure this human proposed and the other human took: the deal is
-      // agreed and the switchboard has nothing further to do on it.
-      if (table.some((l) => l.side === 'yours' && l.state === 'accepted-by-human')) {
+      // A figure one human proposed and the other took, whichever way round:
+      // the deal is agreed and the switchboard has nothing further to do on it.
+      // (Run 6: the accepting side's agent read 'ready_to_talk' and told its
+      // human the accept was still pending.)
+      if (table.some((l) => l.state === 'accepted-by-human')) {
         entry.next = 'deal_agreed';
       }
     }

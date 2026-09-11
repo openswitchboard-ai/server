@@ -141,7 +141,7 @@ export async function sendNumberLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does.`,
+    what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does. Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -187,7 +187,7 @@ export async function acceptNumberLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table for their ${categoryLeafLabel(o.category).toLowerCase()}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN.`,
+    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table for their ${categoryLeafLabel(o.category).toLowerCase()}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -216,7 +216,7 @@ export async function shareNameLink(
     link,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page asking your human whether to share their first name and area with the other side. Nothing crosses until they say yes there.',
+      'Opens one page asking your human whether to share their first name and area with the other side. Nothing crosses until they say yes there. Once they press it, your next check_matches shows the result.',
   };
 }
 
@@ -249,7 +249,7 @@ export async function closeWindowLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to close the window on their ${categoryLeafLabel(card.category).toLowerCase()} now and go ahead with someone.`,
+    what_it_does: `Opens one page asking your human whether to close the window on their ${categoryLeafLabel(card.category).toLowerCase()} now and go ahead with someone. Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -299,7 +299,7 @@ export async function autoNegotiateLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to let you negotiate their ${thing}: ${edge}. Saying yes takes their PIN, and it writes those numbers onto that one want or have.`,
+    what_it_does: `Opens one page asking your human whether to let you negotiate their ${thing}: ${edge}. Saying yes takes their PIN, and it writes those numbers onto that one want or have. Once they press it, your next check_matches shows the result.`,
   };
 }
 
