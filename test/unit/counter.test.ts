@@ -1165,7 +1165,7 @@ const settingsView = (hearsVia: chome.HearsVia): chome.EmailSettingsView => ({
 describe('how do you want to hear about things?', () => {
   it('leads the settings page, above the frequency dials and blind mode', () => {
     const html = chome.settingsPage(settingsView('email'));
-    const ask = html.indexOf('<h2>How do you want to hear about things?</h2>');
+    const ask = html.indexOf('<h2>Which kind of assistant do you use?</h2>');
     expect(ask).toBeGreaterThan(-1);
     expect(html.indexOf('<h2>Email frequency</h2>')).toBeGreaterThan(ask);
     expect(html.indexOf('<h2>Blind mode</h2>')).toBeGreaterThan(ask);
@@ -1173,11 +1173,11 @@ describe('how do you want to hear about things?', () => {
 
   it('puts the two answers in the words a person would use', () => {
     const html = chome.settingsPage(settingsView('email'));
-    expect(html).toContain('By email.');
+    expect(html).toContain('A chat assistant.');
     expect(html).toContain(
       'My assistant can only act when I talk to it. Each match and reply needs to reach me by email.',
     );
-    expect(html).toContain('Through my assistant.');
+    expect(html).toContain('An always-on agent.');
     expect(html).toContain('My assistant checks on its own and brings me the news. I only need email as a backup.');
     expect(html).toContain('action="/settings/hears-via"');
   });

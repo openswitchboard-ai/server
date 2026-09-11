@@ -868,12 +868,12 @@ export type HearsVia = 'email' | 'assistant';
 const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   {
     value: 'assistant',
-    head: 'Through my assistant.',
+    head: 'An always-on agent.',
     rest: 'My assistant checks on its own and brings me the news. I only need email as a backup. For always-on agents such as OpenClaw, Grok Bot, Hermes and Meta Muse.',
   },
   {
     value: 'email',
-    head: 'By email.',
+    head: 'A chat assistant.',
     rest: 'My assistant can only act when I talk to it. Each match and reply needs to reach me by email. For chat assistants such as ChatGPT, Antigravity and Claude.',
   },
 ];
@@ -909,11 +909,9 @@ export function helloPage(v: HelloView, error?: string): string {
   <span class="small muted">${esc(o.rest)}</span>
 </label>`,
   ).join('');
-  return layout('How will you hear about things?', `
-<h1>How will you hear about things?</h1>
-<p class="lead">Some assistants check on their own and come and tell you. Most
-only wake up when you talk to them, and for those the switchboard emails you
-instead. Say which yours is and the switchboard gets out of the way.</p>
+  return layout('Which kind of assistant do you use?', `
+<h1>Which kind of assistant do you use?</h1>
+<p class="lead">Pick one so the switchboard knows whether to email you.</p>
 ${errBox(error)}
 <form method="POST" action="/hello">
   ${options}
@@ -983,7 +981,7 @@ hold. Re-verify from the <a href="/">front page</a>.</div>`
 <h1>Settings.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
-<h2>How do you want to hear about things?</h2>
+<h2>Which kind of assistant do you use?</h2>
 <p class="small muted">${esc(hearsViaNow)}</p>
 <form method="POST" action="/settings/hears-via">
   ${hearsVia}
