@@ -12,7 +12,7 @@
  *       price|band|budget|reserve -> [];
  *  (c)  k-floor: a seeded 9-member pulse cell is ABSENT, a 10-member cell is
  *       present with the exact real count;
- *  (d)  collection window under concurrency: parallel offers from 3 buyers,
+ *  (d)  the line under concurrency: parallel offers from 3 buyers,
  *       holder sees all, non-holders see no rival signal, early-close
  *       honoured, post-window proceed works;
  *  (e)  anti-probing: 4th per-match offer in 24h -> RATE_LIMITED_OFFERS;
@@ -424,15 +424,80 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     expect(abEntry.attributes.kind).toBe('intro.attributes');
   });
 
-  it('GATE (d): collection window - holder sees all, rivals see nothing, early-close unlocks', async () => {
-    // The contested card carries a live window.
-    const w = await dbExec(
-      `SELECT collect_until > now(), collect_closed_at IS NULL FROM cards WHERE id = :id::uuid`,
+  it('GATE (d): the line - one at a time, the rest in line, and nothing blocks the holder', async () => {
+    // Hank's have takes one person at a time (the default), so exactly one of
+    // the three introductions on it is live and the other two are in line.
+    const live = await dbExec(
+      `SELECT count(*) FILTER (WHERE live), count(*) FROM matches
+        WHERE card_have = :id::uuid AND state = 'open'`,
       [{ name: 'id', value: hankHave }],
     );
-    expect(w[0]).toEqual([true, true]);
+    expect(Number(live[0][0])).toBe(1);
+    expect(Number(live[0][1])).toBeGreaterThanOrEqual(3);
 
-    // Unlock stage 2 on all three rival matches (both sides express interest).
+    // HOLDER view: the one they are talking to, and a count of their own line.
+    // Nothing about who is waiting, ever — only how many.
+    const hankLine = await mcpCall(hank.accessToken, 'check_in', { intent_id: hankHave });
+    const hankOpen = hankLine.result.introductions.filter((m: any) => m.state === 'open');
+    expect(hankOpen).toHaveLength(1);
+    expect(hankOpen[0].line.in_line).toBeGreaterThanOrEqual(2);
+    expect(hankLine.raw).not.toMatch(/rival|compet|contest|bidding/i);
+
+    // WAITING view: one sentence and nothing else, and nothing to act on.
+    const waiting = buyers.filter(
+      (b) => hankMatchIds[b.accountId] !== hankOpen[0].intro_id,
+    );
+    expect(waiting.length).toBeGreaterThanOrEqual(2);
+    for (const b of waiting) {
+      const view = await mcpCall(b.accessToken, 'check_in', {});
+      const mine = view.result.introductions.find(
+        (m: any) => m.intro_id === hankMatchIds[b.accountId],
+      );
+      expect(mine.state).toBe('in_line');
+      expect(Object.keys(mine).sort()).toEqual(['intro_id', 'note', 'state']);
+      expect(view.raw).not.toMatch(/collect|interested part|rival|window|compet|contest/i);
+      // It cannot be advanced, and the refusal says only what the sweep says.
+      const push = await mcpCall(b.accessToken, 'respond', {
+        intro_id: hankMatchIds[b.accountId],
+        action: 'express_interest',
+      });
+      expect(push.isError).toBe(true);
+      expect(push.result.code).toBe('NOT_UNLOCKED_YET');
+      // And a rival's introduction is not addressable at all.
+      const other = buyers.find((x) => x.accountId !== b.accountId)!;
+      const probe = await mcpCall(b.accessToken, 'respond', {
+        intro_id: hankMatchIds[other.accountId],
+        action: 'list_offers',
+      });
+      expect(probe.isError).toBe(true);
+    }
+
+    // The short window that used to freeze the holder is gone: both of the
+    // actions that closed it answer plainly, and nothing is blocked.
+    for (const action of ['close_collection', 'request_close_window']) {
+      const r = await mcpCall(hank.accessToken, 'respond', {
+        intro_id: hankOpen[0].intro_id,
+        intent_id: hankHave,
+        action,
+      });
+      expect(r.isError).toBe(true);
+      expect(JSON.stringify(r.result)).toContain('the window is gone');
+    }
+
+    // FIXTURE, for the gates that follow: Hank can genuinely take all three at
+    // once, so the headcount goes up and the line empties. Written directly
+    // because raising slots through amend_intent would send the have back
+    // through screening mid-suite.
+    await dbExec(`UPDATE cards SET slots = 10 WHERE id = :id::uuid`, [
+      { name: 'id', value: hankHave },
+    ]);
+    await dbExec(
+      `UPDATE matches SET live = true, live_at = now(), last_movement_at = now()
+        WHERE card_have = :id::uuid AND state = 'open'`,
+      [{ name: 'id', value: hankHave }],
+    );
+
+    // Unlock the details step on all three (both sides express interest).
     await Promise.all(
       buyers.map(async (b) => {
         const mid = hankMatchIds[b.accountId];
@@ -441,14 +506,13 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       }),
     );
 
-    // Every card starts on "Pass on", where an agent may not name a figure.
-    // Each buyer's human writes a ceiling on their own card first — which is
-    // what a real person would have to do before their agent could bid.
+    // Every want and have starts on "Pass on", where an agent may not name a
+    // figure. Each buyer's human writes a ceiling on their own first.
     await Promise.all(
       buyers.map((b, i) => setAutoNegotiate(b.jar, buyerWants[i], { limit: 1000 })),
     );
 
-    // CONCURRENCY: all three buyers fire offers in parallel during the window.
+    // CONCURRENCY: all three buyers fire offers in parallel.
     const offers = await Promise.all(
       buyers.map((b, i) =>
         mcpCall(b.accessToken, 'respond', {
@@ -463,14 +527,6 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       ),
     );
     for (const o of offers) expect(o.isError, JSON.stringify(o.result)).toBe(false);
-
-    // HOLDER view: all three matches, all offers, and the window itself.
-    const hankView = await mcpCall(hank.accessToken, 'check_in', { intent_id: hankHave });
-    const hankOpen = hankView.result.introductions.filter((m: any) => m.state === 'open');
-    expect(hankOpen.length).toBeGreaterThanOrEqual(3);
-    const withWindow = hankOpen.filter((m: any) => m.collection?.collecting === true);
-    expect(withWindow.length).toBe(hankOpen.length);
-    expect(withWindow[0].collection.interested_parties).toBeGreaterThanOrEqual(3);
     for (const b of buyers) {
       const l = await mcpCall(hank.accessToken, 'respond', {
         intro_id: hankMatchIds[b.accountId],
@@ -479,57 +535,14 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       expect(l.result.offers.length).toBeGreaterThanOrEqual(1);
     }
 
-    // NON-HOLDER view: no rival signal of any kind (scarcity-theatre ban).
-    for (const b of buyers) {
-      const view = await mcpCall(b.accessToken, 'check_in', {});
-      expect(view.raw).not.toMatch(/collect|interested|rival|window|compet|contest/i);
-      const mine = view.result.introductions.filter(
-        (m: any) => m.intro_id === hankMatchIds[b.accountId],
-      );
-      expect(mine).toHaveLength(1);
-      // A rival's match is not even addressable.
-      const other = buyers.find((x) => x.accountId !== b.accountId)!;
-      const probe = await mcpCall(b.accessToken, 'respond', {
-        intro_id: hankMatchIds[other.accountId],
-        action: 'list_offers',
-      });
-      expect(probe.isError).toBe(true);
-    }
-
-    // HOLDER commit is locked while collecting...
-    const locked = await mcpCall(hank.accessToken, 'respond', {
-      intro_id: hankMatchIds[buyers[0].accountId],
-      action: 'opt_in',
-    });
-    expect(locked.isError).toBe(true);
-    expect(locked.result.code).toBe('NOT_UNLOCKED_YET');
-
-    // ...but a NON-holder buyer's own opt-in is not (their card is uncontested).
-    const buyerOptIn = await mcpCall(buyers[1].accessToken, 'respond', {
-      intro_id: hankMatchIds[buyers[1].accountId],
-      action: 'opt_in',
-    });
-    expect(buyerOptIn.isError, JSON.stringify(buyerOptIn.result)).toBe(false);
-
-    // Early-close by the holder, then proceeding works.
-    const close = await mcpCall(hank.accessToken, 'respond', {
-      intro_id: hankMatchIds[buyers[0].accountId],
-      action: 'close_collection',
-    });
-    expect(close.isError).toBe(false);
-    expect(close.result.collection_closed).toBe(true);
+    // THE HOLDER IS NOT BLOCKED. This is what replaced the window: several
+    // people are on it and the go-ahead still goes through at once.
     const optIn = await mcpCall(hank.accessToken, 'respond', {
       intro_id: hankMatchIds[buyers[0].accountId],
       action: 'opt_in',
     });
     expect(optIn.isError, JSON.stringify(optIn.result)).toBe(false);
     expect(optIn.result.optin_recorded).toBe(true);
-    // Terminal: the card records the explicit close.
-    const closed = await dbExec(
-      `SELECT collect_closed_at IS NOT NULL FROM cards WHERE id = :id::uuid`,
-      [{ name: 'id', value: hankHave }],
-    );
-    expect(closed[0][0]).toBe(true);
   });
 
   it('GATE (e): 4th per-match offer in 24h -> RATE_LIMITED_OFFERS; ladder flags reputation', async () => {
