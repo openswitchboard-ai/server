@@ -283,26 +283,19 @@ export interface LedgerCard {
   price?: any; // decrypted for the OWNER only, server-side, audit-logged
   matchCount: number;
   latestMatchState?: string;
-  collect_window_minutes?: number | null;
+  /** How many people this want or have takes at once (domain/sequencer.ts). */
+  slots?: number;
+  /** Haves only: 'straight' or 'best-offer'. */
+  sale?: string;
   /** The stored screening verdict (cards.screening). Owner-only, by row. */
   screening?: any;
   /** Who writes this card's negotiating figures. 'relay' unless switched. */
   negotiation_mode: 'relay' | 'mandate';
 }
 
-/** Per-card collection-window override; may only SHORTEN the default. */
-export async function setCollectWindowOverride(
-  accountId: string,
-  cardId: string,
-  minutes: number | null,
-): Promise<void> {
-  const r = await getPool().query(
-    `UPDATE cards SET collect_window_minutes = $3, updated_at = now()
-     WHERE id = $1 AND account_id = $2 RETURNING id`,
-    [cardId, accountId, minutes],
-  );
-  if (!r.rowCount) throw new Error('card not found');
-}
+// The per-card collection-window override lived here. The window is gone
+// (migration 030); how many people a want or have takes at once is `slots`
+// now, and it rides the ordinary amend rather than a setter of its own.
 
 export async function ledgerCards(cfg: Config, accountId: string): Promise<LedgerCard[]> {
   const pool = getPool();
@@ -343,7 +336,8 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
     expires_at: row.expires_at,
     price: bands[row.id] ? JSON.parse(bands[row.id]) : undefined,
     matchCount: row.match_count,
-    collect_window_minutes: row.collect_window_minutes,
+    slots: row.slots ?? 1,
+    sale: row.sale ?? 'straight',
     screening: row.screening,
     negotiation_mode: row.negotiation_mode === 'mandate' ? 'mandate' : 'relay',
   }));
@@ -462,28 +456,9 @@ export async function verdictOnMatch(
   return r.rows[0]?.verdict ?? undefined;
 }
 
-export interface OpenWindowView {
-  card_id: string;
-  category: string;
-  type: string;
-  until: Date;
-  interested_parties: number;
-}
-
-/** This human's OWN cards with an open collection window (holder view). */
-export async function openCollectionWindows(accountId: string): Promise<OpenWindowView[]> {
-  const r = await getPool().query(
-    `SELECT c.id AS card_id, c.category, c.type, c.collect_until AS until,
-            (SELECT count(*)::int FROM matches m
-             WHERE (m.card_want = c.id OR m.card_have = c.id) AND m.state = 'open')
-              AS interested_parties
-     FROM cards c
-     WHERE c.account_id = $1 AND c.collect_until > now() AND c.collect_closed_at IS NULL
-     ORDER BY c.collect_until ASC`,
-    [accountId],
-  );
-  return r.rows;
-}
+// The holder's list of open collection windows stood here, for the card the
+// front page used to render. Nothing blocks a holder now (migration 030), so
+// there is no window to list and no card to render.
 
 // ---------------------------------------------------------------------------
 // 1.E: the offers on one match, for the human whose match it is. This is the

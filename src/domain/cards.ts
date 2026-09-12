@@ -60,6 +60,10 @@ export interface CardRow {
   ttl_days: number;
   expires_at: Date;
   screening: any;
+  /** How many live introductions this can hold at once (domain/sequencer.ts). */
+  slots?: number;
+  /** Haves only: 'straight' or 'best-offer'. */
+  sale?: 'straight' | 'best-offer';
 }
 
 /**
@@ -90,6 +94,21 @@ export async function assertCategoryOpen(
     ...(categories.length ? { suggestions: categories } : {}),
   });
 }
+
+/**
+ * How many people this want or have can take at once. The wire bounds it 1-10
+ * and the column checks the same, so this is only the default: one, which is
+ * what "introduce me to someone" means when nobody has said otherwise.
+ */
+const slotsOf = (card: any): number => {
+  const n = Number(card?.slots);
+  return Number.isInteger(n) && n >= 1 && n <= 10 ? n : 1;
+};
+
+/** How the asking price works. A want has no asking price, so it is always the
+ *  straight one — the schema forbids `sale` there in any case. */
+const saleOf = (card: any): 'straight' | 'best-offer' =>
+  card?.type === 'offering' && card?.sale === 'best-offer' ? 'best-offer' : 'straight';
 
 /**
  * Publish an intent card.
@@ -157,9 +176,10 @@ export async function publishIntent(
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
-                        protocol_status, price_enc, ttl_days, expires_at)
+                        protocol_status, price_enc, ttl_days, expires_at, slots, sale)
      VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
-             COALESCE($17::timestamptz, now() + make_interval(days => $12::int)))
+             COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
+             $18::int, $19)
      RETURNING id`,
     [
       accountId,
@@ -180,6 +200,11 @@ export async function publishIntent(
       geo.radius_km,
       geo.country,
       endsAt,
+      // How many people this can take at once, and (on a have) how the asking
+      // price works. Both are the human's own word, and both are routing only:
+      // see domain/sequencer.ts for the line they drive.
+      slotsOf(card),
+      saleOf(card),
     ],
   );
   const id = r.rows[0].id as string;
@@ -205,7 +230,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
   const r = await getPool().query(
     `SELECT id, schema_version, type, category, geo, attributes, ask, urgency, visibility,
             protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at,
-            screening
+            screening, slots, sale
      FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
     [accountId],
   );
@@ -253,6 +278,8 @@ export async function listIntents(accountId: string): Promise<any[]> {
       visibility: row.visibility,
       status: row.protocol_status,
       ttl_days: row.ttl_days,
+      slots: row.slots ?? 1,
+      ...(row.type === 'HAVE' ? { sale: row.sale ?? 'straight' } : {}),
     },
     expires_at: row.expires_at,
     ...(tz && row.expires_at ? { expires_local: localTimeText(new Date(row.expires_at), tz) } : {}),
@@ -299,11 +326,42 @@ export async function amendIntent(
       card.visibility === 'anonymous-until-match' ? 'anonymous-until-introduced' : card.visibility,
     status: card.protocol_status,
     ttl_days: card.ttl_days,
+    slots: card.slots ?? 1,
+    ...(card.type === 'HAVE' && card.sale ? { sale: card.sale } : {}),
   };
-  const allowed = ['geo', 'attributes', 'ask', 'urgency', 'status', 'ttl_days', 'price'];
+  const allowed = [
+    'geo',
+    'attributes',
+    'ask',
+    'urgency',
+    'status',
+    'ttl_days',
+    'price',
+    'slots',
+    'sale',
+  ];
   for (const k of Object.keys(patch ?? {})) {
     if (!allowed.includes(k)) {
       throw Object.assign(new Error(`field '${k}' cannot be amended`), { validation: [k] });
+    }
+  }
+  // How the asking price works is settled before anyone is introduced. Once a
+  // real introduction is live on it, somebody is already acting on the terms
+  // they were shown — a buyer about to send one sealed number should not have
+  // the rules change under them, and a best offer half-way through is not a
+  // thing anyone can reason about. Changing it is refused plainly; taking the
+  // want or have down and posting it again is always open to them.
+  if ('sale' in (patch ?? {}) && String(patch.sale) !== String(card.sale ?? 'straight')) {
+    const live = await getPool().query(
+      `SELECT 1 FROM matches
+        WHERE (card_want = $1 OR card_have = $1) AND state = 'open' AND live LIMIT 1`,
+      [intentId],
+    );
+    if (live.rowCount) {
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action:
+          'How this one sells can only change before the first person is introduced, and somebody is already talking to your human about it. Take it down and post it again to change that.',
+      });
     }
   }
   const next: any = { ...current, ...patch };
@@ -340,7 +398,7 @@ export async function amendIntent(
     `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
         attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
-        renewal_notified_at = NULL,
+        renewal_notified_at = NULL, slots=$13::int, sale=$14,
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
      WHERE id=$1`,
     [
@@ -356,6 +414,8 @@ export async function amendIntent(
       geo.lon,
       geo.radius_km,
       geo.country,
+      slotsOf(next),
+      saleOf(next),
     ],
   );
   await getPool().query('INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)', [

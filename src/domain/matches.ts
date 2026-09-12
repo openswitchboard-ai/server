@@ -11,6 +11,7 @@ import {
   categoryPhrase,
   categoryPhraseWithArticle,
 } from './matchRules.js';
+import { inLineCount, noteMovement, ownCardIsFull } from './sequencer.js';
 import {
   counterpartyProfileConsentError,
   profileIsFilled,
@@ -38,6 +39,10 @@ export interface MatchRow {
   archived_at?: Date | null;
   archived_by?: string | null;
   archived_via?: string | null;
+  /** In a slot right now. An introduction that is not live is in line. */
+  live?: boolean;
+  live_at?: Date | null;
+  last_movement_at?: Date | null;
 }
 
 export async function getMatch(id: string): Promise<MatchRow | undefined> {
@@ -77,104 +82,37 @@ export async function createMatch(
      RETURNING id`,
     [cardWantId, cardHaveId, want.account_id, have.account_id, score, want.category],
   );
+  // A new candidate joins a line rather than arriving on somebody's doorstep,
+  // so the sequencer decides whether there is a slot free for it right now.
+  const { resequenceCard } = await import('./sequencer.js');
+  await resequenceCard(cardWantId);
+  await resequenceCard(cardHaveId);
   return r.rows[0].id as string;
 }
 
 // ---------------------------------------------------------------------------
-// Contested matches - the collection window (0.F).
+// Contested wants and haves: the line, not the window.
 //
-// State machine (lives on the CONTESTED CARD, the "holder" side):
-//   uncontested --(2nd concurrently-open match created)--> collecting
-//     [collect_until stamped by the matcher: min(per-card override,
-//      15 min if urgency='today' else 6 h)]
-//   collecting --(timer expiry)---------------------------> closed
-//   collecting --(holder early-close via counter/agent)----> closed
-//   closed is TERMINAL: the window never reopens for that card.
+// Until migration 030 a second person coming forward put the holder's want or
+// have into a COLLECTION WINDOW: everybody was introduced at once, and for six
+// hours the holder could talk to all of them and commit to none of them. It
+// solved the wrong problem. Nobody asked to run an auction, and the person who
+// came second was left in silence either way.
 //
-// While collecting, the HOLDER's side sees every interested party's
-// interest/offers as they arrive but cannot COMMIT (stage-3 opt-in / human
-// offer acceptance) until the window closes. The NON-holder side is told
-// NOTHING: no rival counts, no window, no hint a contest exists at all
-// ("scarcity theatre" ban - asserted in tests).
+// Nothing blocks a holder now. Every open want and have holds a LINE of
+// candidates and a number of slots (cards.slots): the introductions in a slot
+// are live and behave exactly as an introduction always has, and the rest wait
+// their turn. The holder is shown nothing of who is in line beyond a count of
+// their own line; the person waiting is told one sentence and nothing else.
+// The whole of that machinery is domain/sequencer.ts.
+//
+// What stayed: the ban on scarcity theatre. No rival count, no position, no
+// hint that a contest exists, crosses to a counterparty — asserted in tests.
 // ---------------------------------------------------------------------------
-
-export interface CollectionWindow {
-  cardId: string;
-  until: Date;
-  /** open matches on the contested card - visible to the HOLDER only */
-  interestedParties: number;
-}
 
 /** The caller's OWN card on this match. */
 export function ownCardId(m: MatchRow, accountId: string): string {
   return sideOf(m, accountId) === 'want' ? m.card_want : m.card_have;
-}
-
-/** Open collection window on a card, if any (undefined = none / closed). */
-export async function openCollectionWindow(cardId: string): Promise<CollectionWindow | undefined> {
-  const r = await getPool().query(
-    `SELECT c.collect_until,
-            (SELECT count(*)::int FROM matches m
-             WHERE (m.card_want = c.id OR m.card_have = c.id) AND m.state = 'open') AS n
-     FROM cards c
-     WHERE c.id = $1 AND c.collect_until > now() AND c.collect_closed_at IS NULL`,
-    [cardId],
-  );
-  if (!r.rows[0]) return undefined;
-  return { cardId, until: r.rows[0].collect_until, interestedParties: r.rows[0].n };
-}
-
-/** Throws NOT_UNLOCKED_YET when the caller's own card is still collecting. */
-async function assertNotCollecting(m: MatchRow, accountId: string): Promise<void> {
-  const w = await openCollectionWindow(ownCardId(m, accountId));
-  if (w) {
-    const secs = Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000));
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action:
-        'Your collection window is still open on what you posted: review the interest that has arrived, then close the window early (or let it lapse) before proceeding with a chosen counterpart.',
-      retry_after: secs,
-    });
-  }
-}
-
-/**
- * Holder's explicit early-close (agent 'close_collection' action or the
- * counter button). Idempotent; closing is terminal.
- */
-export async function closeCollection(
-  matchId: string,
-  accountId: string,
-  recordedVia: string,
-): Promise<{ closed: boolean }> {
-  const m = await loadOpenMatchFor(matchId, accountId);
-  return closeCollectionByCard(ownCardId(m, accountId), accountId, recordedVia);
-}
-
-export async function closeCollectionByCard(
-  cardId: string,
-  accountId: string,
-  recordedVia: string,
-): Promise<{ closed: boolean }> {
-  const card = await getCard(cardId);
-  if (!card || card.account_id !== accountId) {
-    throw Object.assign(new Error('want or have not found'), { notFound: true });
-  }
-  const r = await getPool().query(
-    `UPDATE cards SET collect_closed_at = now(), updated_at = now()
-     WHERE id = $1 AND collect_until IS NOT NULL AND collect_closed_at IS NULL
-       AND collect_until > now()
-     RETURNING id`,
-    [cardId],
-  );
-  if (r.rowCount) {
-    await writeConsentEvent({
-      event: 'collection-early-close',
-      card_id: cardId,
-      account_id: accountId,
-      recorded_via: recordedVia,
-    });
-  }
-  return { closed: !!r.rowCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +210,18 @@ async function stage3OptinCount(matchId: string): Promise<number> {
   return r.rows[0].n as number;
 }
 
-async function loadOpenMatchFor(matchId: string, accountId: string): Promise<MatchRow> {
+/**
+ * The one sentence a waiting agent ever gets about the line. No count, no
+ * position, no hint of who else is there — see domain/sequencer.ts.
+ */
+export const IN_LINE_SENTENCE =
+  "You're in line for this one. I'll tell you when it's your turn.";
+
+async function loadOpenMatchFor(
+  matchId: string,
+  accountId: string,
+  requireLive = true,
+): Promise<MatchRow> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
@@ -281,6 +230,13 @@ async function loadOpenMatchFor(matchId: string, accountId: string): Promise<Mat
     // archived match is a finished connection, so it accepts no further
     // interest, opt-in or channel action (retrieval reads it separately).
     throw new OsbError('NOT_UNLOCKED_YET');
+  }
+  // An introduction still in line is a row, not yet an introduction: nothing
+  // advances on it until its turn comes. The refusal carries the same sentence
+  // the sweep carries, and nothing more — a waiting agent must not be able to
+  // learn anything about the line by poking at it.
+  if (requireLive && m.live === false) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: IN_LINE_SENTENCE });
   }
   return m;
 }
@@ -309,6 +265,8 @@ export async function expressInterest(
     [matchId],
   );
   const updated: MatchRow = r.rows[0];
+  // Movement: the slot's clock starts again from here.
+  await noteMovement(matchId);
   if (updated.interest_want && updated.interest_have && updated.stage < 2) {
     const r2 = await getPool().query(
       `UPDATE matches SET stage = 2, updated_at = now() WHERE id = $1 RETURNING *`,
@@ -382,10 +340,6 @@ export async function recordStage3OptIn(
       human_action: 'Both sides have to say they are interested before this opens.',
     });
   }
-  // Collection window: while the caller's OWN card is contested and still
-  // collecting, the holder cannot commit to one counterpart. (The other,
-  // non-holder side is unaffected - and never told a contest exists.)
-  await assertNotCollecting(m, accountId);
   const own = await readSharedProfile(accountId, {
     purpose: 'stage3-optin-profile-check',
     actor: accountId,
@@ -410,6 +364,7 @@ export async function recordStage3OptIn(
      ON CONFLICT (match_id, account_id, kind) DO NOTHING`,
     [matchId, accountId, recordedVia],
   );
+  await noteMovement(matchId); // the slot's clock starts again
   const n = await stage3OptinCount(matchId);
   if (n >= 2 && m.stage < 3) {
     await getPool().query(`UPDATE matches SET stage = 3, updated_at = now() WHERE id = $1`, [
@@ -442,13 +397,26 @@ export async function recordStage3OptIn(
   return { match: updated, both: n >= 2 };
 }
 
-/** Decline: closes the match. NO reason is recorded on the wire (anti-probing). */
-export async function declineMatch(matchId: string, accountId: string): Promise<void> {
-  await loadOpenMatchFor(matchId, accountId);
+/**
+ * Decline: closes the match. NO reason is recorded on the wire (anti-probing).
+ *
+ * A person in line may decline too — dropping out of a queue is a perfectly
+ * ordinary thing to want to do, and refusing it would leave them stuck behind
+ * something they no longer want. Either way the slot it held (or would have
+ * held) goes to whoever is next.
+ */
+export async function declineMatch(
+  matchId: string,
+  accountId: string,
+  cfg?: Config,
+): Promise<void> {
+  await loadOpenMatchFor(matchId, accountId, false);
   await getPool().query(
-    `UPDATE matches SET state = 'declined', updated_at = now() WHERE id = $1`,
+    `UPDATE matches SET state = 'declined', live = false, updated_at = now() WHERE id = $1`,
     [matchId],
   );
+  const { resequenceAround } = await import('./sequencer.js');
+  await resequenceAround(matchId, cfg);
 }
 
 /**
@@ -471,6 +439,7 @@ export async function archiveMatch(
   matchId: string,
   accountId: string,
   recordedVia: string,
+  cfg?: Config,
 ): Promise<{ intro_id: string; state: 'archived'; already: boolean }> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
@@ -488,7 +457,7 @@ export async function archiveMatch(
   const r = await getPool().query(
     `UPDATE matches
         SET state = 'archived', archived_at = now(), archived_by = $2,
-            archived_via = $3, updated_at = now()
+            archived_via = $3, live = false, updated_at = now()
       WHERE id = $1 AND state = 'open'
       RETURNING id`,
     [matchId, accountId, recordedVia],
@@ -512,6 +481,10 @@ export async function archiveMatch(
     `UPDATE channel_messages SET expires_at = now() WHERE match_id = $1 AND expires_at > now()`,
     [matchId],
   );
+  // The slot it held is free, so whoever is next in line on either side goes
+  // live now and their human is summoned the ordinary way.
+  const { resequenceAround } = await import('./sequencer.js');
+  await resequenceAround(matchId, cfg);
   return { intro_id: matchId, state: 'archived', already: false };
 }
 
@@ -546,7 +519,7 @@ export async function archiveOpenIntroductionsOnCard(
   const r = await getPool().query(
     `UPDATE matches
         SET state = 'archived', archived_at = now(), archived_by = $2,
-            archived_via = $3, updated_at = now()
+            archived_via = $3, live = false, updated_at = now()
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
         AND (channel_id IS NULL OR stage < 4)
       RETURNING id`,
@@ -567,6 +540,10 @@ export async function archiveOpenIntroductionsOnCard(
       WHERE match_id = ANY($1::uuid[]) AND expires_at > now()`,
     [ids],
   );
+  // Each of those people had a slot of their own taken up by this. It is free
+  // now, so whoever is next in THEIR line goes live and hears about it.
+  const { resequenceAround } = await import('./sequencer.js');
+  for (const id of ids) await resequenceAround(id);
   return ids.length;
 }
 
@@ -584,6 +561,10 @@ async function incomingOffer(
   matchId: string,
   accountId: string,
 ): Promise<{ amount: number; ccy: string; message: string | null } | undefined> {
+  // Sealed on a best offer: the seller sees no number until the window closes,
+  // by whichever road they come looking.
+  const { bestOfferSealedFrom } = await import('./offers.js');
+  if (await bestOfferSealedFrom(matchId, accountId)) return undefined;
   const r = await getPool().query(
     `SELECT amount, ccy, message FROM offers
      WHERE match_id = $1 AND proposer_account <> $2
@@ -764,7 +745,6 @@ export async function buildMutual(
 
 export async function openChannel(matchId: string, accountId: string) {
   const m = await loadOpenMatchFor(matchId, accountId);
-  await assertNotCollecting(m, accountId); // holder commits only after the window
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
     throw new OsbError('NOT_UNLOCKED_YET', {
@@ -873,6 +853,8 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     params,
   );
   const out: any[] = [];
+  /** Wants and haves whose closed best-offer result is already on the sweep. */
+  const bestOfferShown = new Set<string>();
   // The caller's own profile is the same for every match in the list, so it is
   // read at most once for the whole sweep (one audit line, not fifty).
   let own: SharedProfile | undefined;
@@ -905,15 +887,49 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // A ready sentence to answer "who was that again?" from later — the first
       // name and area if the two reached mutual disclosure, plainly, with no
       // system words. This is the whole of what the agent relays on recall.
+      //
+      // Two of them are not a recollection at all but news, and they are the
+      // ones the fit sequencer files away: a slot whose clock ran out, and a
+      // best-offer seller who went with somebody else. Both sides are owed a
+      // sentence saying so rather than an introduction that quietly stops.
       const c = entry.mutual?.counterparty;
-      entry.note = c
-        ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category)} a while back. The conversation and any number you swapped are here in our chat.`)
-        : sbNote(`You had ${plainLeaf(m.category)} sorted with someone a while back; it has since been filed away.`);
+      if (m.archived_via === 'lapsed') {
+        entry.note = sbNote(
+          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category)}; say the word if you would like me to look again.`,
+        );
+      } else if (m.archived_via === 'not-chosen') {
+        // No figure, no count, nothing about anyone else: the losing side is
+        // told the outcome and not one thing more.
+        entry.note = sbNote(
+          'The seller went with someone else on this one. Say the word and I will keep an ear out for another.',
+        );
+      } else {
+        entry.note = c
+          ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category)} a while back. The conversation and any number you swapped are here in our chat.`)
+          : sbNote(`You had ${plainLeaf(m.category)} sorted with someone a while back; it has since been filed away.`);
+      }
       out.push(entry);
       continue;
     }
     if (m.state !== 'open') {
       out.push({ intro_id: m.id, state: m.state });
+      continue;
+    }
+    // IN LINE. Only the introductions in a slot are live. The rest are rows
+    // waiting their turn, and who sees one depends on whose line is full:
+    //
+    //   - the HOLDER (their own want or have has no slot free) is shown
+    //     nothing of it at all. They are already talking to someone about this
+    //     and a queue behind that person is not their business to manage;
+    //     their own line is summed up once, on the live introduction, as a
+    //     count they can act on.
+    //   - the person WAITING gets one entry, one sentence, and nothing else:
+    //     no count, no position, no signal, no category. Being told "not yet"
+    //     is the difference between waiting and silence, and everything past
+    //     that sentence would be scarcity theatre.
+    if (m.live === false) {
+      if (await ownCardIsFull(ownCardId(m, accountId))) continue;
+      out.push({ intro_id: m.id, state: 'in_line', note: sbNote(IN_LINE_SENTENCE) });
       continue;
     }
     const signal = await buildSignal(m, accountId);
@@ -928,27 +944,36 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // entry, so the agent leads with it instead of naming the machinery.
       note: signalNote(m.category, signal.counterparty_type),
     };
-    // Collection-window info is shown ONLY to the holder (the side whose OWN
-    // card is contested). A rival's view carries no trace of the contest.
-    const w = await openCollectionWindow(ownCardId(m, accountId));
-    if (w) {
-      // No bare UTC close time crosses to the agent — a raw timestamp was
-      // being read out verbatim. The close time stays in the DB and on the
-      // human's own dashboard; the agent gets the count it can act on plus a
-      // human-voiced note, the way the switchboard would say it.
-      // With the human's zone known, the close can be said in their own
-      // clock — a wall-clock sentence, never the raw instant.
-      const tz = await getTimezone(accountId);
-      const { localTimeText } = await import('./localTime.js');
-      const closes = tz ? localTimeText(new Date(w.until), tz) : undefined;
-      entry.collection = {
-        collecting: true,
-        interested_parties: w.interestedParties,
-        ...(closes ? { closes_at_local: closes } : {}),
+    // THE LINE, and it is the HOLDER'S OWN. How many people are waiting behind
+    // this one on the caller's own want or have: their queue, on their own
+    // thing, so it is theirs to know. Nothing about it ever crosses to the
+    // other side, and it carries no names, no order and no hint of who.
+    const ownCard = ownCardId(m, accountId);
+    const waiting = await inLineCount(ownCard);
+    if (waiting > 0) {
+      entry.line = {
+        in_line: waiting,
         note: sbNote(
-          `More people are still coming forward about what you put up${closes ? ` until ${closes}` : ''}. Take a look at who is interested, and when you are ready to pick someone, tell me — or leave it and it will settle on its own.`,
+          `${waiting === 1 ? 'One more person is' : `${waiting} more people are`} in line for this; they come to you one at a time as this one settles.`,
         ),
       };
+    }
+    // The underpricing note. Only ever to the holder, only on something they
+    // are selling outright, never with a figure and never with a count. See
+    // domain/offers.ts for the floor of five it will not speak below.
+    const { bestOfferResult, underpricingNote } = await import('./offers.js');
+    const priceNote = await underpricingNote(ownCard, accountId);
+    if (priceNote) entry.price_note = sbNote(priceNote);
+    // A best offer whose gathering window has closed: every number at once,
+    // best first, on the seller's own want or have and once for the whole
+    // sweep rather than scattered one per introduction. Nothing of it exists
+    // for a buyer — bestOfferResult answers only its own card's owner.
+    if (!bestOfferShown.has(ownCard)) {
+      const result = await bestOfferResult(ownCard, accountId);
+      if (result) {
+        bestOfferShown.add(ownCard);
+        entry.best_offers = { offers: result.offers, note: sbNote(result.note) };
+      }
     }
     // A match that has reached stage 4 names its conversation here, so an agent
     // polling for matches already knows where to collect from. How many

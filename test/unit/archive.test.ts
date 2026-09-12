@@ -125,7 +125,17 @@ function run(sql: string, params: any[] = []) {
     if (params[0] === ANA) return rows([account(ANA, 'Ana', 'Downtown')]);
     return rows([]);
   }
-  // No open collection window in these scenarios.
+  // The fit sequencer runs after an archive: the slot the finished
+  // introduction held is free, so it looks at both sides' lines. Nobody is
+  // waiting in any of these scenarios, so every read comes back empty.
+  if (/SELECT card_want, card_have FROM matches/.test(sql)) {
+    return rows([{ card_want: 'card-w', card_have: 'card-h' }]);
+  }
+  if (/UPDATE cards c\s+SET gather_until/.test(sql)) return rows([]);
+  if (/JOIN cards own ON own\.id/.test(sql)) return rows([]);
+  if (/FROM matches m\s+WHERE \(m\.card_want = \$1 OR m\.card_have = \$1\)/.test(sql)) {
+    return rows([{ n: 0 }]);
+  }
   if (/collect_until/.test(sql)) return rows([]);
   throw new Error(`unexpected SQL in archive test: ${sql}`);
 }
