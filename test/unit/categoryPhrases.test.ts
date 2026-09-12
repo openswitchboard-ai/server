@@ -71,10 +71,15 @@ function framesFor(path: string): { frame: string; text: string }[] {
   const thing = categoryPhrase(path);
   const withArticle = categoryPhraseWithArticle(path);
   return [
-    { frame: 'summons', text: `Someone has come forward about your ${thing}.` },
+    { frame: 'summons (have side)', text: `Someone has come forward about your ${thing}.` },
+    { frame: 'summons (want side)', text: `Someone has come forward with ${withArticle}.` },
     {
-      frame: 'summons (second person)',
+      frame: 'summons (second person, have side)',
       text: `A second person has come forward about your ${thing}.`,
+    },
+    {
+      frame: 'summons (second person, want side)',
+      text: `A second person has come forward with ${withArticle}.`,
     },
     {
       frame: 'number on the table (seller)',
@@ -240,7 +245,7 @@ describe('every leaf, read aloud in every frame', () => {
         rendered++;
       }
     }
-    expect(rendered).toBe(LEAVES.length * 15);
+    expect(rendered).toBe(LEAVES.length * 17);
   });
 });
 

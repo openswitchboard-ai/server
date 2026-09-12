@@ -28,6 +28,7 @@ import {
   renderSummons,
   renderYourMove,
   type DigestItem,
+  type ReaderSide,
   type RenewalCardItem,
   type YourMoveStep,
 } from './templates.js';
@@ -52,6 +53,17 @@ function isoWeekKey(d = new Date()): string {
 }
 
 const periodKey = (cadence: Cadence) => (cadence === 'daily' ? dayKey() : isoWeekKey());
+
+/**
+ * Which side of a pairing this recipient is on, from the pairing row itself.
+ * Every sentence that names the thing needs it: the person offering reads
+ * "your mountain bike", the person looking reads "the mountain bike you are
+ * after", and one email template served both until 2026-09-12. Worked out at
+ * send time so nothing upstream has to carry it.
+ */
+function sideOf(row: { account_want: string }, accountId: string): ReaderSide {
+  return accountId === row.account_want ? 'want' : 'have';
+}
 
 /**
  * Per-account isolation for the tick loops. One account whose send throws
@@ -116,6 +128,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
             ordinal: Math.max(1, rank.rows[0]?.n ?? 1),
             categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
             blind: ctx.blind,
+            side: sideOf(m, accountId),
           },
           ctx.links,
         ),
@@ -142,7 +155,9 @@ export async function sendChannelWaitingNudge(
   cfg: Config,
   args: { matchId: string; channelId: string; recipientAccount: string; notifiedAt: string },
 ): Promise<void> {
-  const r = await getPool().query(`SELECT category FROM matches WHERE id = $1`, [args.matchId]);
+  const r = await getPool().query(`SELECT category, account_want FROM matches WHERE id = $1`, [
+    args.matchId,
+  ]);
   const m = r.rows[0];
   if (!m) return; // match vanished — nothing to say
   const ctx = await emailAccountContext(cfg, args.recipientAccount);
@@ -156,7 +171,11 @@ export async function sendChannelWaitingNudge(
     kind: 'bulk',
     dedupeKey: `channel-waiting:${args.channelId}:${args.recipientAccount}:${args.notifiedAt}`,
     content: renderChannelWaiting(
-      { categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category), blind: ctx.blind },
+      {
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        blind: ctx.blind,
+        side: sideOf(m, args.recipientAccount),
+      },
       ctx.links,
     ),
   });
@@ -210,6 +229,7 @@ export async function notifyYourMove(
         categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
         blind: ctx.blind,
         step,
+        side: sideOf(m, recipientAccount),
       },
       ctx.links,
     ),

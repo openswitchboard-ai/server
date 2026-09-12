@@ -222,7 +222,7 @@ describe('the notice itself', () => {
 
   it('says they are keen too, names the thing as a person would, and stops', () => {
     const c = renderYourMove(
-      { categoryLabel: 'Mountain bikes', blind: false, step: 'details' },
+      { categoryLabel: 'Mountain bikes', blind: false, step: 'details', side: 'have' },
       links,
     );
     expect(c.text).toContain('take it further too');
@@ -233,7 +233,7 @@ describe('the notice itself', () => {
 
   it('carries nothing to press and no marketing voice', () => {
     const c = renderYourMove(
-      { categoryLabel: 'Mountain bikes', blind: false, step: 'details' },
+      { categoryLabel: 'Mountain bikes', blind: false, step: 'details', side: 'have' },
       links,
     );
     expect(
@@ -243,15 +243,39 @@ describe('the notice itself', () => {
   });
 
   it('names no thing at all when the person is in blind mode', () => {
-    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: true, step: 'details' }, links);
+    const c = renderYourMove(
+      { categoryLabel: 'Mountain bikes', blind: true, step: 'details', side: 'have' },
+      links,
+    );
     expect(c.text).not.toContain('mountain bike');
     expect(c.text).toContain('take it further too');
   });
 
-  it('leaves the names-step wording exactly as it was', () => {
-    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: false }, links);
+  // The details step is the one this suite is about, and its wording is
+  // untouched by the 2026-09-12 copy audit. The names step it shares a
+  // template with is not: nobody has talked to anybody at that step, so it no
+  // longer says the other person is "ready to talk".
+  it('keeps the details step apart from the reworded names step', () => {
+    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: false, side: 'have' }, links);
     expect(c.subject).toBe('It is your turn');
-    expect(c.text).toContain('is keen and ready to talk');
+    expect(c.text).toContain('They have said yes to swapping first names about your mountain bike.');
+    expect(c.text).toContain('Your yes is the last step before the two of you can talk.');
+    expect(c.text).not.toContain('keen and ready to talk');
+    expect(c.text).not.toContain('take it further too');
+  });
+
+  // The details step names the thing the same way to both sides ("the
+  // mountain bike"); the names step says whose it is, so it takes the side.
+  it('says the names step from the reader’s own side', () => {
+    const buyer = renderYourMove(
+      { categoryLabel: 'Mountain bikes', blind: false, side: 'want' },
+      links,
+    );
+    expect(buyer.text).toContain(
+      'They have said yes to swapping first names about the mountain bike you are after.',
+    );
+    expect(buyer.text).not.toContain('your mountain bike');
+    expect(lintEmailCopy(buyer.subject + buyer.text + buyer.html)).toEqual([]);
   });
 });
 
@@ -270,5 +294,22 @@ describe('the two steps keep their own dedupe keys', () => {
     world.hearsVia[ANA] = 'assistant';
     await notifyYourMove(cfg, MATCH, ANA, 'details');
     expect(sesSend).not.toHaveBeenCalled();
+  });
+
+  // The sender works the side out from the pairing row at send time: Ana holds
+  // the want, Beppe holds the have, and neither is ever told they own the
+  // other one's thing.
+  it('the sender gives each human the sentence for their own side', async () => {
+    const bodyText = () =>
+      (sesSend.mock.calls.at(-1)![0] as any).input.Content.Simple.Body.Text.Data as string;
+    await notifyYourMove(cfg, MATCH, ANA, 'names');
+    expect(bodyText()).toContain(
+      'They have said yes to swapping first names about the mountain bike you are after.',
+    );
+    expect(bodyText()).not.toContain('your mountain bike');
+    await notifyYourMove(cfg, MATCH, BEPPE, 'names');
+    expect(bodyText()).toContain(
+      'They have said yes to swapping first names about your mountain bike.',
+    );
   });
 });
