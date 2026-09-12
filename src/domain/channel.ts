@@ -201,6 +201,11 @@ export async function sendMessage(
         recipientAccount: ch.counterpartyAccount,
       });
     }
+    // Two people talking is the plainest movement there is, so the slot's
+    // clock starts again from here (domain/sequencer.ts). Best-effort by
+    // construction: the message is already committed.
+    const { noteMovement } = await import('./sequencer.js');
+    await noteMovement(matchId);
     return {
       conversation_id: ch.channelId,
       message_id: r.rows[0].id as string,
