@@ -37,9 +37,11 @@ export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
 
 const CSS = `
-  /* Choose-a-PIN boxes: masked like a password without being one, so no
-     browser offers to invent a password for a six-digit PIN. */
-  .pinbox{-webkit-text-security:disc;text-security:disc;letter-spacing:.25em;}
+  /* PIN boxes show their digits. Safari treats any masked box (type=password
+     or -webkit-text-security) as a password: it offers to invent one and asks
+     to save it on submit. A six-digit PIN typed on your own device is shown,
+     the way a bank app shows it. */
+  .pinbox{letter-spacing:.3em;font-variant-numeric:tabular-nums;}
 
 :root {
   /* Palette — the public site's tokens, light first. */
@@ -358,9 +360,9 @@ export function pinSetPage(error?: string): string {
 ${errBox(error)}
 <form method="POST" action="/pin/set">
   <label for="pin">PIN (6+ digits)</label>
-  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
   <label for="pin2">PIN again</label>
-  <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+  <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
   <button type="submit">Set PIN</button>
 </form>
 <p class="small muted">Disclosures, settlements and turning things back on all ask
@@ -536,7 +538,7 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   const showPin = v.needsPin && !v.elevated;
   const pinBlock = showPin
     ? `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
+       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
     : '';
   const passkeyBtn = v.needsPin && v.hasPasskey && !v.elevated
     ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
@@ -676,7 +678,7 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   const pinBlock = v.elevated
     ? `<input type="hidden" name="pin" value="">`
     : `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
+       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
   const passkeyBtn = v.hasPasskey && !v.elevated
     ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
     : '';
@@ -917,7 +919,7 @@ function pinField(elevated: boolean, which: string): string {
   return elevated
     ? `<input type="hidden" name="pin" value="">`
     : `<label for="pin-${which}">Confirm with your PIN</label>
-         <input id="pin-${which}" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
+         <input id="pin-${which}" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
