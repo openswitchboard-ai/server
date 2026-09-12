@@ -531,15 +531,20 @@ describe('an acceptance reaches the person whose figure it was', () => {
 describe('what the emails say', () => {
   const links: FooterLinks = { settingsUrl: 'https://my.test/settings' };
 
+  // The words come from the taxonomy now, by leaf id or by label, and the
+  // mechanical rule is only what is left for a category nobody has phrased.
   it('says a category the way a person says it mid-sentence', () => {
     expect(categoryPhrase('Mountain bikes')).toBe('mountain bike');
-    expect(categoryPhrase('Garden tools')).toBe('garden tool');
+    expect(categoryPhrase('goods.bicycle.mountain')).toBe('mountain bike');
+    expect(categoryPhrase('Garden tools')).toBe('garden tools');
     expect(categoryPhrase('Fridges & freezers')).toBe('fridge');
-    expect(categoryPhrase('Kettles, toasters & benchtop appliances')).toBe('kettle');
-    expect(categoryPhrase('Language exchange')).toBe('language exchange');
+    expect(categoryPhrase('Kettles, toasters & benchtop appliances')).toBe('kitchen appliance');
+    expect(categoryPhrase('DSLR cameras')).toBe('DSLR camera');
+    expect(categoryPhrase('Kids clothing')).toBe("kids' clothing");
+    expect(categoryPhrase(undefined)).toBe('');
+    // Nobody has phrased these, so the old rule still answers.
     expect(categoryPhrase('Batteries')).toBe('battery');
     expect(categoryPhrase('Glasses')).toBe('glasses');
-    expect(categoryPhrase(undefined)).toBe('');
   });
 
   it('says a figure the way a person writes it', () => {

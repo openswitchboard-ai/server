@@ -8,8 +8,8 @@ import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
   THRESHOLD_BUMP_STEP,
-  categoryLeafLabel,
   categoryPhrase,
+  categoryPhraseWithArticle,
 } from './matchRules.js';
 import {
   counterpartyProfileConsentError,
@@ -754,11 +754,11 @@ export async function getStagePayload(
  *  the machinery — every one is written plain, warm and jargon-free. */
 const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
 
-/** The leaf category as a human would say it mid-sentence ("book club",
- *  "bicycle"), for dropping into a ready sentence — hyphens and dots read as
- *  spaces so nothing looks like a code. */
-const plainLeaf = (category: string) =>
-  categoryLeafLabel(category).toLowerCase().replace(/[-_.]+/g, ' ').trim();
+/** The leaf category as a human would say it mid-sentence, with the article
+ *  the sentences here need in front of it: "a mountain bike", "climbing gear",
+ *  "a book club". The words come from the taxonomy, so nothing looks like a
+ *  code and no acronym arrives lower-cased. */
+const plainLeaf = (category: string) => categoryPhraseWithArticle(category);
 
 /** The ready sentence for a fresh stage-1 signal, warmed by which side the
  *  other person is on: they have what your human is after, or they are after
@@ -898,12 +898,8 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       entry.offers = table;
       // The offer sentence names the thing the way a person would say it in
       // one — "for your mountain bike" — where the signal sentence wants the
-      // plural it already has.
-      const noteText = offerTableNote(
-        table,
-        categoryPhrase(categoryLeafLabel(m.category)),
-        sideOf(m, accountId),
-      );
+      // article in front of it as well.
+      const noteText = offerTableNote(table, categoryPhrase(m.category), sideOf(m, accountId));
       if (noteText) entry.offer_note = sbNote(noteText);
       // A figure one human proposed and the other took, whichever way round:
       // the deal is agreed and the switchboard has nothing further to do on it.
