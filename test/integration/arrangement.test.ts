@@ -9,8 +9,16 @@
  * the arrangement back off that connection's first check_in sweep.
  *
  * Also proved here against the real service: the validator refuses contact
- * details, the human's own page shows the arrangement in plain words and can
- * clear it, and an agent bearer token is turned away from that page.
+ * details, a checking cadence is refused unless the agent has said it runs
+ * between conversations, saving both moves the account over to hearing its
+ * news through the assistant, the human's own page shows the arrangement in
+ * plain words and can clear it, and an agent bearer token is turned away from
+ * that page.
+ *
+ * The sweep carries more beside the arrangement than it used to (how this
+ * human hears, whether this agent runs on its own, their clock, and a sentence
+ * for each), so nothing here pins the exact set of keys check_in returns; the
+ * fields this file is about are read one by one.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
@@ -27,7 +35,10 @@ const d = RUN ? describe : describe.skip;
 
 let ada: TestActor;
 
+// A cadence is only accepted from an agent that has said it runs between
+// conversations, so the arrangement this suite saves says both.
 const ARRANGEMENT = {
+  runs_on_its_own: true,
   check_every_minutes: 720,
   interrupt_for: ['a new match', 'anything waiting on my approval page'],
   summarize: 'a round-up on Sunday evening',
@@ -52,16 +63,23 @@ d('standing arrangement against live deployment', () => {
     expect(got.result.arrangement).toEqual({});
     const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({});
-    expect(sweep.result.arrangement_note.text).toMatch(/no standing arrangement/i);
+    expect(sweep.result.arrangement_note.text).toMatch(/has not saved any standing preferences/i);
+    // Where a fresh account starts: nobody has said an agent runs between
+    // conversations, so the switchboard is the one that emails this human.
+    expect(sweep.result.runs_on_its_own).toBe(false);
+    expect(sweep.result.hears_via).toBe('email');
   });
 
-  it('sets and reads back the whole object', async () => {
+  it('sets and reads back the whole object, and the agent becomes the messenger', async () => {
     const set = await mcpCall(ada.accessToken, 'standing_arrangement', {
       action: 'set',
       arrangement: ARRANGEMENT,
     });
     expect(set.isError).toBe(false);
     expect(set.result.arrangement).toEqual(ARRANGEMENT);
+    // Runs on its own AND keeps a cadence, so this account now hears its news
+    // through the agent, and the saving says so.
+    expect(set.result.note.text).toContain('you are the one who brings them the news');
     const got = await mcpCall(ada.accessToken, 'standing_arrangement', { action: 'get' });
     expect(got.result.arrangement).toEqual(ARRANGEMENT);
   });
@@ -75,6 +93,13 @@ d('standing arrangement against live deployment', () => {
     expect(sweep.isError).toBe(false);
     expect(sweep.result.arrangement).toEqual(ARRANGEMENT);
     expect(sweep.result.arrangement_note.provenance).toBe('switchboard-system');
+    expect(sweep.result.arrangement_note.text).toContain('every 12 hours');
+    // The rest of what the first connection settled travels with it: this
+    // agent runs on its own, and this human hears through it.
+    expect(sweep.result.runs_on_its_own).toBe(true);
+    expect(sweep.result.hears_via).toBe('assistant');
+    expect(sweep.result.runs_on_its_own_note.provenance).toBe('switchboard-system');
+    expect(sweep.result.hears_via_note.provenance).toBe('switchboard-system');
   });
 
   it('refuses anything shaped like a way to reach someone', async () => {
@@ -93,6 +118,7 @@ d('standing arrangement against live deployment', () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('How your agents behave');
+    expect(body).toContain('It runs on its own and brings you the news.');
     expect(body).toContain('every 12 hours');
     expect(body).toContain('anything waiting on my approval page');
   });
@@ -109,6 +135,9 @@ d('standing arrangement against live deployment', () => {
       ada.jar,
       '/arrangement',
       form({
+        // The tick box on the page is the same fact as runs_on_its_own on the
+        // wire, and the cadence box needs it here too.
+        runs_on_its_own: 'on',
         check_every_minutes: '10080',
         interrupt_for: 'a new match',
         summarize: '',
@@ -120,10 +149,37 @@ d('standing arrangement against live deployment', () => {
     expect(res.status).toBe(200);
     const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({
+      runs_on_its_own: true,
       check_every_minutes: 10080,
       interrupt_for: ['a new match'],
       suggestion_appetite: 'never',
     });
+  });
+
+  it('a cadence from an agent that does not run on its own is refused, on both surfaces', async () => {
+    const said = 'A checking cadence is for an agent that runs between conversations.';
+    const bad = await mcpCall(ada.accessToken, 'standing_arrangement', {
+      action: 'set',
+      arrangement: { check_every_minutes: 720, interrupt_for: ['a new match'] },
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.result.message).toContain(said);
+    // It is a thing to say to a person, so it comes back as one.
+    expect(bad.result.human_action).toContain(said);
+    const res = await counterFetch(
+      ada.jar,
+      '/arrangement',
+      form({
+        check_every_minutes: '720',
+        interrupt_for: '',
+        summarize: '',
+        quiet_hours: '',
+        suggestion_appetite: '',
+        notes: '',
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain(said);
   });
 
   it('a cadence oftener than every 30 minutes is refused, and the floor is named', async () => {
@@ -132,7 +188,7 @@ d('standing arrangement against live deployment', () => {
       arrangement: { ...ARRANGEMENT, check_every_minutes: 5 },
     });
     expect(bad.isError).toBe(true);
-    expect(JSON.stringify(bad)).toContain('No more often than every 30 minutes');
+    expect(bad.result.message).toContain('No more often than every 30 minutes');
   });
 
   it('the page refuses it too, in the same sentence', async () => {
@@ -140,6 +196,7 @@ d('standing arrangement against live deployment', () => {
       ada.jar,
       '/arrangement',
       form({
+        runs_on_its_own: 'on',
         check_every_minutes: '5',
         interrupt_for: '',
         summarize: '',
@@ -157,6 +214,10 @@ d('standing arrangement against live deployment', () => {
     expect(res.status).toBe(200);
     const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({});
-    expect(sweep.result.arrangement_note.text).toMatch(/no standing arrangement/i);
+    expect(sweep.result.arrangement_note.text).toMatch(/has not saved any standing preferences/i);
+    expect(sweep.result.runs_on_its_own).toBe(false);
+    // Clearing the arrangement does not put this human back on email. Which
+    // way they hear is their own call, on their own page.
+    expect(sweep.result.hears_via).toBe('assistant');
   });
 });
