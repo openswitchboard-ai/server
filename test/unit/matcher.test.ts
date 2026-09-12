@@ -671,7 +671,7 @@ describe('score blend + decision', () => {
     expect(decide(0.7, 0, 0)).toBe('near-miss');
     expect(decide(0.5, 0, 0)).toBe('discard');
     expect(NEAR_MISS_FLOOR).toBe(0.55);
-    // A not-for-me-nudged user's threshold rises: 0.76 no longer clears 0.75+0.02.
+    // A bad-verdict-nudged user's threshold rises: 0.76 no longer clears 0.75+0.02.
     expect(decide(0.76, 0.02, 0)).toBe('near-miss');
     expect(decide(0.78, 0.02, 0)).toBe('match');
   });
