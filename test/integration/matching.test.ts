@@ -32,6 +32,7 @@ import {
   dbExec,
   mcpCall,
   poll,
+  reachStage3,
   sendOp,
   setAutoNegotiate,
   waitForCardState,
@@ -536,13 +537,25 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     }
 
     // THE HOLDER IS NOT BLOCKED. This is what replaced the window: several
-    // people are on it and the go-ahead still goes through at once.
-    const optIn = await mcpCall(hank.accessToken, 'respond', {
-      intro_id: hankMatchIds[buyers[0].accountId],
-      action: 'opt_in',
+    // people are on it and the go-ahead still goes through at once. The
+    // go-ahead itself is the human's own press every time (Lachlan,
+    // 2026-09-12): each agent's opt_in records nothing and answers
+    // CONSENT_REQUIRED carrying that human's single-use link, and the two
+    // presses are what open the names step.
+    const live = hankMatchIds[buyers[0].accountId];
+    const refusals = await reachStage3(live, [{ actor: hank }, { actor: buyers[0] }]);
+    for (const r of refusals) {
+      expect(r.isError, JSON.stringify(r.result)).toBe(true);
+      expect(r.result.code).toBe('CONSENT_REQUIRED');
+      expect(r.result.human_action).toMatch(/https?:\/\/\S+\/a\//);
+      expect(r.result.optin_recorded).toBeUndefined();
+    }
+    const mutual = await mcpCall(hank.accessToken, 'check_in', {
+      intro_id: live,
+      step: 'names',
     });
-    expect(optIn.isError, JSON.stringify(optIn.result)).toBe(false);
-    expect(optIn.result.optin_recorded).toBe(true);
+    expect(mutual.isError, JSON.stringify(mutual.result)).toBe(false);
+    expect(mutual.result.optin.both_recorded).toBe(true);
   });
 
   it('GATE (e): 4th per-match offer in 24h -> RATE_LIMITED_OFFERS; ladder flags reputation', async () => {
