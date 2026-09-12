@@ -728,7 +728,7 @@ async function notifyHumansOfProposal(
 ): Promise<void> {
   const { sendSettlementEmail } = await import('../counter/email.js');
   const { accountEmail } = await import('./counterOps.js');
-  const { categoryLeafLabel } = await import('./matchRules.js');
+  const { categoryPhrase } = await import('./matchRules.js');
   for (const accountId of [s.buyer_account, s.seller_account] as const) {
     const email = await accountEmail(accountId, 'settlement-approval-notification');
     if (email) {
@@ -740,7 +740,7 @@ async function notifyHumansOfProposal(
         accountId,
         template: 'settlement-proposed',
         settlementId: s.id,
-        summary: `A settlement of ${Number(s.amount)} ${s.ccy} on your ${categoryLeafLabel(m.category)} introduction is waiting for your approval.`,
+        summary: `A settlement of ${Number(s.amount)} ${s.ccy} on your ${categoryPhrase(m.category)} introduction is waiting for your approval.`,
       });
       } catch (err) {
         console.warn('settlement-proposed email failed; settlement stands', err);

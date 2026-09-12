@@ -23,7 +23,7 @@ import { getPool } from '../db.js';
 import { OsbError } from '../protocol.js';
 import { getHearsVia } from './accounts.js';
 import { getMatch, ownCardId, sideOf } from './matches.js';
-import { categoryLeafLabel } from './matchRules.js';
+import { categoryPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink } from '../counter/links.js';
 import type { Config } from '../config.js';
@@ -67,7 +67,7 @@ function money(amount: number, ccy: string): string {
 /** The thing itself, in the words a person uses for it. */
 async function thingOf(cardId: string): Promise<string> {
   const r = await getPool().query('SELECT category FROM cards WHERE id = $1', [cardId]);
-  return r.rows[0] ? categoryLeafLabel(r.rows[0].category).toLowerCase() : 'what you posted';
+  return r.rows[0] ? categoryPhrase(r.rows[0].category) : 'what you posted';
 }
 
 /** This account's own card behind an introduction, or a refusal. */
@@ -187,7 +187,7 @@ export async function acceptNumberLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryLeafLabel(o.category).toLowerCase()}` : ` for the ${categoryLeafLabel(o.category).toLowerCase()} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -249,7 +249,7 @@ export async function closeWindowLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to close the window on their ${categoryLeafLabel(card.category).toLowerCase()} now and go ahead with someone. Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page asking your human whether to close the window on their ${categoryPhrase(card.category)} now and go ahead with someone. Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -291,7 +291,7 @@ export async function autoNegotiateLink(
       ...(mandate.step !== undefined ? { step: mandate.step } : {}),
     },
   });
-  const thing = categoryLeafLabel(card.category).toLowerCase();
+  const thing = categoryPhrase(card.category);
   const edge =
     card.type === 'HAVE'
       ? `take no less than ${money(mandate.limit, mandate.ccy)}`

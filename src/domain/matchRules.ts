@@ -666,14 +666,18 @@ export function isLadderPattern(amountsInOrder: number[]): boolean {
 // The taxonomy's labels are headings: "Mountain bikes", "Kettles, toasters &
 // benchtop appliances", "Fridges & freezers". Dropped into a sentence they
 // read as a catalogue — "about your Mountain bikes" — which is exactly how a
-// person can tell an email was assembled rather than written. categoryPhrase
-// turns a heading into a lower-case singular noun phrase: the first thing the
-// heading lists, in the singular, so the sentence reads "about your mountain
-// bike".
+// person can tell an email was assembled rather than written.
 //
-// Deliberately small. It is a phrasing helper for one sentence, so a word it
-// gets wrong costs a slightly odd reading and nothing else; no lookup table
-// and no exceptions beyond the words that are already singular with an s.
+// So every open leaf in the taxonomy now carries its own `phrase`, written by
+// hand: the words a person uses after "your", after "the ... you are after",
+// and after "keen on". categoryPhrase looks that up, by leaf id or by label,
+// and only falls back to the old mechanical rule for a category the taxonomy
+// has never heard of.
+//
+// The mechanical rule below is the fallback and nothing more. It lower-cases
+// the first clause of the heading and trims the last s, which is right often
+// enough and wrong on acronyms ("dslr camera"), brands ("playstation") and
+// mass nouns ("kids clothing"). That is the whole reason the phrases exist.
 // ---------------------------------------------------------------------------
 
 /** Words that end in s and are not plurals; never trimmed. */
@@ -706,13 +710,8 @@ function singularise(word: string): string {
   return word;
 }
 
-/**
- * "Mountain bikes" -> "mountain bike"; "Kettles, toasters & benchtop
- * appliances" -> "kettle"; "Language exchange" -> "language exchange". Safe on
- * an empty or missing label, which comes back as an empty string so a caller
- * can fall back to the sentence that names nothing.
- */
-export function categoryPhrase(label?: string): string {
+/** The old rule, kept for a category the taxonomy does not know. */
+function mechanicalPhrase(label?: string): string {
   const first = String(label ?? '')
     .split(/[,&]/)[0]
     .trim()
@@ -722,4 +721,95 @@ export function categoryPhrase(label?: string): string {
   const words = first.split(' ');
   words[words.length - 1] = singularise(words[words.length - 1]);
   return words.join(' ');
+}
+
+type PhraseNode = { phrase?: string; countable?: boolean; article?: 'a' | 'an' };
+
+/** Leaf id -> node, and label -> node for the callers that only hold a label
+ *  (the email templates are handed `categoryLabel`, never the id). Two leaves
+ *  share a label today ("Board games", "Video games"); both pairs are written
+ *  to the same phrase, so first-wins on the label side says the same thing
+ *  either way. The taxonomy test in the schema repo is what keeps that true. */
+let phraseIndexCache: { byId: Map<string, PhraseNode>; byLabel: Map<string, PhraseNode> } | undefined;
+function phraseIndex() {
+  if (!phraseIndexCache) {
+    const byId = new Map<string, PhraseNode>();
+    const byLabel = new Map<string, PhraseNode>();
+    for (const [id, node] of Object.entries((taxonomy().nodes ?? {}) as Record<string, any>)) {
+      if (!node?.phrase) continue;
+      byId.set(id, node);
+      if (node.label && !byLabel.has(node.label)) byLabel.set(node.label, node);
+    }
+    phraseIndexCache = { byId, byLabel };
+  }
+  return phraseIndexCache;
+}
+
+function phraseNode(labelOrId?: string): PhraseNode | undefined {
+  const key = String(labelOrId ?? '').trim();
+  if (!key) return undefined;
+  const { byId, byLabel } = phraseIndex();
+  return byId.get(key) ?? byLabel.get(key);
+}
+
+/** A leaf id with no phrase — a reserved node, or a branch — still has a
+ *  label, and the mechanical rule reads better on a heading than on a slug.
+ *  A category the taxonomy has never seen at all falls back to its own last
+ *  segment, where hyphens read as spaces so nothing arrives looking like code. */
+function fallbackPhrase(labelOrId?: string): string {
+  const key = String(labelOrId ?? '').trim();
+  if (!key) return '';
+  const isCategoryId = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/.test(key);
+  if (!isCategoryId) return mechanicalPhrase(key);
+  const label = categoryLeafLabel(key);
+  const known = Boolean((taxonomy().nodes ?? {})[key]);
+  return mechanicalPhrase(known ? label : label.replace(/[-_]+/g, ' '));
+}
+
+/**
+ * The category as a person says it mid-sentence, from either the leaf id
+ * ("goods.bicycle.mountain") or its label ("Mountain bikes"): both come back
+ * "mountain bike". A category the taxonomy has never heard of falls back to
+ * the mechanical rule, and an empty or missing one comes back as an empty
+ * string so a caller can use the sentence that names nothing.
+ */
+export function categoryPhrase(labelOrId?: string): string {
+  return phraseNode(labelOrId)?.phrase ?? fallbackPhrase(labelOrId);
+}
+
+/** Whether the phrase takes an article at all. Mass nouns ("climbing gear")
+ *  and the phrases people keep plural ("guitar lessons") do not. */
+export function categoryPhraseIsCountable(labelOrId?: string): boolean {
+  return phraseNode(labelOrId)?.countable !== false;
+}
+
+/** Letters whose NAME starts with a vowel sound, for a phrase that opens with
+ *  an acronym: an SLR, an MP3, an Xbox. */
+const VOWEL_SOUND_LETTERS = new Set(['A', 'E', 'F', 'H', 'I', 'L', 'M', 'N', 'O', 'R', 'S', 'X']);
+
+/** Spelt with a vowel and said with a consonant: a European, a university. */
+const A_DESPITE_VOWEL = [/^eu/, /^uni(?!n)/, /^use/, /^user/, /^ukulele/, /^one$/, /^once$/];
+
+/** "a" or "an" in front of a phrase, worked out from how the phrase is said.
+ *  The taxonomy overrides it on the handful the spelling gets wrong. */
+export function articleForPhrase(phrase: string): 'a' | 'an' {
+  const first = phrase.split(/[\s-]/)[0] ?? '';
+  if (/^[A-Z][A-Z0-9]/.test(first)) return VOWEL_SOUND_LETTERS.has(first[0]) ? 'an' : 'a';
+  const lower = first.toLowerCase();
+  if (A_DESPITE_VOWEL.some((r) => r.test(lower))) return 'a';
+  return /^[aeiou]/.test(lower) ? 'an' : 'a';
+}
+
+/**
+ * The phrase with its article in front where it takes one: "a mountain bike",
+ * "an English lesson", "an Xbox", and plain "climbing gear" for a mass noun.
+ * For the sentences that introduce the thing rather than possess it — "keen on
+ * a mountain bike", "someone nearby has climbing gear going".
+ */
+export function categoryPhraseWithArticle(labelOrId?: string): string {
+  const node = phraseNode(labelOrId);
+  const phrase = node?.phrase ?? fallbackPhrase(labelOrId);
+  if (!phrase) return '';
+  if (node?.countable === false) return phrase;
+  return `${node?.article ?? articleForPhrase(phrase)} ${phrase}`;
 }
