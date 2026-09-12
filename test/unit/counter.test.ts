@@ -391,23 +391,19 @@ describe('local times', () => {
     expect(settlement).toContain('<time datetime="2026-09-05T00:00:00.000Z" data-local="day">');
     expect(settlement).not.toContain('&lt;time');
 
+    // The dashboard's own local time is the lapsing day, asserted below with
+    // the rest of that card. The window that used to print one here is gone
+    // (migration 030).
     const dashboard = chome.dashboardPage({
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [
-        {
-          cardId: 'c-1',
-          category: LABEL,
-          type: 'WANT',
-          until: cpages.localTime('2026-09-09T10:28:00.000Z'),
-          interestedParties: 2,
-        },
-      ],
+      lapsingSoon: { count: 1, soonest: cpages.localTime('2026-09-09T10:28:00.000Z', 'day') },
     });
     expect(dashboard).toContain(
-      'window open until <time datetime="2026-09-09T10:28:00.000Z" data-local="minute">2026-09-09 10:28 UTC</time>',
+      '<time datetime="2026-09-09T10:28:00.000Z" data-local="day">',
     );
+    expect(dashboard).not.toContain('&lt;time');
   });
 
   it('the offer and arrangement pages do the same', () => {
@@ -648,12 +644,9 @@ describe('counter pages: copy-cull render suite', () => {
           },
           { href: '/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
         ],
-        collectionWindows: [
-          { cardId: 'c-1', category: LABEL, type: 'WANT', until: cpages.localTime('2026-09-01T00:00:00.000Z'), interestedParties: 2 },
-        ],
       }),
     },
-    { name: 'dashboard-kill-on', html: chome.dashboardPage({ killSwitchOn: true, cardCounts: { total: 0, published: 0, pending: 0 }, pendingApprovals: [], collectionWindows: [] }) },
+    { name: 'dashboard-kill-on', html: chome.dashboardPage({ killSwitchOn: true, cardCounts: { total: 0, published: 0, pending: 0 }, pendingApprovals: [] }) },
     {
       name: 'ledger',
       html: chome.ledgerPage([
@@ -1103,7 +1096,6 @@ describe('counter pages: copy-cull render suite', () => {
       killSwitchOn: false,
       cardCounts: { total: 0, published: 0, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [],
     });
     expect(html).toContain('Nothing is waiting for you.');
     expect(html).toContain('<h2>Waiting for you</h2>');
@@ -1114,7 +1106,6 @@ describe('counter pages: copy-cull render suite', () => {
       killSwitchOn: false,
       cardCounts: { total: 3, published: 3, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [],
       lapsingSoon: { count: 2, soonest: cpages.localTime('2026-09-08T00:00:00.000Z', 'day') },
     });
     expect(html).toContain('2 of your wants and haves');
@@ -1210,7 +1201,6 @@ describe('the dashboard the rehearsal left notes on', () => {
       killSwitchOn: false,
       cardCounts: { total: 1, published: 1, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [],
       ...over,
     });
 

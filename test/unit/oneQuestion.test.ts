@@ -661,26 +661,23 @@ describe('(c) accept a number', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('(d) close the window', () => {
-  it('asks whether to close it now, and closes it on the press', async () => {
-    const r = await humanLinks.closeWindowLink(cfg, ANA, CARD_W);
-    const t = encodeURIComponent(tokenOf(r.link));
-    const page = await inject('GET', `/a/${t}`);
-    expect(page.body).toContain('Close the window on your mountain bike now and choose?');
-    // No money and no identity moves, so no PIN.
-    expect(page.body).not.toContain('Confirm with your PIN');
-
-    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes' });
-    expect(pressed.statusCode).toBe(200);
-    expect(pressed.body).toContain('The window is closed.');
-    expect(world.collectClosedAt).not.toBeNull();
-  });
-
-  it('refuses to mint when no window is open', async () => {
-    world.collectUntil = null;
-    await expect(humanLinks.closeWindowLink(cfg, ANA, CARD_W)).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET' },
-    });
+// (d) There was a fourth link here, for closing the short window on a want or
+// have of the holder's own. The window is gone (migration 030): nothing blocks
+// a holder, so there is nothing to close and no link to mint. What is asserted
+// instead is that an agent still reaching for it is told so plainly, rather
+// than being handed "unknown action".
+describe('(d) the window that is gone', () => {
+  it('answers both retired actions with a plain refusal, and mints nothing', async () => {
+    for (const args of [
+      { intent_id: CARD_W, action: 'request_close_window' },
+      { intro_id: MATCH, action: 'close_collection' },
+    ]) {
+      const r: any = await respond(args);
+      expect(r.isError).toBe(true);
+      expect(JSON.stringify(r.content[0].text)).toContain('the window is gone');
+      expect(JSON.stringify(r.content[0].text)).toContain('one at a time');
+    }
+    expect(world.links).toHaveLength(0);
   });
 });
 
@@ -762,7 +759,6 @@ describe('the assistant fetches the links and never acts', () => {
     const calls: Record<string, unknown>[] = [
       { intro_id: MATCH, action: 'request_share_name' },
       { intro_id: MATCH, action: 'request_accept', offer_id: OFFER },
-      { intent_id: CARD_W, action: 'request_close_window' },
       {
         intent_id: CARD_W,
         action: 'request_auto_negotiate',
@@ -777,11 +773,10 @@ describe('the assistant fetches the links and never acts', () => {
       expect(out.expires_in_minutes).toBe(15);
       expect(String(out.what_it_does).length).toBeGreaterThan(20);
     }
-    // Four links minted, and not one of them acted on.
-    expect(world.links).toHaveLength(4);
+    // Three links minted, and not one of them acted on.
+    expect(world.links).toHaveLength(3);
     expect(world.offers).toHaveLength(0);
     expect(world.mandateWrites).toHaveLength(0);
-    expect(world.collectClosedAt).toBeNull();
   });
 
   it('relays the auto-negotiate refusal to the agent that asked', async () => {
@@ -798,7 +793,6 @@ describe('the assistant fetches the links and never acts', () => {
   it('says which field is missing rather than failing obscurely', async () => {
     for (const [args, want] of [
       [{ intro_id: MATCH, action: 'request_accept' }, 'requires offer_id'],
-      [{ action: 'request_close_window' }, 'requires intent_id'],
       [{ action: 'request_auto_negotiate', intent_id: CARD_W }, 'requires the numbers'],
       [{ action: 'express_interest' }, 'requires intro_id'],
     ] as const) {
@@ -917,16 +911,15 @@ describe('a link belongs to one person', () => {
   });
 
   it('a link for a want or have that is not yours is not minted at all', async () => {
-    await expect(humanLinks.closeWindowLink(cfg, ANA, CARD_H)).rejects.toMatchObject({
-      notFound: true,
-    });
     await expect(humanLinks.autoNegotiateLink(cfg, ANA, CARD_H, { limit: 400, ccy: 'AUD' }))
       .rejects.toMatchObject({ notFound: true });
     expect(world.links).toHaveLength(0);
   });
 
   it('the refusals carry the protocol shape an agent can act on', async () => {
-    world.collectUntil = null;
-    await expect(humanLinks.closeWindowLink(cfg, ANA, CARD_W)).rejects.toBeInstanceOf(OsbError);
+    world.hearsVia = 'email';
+    await expect(
+      humanLinks.autoNegotiateLink(cfg, ANA, CARD_W, { limit: 400, ccy: 'AUD' }),
+    ).rejects.toBeInstanceOf(OsbError);
   });
 });

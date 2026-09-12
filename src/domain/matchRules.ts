@@ -281,19 +281,10 @@ export const NEAR_MISS_FLOOR = 0.55;
 export const MAX_THRESHOLD_BUMP = 0.1;
 export const THRESHOLD_BUMP_STEP = 0.01;
 
-/** Collection-window defaults (minutes). Per-card override may only shorten. */
-export const COLLECT_WINDOW_DEFAULT_MIN = 360; // 6h, goods
-export const COLLECT_WINDOW_URGENT_MIN = 120; // urgency = 'today' — two hours; people do not watch their inbox by the minute
-
-export function defaultCollectWindowMinutes(urgency: string): number {
-  return urgency === 'today' ? COLLECT_WINDOW_URGENT_MIN : COLLECT_WINDOW_DEFAULT_MIN;
-}
-
-export function collectWindowMinutes(urgency: string, override: number | null | undefined): number {
-  const dflt = defaultCollectWindowMinutes(urgency);
-  if (override != null && override >= 1) return Math.min(override, dflt);
-  return dflt;
-}
+// The collection window's constants stood here. It is gone (migration 030).
+// Nothing blocks a holder now: a contested want or have is worked through one
+// introduction at a time by the fit sequencer, and the timer that replaced the
+// window's is the slot clock in domain/sequencer.ts.
 
 // ---------------------------------------------------------------------------
 // Canonical projection text: what gets embedded for a card. Deliberately NOT
@@ -577,6 +568,66 @@ export function evaluatePrice(
   if (ceiling <= 0) return { compatible: true, fit: 1 };
   const headroom = (ceiling - floor) / ceiling; // [0,1]
   return { compatible: true, fit: Math.min(1, headroom / 0.25) };
+}
+
+/**
+ * An asking price, as a have states it. The disclosable one — unlike a band.
+ */
+export interface Ask {
+  amount: number;
+  ccy: string;
+}
+
+/**
+ * Does the buyer's sealed ceiling reach what the seller wants? YES OR NO, and
+ * nothing else ever leaves this function: the sequencer ranks a line on this
+ * boolean, so "who can afford it" orders the line without a single figure
+ * crossing out of the engine.
+ *
+ * The ask comes first when there is one, because the ask is the number the
+ * seller actually named. Without one the reserve floor is the best the
+ * switchboard has. Silence on either side is not an overlap: the sequencer
+ * treats it as unknown and ranks it behind the pairs that are known to meet,
+ * which is the honest reading and never a penalty for privacy — a want with no
+ * band still matches, still goes live, and is simply not promoted ahead of
+ * someone whose limits are known to fit.
+ */
+export function limitsOverlap(
+  wantBand: PriceBand | undefined,
+  haveBand: PriceBand | undefined,
+  ask?: Ask | null,
+): boolean {
+  const ceiling = wantBand?.band?.max;
+  if (ceiling == null || !Number.isFinite(ceiling)) return false;
+  if (ask && Number.isFinite(ask.amount)) {
+    if (wantBand!.ccy !== ask.ccy) return false;
+    return ceiling >= ask.amount;
+  }
+  const floor = haveBand?.band?.min;
+  if (floor == null || !Number.isFinite(floor)) return false;
+  if (wantBand!.ccy !== haveBand!.ccy) return false;
+  return ceiling >= floor;
+}
+
+/** How much room over the ask the underpricing note needs before it speaks. */
+export const UNDERPRICED_HEADROOM = 0.25;
+
+/**
+ * Does the buyer's sealed ceiling clear the ask by a quarter or more? Again a
+ * boolean and only a boolean. It is the input to the note that tells a seller
+ * they may be asking too little, which carries no figure and no count and goes
+ * only to the seller (see domain/offers.ts, underpricingNote).
+ */
+export function clearsAskWithRoom(
+  wantBand: PriceBand | undefined,
+  ask: Ask | null | undefined,
+  headroom = UNDERPRICED_HEADROOM,
+): boolean {
+  const ceiling = wantBand?.band?.max;
+  if (ceiling == null || !Number.isFinite(ceiling)) return false;
+  if (!ask || !Number.isFinite(ask.amount) || ask.amount <= 0) return false;
+  if (wantBand!.ccy !== ask.ccy) return false;
+  return ceiling >= ask.amount * (1 + headroom);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { aboutThing } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
-import { getMatch, openCollectionWindow, ownCardId, sideOf } from './matches.js';
+import { getMatch, ownCardId, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
 import {
   checkAgainstMandate,
@@ -92,6 +92,9 @@ export async function proposeOffer(
       human_action: 'Offers open once both sides have said they are interested.',
     });
   }
+  // Best offer, if this is one: the floor, the one-number rule and the closed
+  // window, all refused to the side that tried rather than silently dropped.
+  await assertBestOfferRules(m, accountId, input);
   if (author === 'agent') {
     await assertAgentMayPropose(cfg, accountId, m.id, ownCardId(m, accountId), input);
   }
@@ -115,6 +118,9 @@ export async function proposeOffer(
     ],
   );
   await detectLadderProbing(accountId, input.match_id);
+  // A figure is movement: the slot's clock starts again (domain/sequencer.ts).
+  const { noteMovement } = await import('./sequencer.js');
+  await noteMovement(input.match_id);
   // A figure is on the table now, so anything this side's agent parked for
   // the human to check has been answered.
   await clearOfferDrafts(accountId, input.match_id);
@@ -218,6 +224,287 @@ async function assertAgentMayPropose(
     isOpening: priorAmounts.length === 0,
   });
   if (!check.ok) throw outsideMandateRefusal(cfg, cardId, check.reason);
+}
+
+// ---------------------------------------------------------------------------
+// BEST OFFER: one sealed number each, and nothing readable from inside it.
+//
+// A have can be sold two ways (cards.sale). 'straight' is the ask as it
+// stands, worked through one introduction at a time. 'best-offer' opens a
+// short GATHERING WINDOW at the first candidate: everyone who fits is
+// introduced at once, slots are ignored for its length, and each buyer may put
+// exactly ONE number on the table.
+//
+// WHAT IS SEALED, and why each part of it matters:
+//
+//   - a buyer's agent sees its own number and no other. Not a highest, not a
+//     count, not a rank, not a "you are in front" — there is nothing for an
+//     agent to read back to its human that would turn this into an auction, so
+//     it cannot become one by accident or by probing;
+//   - the seller's agent sees NONE of them until the window closes. A seller
+//     who could watch them arrive would be running an auction too, and would
+//     be tempted to tell somebody where they stood;
+//   - the ask is the FLOOR. A number under it is refused to the buyer's own
+//     agent, with the reason, and never reaches the seller at all;
+//   - a number after the close is refused. A buyer who put none by the close
+//     is filed away the way a lapsed slot is.
+//
+// When the window closes the seller sees every number at once, best first,
+// with the fit facts beside each (how far, how soon, how reliable — bands, not
+// figures). Accepting one declines the rest, and the rest are told only that
+// the seller went with someone else.
+// ---------------------------------------------------------------------------
+
+/** The have behind an introduction, with everything best offer turns on. */
+interface SaleRow {
+  card_id: string;
+  sale: string;
+  ask: { amount: number; ccy: string } | null;
+  gather_until: Date | null;
+  gather_closed_at: Date | null;
+  open: boolean;
+}
+
+async function saleOf(matchId: string): Promise<SaleRow | undefined> {
+  const r = await getPool().query(
+    `SELECT c.id AS card_id, c.sale, c.ask, c.gather_until, c.gather_closed_at,
+            (c.gather_until IS NOT NULL AND c.gather_until > now()
+             AND c.gather_closed_at IS NULL) AS open
+       FROM matches m JOIN cards c ON c.id = m.card_have
+      WHERE m.id = $1`,
+    [matchId],
+  );
+  return r.rows[0];
+}
+
+/**
+ * Is what this account can see about the money sealed right now? True only for
+ * the SELLER on a best-offer have whose gathering window is still open. Every
+ * read of the money goes through it, so there is no path — sweep, table, list
+ * — on which a number reaches a seller early.
+ */
+export async function bestOfferSealedFrom(matchId: string, accountId: string): Promise<boolean> {
+  const m = await getMatch(matchId);
+  if (!m || m.account_have !== accountId) return false;
+  const sale = await saleOf(matchId);
+  return !!sale && sale.sale === 'best-offer' && !!sale.open;
+}
+
+/** The refusals a best-offer number can meet, each said plainly to the side
+ *  that tried. None of them leaks anything about anyone else's number. */
+async function assertBestOfferRules(
+  m: { id: string; account_have: string; account_want: string },
+  accountId: string,
+  input: { amount: number; ccy: string },
+): Promise<void> {
+  const sale = await saleOf(m.id);
+  if (!sale || sale.sale !== 'best-offer') return;
+  if (accountId === m.account_have) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'This one is on best offer, so the numbers come to your human rather than from them. They will see them all when the window closes.',
+    });
+  }
+  if (!sale.open) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'The window on this has closed.',
+    });
+  }
+  const ask = sale.ask;
+  if (ask && Number.isFinite(ask.amount)) {
+    const sameCcy = String(input.ccy).toUpperCase() === String(ask.ccy).toUpperCase();
+    if (!sameCcy || Number(input.amount) < Number(ask.amount)) {
+      // The floor is the seller's own asking price, which the buyer's side has
+      // already been shown, so naming it here discloses nothing new.
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action: `That is below the floor on this one: the asking price is ${ask.amount} ${String(ask.ccy).toUpperCase()}, and a number under it is not carried.`,
+      });
+    }
+  }
+  const prior = await getPool().query(
+    `SELECT 1 FROM offers
+      WHERE match_id = $1 AND proposer_account = $2 AND state <> 'withdrawn' LIMIT 1`,
+    [m.id, accountId],
+  );
+  if (prior.rowCount) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'This is a best offer, so it is one number each. Your human has already put theirs in and it stands until the window closes.',
+    });
+  }
+}
+
+/**
+ * Everything the seller sees once the window has closed: every number on this
+ * have, best first, with the fit facts beside each. The facts are BANDS, never
+ * figures — how far, how soon, how reliable — so the seller can choose on more
+ * than money without anybody's private inputs crossing.
+ */
+export interface BestOfferLine {
+  offer_id: string;
+  intro_id: string;
+  amount: number;
+  ccy: string;
+  message: string | null;
+  /** 'nearby' | 'a drive away' | 'further afield' | 'not local' */
+  distance: string;
+  /** 'today' | 'within days' | 'no rush' */
+  timing: string;
+  /** 'well established' | 'getting started' */
+  reliability: string;
+}
+
+const distanceBand = (km: number | null): string => {
+  if (km === null) return 'not local';
+  if (km <= 10) return 'nearby';
+  if (km <= 50) return 'a drive away';
+  return 'further afield';
+};
+
+const timingBand = (urgency: string | null): string =>
+  urgency === 'today' ? 'today' : urgency === 'days' ? 'within days' : 'no rush';
+
+/**
+ * The closed window's result for the seller, or undefined when there is none
+ * (not a best offer, still open, or nobody put a number in).
+ */
+export async function bestOfferResult(
+  cardId: string,
+  accountId: string,
+): Promise<{ offers: BestOfferLine[]; note: string } | undefined> {
+  const c = await getPool().query(
+    `SELECT id, account_id, sale, category, geo_lat, geo_lon, gather_until, gather_closed_at
+       FROM cards WHERE id = $1`,
+    [cardId],
+  );
+  const card = c.rows[0];
+  if (!card || card.account_id !== accountId || card.sale !== 'best-offer') return undefined;
+  if (!card.gather_until || new Date(card.gather_until) > new Date()) return undefined;
+  const r = await getPool().query(
+    `SELECT o.id, o.match_id, o.amount, o.ccy, o.message,
+            w.urgency AS want_urgency, w.geo_lat AS want_lat, w.geo_lon AS want_lon,
+            COALESCE(rep.score, 0.5) AS reliability
+       FROM offers o
+       JOIN matches m ON m.id = o.match_id
+       JOIN cards w ON w.id = m.card_want
+       LEFT JOIN reputation rep ON rep.account_id = m.account_want
+      WHERE m.card_have = $1 AND o.state IN ('proposed','awaiting-human','accepted-by-human')
+      ORDER BY o.amount DESC, o.created_at ASC`,
+    [cardId],
+  );
+  if (!r.rowCount) return undefined;
+  const { haversineKm } = await import('../geo/geohash.js');
+  const offers: BestOfferLine[] = (r.rows as any[]).map((o) => {
+    const placed =
+      typeof card.geo_lat === 'number' &&
+      typeof card.geo_lon === 'number' &&
+      typeof o.want_lat === 'number' &&
+      typeof o.want_lon === 'number';
+    return {
+      offer_id: o.id as string,
+      intro_id: o.match_id as string,
+      amount: Number(o.amount),
+      ccy: o.ccy as string,
+      message: offerMessageText(o.message),
+      distance: distanceBand(
+        placed
+          ? haversineKm(
+              { lat: Number(card.geo_lat), lon: Number(card.geo_lon) },
+              { lat: Number(o.want_lat), lon: Number(o.want_lon) },
+            )
+          : null,
+      ),
+      timing: timingBand(o.want_urgency),
+      reliability: Number(o.reliability) >= 0.5 ? 'well established' : 'getting started',
+    };
+  });
+  // The category as a person says it mid-sentence, from the taxonomy itself.
+  const { categoryPhrase } = await import('./matchRules.js');
+  const thing = categoryPhrase(card.category);
+  const n = offers.length;
+  return {
+    offers,
+    note:
+      `${n === 1 ? 'One person has' : `${n} people have`} put a number on your ${thing}; ` +
+      `here ${n === 1 ? 'it is' : 'they are, best first'}. It is your human's choice. ` +
+      'Say the word and I will fetch their link to accept one.',
+  };
+}
+
+/**
+ * The seller took one of them. Everybody else's number is declined and their
+ * introduction is filed away as not chosen, which is what their sweep reads
+ * the sentence off. No figure and no count travels to any of them.
+ */
+async function declineTheRest(acceptedOfferId: string, matchId: string): Promise<void> {
+  const c = await getPool().query(
+    `SELECT c.id FROM matches m JOIN cards c ON c.id = m.card_have
+      WHERE m.id = $1 AND c.sale = 'best-offer'`,
+    [matchId],
+  );
+  const cardId = c.rows[0]?.id;
+  if (!cardId) return;
+  await getPool().query(
+    `UPDATE offers o SET state = 'declined', updated_at = now()
+       FROM matches m
+      WHERE o.match_id = m.id AND m.card_have = $1 AND o.id <> $2
+        AND o.state IN ('proposed','awaiting-human')`,
+    [cardId, acceptedOfferId],
+  );
+  await getPool().query(
+    `UPDATE matches SET state = 'archived', archived_at = now(),
+            archived_via = 'not-chosen', live = false, updated_at = now()
+      WHERE card_have = $1 AND id <> $2 AND state = 'open'`,
+    [cardId, matchId],
+  );
+}
+
+/**
+ * The underpricing note, and the k-anonymity floor under it.
+ *
+ * When a straight-sale have has at least five introductions — live or in line
+ * — whose sealed limits ALL clear the ask by a quarter or more, the person
+ * selling is probably asking too little, and telling them is worth doing. What
+ * is NOT worth doing is telling them anything else: there is no figure in the
+ * sentence, no count of people, and no suggestion of what to ask instead, so
+ * nothing about any individual buyer's private ceiling can be read out of it.
+ * Five is the floor because below it the note is about one or two people
+ * rather than about the market, and that is exactly what a private band must
+ * never become.
+ *
+ * It goes to the holder and to nobody else, once per have (cards.price_note_at).
+ */
+export const UNDERPRICED_FLOOR = 5;
+
+export const UNDERPRICED_NOTE =
+  'A lot of people fit this with room to spare. You may be asking too little.';
+
+export async function underpricingNote(
+  cardId: string,
+  accountId: string,
+): Promise<string | undefined> {
+  const r = await getPool().query(
+    `SELECT c.id,
+            (SELECT count(*)::int FROM matches m
+              WHERE m.card_have = c.id AND m.state = 'open') AS fitting,
+            (SELECT count(*)::int FROM matches m
+              WHERE m.card_have = c.id AND m.state = 'open' AND m.clears_ask_25) AS with_room
+       FROM cards c
+      WHERE c.id = $1 AND c.account_id = $2 AND c.type = 'HAVE'
+        AND c.sale = 'straight' AND c.ask IS NOT NULL AND c.price_note_at IS NULL`,
+    [cardId, accountId],
+  );
+  const row = r.rows[0];
+  if (!row) return undefined;
+  const fitting = Number(row.fitting ?? 0);
+  const withRoom = Number(row.with_room ?? 0);
+  if (fitting < UNDERPRICED_FLOOR || withRoom < fitting) return undefined;
+  const stamped = await getPool().query(
+    `UPDATE cards SET price_note_at = now(), updated_at = now()
+      WHERE id = $1 AND price_note_at IS NULL RETURNING id`,
+    [cardId],
+  );
+  return stamped.rowCount ? UNDERPRICED_NOTE : undefined;
 }
 
 /**
@@ -349,17 +636,9 @@ export async function acceptOfferByHuman(
       human_action: 'This is your own side\'s offer. Only the other person can accept it.',
     });
   }
-  // Collection window: while the accepting human's OWN card is contested and
-  // still collecting, acceptance is locked - close the window (or let it
-  // lapse) first, then proceed with the chosen counterpart.
-  const w = await openCollectionWindow(ownCardId(m, humanAccountId));
-  if (w) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action:
-        'Your collection window on what you posted is still open. Close it early from your approval page (or let it lapse), then accept.',
-      retry_after: Math.max(1, Math.ceil((new Date(w.until).getTime() - Date.now()) / 1000)),
-    });
-  }
+  // The collection window used to lock acceptance here while the accepting
+  // human's own want or have was contested. It is gone (migration 030): a
+  // human's yes is never blocked by how many other people are about.
   await writeConsentEvent({
     event: 'offer-accepted-by-human',
     offer_id: offerId,
@@ -376,6 +655,9 @@ export async function acceptOfferByHuman(
     `UPDATE offers SET state='accepted-by-human', updated_at=now() WHERE id=$1 RETURNING *`,
     [offerId],
   );
+  // Best offer: taking one is choosing, so the rest are declined in the same
+  // breath and their people are told, plainly, that it went elsewhere.
+  await declineTheRest(offerId, o.match_id);
   // The person whose figure this was is owed the news. It goes however they
   // hear about the switchboard: their agent may bring it on its next sweep,
   // and an agreed price is the one moment worth saying twice.
@@ -455,6 +737,9 @@ export function offerMessageText(message: any): string | null {
  * an agent reading them back to its human would be reading history as news.
  */
 export async function offerTable(accountId: string, matchId: string): Promise<OfferLine[]> {
+  // Sealed: the seller on a best offer sees nothing at all until the window
+  // closes. This is the single read the sweep uses, so the seal holds there.
+  if (await bestOfferSealedFrom(matchId, accountId)) return [];
   const r = await getPool().query(
     `SELECT id, proposer_account, amount, ccy, state, message, authored_by, created_at
        FROM offers
@@ -527,6 +812,8 @@ export async function listOffers(accountId: string, matchId: string) {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
+  // The same seal as the sweep: asking a second way is still asking early.
+  if (await bestOfferSealedFrom(matchId, accountId)) return [];
   const r = await getPool().query(
     `SELECT * FROM offers WHERE match_id = $1 ORDER BY created_at ASC`,
     [matchId],

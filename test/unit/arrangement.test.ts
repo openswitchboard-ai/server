@@ -531,7 +531,6 @@ describe('the page the human reads it on', () => {
       killSwitchOn: false,
       cardCounts: { total: 0, published: 0, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [],
     };
     const empty = home.dashboardPage(base);
     expect(empty).toContain('/arrangement');

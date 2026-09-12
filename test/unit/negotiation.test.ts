@@ -840,7 +840,6 @@ describe('the pages say it in plain words', () => {
       pendingApprovals: [
         { href: `/approvals/offer/${offerId(1)}`, label: 'Offer on your Mountain bikes match', amount: '400 AUD' },
       ],
-      collectionWindows: [],
     });
     // The offer waiting for a yes is the whole of what the page carries about
     // this one: the introduction itself is reached from there, and the page
