@@ -446,6 +446,74 @@ export async function approveDisclosure(
 }
 
 /**
+ * The names step the way a person does it: the single-use link their agent was
+ * handed, read once and then pressed with the PIN. From 2026-09-12 this is the
+ * ONLY road to an opt-in — respond(opt_in) records nothing and answers
+ * CONSENT_REQUIRED carrying this link, every time. Pass the human_action of
+ * that refusal (or the link on its own) straight in.
+ *
+ * Where nothing is on file the same page asks for the first name and area, so
+ * the two fields ride along with the press; `asked` says whether it did.
+ */
+export async function pressNamesLink(
+  actor: TestActor,
+  humanAction: string,
+  shared?: { firstName: string; locality: string },
+): Promise<{ status: number; body: string; asked: boolean }> {
+  const link = String(humanAction).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+  if (!link) throw new Error(`no one-question link to press in: ${humanAction}`);
+  const ask = await counterFetch(actor.jar, link);
+  const askBody = await ask.text();
+  if (ask.status !== 200) throw new Error(`the names page answered ${ask.status}`);
+  if (!askBody.includes('Share your first name and area')) {
+    throw new Error(`the link did not open the names question: ${askBody.slice(0, 200)}`);
+  }
+  const pressed = await counterFetch(
+    actor.jar,
+    link,
+    form({
+      decision: 'yes',
+      pin: actor.pin,
+      ...(shared ? { first_name: shared.firstName, locality: shared.locality } : {}),
+    }),
+  );
+  return {
+    status: pressed.status,
+    body: await pressed.text(),
+    asked: askBody.includes('name="first_name"'),
+  };
+}
+
+/**
+ * Both humans through the names step on one introduction, which is what opens
+ * stage 3. Each side's agent asks for the opt-in, is refused with that human's
+ * own single-use link, and the human presses it; two presses and the details
+ * are open. Returns the two refusals, in the order the parties were given, so
+ * a suite can assert on what the agent was told.
+ */
+export async function reachStage3(
+  introId: string,
+  parties: { actor: TestActor; shared?: { firstName: string; locality: string } }[],
+): Promise<{ raw: string; result: any; isError: boolean }[]> {
+  const refusals: { raw: string; result: any; isError: boolean }[] = [];
+  for (const { actor, shared } of parties) {
+    const refused = await mcpCall(actor.accessToken, 'respond', {
+      intro_id: introId,
+      action: 'opt_in',
+    });
+    if (!refused.isError || refused.result?.code !== 'CONSENT_REQUIRED') {
+      throw new Error(`opt_in should be refused with the link: ${JSON.stringify(refused.result)}`);
+    }
+    const pressed = await pressNamesLink(actor, refused.result.human_action, shared);
+    if (pressed.status !== 200) {
+      throw new Error(`the names press answered ${pressed.status}: ${pressed.body.slice(0, 200)}`);
+    }
+    refusals.push(refused);
+  }
+  return refusals;
+}
+
+/**
  * OAuth 2.1 flow, 0.D shape: DCR + PKCE on the MCP hostname; the human
  * login/consent half happens on the COUNTER hostname with a signed-in
  * counter session (the PIN and passkey never transit the agent path).
