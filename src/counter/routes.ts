@@ -1083,7 +1083,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         // and come back to it.
         return html(
           reply,
-          pages.messagePage(
+          pages.donePage(
             'Sign in to review this',
             '<p>Sign in, then open the link your assistant gave you again.</p>',
             '/login',
@@ -1095,14 +1095,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (links.isOneQuestionAction(row.action)) {
         const q = await oneQuestionView(s.accountId, row, token);
         if ('error' in q) {
-          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+          return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
         }
         q.elevated = sess.isElevated(s);
         return html(reply, pages.oneQuestionPage(q));
       }
       await consumeLink(row.id); // single-use: burns on first authenticated view
       const v = await approvalView(s.accountId, row.action, row.ref_id);
-      if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       return html(reply, pages.approvalPage(v));
     });
@@ -1122,7 +1122,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s?.accountId || s.accountId !== row.account_id) {
         return html(
           reply,
-          pages.messagePage(
+          pages.donePage(
             'Sign in to review this',
             '<p>Sign in, then open the link your assistant gave you again.</p>',
             '/login',
@@ -1136,14 +1136,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const q = await oneQuestionView(s.accountId, row, token);
       if ('error' in q) {
         await consumeLink(row.id);
-        return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+        return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
       }
       if (decision === 'no') {
         await consumeLink(row.id);
         await links.recordLinkDecision(row.id, 'declined');
         return html(
           reply,
-          pages.messagePage('Not now', '<p>Nothing changed, and no reason was sent.</p>'),
+          pages.donePage('Not now', '<p>Nothing changed, and no reason was sent.</p>'),
         );
       }
       if (decision !== 'yes') return reply.code(400).send({ error: 'bad_request' });
@@ -1163,7 +1163,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           await links.recordLinkDecision(row.id, 'approved');
           return html(
             reply,
-            pages.messagePage('Accepted', '<p>The number is agreed. Your assistant takes it from here.</p>'),
+            pages.donePage('Accepted', '<p>The number is agreed. Your assistant takes it from here.</p>'),
           );
         }
         if (row.action === 'offer-send') {
@@ -1186,7 +1186,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           await links.recordLinkDecision(row.id, 'approved');
           return html(
             reply,
-            pages.messagePage('Sent', '<p>Your number is on the table for the other side.</p>'),
+            pages.donePage('Sent', '<p>Your number is on the table for the other side.</p>'),
           );
         }
         if (row.action === 'collection-close') {
@@ -1194,7 +1194,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           await links.recordLinkDecision(row.id, 'approved');
           return html(
             reply,
-            pages.messagePage('Closed', '<p>The window is closed. You can go ahead with whoever you choose.</p>'),
+            pages.donePage('Closed', '<p>The window is closed. You can go ahead with whoever you choose.</p>'),
           );
         }
         const cardRow = await getPool().query(
@@ -1202,11 +1202,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           [row.ref_id, s.accountId!],
         );
         if (!cardRow.rowCount) {
-          return html(reply, pages.messagePage('Nothing to decide', '<p>Nothing like that on your ledger.</p>'));
+          return html(reply, pages.donePage('Nothing to decide', '<p>Nothing like that on your ledger.</p>'));
         }
         const checked = validateMandate(figures, cardRow.rows[0].type);
         if (!checked.ok) {
-          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(checked.error)}</p>`));
+          return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(checked.error)}</p>`));
         }
         await saveNegotiation(
           s.accountId!,
@@ -1217,7 +1217,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         await links.recordLinkDecision(row.id, 'approved');
         return html(
           reply,
-          pages.messagePage(
+          pages.donePage(
             'Done',
             `<p>Your assistant can negotiate this one between your numbers. It is on ${pages.esc(MODE_NAMES.mandate)} until you change it.</p>`,
           ),
@@ -1226,7 +1226,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (e instanceof OsbError) {
           return html(
             reply,
-            pages.messagePage(
+            pages.donePage(
               'Not yet',
               `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
             ),
@@ -1234,7 +1234,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           );
         }
         if (e?.notFound) {
-          return html(reply, pages.messagePage('Nothing to decide', '<p>This is no longer yours to decide.</p>'));
+          return html(reply, pages.donePage('Nothing to decide', '<p>This is no longer yours to decide.</p>'));
         }
         throw e;
       }
@@ -1244,7 +1244,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await approvalView(s.accountId!, 'offer-accept', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       return html(reply, pages.approvalPage(v));
     });
@@ -1253,7 +1253,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await approvalView(s.accountId!, 'stage3-disclosure', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       return html(reply, pages.approvalPage(v));
     });
@@ -1262,7 +1262,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await approvalView(s.accountId!, 'settlement-approve', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       return html(reply, pages.approvalPage(v));
     });
@@ -1285,17 +1285,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             await settlements.declineSettlement(settlements.counterAction(s.accountId!), refId);
           } catch (e: any) {
             if (!e?.notFound && !(e instanceof OsbError)) throw e;
-            return html(reply, pages.messagePage('Nothing to decide', '<p>This settlement has moved on.</p>'));
+            return html(reply, pages.donePage('Nothing to decide', '<p>This settlement has moved on.</p>'));
           }
           return html(
             reply,
-            pages.messagePage('Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
+            pages.donePage('Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
           );
         }
         else await declineMatch(refId, s.accountId!);
         return html(
           reply,
-          pages.messagePage('Declined', '<p>Nothing was shared or accepted. No reason was sent.</p>'),
+          pages.donePage('Declined', '<p>Nothing was shared or accepted. No reason was sent.</p>'),
         );
       }
       if (decision !== 'approve') return reply.code(400).send({ error: 'bad_request' });
@@ -1306,7 +1306,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (action === 'stage3-disclosure') {
         const view = await approvalView(s.accountId!, 'stage3-disclosure', refId);
         if ('error' in view) {
-          return html(reply, pages.messagePage('Nothing to decide', `<p>${pages.esc(view.error)}</p>`));
+          return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(view.error)}</p>`));
         }
         if (view.collectProfile) {
           const checked = validateSharedProfile({
@@ -1345,13 +1345,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           await acceptOfferByHuman(refId, s.accountId!, 'counter', cfg);
           return html(
             reply,
-            pages.messagePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
+            pages.donePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
           );
         }
         const r = await recordStage3OptIn(cfg, refId, s.accountId!, 'counter');
         return html(
           reply,
-          pages.messagePage(
+          pages.donePage(
             'Approved',
             r.both
               ? '<p>Both of you have opted in — your first name and locality are now mutually shared on this match.</p>'
@@ -1368,7 +1368,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           return html(
             reply,
-            pages.messagePage(
+            pages.donePage(
               'Not yet',
               `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
               '/',
