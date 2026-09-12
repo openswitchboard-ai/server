@@ -575,10 +575,11 @@ describe('(c) accept a number', () => {
     expect(page.body).toContain('>Accept<');
     expect(page.body).toContain('>Not now<');
     expect(page.body).toContain('Confirm with your PIN');
-    // The counter-offer door is a plain line, and pressing nothing here spends
-    // nothing: reading the question does not burn the link.
-    expect(page.body).toContain(`href="/matches/${MATCH}"`);
-    expect(page.body).toContain('Or put a different number on the table');
+    // Nothing else is on the page: no link away, no second decision. A number
+    // of their own goes through the assistant ("tell me a number and I'll
+    // carry it"). Reading the question does not burn the link.
+    expect(page.body).not.toContain('href="/matches/');
+    expect(page.body).not.toContain('different number');
     expect(world.links[0].used_at).toBeNull();
     expect(world.offerState).toBe('proposed');
 

@@ -499,7 +499,6 @@ describe('counter pages: copy-cull render suite', () => {
         yesLabel: 'Accept',
         noLabel: 'Not now',
         needsPin: true,
-        door: { href: '/matches/m-1', text: 'Or put a different number on the table' },
         hasPasskey: false,
         elevated: false,
       }),
