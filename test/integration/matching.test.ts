@@ -586,31 +586,31 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     expect(declined.raw).not.toMatch(/reason/i);
   });
 
-  it('VERDICT: good-call / not-for-me stored per human; not-for-me mutes + nudges threshold', async () => {
-    // Hank: good call on the buyer[1] match.
+  it('VERDICT: good / fine / bad stored per human; bad mutes + nudges threshold', async () => {
+    // Hank: good on the buyer[1] introduction.
     const good = await mcpCall(hank.accessToken, 'respond', {
       intro_id: hankMatchIds[buyers[1].accountId],
       action: 'verdict',
-      verdict: 'good-call',
+      verdict: 'good',
     });
     expect(good.isError, JSON.stringify(good.result)).toBe(false);
 
-    // Boris (buyers[2]): not for me.
+    // Boris (buyers[2]): bad.
     const b3 = buyers[2];
     const before = await dbExec(
       `SELECT threshold_bump::float8 FROM reputation WHERE account_id = :id::uuid`,
       [{ name: 'id', value: b3.accountId }],
     );
-    const notForMe = await mcpCall(b3.accessToken, 'respond', {
+    const badOne = await mcpCall(b3.accessToken, 'respond', {
       intro_id: hankMatchIds[b3.accountId],
       action: 'verdict',
-      verdict: 'not-for-me',
+      verdict: 'bad',
     });
-    expect(notForMe.isError).toBe(false);
+    expect(badOne.isError).toBe(false);
 
     const rows = await dbExec(
       `SELECT
-         (SELECT count(*)::int FROM match_verdicts WHERE account_id = :b::uuid AND verdict = 'not-for-me'),
+         (SELECT count(*)::int FROM match_verdicts WHERE account_id = :b::uuid AND verdict = 'bad'),
          (SELECT count(*)::int FROM match_mutes WHERE account_id = :b::uuid AND muted_account = :h::uuid),
          (SELECT threshold_bump::float8 FROM reputation WHERE account_id = :b::uuid),
          (SELECT state FROM matches WHERE id = :m::uuid)`,
@@ -624,6 +624,36 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     expect(Number(rows[0][1])).toBe(1); // pairing muted
     expect(Number(rows[0][2])).toBeCloseTo(Number(before[0][0]) + 0.01); // nudged up
     expect(rows[0][3]).toBe('declined'); // reasonless decline of the pairing
+
+    // 'fine' is the third answer, and it is the one that does nothing else:
+    // recorded, no mute, no decline, and the threshold left where it was.
+    const b4 = buyers[0]; // their introduction is still open, and unmuted
+    const fineBefore = await dbExec(
+      `SELECT threshold_bump::float8 FROM reputation WHERE account_id = :id::uuid`,
+      [{ name: 'id', value: b4.accountId }],
+    );
+    const fine = await mcpCall(b4.accessToken, 'respond', {
+      intro_id: hankMatchIds[b4.accountId],
+      action: 'verdict',
+      verdict: 'fine',
+    });
+    expect(fine.isError, JSON.stringify(fine.result)).toBe(false);
+    const fineRows = await dbExec(
+      `SELECT
+         (SELECT count(*)::int FROM match_verdicts WHERE account_id = :b::uuid AND verdict = 'fine'),
+         (SELECT count(*)::int FROM match_mutes WHERE account_id = :b::uuid AND muted_account = :h::uuid),
+         (SELECT threshold_bump::float8 FROM reputation WHERE account_id = :b::uuid),
+         (SELECT state FROM matches WHERE id = :m::uuid)`,
+      [
+        { name: 'b', value: b4.accountId },
+        { name: 'h', value: hank.accountId },
+        { name: 'm', value: hankMatchIds[b4.accountId] },
+      ],
+    );
+    expect(Number(fineRows[0][0])).toBe(1); // recorded
+    expect(Number(fineRows[0][1])).toBe(0); // nothing muted
+    expect(Number(fineRows[0][2])).toBeCloseTo(Number(fineBefore[0][0])); // neutral
+    expect(fineRows[0][3]).not.toBe('declined'); // still open
   });
 
   it('GATE (c): pulse k-floor - 9-member cell ABSENT, 10-member cell exact', async () => {

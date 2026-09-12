@@ -209,10 +209,18 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 break;
               }
               case 'your-move-notify': {
-                // The counterparty opted in and it is now this human's turn to
-                // reciprocate. Enqueued by recordStage3OptIn; idempotent via
-                // the your-move:{match}:{account} dedupe key.
-                await notifyYourMove(cfg, body.match_id, body.account_id);
+                // Two steps share this op. 'names': the counterparty opted in
+                // and it is now this human's turn to reciprocate (enqueued by
+                // recordStage3OptIn). 'details': the other side said it was
+                // keen too, so the details are open (enqueued by
+                // expressInterest, to the side that spoke first). Idempotent
+                // via the your-move:{match}:{account}[:details] dedupe key.
+                await notifyYourMove(
+                  cfg,
+                  body.match_id,
+                  body.account_id,
+                  body.step === 'details' ? 'details' : 'names',
+                );
                 break;
               }
               case 'email-digest-tick': {

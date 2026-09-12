@@ -453,6 +453,26 @@ export function arrangementInPlainWords(a: Arrangement): { k: string; v: string 
 }
 
 /**
+ * The sentence that rides beside runs_on_its_own on every sweep.
+ *
+ * The flag alone is a field name, and a field name is a thing an agent reads
+ * out. What it changes is whether the agent may go and look between
+ * conversations, so the sweep says that in words rather than leaving the agent
+ * to work it out from a boolean.
+ */
+export function runsOnItsOwnNote(runs: boolean): {
+  text: string;
+  provenance: 'switchboard-system';
+} {
+  return {
+    text: runs
+      ? 'You have told the switchboard you run between conversations, so you may look again on your own and bring your human anything that has moved, without waiting to be asked.'
+      : 'Nothing on this account says you run between conversations, so look when your human asks you to and no oftener. If you do run on your own, say so with standing_arrangement and give a cadence, and the switchboard will let you carry the news instead of emailing them.',
+    provenance: 'switchboard-system',
+  };
+}
+
+/**
  * The sentence that rides beside the object on every sweep. Switchboard
  * authored. Phrased as the human's own saved preferences reflected back,
  * not as a command from the system — so a defensive agent reads it as data
