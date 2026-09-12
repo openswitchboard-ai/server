@@ -53,7 +53,7 @@ export function sampleSet(envName = 'dev'): { name: string; content: EmailConten
     {
       name: 'summons',
       content: renderSummons(
-        { count: 1, categoryLabel: 'Garden tools', blind: false },
+        { count: 1, categoryLabel: 'Garden tools', blind: false, side: 'have' },
         links,
       ),
     },

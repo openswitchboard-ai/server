@@ -83,7 +83,12 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
     {
       name: 'summons',
       blind: false,
-      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: false }, links),
+      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: false, side: 'have' }, links),
+    },
+    {
+      name: 'summons-want-side',
+      blind: false,
+      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: false, side: 'want' }, links),
     },
     {
       name: 'summons-batch',
@@ -93,32 +98,42 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
     {
       name: 'summons-blind',
       blind: true,
-      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: true }, links),
+      content: renderSummons({ count: 1, categoryLabel: LABEL, blind: true, side: 'have' }, links),
     },
     {
       name: 'channel-waiting',
       blind: false,
-      content: renderChannelWaiting({ categoryLabel: LABEL, blind: false }, links),
+      content: renderChannelWaiting({ categoryLabel: LABEL, blind: false, side: 'have' }, links),
+    },
+    {
+      name: 'channel-waiting-want-side',
+      blind: false,
+      content: renderChannelWaiting({ categoryLabel: LABEL, blind: false, side: 'want' }, links),
     },
     {
       name: 'channel-waiting-no-label',
       blind: false,
-      content: renderChannelWaiting({ blind: false }, links),
+      content: renderChannelWaiting({ blind: false, side: 'have' }, links),
     },
     {
       name: 'channel-waiting-blind',
       blind: true,
-      content: renderChannelWaiting({ categoryLabel: LABEL, blind: true }, links),
+      content: renderChannelWaiting({ categoryLabel: LABEL, blind: true, side: 'have' }, links),
     },
     {
       name: 'your-move',
       blind: false,
-      content: renderYourMove({ categoryLabel: LABEL, blind: false }, links),
+      content: renderYourMove({ categoryLabel: LABEL, blind: false, side: 'have' }, links),
+    },
+    {
+      name: 'your-move-want-side',
+      blind: false,
+      content: renderYourMove({ categoryLabel: LABEL, blind: false, side: 'want' }, links),
     },
     {
       name: 'your-move-blind',
       blind: true,
-      content: renderYourMove({ categoryLabel: LABEL, blind: true }, links),
+      content: renderYourMove({ categoryLabel: LABEL, blind: true, side: 'have' }, links),
     },
     {
       name: 'offer-on-the-table',
@@ -600,10 +615,110 @@ describe('the email rule: a notice carries no link and no button', () => {
     expect(c.text).toContain('Ask your assistant and it will read it to you.');
   });
 
-  it('your move says whose turn it is, and nothing to press', () => {
+  it('your move says what the other side did, and nothing to press', () => {
     const c = byName()['your-move'];
-    expect(c.text).toContain('is keen and ready to talk');
+    // Nobody has said a word to anybody at the names step, so the sentence
+    // says what actually happened rather than that somebody is "ready to
+    // talk".
+    expect(c.text).toContain(
+      'They have said yes to swapping first names about your mountain bike. ' +
+        'Your yes is the last step before the two of you can talk.',
+    );
+    expect(c.text).not.toContain('keen and ready to talk');
     expect(c.html).not.toContain(`${COUNTER}/a/`);
+  });
+
+  // -------------------------------------------------------------------------
+  // WHOSE SIDE THE READER IS ON (2026-09-12). Three notices named the thing
+  // from the offering side only, so somebody trying to BUY a mountain bike was
+  // told it was theirs. Each now takes the recipient's own side, and the
+  // sentence a buyer reads never says they hold the thing.
+  // -------------------------------------------------------------------------
+  it('the summons names the thing from the reader’s own side', () => {
+    const all = byName();
+    expect(all['summons'].text).toContain('Someone has come forward about your mountain bike.');
+    expect(all['summons-want-side'].text).toContain(
+      'Someone has come forward with a mountain bike.',
+    );
+    expect(all['summons-want-side'].text).not.toContain('your mountain bike');
+    // The article comes from the taxonomy: a mass noun takes none, and a
+    // phrase people keep plural stays plural.
+    const mass = renderSummons(
+      { count: 1, categoryLabel: 'Climbing gear', blind: false, side: 'want' },
+      links,
+    );
+    expect(mass.text).toContain('Someone has come forward with climbing gear.');
+    const plural = renderSummons(
+      { count: 1, categoryLabel: 'Guitar lessons', blind: false, side: 'want' },
+      links,
+    );
+    expect(plural.text).toContain('Someone has come forward with guitar lessons.');
+    // A second arrival says so on both sides.
+    const second = renderSummons(
+      { count: 1, ordinal: 2, categoryLabel: LABEL, blind: false, side: 'want' },
+      links,
+    );
+    expect(second.text).toContain('A second person has come forward with a mountain bike.');
+    expect(
+      renderSummons({ count: 1, ordinal: 2, categoryLabel: LABEL, blind: false, side: 'have' }, links)
+        .text,
+    ).toContain('A second person has come forward about your mountain bike.');
+    // The batched summons counts arrivals across everything at once, so it
+    // names no thing and needs no side.
+    expect(all['summons-batch'].text).toContain('3 people have come forward.');
+  });
+
+  it('a waiting message names the thing from the reader’s own side', () => {
+    const all = byName();
+    expect(all['channel-waiting'].text).toContain(
+      'Someone you got talking to about your mountain bike has sent you a message.',
+    );
+    expect(all['channel-waiting-want-side'].text).toContain(
+      'Someone you got talking to about the mountain bike you are after has sent you a message.',
+    );
+    expect(all['channel-waiting-want-side'].text).not.toContain('your mountain bike');
+  });
+
+  it('your move names the thing from the reader’s own side', () => {
+    const all = byName();
+    expect(all['your-move-want-side'].text).toContain(
+      'They have said yes to swapping first names about the mountain bike you are after. ' +
+        'Your yes is the last step before the two of you can talk.',
+    );
+    expect(all['your-move-want-side'].text).not.toContain('your mountain bike');
+    // The heading and the subject are the same on both sides.
+    expect(all['your-move-want-side'].text).toContain('It is your move.');
+    expect(all['your-move-want-side'].subject).toBe('It is your turn');
+  });
+
+  it('the digest says its lines in words, and never HAVE or WANT', () => {
+    const c = renderDigest(
+      {
+        cadence: 'daily',
+        blind: false,
+        items: [
+          { type: 'HAVE', categoryLabel: LABEL, newOpposite: 3, nearMisses: 1 },
+          { type: 'WANT', categoryLabel: LABEL, newOpposite: 2, nearMisses: 0 },
+          { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 2 },
+          { type: 'WANT', categoryLabel: LABEL2, newOpposite: 1, nearMisses: 1 },
+        ],
+      },
+      links,
+    );
+    expect(c.text).toContain('Your mountain bike (offering): 3 new people looking nearby, 1 near miss');
+    expect(c.text).toContain('Mountain bike (looking for): 2 new nearby, no near misses');
+    // Under the k-anonymity floor there is no count to give.
+    expect(c.text).toContain(
+      'Your garden tools (offering): nothing new that clears the floor, 2 near misses',
+    );
+    // One of anything is said as one.
+    expect(c.text).toContain('Garden tools (looking for): 1 new nearby, 1 near miss');
+    expect(c.text).toContain('A near miss is someone close on everything but one thing.');
+    expect(c.text).not.toContain('Counts are real and current');
+    for (const part of [c.text, c.html, c.subject]) {
+      expect(part).not.toContain('HAVE');
+      expect(part).not.toContain('WANT');
+    }
   });
 
   it('a figure on the table names the figure and stops', () => {
@@ -614,9 +729,54 @@ describe('the email rule: a notice carries no link and no button', () => {
 
   it('the renewal says the day it lapses and what to ask for', () => {
     const c = byName()['renewal'];
-    expect(c.text).toContain('lapses Thursday 3 September');
-    expect(c.text).toContain('Ask your assistant to renew or let it go.');
+    // One thing lapsing soon: a sentence about that thing, and the day.
+    expect(c.text).toContain(
+      'What you put up about your mountain bike lapses on Thursday 3 September. ' +
+        'Ask your assistant to renew it or let it go.',
+    );
+    // The list says the side in words and the marker in plain words.
+    expect(c.text).toContain('Mountain bike (looking for): lapses this week, on Thursday 3 September');
+    expect(c.text).toContain('Garden tools (offering): lapses Tuesday 20 October');
+    expect(c.text).not.toContain('within a week');
+    for (const part of [c.text, c.html, c.subject]) {
+      expect(part).not.toContain('HAVE');
+      expect(part).not.toContain('WANT');
+    }
     expect(c.html).not.toContain('/renew?t=');
+  });
+
+  it('the renewal handles several things lapsing at once', () => {
+    const c = renderRenewal(
+      {
+        blind: false,
+        cards: [
+          { type: 'HAVE', categoryLabel: LABEL, expiresAt: new Date('2026-09-03'), expiringSoon: true },
+          { type: 'WANT', categoryLabel: LABEL2, expiresAt: new Date('2026-09-05'), expiringSoon: true },
+          { type: 'HAVE', categoryLabel: LABEL2, expiresAt: new Date('2026-10-20'), expiringSoon: false },
+        ],
+      },
+      links,
+    );
+    expect(c.text).toContain(
+      '2 of the things you put up lapse this week, starting with your mountain bike ' +
+        'on Thursday 3 September. Ask your assistant to renew them or let them go.',
+    );
+    expect(c.text).toContain('Garden tools (looking for): lapses this week, on Saturday 5 September');
+  });
+
+  it('the kill-switch mail sends people to a page they have', () => {
+    const c = byName()['kill-switch-on'];
+    expect(c.text).toContain('Sign in when you can and look over your approval page.');
+    expect(c.html).toContain('look over your approval page');
+    expect(c.text).not.toContain('ledger');
+  });
+
+  it('the held-payment mail tells the seller what to do in plain words', () => {
+    const c = renderSettlementUpdate({ event: 'payment-held', role: 'seller', blind: false }, links);
+    expect(c.text).toContain(
+      'Hand over the goods, then mark it handed over on the settlement page, with photos if you like.',
+    );
+    expect(c.text).not.toContain('handover evidence');
   });
 
   it('the settlement notices say what moved, and point at no page', () => {
