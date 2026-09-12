@@ -438,15 +438,21 @@ export async function archiveMatch(
 }
 
 /**
- * File away every open introduction on a want or have that has just been taken
- * down. Taking one down is the human saying the thing is gone — the bike
- * sold, the room filled — and an introduction that keeps advancing on it wastes
- * the other person's time on something they can no longer have. So the
- * withdrawal carries them with it: each open introduction on the card becomes
- * 'archived' with archived_via 'withdrawn', which is enough on its own to stop
- * the conversation (loadOpenChannel gates on state = 'open') and to keep it out
- * of both sides' sweeps as something new to act on. Anything uncollected is
+ * File away the open introductions on a want or have that has just been taken
+ * down — the ones that never got as far as a conversation. Taking one down is
+ * the human saying the thing is gone — the bike sold, the room filled — and an
+ * introduction still advancing on it wastes the other person's time on
+ * something they can no longer have. So the withdrawal carries those with it:
+ * each becomes 'archived' with archived_via 'withdrawn', which keeps it out of
+ * both sides' sweeps as something new to act on, and anything uncollected is
  * expired so the ordinary sweep clears it.
+ *
+ * An introduction whose conversation is already open is left exactly as it
+ * was. Run 6 (12 September 2026): the seller said "the bike is sold, take it
+ * down" and the conversation with the buyer, in which the handover was being
+ * arranged, closed with it. Taking the thing down and closing a conversation
+ * are two different acts; the second is the explicit archive, on the human's
+ * word, once the two people are done.
  *
  * The record stays, the same way an ordinary archive keeps one: who it was and
  * what it was about are still there to answer "who was that person again?".
@@ -464,6 +470,7 @@ export async function archiveOpenIntroductionsOnCard(
         SET state = 'archived', archived_at = now(), archived_by = $2,
             archived_via = $3, updated_at = now()
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
+        AND (channel_id IS NULL OR stage < 4)
       RETURNING id`,
     [cardId, accountId, recordedVia],
   );
@@ -861,7 +868,18 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     // polling for matches already knows where to collect from. How many
     // messages are waiting is counted once for the whole sweep, in the tool
     // layer, alongside the sentence written for the human.
-    if (m.stage >= 4 && m.channel_id) entry.conversation = { conversation_id: m.channel_id };
+    let takenDown: 'yours' | 'theirs' | undefined;
+    if (m.stage >= 4 && m.channel_id) {
+      entry.conversation = { conversation_id: m.channel_id };
+      // The thing this was about may have been taken down while the two were
+      // still talking. The conversation stays open on purpose; say so, so the
+      // agent neither treats it as ended nor as something new is coming into.
+      const own = await getCard(ownCardId(m, accountId));
+      const theirs = await getCard(sideOf(m, accountId) === 'want' ? m.card_have : m.card_want);
+      if (own?.lifecycle_state === 'WITHDRAWN') takenDown = 'yours';
+      else if (theirs?.lifecycle_state === 'WITHDRAWN') takenDown = 'theirs';
+      if (takenDown) entry.taken_down = takenDown;
+    }
     // A pending offer FROM the other side must reach this agent on its ordinary
     // sweep — otherwise a routine "anything new?" misses a figure on the table.
     // The amount is a deliberate disclosure (an offer is meant to be seen), so
@@ -933,7 +951,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         break;
       case 'ready_to_talk':
         entry.note = sbNote(
-          "You are connected now — you can message each other through me whenever you like.",
+          takenDown === 'yours'
+            ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
+            : takenDown === 'theirs'
+              ? "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away."
+              : "You are connected now — you can message each other through me whenever you like.",
         );
         break;
       case 'deal_agreed':
