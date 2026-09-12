@@ -233,10 +233,17 @@ export interface DashboardAgreedItem {
   amount: string;
 }
 
-/** The one-tap verdicts, in the words a person would use for them. */
+/**
+ * The one-tap answers. The words stored are the words a person says, so this
+ * table reads a verdict back unchanged; the two spellings the wire used before
+ * run 7 are kept here for any row an older process wrote.
+ */
 const VERDICT_WORDS: Record<string, string> = {
-  'good-call': 'good call',
-  'not-for-me': 'not for me',
+  good: 'good',
+  fine: 'fine',
+  bad: 'bad',
+  'good-call': 'good',
+  'not-for-me': 'bad',
 };
 
 /**
@@ -702,11 +709,15 @@ export interface MatchOffersView {
 }
 
 /**
- * Was this a good one? The quietest thing on the page, at the very foot of it.
+ * How was that one? The quietest thing on the page, at the very foot of it.
  *
  * It used to sit on the front page beside a percentage, which made the front
  * page a place to browse. It belongs here, on the introduction it is about,
  * asked once and never scored: a person reads no figure about a person.
+ *
+ * Three answers rather than two. A yes/no left a person with nowhere to put an
+ * introduction that was simply all right, so all right went in with the
+ * rejections and muted the pairing for good.
  */
 function verdictLine(v: MatchOffersView): string {
   if (v.verdict) {
@@ -720,10 +731,11 @@ function verdictLine(v: MatchOffersView): string {
   <input type="hidden" name="verdict" value="${verdict}">
   <button type="submit" class="secondary">${label}</button>
 </form>`;
-  return `<p class="small muted">Was this a good match?</p>
-<div class="row-actions">${btn('good-call', 'Yes')}${btn('not-for-me', 'No')}</div>
-<p class="small muted">Your answer tunes what comes to you next. "No" also mutes
-this pairing, and no reason is ever sent to the other side.</p>`;
+  return `<p class="small muted">How was that one?</p>
+<div class="row-actions">${btn('good', 'Good')}${btn('fine', 'Fine')}${btn('bad', 'Bad')}</div>
+<p class="small muted">Your answer tunes what comes to you next. "Fine" is a real
+answer and changes nothing else. "Bad" also mutes this pairing, and no reason is
+ever sent to the other side.</p>`;
 }
 
 /** The box's heading when the assistant carried the figure here. */

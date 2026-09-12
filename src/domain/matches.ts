@@ -178,19 +178,48 @@ export async function closeCollectionByCard(
 }
 
 // ---------------------------------------------------------------------------
-// Match-quality verdicts: one tap, 'good-call' | 'not-for-me', per human per
-// match. Simple documented model (no ML):
+// How it went: one tap, in the three words a person says. Simple documented
+// model (no ML):
 //   - the verdict row is stored (match_verdicts, unique per human+match);
-//   - 'not-for-me' additionally (a) mutes the account pairing so the matcher
-//     never pairs these two accounts again, (b) declines the match if still
+//   - 'bad' additionally (a) mutes the account pairing so the matcher never
+//     pairs these two accounts again, (b) declines the introduction if still
 //     open (reasonless, as all declines are), and (c) nudges the verdict-
 //     giver's personal threshold up by +0.01 (cap +0.10 over the 0.75 base);
-//   - 'good-call' relaxes the personal threshold by -0.01 (floor 0).
+//   - 'good' relaxes the personal threshold by -0.01 (floor 0);
+//   - 'fine' is recorded and does nothing else. It is the answer most of them
+//     are, and it was missing: without it an introduction that was merely all
+//     right had to be filed as a rejection, which muted the pairing for good.
+//     Neutral in the reliability signal, both ways.
+// The old wire words ('good-call', 'not-for-me') are mapped in the tool layer
+// for one manual version and never reach here.
 // ---------------------------------------------------------------------------
+export type Verdict = 'good' | 'fine' | 'bad';
+
+/** The three words, for anything that has to check one. */
+export const VERDICTS: readonly Verdict[] = ['good', 'fine', 'bad'];
+
+export const isVerdict = (v: unknown): v is Verdict => VERDICTS.includes(v as Verdict);
+
+/**
+ * The two words the wire used before run 7, mapped to the ones it uses now.
+ * An agent holding the older tool schema keeps working for one manual version;
+ * nothing is logged about the alias, and neither old word is stored.
+ */
+const VERDICT_ALIASES: Record<string, Verdict> = {
+  'good-call': 'good',
+  'not-for-me': 'bad',
+};
+
+/** The verdict a caller meant, from either vocabulary (undefined = neither). */
+export function readVerdict(v: unknown): Verdict | undefined {
+  if (isVerdict(v)) return v;
+  return typeof v === 'string' ? VERDICT_ALIASES[v] : undefined;
+}
+
 export async function recordVerdict(
   matchId: string,
   accountId: string,
-  verdict: 'good-call' | 'not-for-me',
+  verdict: Verdict,
   recordedVia: string,
 ): Promise<{ intro_id: string; verdict: string }> {
   const m = await getMatch(matchId);
@@ -203,7 +232,10 @@ export async function recordVerdict(
      ON CONFLICT (match_id, account_id) DO UPDATE SET verdict = $3, created_at = now()`,
     [matchId, accountId, verdict, recordedVia],
   );
-  if (verdict === 'not-for-me') {
+  // 'fine' is recorded and stops there: no mute, no decline, and no move on
+  // the threshold in either direction.
+  if (verdict === 'fine') return { intro_id: matchId, verdict };
+  if (verdict === 'bad') {
     const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
     await pool.query(
       `INSERT INTO match_mutes (account_id, muted_account) VALUES ($1,$2)

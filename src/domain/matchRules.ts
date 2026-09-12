@@ -174,8 +174,8 @@
  *   otherwise                                                       -> discarded
  *
  * PERSONAL THRESHOLD NUDGE (simple model, no ML): each account carries
- * reputation.threshold_bump in [0, 0.10]. A 'not-for-me' verdict adds +0.01;
- * a 'good-call' verdict subtracts 0.01 (floor 0). The account's effective
+ * reputation.threshold_bump in [0, 0.10]. A 'bad' verdict adds +0.01; a 'good'
+ * verdict subtracts 0.01 (floor 0); 'fine' is neutral. The account's effective
  * match-creation threshold is 0.75 + bump. There are NO other ranking inputs:
  * match quality is the only ranking signal (no paid ranking, ever).
  *
