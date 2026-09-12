@@ -45,7 +45,7 @@
  * past, the sweep runs, and the agreed amount is released to the seller with
  * the row saying the rule did it.
  */
-import { describe, expect, it, beforeAll } from 'vitest';
+import { afterEach, describe, expect, it, beforeAll } from 'vitest';
 import {
   COUNTER_URL,
   TestActor,
@@ -59,6 +59,7 @@ import {
   reachStage3,
   sendOp,
   waitForCardState,
+  withdrawCards,
 } from './helpers.js';
 import { createHash } from 'node:crypto';
 import {
@@ -112,9 +113,25 @@ async function approveOnCounter(actor: TestActor, settlementId: string): Promise
 }
 
 /**
+ * The wants and haves the gate now running published, waiting to come back
+ * down. Every gate below clears them as it ends; `beforeAll` empties the list
+ * by hand for the one pair that has to outlive its gate.
+ */
+const gateCards: { token: string; intentId: string }[] = [];
+
+/**
  * An introduction settles once — a released settlement closes the door on
  * that introduction — so each gate that funds a payment gets a fresh pair of
  * listings and its own introduction, taken to the names step.
+ *
+ * Each pair is put back down as its gate ends (see the afterEach below). The
+ * quota these two accounts live under is production's — five open wants and
+ * haves each, ten publishes a day each — and this suite needs eight
+ * introductions, so pairs left standing run the accounts out of open cards
+ * partway through and every gate after that fails on the publish rather than
+ * on the payment it exists to prove. Withdrawing as we go holds each account
+ * at two open cards: the shared pair, plus the pair of whichever gate is
+ * running.
  */
 async function newIntroduction(): Promise<string> {
   const w = await mcpCall(buyer.accessToken, 'publish_intent', {
@@ -125,6 +142,10 @@ async function newIntroduction(): Promise<string> {
     listing: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
   });
   expect(h.isError).toBe(false);
+  gateCards.push(
+    { token: buyer.accessToken, intentId: w.result.intent_id },
+    { token: seller.accessToken, intentId: h.result.intent_id },
+  );
   await waitForCardState(buyer.accessToken, w.result.intent_id, ['PUBLISHED']);
   await waitForCardState(seller.accessToken, h.result.intent_id, ['PUBLISHED']);
   await sendOp({
@@ -355,6 +376,10 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       bootstrapActor('Sam', 'Subiaco'),
     ]);
     matchId = await newIntroduction();
+    // This one pair stays up for the whole run: G2 settles on it and the last
+    // test reads its settlement page, so it is not one of the gate's own to
+    // take back down. One open card each is the floor everything else sits on.
+    gateCards.length = 0;
     // The seller's connected test account: created pre-verified through
     // Stripe's test-mode API and attached with the server's own envelope
     // encryption (production sellers use the hosted account-link flow).
@@ -366,6 +391,18 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     // first one starts.
     await ensurePlatformBalance((SELLER_MINOR + BUYER_TOTAL_MINOR) * 9, 'AUD');
   }, 420_000);
+
+  /**
+   * The gate's own want and have go back on the board's shelf. This runs after
+   * a gate that failed as well as one that passed, so a single red gate cannot
+   * leave its pair standing and take the rest of the suite down with it on the
+   * open-card quota.
+   */
+  afterEach(async () => {
+    for (const { token, intentId } of gateCards.splice(0)) {
+      await withdrawCards(token, intentId);
+    }
+  }, 120_000);
 
   it('settle requires stage 3 and refuses a bad proposal shape', async () => {
     const bad = await mcpCall(buyer.accessToken, 'settle', { intro_id: matchId, amount: AMOUNT });

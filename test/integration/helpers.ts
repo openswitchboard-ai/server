@@ -668,6 +668,32 @@ export async function withdrawPublishedCards(): Promise<number> {
 }
 
 /**
+ * Take named cards down NOW rather than at the end of the run.
+ *
+ * The posting quota an account lives under is five open wants and haves, so a
+ * suite that needs a fresh pair for each of several gates cannot leave the
+ * earlier pairs standing: by the sixth publish the quota refuses it and the
+ * gate fails on the board rather than on what it set out to prove. A gate that
+ * puts its own pair back as it ends never gets near the ceiling.
+ *
+ * Same door as everything else here - `withdraw_intent`, the one a person's
+ * agent uses - and the card is dropped from the teardown list so the run's
+ * final sweep does not count it twice. Best-effort: a card already gone never
+ * fails a gate.
+ */
+export async function withdrawCards(token: string, ...intentIds: string[]): Promise<void> {
+  const mine = publishedCards.get(token);
+  for (const id of intentIds) {
+    try {
+      await mcpCall(token, 'withdraw_intent', { intent_id: id });
+    } catch {
+      // Already withdrawn, or a token that has gone.
+    }
+    mine?.delete(id);
+  }
+}
+
+/**
  * Nagatha, the standing agent under test. Her cards are hers: every harness
  * that touches them does it deliberately and by name, and this helper refuses
  * to sweep them by accident.
