@@ -7,8 +7,8 @@
  *
  *  - PARTICIPANT GATING: only the two accounts of an OPEN stage-4 match can
  *    reach a channel. A stranger is not told the match exists; a party on a
- *    match that has not opened a channel gets NOT_UNLOCKED_YET; a withdrawn card
- *    closes the channel for both sides.
+ *    match that has not opened a channel gets NOT_UNLOCKED_YET; a withdrawn or
+ *    expired card leaves an open channel alone.
  *  - DELETE ON DELIVERY: collecting a message is what removes it. After a
  *    receive the row count for that channel is ZERO, a second receive comes
  *    back empty, and the sender cannot read back what they sent.
