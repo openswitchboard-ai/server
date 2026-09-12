@@ -592,13 +592,6 @@ export interface ApprovalView {
   hasPasskey: boolean;
   elevated: boolean;
   postPath: string; // decision endpoint
-  /** Set on an offer approval: the match to reply on, and the offer's currency.
-   *  Answering with a figure of your own is a third door out of this page,
-   *  beside approve and decline, and it needs no PIN because it binds nothing. */
-  counterOffer?: { matchId: string; ccy: string };
-  /** A figure this person's agent tried to send on their behalf and was
-   *  refused for, waiting here to be checked and sent. */
-  draft?: OfferDraftView;
 }
 
 /** A number the agent brought back, ready for its human to check and send. */
@@ -657,9 +650,14 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
 
 export function approvalPage(v: ApprovalView, error?: string): string {
   const title = {
-    'offer-accept': 'Approve this settlement?',
-    'stage3-disclosure': 'Share your details?',
+    'offer-accept': 'Accept this number?',
+    'stage3-disclosure': 'Share your first name and area?',
     'settlement-approve': 'Approve this payment?',
+  }[v.action];
+  const yesLabel = {
+    'offer-accept': 'Accept',
+    'stage3-disclosure': 'Share',
+    'settlement-approve': 'Approve',
   }[v.action];
   const anomalyHtml = v.anomalies
     .map((a) => `<div class="anomaly"><div class="k">Worth a second look</div>${esc(a)}</div>`)
@@ -680,7 +678,7 @@ export function approvalPage(v: ApprovalView, error?: string): string {
     : `<label for="pin">Confirm with your PIN</label>
        <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
   const passkeyBtn = v.hasPasskey && !v.elevated
-    ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Approve with passkey instead</button>`
+    ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
     : '';
   // First time through: the page collects the two things it is about to
   // share. They are stored under this account's own key when you approve.
@@ -690,11 +688,6 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   You can change both any time on <a href="/profile">what you share on a match</a>.</p>
   ${sharedFieldsFieldset(v.collectProfile)}`
     : '';
-  const declineTail = {
-    'offer-accept': 'is accepted',
-    'stage3-disclosure': 'is shared',
-    'settlement-approve': 'is paid',
-  }[v.action];
   return layout(title, `
 <h1>${esc(title)}</h1>
 ${errBox(error)}
@@ -706,29 +699,13 @@ ${headlineHtml}
   ${collect}
   ${pinBlock}
   <div class="actions">
-  <button type="submit" name="decision" value="approve" class="approve">Approve</button>
-  <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Decline — nothing ${declineTail}</button>
+  <button type="submit" name="decision" value="approve" class="approve">${yesLabel}</button>
+  <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Not now</button>
   </div>
 </form>
 ${passkeyBtn}
-<p class="small muted">Approve needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Decline shares nothing and carries no reason.</p>
+<p class="small muted">${yesLabel} needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Not now changes nothing and sends no reason. A number of your own goes through your assistant.</p>
 ${restHtml}
-${
-  v.counterOffer
-    ? foldedDetail(
-        'Or reply with a number of your own',
-        counterOfferForm(v.counterOffer.matchId, {
-          ccy: v.draft?.ccy ?? v.counterOffer.ccy,
-          amount: v.draft?.amount,
-          note: v.draft?.note,
-          // The fold's own summary is the heading here.
-          heading: '',
-          draft: !!v.draft,
-        }),
-        !!v.draft,
-      )
-    : ''
-}
 ${v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
 document.getElementById('pkapprove').addEventListener('click', async () => {
   try {

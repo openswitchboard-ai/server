@@ -800,8 +800,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const anomalies: string[] = [];
       const facts: { k: string; v: string }[] = [];
       let collectProfile: pages.ApprovalView['collectProfile'];
-      let counterOffer: pages.ApprovalView['counterOffer'];
-      let draft: pages.ApprovalView['draft'];
       if (action === 'settlement-approve') {
         const s = await settlements.getSettlement(refId);
         if (!s) return { error: 'This settlement no longer exists.' };
@@ -867,11 +865,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           { k: 'For', v: categoryLeafLabel(o.category) },
           { k: 'Offer expires', v: new Date(o.expiry).toUTCString() },
         );
-        // The third door out of this page: answer with a figure of your own,
-        // opened on the number their agent already tried to send if it has one.
-        counterOffer = { matchId: o.match_id, ccy: o.ccy };
-        const carried = await newestOfferDraft(accountId, o.match_id);
-        if (carried) draft = draftToFields(carried);
         const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
         if (amountAnomaly) anomalies.push(amountAnomaly.text);
         const cp = await newCounterpartyAnomaly(o.proposer_account, 'offer-accept');
@@ -907,8 +900,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         facts,
         anomalies,
         collectProfile,
-        counterOffer,
-        draft,
         hasPasskey: await wa.accountHasPasskey(accountId),
         elevated: false,
         postPath: '/approve',
