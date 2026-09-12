@@ -35,6 +35,14 @@ export const LOCALITY_MAX = 60;
 export const SHARED_PROFILE_ACTION =
   "Add the first name and area you'd share, on your approval page";
 
+/**
+ * The names step is the human's to press, every time (Lachlan, 2026-09-12).
+ * An agent that asks to opt in is handed this and the link, whether or not a
+ * first name and area are already on file: the press is what records it.
+ */
+export const NAMES_GATE_ACTION =
+  'Sharing their first name and area is theirs to press. Hand them this link';
+
 /** Said to the side that has done its part and is waiting on the other one. */
 export const COUNTERPARTY_PROFILE_ACTION =
   'The other side has not added the first name and area they share yet. This introduction opens up once they do.';
@@ -213,10 +221,30 @@ export async function sharedProfileConsentError(
   cfg: Config,
   opts: { accountId: string; matchId: string; counterpartyAccount: string },
 ): Promise<OsbError> {
+  return consentErrorWithLink(cfg, SHARED_PROFILE_ACTION, opts);
+}
+
+/**
+ * The refusal an agent's own opt-in earns, every time. Same link, different
+ * sentence: there is nothing wrong here to fix, so the sentence says whose
+ * press this is and hands the link over rather than naming a missing field.
+ */
+export async function namesGateConsentError(
+  cfg: Config,
+  opts: { accountId: string; matchId: string; counterpartyAccount: string },
+): Promise<OsbError> {
+  return consentErrorWithLink(cfg, NAMES_GATE_ACTION, opts);
+}
+
+async function consentErrorWithLink(
+  cfg: Config,
+  sentence: string,
+  opts: { accountId: string; matchId: string; counterpartyAccount: string },
+): Promise<OsbError> {
   const url = await stage3LinkFor(cfg, opts.accountId, opts.matchId, opts.counterpartyAccount);
-  const withLink = url ? `${SHARED_PROFILE_ACTION}: ${url}` : SHARED_PROFILE_ACTION;
+  const withLink = url ? `${sentence}: ${url}` : sentence;
   return new OsbError('CONSENT_REQUIRED', {
-    human_action: withLink.length <= 300 ? withLink : SHARED_PROFILE_ACTION,
+    human_action: withLink.length <= 300 ? withLink : sentence,
   });
 }
 
