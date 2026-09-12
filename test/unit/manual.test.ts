@@ -312,7 +312,11 @@ describe('the sweep carries it, for a day', () => {
       'arrangement',
       'arrangement_note',
       'hears_via',
+      // Every field that changes what the agent should say carries the saying
+      // of it, so a field name is never the only thing there is to read.
+      'hears_via_note',
       'runs_on_its_own',
+      'runs_on_its_own_note',
       'timezone',
       'local_time_now',
     ]);

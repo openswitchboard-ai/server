@@ -6,7 +6,7 @@
 import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
-import { getHearsVia, getTimezone } from '../domain/accounts.js';
+import { getHearsVia, getTimezone, hearsViaNote } from '../domain/accounts.js';
 import { clockNote, localTimeText } from '../domain/localTime.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
@@ -259,7 +259,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -738,8 +738,13 @@ export async function dispatchTool(
             introductions: withNotes,
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),
+            // Every field here that changes what the agent should say carries
+            // the saying of it. A bare field name is a word an agent reads
+            // out, and in run 7 one did.
             hears_via: hearsVia,
+            hears_via_note: hearsViaNote(hearsVia),
             runs_on_its_own: standing.runs_on_its_own === true,
+            runs_on_its_own_note: arrangement.runsOnItsOwnNote(standing.runs_on_its_own === true),
             timezone: tz,
             local_time_now: tz ? localTimeText(now, tz) : null,
             ...(tz ? { time_note: { text: clockNote(now, tz), provenance: 'switchboard-system' } } : {}),

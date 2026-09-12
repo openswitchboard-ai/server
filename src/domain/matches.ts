@@ -838,6 +838,14 @@ const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as co
 const plainLeaf = (category: string) =>
   categoryLeafLabel(category).toLowerCase().replace(/[-_.]+/g, ' ').trim();
 
+/** What "taken down" means, in the words the agent says it in. The thing this
+ *  was about is off the switchboard, so nobody new comes into it; the two
+ *  people already talking are left to finish. */
+const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
+  takenDown === 'yours'
+    ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
+    : "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away.";
+
 /** The ready sentence for a fresh stage-1 signal, warmed by which side the
  *  other person is on: they have what your human is after, or they are after
  *  what your human put up. No card/match/stage words reach the human. */
@@ -956,7 +964,13 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       const theirs = await getCard(sideOf(m, accountId) === 'want' ? m.card_have : m.card_want);
       if (own?.lifecycle_state === 'WITHDRAWN') takenDown = 'yours';
       else if (theirs?.lifecycle_state === 'WITHDRAWN') takenDown = 'theirs';
-      if (takenDown) entry.taken_down = takenDown;
+      // The field is for the agent; the sentence is what it says out loud.
+      // Left bare, this one reached the human as the words "taken down" in a
+      // sweep whose main sentence was about a figure on the table instead.
+      if (takenDown) {
+        entry.taken_down = takenDown;
+        entry.taken_down_note = sbNote(takenDownSentence(takenDown));
+      }
     }
     // A pending offer FROM the other side must reach this agent on its ordinary
     // sweep — otherwise a routine "anything new?" misses a figure on the table.
@@ -1033,11 +1047,9 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         break;
       case 'ready_to_talk':
         entry.note = sbNote(
-          takenDown === 'yours'
-            ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
-            : takenDown === 'theirs'
-              ? "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away."
-              : "You are connected now — you can message each other through me whenever you like.",
+          takenDown
+            ? takenDownSentence(takenDown)
+            : "You are connected now — you can message each other through me whenever you like.",
         );
         break;
       case 'deal_agreed':
