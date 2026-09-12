@@ -16,7 +16,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
-import { getAccount, findAccountByEmail, getHearsVia, setHearsVia } from '../domain/accounts.js';
+import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
+import { isValidTimeZone } from '../domain/localTime.js';
 import {
   arrangementInPlainWords,
   readArrangement,
@@ -634,6 +635,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         hearsVia: await getHearsVia(accountId),
         firstName: profile.firstName,
         locality: profile.locality,
+        timezone: await getTimezone(accountId),
       };
     };
 
@@ -661,6 +663,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         if (want === 'email' || want === 'assistant') {
           await setHearsVia(s.accountId!, want, 'counter');
         }
+        // The browser's zone, filled into a hidden box. A bad or missing
+        // value is simply not recorded; the settings page has the picker.
+        const tz = String(b.timezone ?? '').trim();
+        if (isValidTimeZone(tz)) await setTimezone(s.accountId!, tz);
         const firstName = String(b.first_name ?? '').trim();
         const locality = String(b.locality ?? '').trim();
         // Both boxes or neither. Half a shared profile shares nothing, and the
@@ -2616,12 +2622,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // send time) and writes to the WORM consent log first.
     // ------------------------------------------------------------------
     const settingsView = async (accountId: string): Promise<home.EmailSettingsView> => {
-      const [es, hearsVia] = await Promise.all([
+      const [es, hearsVia, timezone] = await Promise.all([
         ops.emailSettings(accountId),
         getHearsVia(accountId),
+        getTimezone(accountId),
       ]);
       return {
         hearsVia,
+        timezone,
         blindMode: es.blindMode,
         freqMatches: es.freqMatches,
         freqDigests: es.freqDigests,
@@ -2660,6 +2668,27 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           want === 'assistant'
             ? 'Saved. Your assistant brings you the news, and email is a backup.'
             : 'Saved. Every match, reply and step reaches you by email.',
+        ),
+      );
+    });
+
+    counter.post('/settings/timezone', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const tz = String((req.body as any)?.timezone ?? '').trim();
+      if (!isValidTimeZone(tz)) {
+        return html(
+          reply,
+          home.settingsPage(await settingsView(s.accountId!), 'Pick a zone from the list.'),
+          400,
+        );
+      }
+      await setTimezone(s.accountId!, tz);
+      return html(
+        reply,
+        home.settingsPage(
+          await settingsView(s.accountId!),
+          `Saved. Your assistant says times in ${tz.replace(/_/g, ' ')}.`,
         ),
       );
     });

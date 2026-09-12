@@ -3,7 +3,7 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
-import { getAccount } from './accounts.js';
+import { getAccount, getTimezone } from './accounts.js';
 import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
@@ -843,11 +843,17 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // being read out verbatim. The close time stays in the DB and on the
       // human's own dashboard; the agent gets the count it can act on plus a
       // human-voiced note, the way the switchboard would say it.
+      // With the human's zone known, the close can be said in their own
+      // clock — a wall-clock sentence, never the raw instant.
+      const tz = await getTimezone(accountId);
+      const { localTimeText } = await import('./localTime.js');
+      const closes = tz ? localTimeText(new Date(w.until), tz) : undefined;
       entry.collection = {
         collecting: true,
         interested_parties: w.interestedParties,
+        ...(closes ? { closes_at_local: closes } : {}),
         note: sbNote(
-          'More people are still coming forward about what you put up. Take a look at who is interested, and when you are ready to pick someone, tell me — or leave it and it will settle on its own.',
+          `More people are still coming forward about what you put up${closes ? ` until ${closes}` : ''}. Take a look at who is interested, and when you are ready to pick someone, tell me — or leave it and it will settle on its own.`,
         ),
       };
     }

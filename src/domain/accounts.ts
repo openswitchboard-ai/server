@@ -114,6 +114,28 @@ export async function getHearsVia(accountId: string): Promise<HearsVia> {
 }
 
 /**
+ * The human's IANA time zone, or null when never captured. Read on every
+ * sweep and on publish, so it stays one cheap query and swallows a missing
+ * column the way getHearsVia does.
+ */
+export async function getTimezone(accountId: string): Promise<string | null> {
+  try {
+    const r = await getPool().query('SELECT timezone FROM accounts WHERE id = $1', [accountId]);
+    const tz = r.rows[0]?.timezone;
+    return typeof tz === 'string' && tz ? tz : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Record it. A preference rather than a consent, so no event is written. */
+export async function setTimezone(accountId: string, tz: string): Promise<void> {
+  const { isValidTimeZone } = await import('./localTime.js');
+  if (!isValidTimeZone(tz)) throw new Error(`unknown time zone '${String(tz).slice(0, 64)}'`);
+  await getPool().query('UPDATE accounts SET timezone = $2 WHERE id = $1', [accountId, tz]);
+}
+
+/**
  * Change it. Consent-logged first, the way every other settings change on this
  * account is (blind mode, email frequency) — the log names the new value and
  * who recorded it.

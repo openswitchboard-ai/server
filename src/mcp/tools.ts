@@ -6,7 +6,8 @@
 import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
-import { getHearsVia } from '../domain/accounts.js';
+import { getHearsVia, getTimezone } from '../domain/accounts.js';
+import { clockNote, localTimeText } from '../domain/localTime.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
@@ -724,6 +725,10 @@ export async function dispatchTool(
           // Both have to be true, so both ride the sweep where an agent can
           // read them without digging.
           const hearsVia = await getHearsVia(accountId);
+          // The human's clock rides the sweep as well: the zone, the local
+          // time now, and one sentence telling the agent to say times in it.
+          const tz = await getTimezone(accountId);
+          const now = new Date();
           // The manual rides the sweep too, and only when it has changed. An
           // agent that read the manual at connect and never reconnects still
           // hears about an edit, once, on its next check.
@@ -734,6 +739,9 @@ export async function dispatchTool(
             arrangement_note: arrangement.arrangementNote(standing),
             hears_via: hearsVia,
             runs_on_its_own: standing.runs_on_its_own === true,
+            timezone: tz,
+            local_time_now: tz ? localTimeText(now, tz) : null,
+            ...(tz ? { time_note: { text: clockNote(now, tz), provenance: 'switchboard-system' } } : {}),
             ...(manualUpdate ? { manual_update: manualUpdate } : {}),
           });
         }

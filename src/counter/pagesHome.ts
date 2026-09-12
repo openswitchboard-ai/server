@@ -897,7 +897,14 @@ export interface HelloView {
   hearsVia: HearsVia;
   firstName: string;
   locality: string;
+  /** IANA zone already on the account, if any. */
+  timezone?: string | null;
 }
+
+/** Fills a hidden box with the browser's zone, so nobody is asked a question the browser can answer. */
+const ZONE_SCRIPT = `<script>
+(function(){try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;var el=document.getElementById('tz');if(el&&z&&!el.value)el.value=z;}catch(e){}})();
+</script>`;
 
 export function helloPage(v: HelloView, error?: string): string {
   const options = HEARS_VIA_OPTIONS.map(
@@ -924,13 +931,17 @@ ${errBox(error)}
   <label for="locality">Suburb or area</label>
   <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2" required
     value="${esc(v.locality)}">
+  <input type="hidden" id="tz" name="timezone" value="${esc(v.timezone ?? '')}">
   <button type="submit">Save and carry on</button>
-</form>`);
+</form>
+${ZONE_SCRIPT}`);
 }
 
 export interface EmailSettingsView {
   /** Which of the two ways this account hears about things right now. */
   hearsVia: HearsVia;
+  /** IANA zone on the account, or null when never captured. */
+  timezone: string | null;
   blindMode: boolean;
   freqMatches: string;
   freqDigests: string;
@@ -973,6 +984,14 @@ hold. Re-verify from the <a href="/">front page</a>.</div>`
   <span class="small muted">${esc(o.rest)}</span>
 </label>`,
   ).join('');
+  const zones = Intl.supportedValuesOf('timeZone');
+  const zoneOptions = [
+    `<option value=""${v.timezone ? '' : ' selected'}>Not set</option>`,
+    ...zones.map((z) => `<option value="${esc(z)}"${z === v.timezone ? ' selected' : ''}>${esc(z.replace(/_/g, ' '))}</option>`),
+  ].join('');
+  const zoneNow = v.timezone
+    ? `Your assistant says times in ${v.timezone.replace(/_/g, ' ')}.`
+    : 'Not set yet. Pick your zone so your assistant says times the way you do, and "today" means your today.';
   const hearsViaNow =
     v.hearsVia === 'assistant'
       ? 'Right now your assistant brings you the news, and email is a backup.'
@@ -986,6 +1005,13 @@ ${unreachable}${complaint}
 <form method="POST" action="/settings/hears-via">
   ${hearsVia}
   <button type="submit" class="secondary" id="hears-save" hidden>Save how I hear about things</button>
+</form>
+<h2>Your time zone</h2>
+<p class="small muted">${esc(zoneNow)}</p>
+<form method="POST" action="/settings/timezone">
+  <label for="timezone">Time zone</label>
+  <select id="timezone" name="timezone">${zoneOptions}</select>
+  <button type="submit" class="secondary">Save my time zone</button>
 </form>
 <p class="small muted">An assistant you talk to when you feel like it cannot
 bring you a match it never saw, so the switchboard emails you every step.
