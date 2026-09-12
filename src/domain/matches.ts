@@ -3,7 +3,7 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
-import { getAccount, getTimezone } from './accounts.js';
+import { getAccount, getHearsVia, getTimezone } from './accounts.js';
 import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
@@ -178,19 +178,48 @@ export async function closeCollectionByCard(
 }
 
 // ---------------------------------------------------------------------------
-// Match-quality verdicts: one tap, 'good-call' | 'not-for-me', per human per
-// match. Simple documented model (no ML):
+// How it went: one tap, in the three words a person says. Simple documented
+// model (no ML):
 //   - the verdict row is stored (match_verdicts, unique per human+match);
-//   - 'not-for-me' additionally (a) mutes the account pairing so the matcher
-//     never pairs these two accounts again, (b) declines the match if still
+//   - 'bad' additionally (a) mutes the account pairing so the matcher never
+//     pairs these two accounts again, (b) declines the introduction if still
 //     open (reasonless, as all declines are), and (c) nudges the verdict-
 //     giver's personal threshold up by +0.01 (cap +0.10 over the 0.75 base);
-//   - 'good-call' relaxes the personal threshold by -0.01 (floor 0).
+//   - 'good' relaxes the personal threshold by -0.01 (floor 0);
+//   - 'fine' is recorded and does nothing else. It is the answer most of them
+//     are, and it was missing: without it an introduction that was merely all
+//     right had to be filed as a rejection, which muted the pairing for good.
+//     Neutral in the reliability signal, both ways.
+// The old wire words ('good-call', 'not-for-me') are mapped in the tool layer
+// for one manual version and never reach here.
 // ---------------------------------------------------------------------------
+export type Verdict = 'good' | 'fine' | 'bad';
+
+/** The three words, for anything that has to check one. */
+export const VERDICTS: readonly Verdict[] = ['good', 'fine', 'bad'];
+
+export const isVerdict = (v: unknown): v is Verdict => VERDICTS.includes(v as Verdict);
+
+/**
+ * The two words the wire used before run 7, mapped to the ones it uses now.
+ * An agent holding the older tool schema keeps working for one manual version;
+ * nothing is logged about the alias, and neither old word is stored.
+ */
+const VERDICT_ALIASES: Record<string, Verdict> = {
+  'good-call': 'good',
+  'not-for-me': 'bad',
+};
+
+/** The verdict a caller meant, from either vocabulary (undefined = neither). */
+export function readVerdict(v: unknown): Verdict | undefined {
+  if (isVerdict(v)) return v;
+  return typeof v === 'string' ? VERDICT_ALIASES[v] : undefined;
+}
+
 export async function recordVerdict(
   matchId: string,
   accountId: string,
-  verdict: 'good-call' | 'not-for-me',
+  verdict: Verdict,
   recordedVia: string,
 ): Promise<{ intro_id: string; verdict: string }> {
   const m = await getMatch(matchId);
@@ -203,7 +232,10 @@ export async function recordVerdict(
      ON CONFLICT (match_id, account_id) DO UPDATE SET verdict = $3, created_at = now()`,
     [matchId, accountId, verdict, recordedVia],
   );
-  if (verdict === 'not-for-me') {
+  // 'fine' is recorded and stops there: no mute, no decline, and no move on
+  // the threshold in either direction.
+  if (verdict === 'fine') return { intro_id: matchId, verdict };
+  if (verdict === 'bad') {
     const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
     await pool.query(
       `INSERT INTO match_mutes (account_id, muted_account) VALUES ($1,$2)
@@ -253,8 +285,20 @@ async function loadOpenMatchFor(matchId: string, accountId: string): Promise<Mat
   return m;
 }
 
-/** Record stage-1 interest for the calling side. Advances stage to 2 when mutual. */
-export async function expressInterest(matchId: string, accountId: string): Promise<MatchRow> {
+/**
+ * Record stage-1 interest for the calling side. Advances stage to 2 when mutual.
+ *
+ * The side that spoke FIRST is told, once, when the second side makes it
+ * mutual. That human said they were keen and then heard nothing: their own
+ * assistant only wakes when spoken to, so the details opening was a thing that
+ * happened on a page nobody had told them to open. The side calling now needs
+ * no notice — its own assistant is right here and has the answer in hand.
+ */
+export async function expressInterest(
+  cfg: Config,
+  matchId: string,
+  accountId: string,
+): Promise<MatchRow> {
   const m = await loadOpenMatchFor(matchId, accountId);
   const col = sideOf(m, accountId) === 'want' ? 'interest_want' : 'interest_have';
   const r = await getPool().query(
@@ -270,9 +314,43 @@ export async function expressInterest(matchId: string, accountId: string): Promi
       `UPDATE matches SET stage = 2, updated_at = now() WHERE id = $1 RETURNING *`,
       [matchId],
     );
-    return r2.rows[0];
+    const unlocked: MatchRow = r2.rows[0];
+    await queueYourMove(cfg, matchId, counterpartyOf(unlocked, accountId), 'details');
+    return unlocked;
   }
   return updated;
+}
+
+/**
+ * Enqueue a "your move" notice, best-effort and never able to fail the action
+ * that raised it. Only for a human who hears about the switchboard by email:
+ * an always-on assistant brings the same news itself, and a second copy of it
+ * is noise. The dedupe key on the far side makes a repeat harmless.
+ */
+async function queueYourMove(
+  cfg: Config,
+  matchId: string,
+  recipientAccount: string,
+  step: 'names' | 'details',
+): Promise<void> {
+  if (!cfg.opsQueueUrl) return;
+  try {
+    if ((await getHearsVia(recipientAccount)) !== 'email') return;
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: cfg.opsQueueUrl,
+        MessageBody: JSON.stringify({
+          op: 'your-move-notify',
+          match_id: matchId,
+          account_id: recipientAccount,
+          step,
+        }),
+      }),
+    );
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error(`your-move-notify: enqueue failed (the step itself stands): ${e?.message ?? e}`);
+  }
 }
 
 /** The other party's account on a match. */
@@ -760,6 +838,14 @@ const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as co
 const plainLeaf = (category: string) =>
   categoryLeafLabel(category).toLowerCase().replace(/[-_.]+/g, ' ').trim();
 
+/** What "taken down" means, in the words the agent says it in. The thing this
+ *  was about is off the switchboard, so nobody new comes into it; the two
+ *  people already talking are left to finish. */
+const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
+  takenDown === 'yours'
+    ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
+    : "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away.";
+
 /** The ready sentence for a fresh stage-1 signal, warmed by which side the
  *  other person is on: they have what your human is after, or they are after
  *  what your human put up. No card/match/stage words reach the human. */
@@ -878,7 +964,13 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       const theirs = await getCard(sideOf(m, accountId) === 'want' ? m.card_have : m.card_want);
       if (own?.lifecycle_state === 'WITHDRAWN') takenDown = 'yours';
       else if (theirs?.lifecycle_state === 'WITHDRAWN') takenDown = 'theirs';
-      if (takenDown) entry.taken_down = takenDown;
+      // The field is for the agent; the sentence is what it says out loud.
+      // Left bare, this one reached the human as the words "taken down" in a
+      // sweep whose main sentence was about a figure on the table instead.
+      if (takenDown) {
+        entry.taken_down = takenDown;
+        entry.taken_down_note = sbNote(takenDownSentence(takenDown));
+      }
     }
     // A pending offer FROM the other side must reach this agent on its ordinary
     // sweep — otherwise a routine "anything new?" misses a figure on the table.
@@ -955,11 +1047,9 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         break;
       case 'ready_to_talk':
         entry.note = sbNote(
-          takenDown === 'yours'
-            ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
-            : takenDown === 'theirs'
-              ? "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away."
-              : "You are connected now — you can message each other through me whenever you like.",
+          takenDown
+            ? takenDownSentence(takenDown)
+            : "You are connected now — you can message each other through me whenever you like.",
         );
         break;
       case 'deal_agreed':

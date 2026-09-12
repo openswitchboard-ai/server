@@ -1323,28 +1323,37 @@ describe('the offers page the rehearsal left notes on', () => {
 
   // The one-tap feedback lives here now, at the very foot of the introduction
   // it is about, with no figure anywhere near it.
-  it('asks once, quietly, at the bottom whether this was a good one', () => {
+  it('asks once, quietly, at the bottom how that one went', () => {
     const html = chome.matchOffersPage(offersView());
-    expect(html).toContain('Was this a good match?');
+    expect(html).toContain('How was that one?');
     expect(html).toContain('action="/verdict"');
-    expect(html).toContain('<input type="hidden" name="verdict" value="good-call">');
-    expect(html).toContain('<input type="hidden" name="verdict" value="not-for-me">');
+    // Three answers in the words a person says, and the middle one is real.
+    expect(html).toContain('<input type="hidden" name="verdict" value="good">');
+    expect(html).toContain('<input type="hidden" name="verdict" value="fine">');
+    expect(html).toContain('<input type="hidden" name="verdict" value="bad">');
     expect(html).toContain('name="return_to" value="m-1"');
-    expect(html).toContain('"No" also mutes');
+    expect(html).toContain('"Fine" is a real');
+    expect(html).toContain('"Bad" also mutes');
     expect(html).not.toMatch(/score\s*\d/i);
     // Last on the page: everything that asks something of the person is above it.
-    expect(html.indexOf('Was this a good match?')).toBeGreaterThan(
+    expect(html.indexOf('How was that one?')).toBeGreaterThan(
       html.indexOf('<h2>What has been offered</h2>'),
     );
   });
 
   it('once they have answered, it reads the answer back and stops asking', () => {
-    const good = chome.matchOffersPage(offersView({ verdict: 'good-call' }));
-    expect(good).toContain('Your call on this one: good call.');
-    expect(good).not.toContain('Was this a good match?');
-    expect(good).not.toContain('good-call.');
-    const no = chome.matchOffersPage(offersView({ verdict: 'not-for-me' }));
-    expect(no).toContain('Your call on this one: not for me.');
+    for (const said of ['good', 'fine', 'bad']) {
+      const html = chome.matchOffersPage(offersView({ verdict: said }));
+      expect(html).toContain(`Your call on this one: ${said}.`);
+      expect(html).not.toContain('How was that one?');
+    }
+    // A row an older process wrote still reads back in the plain words.
+    expect(chome.matchOffersPage(offersView({ verdict: 'good-call' }))).toContain(
+      'Your call on this one: good.',
+    );
+    expect(chome.matchOffersPage(offersView({ verdict: 'not-for-me' }))).toContain(
+      'Your call on this one: bad.',
+    );
   });
 
   it('a figure of theirs that is already out there collapses the form to one line', () => {

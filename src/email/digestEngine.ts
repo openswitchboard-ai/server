@@ -29,6 +29,7 @@ import {
   renderYourMove,
   type DigestItem,
   type RenewalCardItem,
+  type YourMoveStep,
 } from './templates.js';
 import { emailAccountContext, sendEmail } from './send.js';
 import { signEmailToken } from './tokens.js';
@@ -162,17 +163,25 @@ export async function sendChannelWaitingNudge(
 }
 
 // ---------------------------------------------------------------------------
-// "Your move" nudge (ops op 'your-move-notify', enqueued when one side records
-// a stage-3 opt-in and the other side has not). New-match is already summoned
-// by notifyMatchCreated; this covers the later progression, where the ball
-// passes to a human who would otherwise never learn it is their turn. One nudge
-// per match per recipient (the dedupe key carries no timestamp), and quiet for
-// an account that has turned match mail off.
+// "Your move" nudge (ops op 'your-move-notify'), at the two steps a passive
+// human would otherwise sleep through. New-match is already summoned by
+// notifyMatchCreated; these cover the progressions after it.
+//
+//   step 'names'   — one side recorded a stage-3 opt-in and the other has not,
+//                    so the ball is in the far human's court.
+//   step 'details' — the second side said it was keen, which opens the details
+//                    for both. The one told is the side that spoke first: the
+//                    other side has just heard it from its own assistant.
+//
+// One nudge per step per recipient (each dedupe key carries no timestamp, and
+// the details step carries its own suffix so the two never collide), and quiet
+// for an account that has turned match mail off.
 // ---------------------------------------------------------------------------
 export async function notifyYourMove(
   cfg: Config,
   matchId: string,
   recipientAccount: string,
+  step: YourMoveStep = 'names',
 ): Promise<void> {
   const r = await getPool().query(
     `SELECT category, account_want, account_have FROM matches WHERE id = $1`,
@@ -192,9 +201,16 @@ export async function notifyYourMove(
     accountId: recipientAccount,
     template: 'your-move',
     kind: 'bulk',
-    dedupeKey: `your-move:${matchId}:${recipientAccount}`,
+    dedupeKey:
+      step === 'details'
+        ? `your-move:${matchId}:${recipientAccount}:details`
+        : `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
-      { categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category), blind: ctx.blind },
+      {
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        blind: ctx.blind,
+        step,
+      },
       ctx.links,
     ),
   });

@@ -6,7 +6,7 @@
 import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
 import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
-import { getHearsVia, getTimezone } from '../domain/accounts.js';
+import { getHearsVia, getTimezone, hearsViaNote } from '../domain/accounts.js';
 import { clockNote, localTimeText } from '../domain/localTime.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as cards from '../domain/cards.js';
@@ -259,7 +259,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -282,7 +282,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (your human\'s one-tap call on how good the introduction was: good-call | not-for-me; not-for-me mutes the pairing), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step), request_accept (accept a figure that is on the table, offer_id), request_close_window (close the window on one of your human\'s own wants or haves, intent_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step), request_accept (accept a figure that is on the table, offer_id), request_close_window (close the window on one of your human\'s own wants or haves, intent_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -328,8 +328,9 @@ export const TOOLS: ToolDef[] = [
         },
         verdict: {
           type: 'string',
-          enum: ['good-call', 'not-for-me'],
-          description: "Required for the 'verdict' action; your human's one-tap call.",
+          enum: ['good', 'fine', 'bad'],
+          description:
+            "Required for the 'verdict' action. Ask your human how it went in those plain words — good, fine or bad — and send back the one they said. Most of them are fine, and fine is a real answer: it records how it went and changes nothing else. Only bad shuts the pairing down.",
         },
         offer_id: { type: 'string', format: 'uuid', description: 'Required for offer actions on an existing offer.' },
         offer: {
@@ -737,8 +738,13 @@ export async function dispatchTool(
             introductions: withNotes,
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),
+            // Every field here that changes what the agent should say carries
+            // the saying of it. A bare field name is a word an agent reads
+            // out, and in run 7 one did.
             hears_via: hearsVia,
+            hears_via_note: hearsViaNote(hearsVia),
             runs_on_its_own: standing.runs_on_its_own === true,
+            runs_on_its_own_note: arrangement.runsOnItsOwnNote(standing.runs_on_its_own === true),
             timezone: tz,
             local_time_now: tz ? localTimeText(now, tz) : null,
             ...(tz ? { time_note: { text: clockNote(now, tz), provenance: 'switchboard-system' } } : {}),
@@ -844,7 +850,7 @@ export async function dispatchTool(
         }
         switch (action) {
           case 'express_interest': {
-            const m = await matches.expressInterest(intro_id, accountId);
+            const m = await matches.expressInterest(cfg, intro_id, accountId);
             // The action word, not a stage number: details_unlocked when this
             // made the interest mutual, awaiting_other_side while it has not.
             return ok({ intro_id, next: matches.nextAction(m, accountId) });
@@ -877,10 +883,12 @@ export async function dispatchTool(
           case 'list_offers':
             return ok({ offers: await offers.listOffers(accountId, intro_id) });
           case 'verdict': {
-            if (verdict !== 'good-call' && verdict !== 'not-for-me') {
-              return invalidInput("verdict must be 'good-call' or 'not-for-me'");
-            }
-            return ok(await matches.recordVerdict(intro_id, accountId, verdict, 'agent'));
+            // The two words the wire used before run 7 are still accepted, so
+            // an agent holding the older tool schema keeps working. They are
+            // mapped here and nothing is logged about the mapping.
+            const said = matches.readVerdict(verdict);
+            if (!said) return invalidInput("verdict must be 'good', 'fine' or 'bad'");
+            return ok(await matches.recordVerdict(intro_id, accountId, said, 'agent'));
           }
           case 'close_collection': {
             const r = await matches.closeCollection(intro_id, accountId, 'agent');

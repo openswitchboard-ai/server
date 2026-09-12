@@ -39,6 +39,7 @@ import {
   closeCollectionByCard,
   declineMatch,
   getMatch,
+  readVerdict,
   recordStage3OptIn,
   recordVerdict,
   sideOf,
@@ -1922,13 +1923,15 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const b: any = req.body ?? {};
-      const verdict = String(b.verdict ?? '');
-      if (verdict !== 'good-call' && verdict !== 'not-for-me') {
+      // The page posts the plain words; the two older spellings are still read
+      // so a form rendered before the rename still answers.
+      const verdict = readVerdict(b.verdict);
+      if (!verdict) {
         return reply.code(400).send({ error: 'bad_request' });
       }
       const matchId = String(b.match_id ?? '');
       try {
-        await recordVerdict(matchId, s.accountId!, verdict as any, 'counter');
+        await recordVerdict(matchId, s.accountId!, verdict, 'counter');
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       }
