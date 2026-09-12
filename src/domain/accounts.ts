@@ -114,6 +114,27 @@ export async function getHearsVia(accountId: string): Promise<HearsVia> {
 }
 
 /**
+ * The sentence that rides beside hears_via on every sweep.
+ *
+ * A bare field name is a word an agent reads out, and in the run-7 rehearsal
+ * one did. Every field that changes what the agent should say now carries the
+ * saying of it, so the agent has the sentence and never has to invent a noun
+ * for the machinery. The field is for the agent; this is what it means.
+ */
+export function hearsViaNote(hearsVia: HearsVia): {
+  text: string;
+  provenance: 'switchboard-system';
+} {
+  return {
+    text:
+      hearsVia === 'assistant'
+        ? 'You are the one who brings this human the news. The switchboard sends them no mail about any of it, so anything you do not pass on, they never hear.'
+        : 'This human is emailed about anything that needs them, because you only act when they speak to you. Assume they have read nothing since you last talked, and tell them what has happened before you ask them anything.',
+    provenance: 'switchboard-system',
+  };
+}
+
+/**
  * The human's IANA time zone, or null when never captured. Read on every
  * sweep and on publish, so it stays one cheap query and swallows a missing
  * column the way getHearsVia does.
