@@ -11,6 +11,7 @@ import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
 import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
+import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
 import {
   notifyMatchCreated,
@@ -38,6 +39,30 @@ import type { Config } from '../config.js';
  * Only principals with sqs:SendMessage on the ops queue (account operators /
  * the EventBridge schedule role) can reach any of this.
  */
+/**
+ * The fit sequencer's two clocks, run together.
+ *
+ * A live slot that has gone quiet lapses and the next person in line goes live
+ * (and is summoned the ordinary way); a best-offer gathering window whose time
+ * is up closes, which is what lets the seller see the numbers at all. Both
+ * halves are idempotent and both are best-effort: a tick that fails leaves
+ * every clock where it was and the next tick picks it up.
+ */
+async function runSequencerTick(cfg: Config, log: (msg: string, extra?: any) => void) {
+  try {
+    const gathered = await closeDueGatherings(cfg);
+    if (gathered.closed > 0) log('sequencer: gathering windows closed', gathered);
+  } catch (e: any) {
+    log('sequencer: closing gathering windows failed', { error: e?.message });
+  }
+  try {
+    const slots = await lapseDueSlots(cfg);
+    if (slots.lapsed > 0) log('sequencer: slots lapsed', slots);
+  } catch (e: any) {
+    log('sequencer: lapsing slots failed', { error: e?.message });
+  }
+}
+
 export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => void) {
   let stopped = false;
   (async () => {
@@ -66,6 +91,18 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 if (swept.messages > 0 || swept.rate_windows > 0) {
                   log('ttl-expiry: channel sweep', swept);
                 }
+                // The fit sequencer's two clocks ride the same tick, so they
+                // need no schedule of their own: a live slot that has shown no
+                // movement lapses and the next in line goes live, and a
+                // best-offer gathering window whose time is up closes.
+                await runSequencerTick(cfg, log);
+                break;
+              }
+              case 'sequencer-tick': {
+                // The same two clocks, on their own schedule where one is set
+                // up. Both halves are idempotent, so running twice costs a
+                // pair of statements and changes nothing.
+                await runSequencerTick(cfg, log);
                 break;
               }
               case 'create-account': {

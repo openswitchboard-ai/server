@@ -8,9 +8,12 @@
  * what the agent should say carries the saying of it, so there is always a
  * sentence to lead with and never a reason to name the machinery.
  *
- * The fields audited here are the five from run 7 — taken_down, collection,
- * timezone, hears_via, runs_on_its_own — and the rule asserted is that each
- * one has a switchboard-authored sentence beside it.
+ * The fields audited here are the five from run 7 — taken_down, the line of
+ * people waiting on the caller's own want or have, timezone, hears_via,
+ * runs_on_its_own — and the rule asserted is that each one has a
+ * switchboard-authored sentence beside it. (The fifth was the collection
+ * window when this suite was written; migration 030 replaced it with the
+ * line, and the rule about it is exactly the same.)
  *
  * The taken_down case is the one that was actually broken: its sentence
  * existed only on the branch where the two were simply talking, so a sweep
@@ -58,7 +61,7 @@ interface World {
   withdrawn: 'none' | 'yours' | 'theirs';
   /** An accepted figure on the table, which owns the entry's main sentence. */
   dealAgreed: boolean;
-  /** An open collection window on the caller's own want or have. */
+  /** People waiting behind this one on the caller's own want or have. */
   collecting: boolean;
 }
 let world: World;
@@ -86,12 +89,11 @@ function fakePool() {
           },
         ]);
       }
-      // The collection window, read for the holder only.
-      if (/FROM cards c/.test(sql)) {
-        return world.collecting
-          ? rows([{ collect_until: new Date(Date.now() + 3_600_000), n: 3 }])
-          : rows([]);
+      // The line behind this one, read for the holder only.
+      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) {
+        return rows([{ n: world.collecting ? 3 : 0 }]);
       }
+      if (/FROM cards c/.test(sql)) return rows([]);
       if (/^\s*SELECT \* FROM cards WHERE id/.test(sql)) {
         const mine = params[0] === CARD_W;
         const down =
@@ -208,14 +210,14 @@ describe('the whole sweep: every field that changes what to say has a sentence',
     expect(isNote(body.runs_on_its_own_note)).toBe(true);
     expect(isNote(body.time_note)).toBe(true);
     expect(isNote(entry.taken_down_note)).toBe(true);
-    expect(isNote(entry.collection.note)).toBe(true);
+    expect(isNote(entry.line.note)).toBe(true);
 
     // The fields themselves are still there for the agent to act on.
     expect(body.hears_via).toBe('email');
     expect(body.runs_on_its_own).toBe(false);
     expect(body.timezone).toBe('Australia/Perth');
     expect(entry.taken_down).toBe('theirs');
-    expect(entry.collection.collecting).toBe(true);
+    expect(entry.line.in_line).toBe(3);
   });
 
   it('the sweep never leaves the clock without words either', async () => {
