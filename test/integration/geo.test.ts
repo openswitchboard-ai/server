@@ -139,13 +139,23 @@ d('one city, two spellings, one match', () => {
       'a match between the Canberra card and the AU-ACT card',
       180_000,
     );
-    for (const actor of [alice, bob]) {
+    // No confidence figure crosses to an agent: the switchboard has already
+    // decided the introduction is worth sending, and intro.signal has no slot
+    // for a score (src/domain/matches.ts buildSignal, and the schema's
+    // additionalProperties:false makes it structural). What the thin first
+    // look does carry is which side the other person is on, so that is what is
+    // read here: Alice asked for the bike, so hers is the one offering it.
+    for (const [actor, theirSide] of [
+      [alice, 'offering'],
+      [bob, 'looking_for'],
+    ] as const) {
       const r = await mcpCall(actor.accessToken, 'check_in', {});
       const ours = (r.result.introductions ?? []).find((m: any) => m.intro_id === matchId);
       expect(ours, JSON.stringify(r.result)).toBeTruthy();
       expect(ours.signal.kind).toBe('intro.signal');
       expect(ours.signal.category).toBe('goods.bicycle.mountain');
-      expect(ours.signal.score).toBeGreaterThanOrEqual(0.75);
+      expect(ours.signal.counterparty_type).toBe(theirSide);
+      expect(ours.signal.score).toBeUndefined();
     }
   }, 240_000);
 

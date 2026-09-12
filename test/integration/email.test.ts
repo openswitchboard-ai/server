@@ -25,6 +25,7 @@ import {
   ENV_NAME,
   Jar,
   OPS_ACCOUNT_WAIT_MS,
+  completeOnboarding,
   consentBucket,
   counterFetch,
   counterLogin,
@@ -37,6 +38,22 @@ import {
 
 const RUN = process.env.RUN_INTEGRATION === '1';
 const d = RUN ? describe : describe.skip;
+
+/**
+ * (e) reads the renewal's WORM consent entry straight out of S3, and bucket
+ * names are globally unique, so there is nothing for the harness to default to
+ * (helpers.ts consentBucket). Without the name the evidence cannot be read at
+ * all, which is a missing environment rather than a failing deployment: the
+ * gate stands aside, loudly, and the rest of the file still runs.
+ */
+const renewalIt = process.env.OSB_CONSENT_BUCKET ? it : it.skip;
+if (RUN && !process.env.OSB_CONSENT_BUCKET) {
+  console.warn(
+    '(e) renewal SKIPPED: OSB_CONSENT_BUCKET is not set. It is the WORM consent-log bucket for ' +
+      `the ${ENV_NAME} deployment — infra/lib/core-stack.ts names it ` +
+      `osb-${ENV_NAME}-consent-log-<aws-account-id>. Export it to run this gate.`,
+  );
+}
 
 const region = process.env.AWS_REGION ?? 'us-east-1';
 const secrets = new SecretsManagerClient({ region });
@@ -252,9 +269,12 @@ d('0.E email daemon (live dev)', () => {
     );
     expect(events.length).toBeGreaterThan(0);
     // Counter banner (verification mail stays allowed, so login still works).
+    // The dashboard is behind the onboarding question, so this account answers
+    // it the way a first-time person does before reading the page.
     const jar = new Jar();
     await counterLogin(jar, email);
     await ensurePin(jar);
+    await completeOnboarding(jar);
     const dash = await counterFetch(jar, '/');
     expect(dash.status).toBe(200);
     expect(await dash.text()).toContain('Email to you is bouncing');
@@ -296,7 +316,7 @@ d('0.E email daemon (live dev)', () => {
     expect(rows[0][1]).toBe('suppressed');
   }, 300_000);
 
-  it('(e) renewal: expiring card -> renewal email; renew-all extends with consent', async () => {
+  renewalIt('(e) renewal: expiring card -> renewal email; renew-all extends with consent', async () => {
     const email = simEmail('g');
     const accountId = await createAccount(email);
     const cardId = await insertCard(accountId, 'HAVE', 3, { colour: `teal-${runId}` }); // lapses in 3 days

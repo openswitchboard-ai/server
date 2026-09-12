@@ -161,6 +161,36 @@ export async function ensurePin(jar: Jar, pin = TEST_PIN): Promise<string> {
 }
 
 /**
+ * Answer the one onboarding question, the way a first-time person does.
+ *
+ * Since migration 027 an account carries `onboarded_at`, and until it is
+ * stamped every signed-in GET of the dashboard answers 303 to /hello (see
+ * counter/routes.ts nextStep). A harness that signs in and reads a page has to
+ * come past that door like anybody else, or every page assertion it makes is
+ * an assertion about a redirect.
+ *
+ * It answers with 'email', which is where a fresh account already sits: the
+ * suites that wait on a summons, a nudge or a digest are waiting on mail the
+ * switchboard only sends to an account that hears that way, so the helper
+ * leaves that fact exactly as it found it. The first name, the area and the
+ * zone are left alone too — each belongs to the suite that is about it.
+ *
+ * Idempotent: an account already past the question is redirected on, which is
+ * the same 303 a fresh answer gets.
+ */
+export async function completeOnboarding(jar: Jar): Promise<void> {
+  const res = await counterFetch(jar, '/hello', form({ hears_via: 'email' }));
+  if (res.status !== 303) throw new Error(`onboarding failed: ${res.status}`);
+  // The page redirects to whatever is still owed, so being sent back to an
+  // earlier step means nothing was stamped and every page read after this
+  // would be a read of a redirect. Say so here rather than there.
+  const next = res.headers.get('location') ?? '';
+  if (['/hello', '/pin', '/consent', '/login'].includes(next)) {
+    throw new Error(`onboarding did not stick: the account still owes ${next}`);
+  }
+}
+
+/**
  * Issue an agent key the way a human does: a signed-in counter session plus a
  * PIN ceremony on /agent-keys. Returns the plaintext key (shown once)
  * and the handle the approval page revokes it by.
@@ -321,6 +351,9 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
   const jar = new Jar();
   await counterLogin(jar, email);
   const pin = await ensurePin(jar);
+  // The onboarding question sits between the PIN and the pages this actor is
+  // about, so it is answered here, once, for every suite.
+  await completeOnboarding(jar);
   const accessToken = await oauthFlow(jar);
   return { email, accountId, pin, accessToken, jar };
 }

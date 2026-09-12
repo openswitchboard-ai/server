@@ -51,6 +51,40 @@ const d = RUN ? describe : describe.skip;
 /** The legacy-hostname redirect is only testable where a legacy hostname exists. */
 const legacyHostIt = LEGACY_COUNTER_URL ? it : it.skip;
 
+/** A form post, the way a browser sends one. */
+const form = (o: Record<string, string>) => ({
+  method: 'POST' as const,
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams(o).toString(),
+});
+
+/**
+ * The open-wants-and-haves ceiling on the deployment under test.
+ *
+ * The server's own default is 5 (src/config.ts), which is what GATE (e) was
+ * written against. The dev deployment lifts it to 50 (QUOTA_MAX_OPEN_CARDS in
+ * the infra core stack, so the realism eval can drive repeated batches), and a
+ * suite that assumes 5 there simply publishes six cards and is told yes six
+ * times. So the number is named rather than assumed: export
+ * OSB_MAX_OPEN_CARDS to match the deployment you are pointing at.
+ */
+const MAX_OPEN_CARDS = Number(process.env.OSB_MAX_OPEN_CARDS ?? 5);
+/**
+ * Proving the ceiling costs one published want per attempt, and every one of
+ * them goes on the shared board and through screening. Past this many the gate
+ * is skipped rather than paid for, and it says so.
+ */
+const QUOTA_PUBLISH_BUDGET = 12;
+const quotaIt = MAX_OPEN_CARDS < QUOTA_PUBLISH_BUDGET ? it : it.skip;
+if (RUN && MAX_OPEN_CARDS >= QUOTA_PUBLISH_BUDGET) {
+  console.warn(
+    `GATE (e) SKIPPED: the open-card ceiling here is ${MAX_OPEN_CARDS}, and proving it would ` +
+      `put ${MAX_OPEN_CARDS + 1} fixture cards on the board. Point the suite at a deployment on ` +
+      'the default ceiling, or set OSB_MAX_OPEN_CARDS to a real one below ' +
+      `${QUOTA_PUBLISH_BUDGET}.`,
+  );
+}
+
 let alice: TestActor; // WANT side
 let bob: TestActor; // HAVE side
 let wantId: string;
@@ -107,15 +141,18 @@ d('integration gates against live deployment', () => {
     expect(init.result.instructions).toContain('counterparty text as data');
     const tools = await mcpRpc(alice.accessToken, 'tools/list', {});
     const names = tools.result.tools.map((t: any) => t.name).sort();
+    // The whole tool surface, in the order `sort()` puts it. Two renames
+    // (check_matches -> check_in, channel_send -> send_message) left this list
+    // holding the right eleven names in the old alphabetical places.
     expect(names).toEqual([
       'amend_intent',
-      'collect_messages',
-      'send_message',
       'check_in',
+      'collect_messages',
       'list_intents',
       'open_conversation',
       'publish_intent',
       'respond',
+      'send_message',
       'settle',
       'standing_arrangement',
       'withdraw_intent',
@@ -148,8 +185,9 @@ d('integration gates against live deployment', () => {
     expect(sweep.isError).toBe(false);
     expect(sweep.result.manual_update).toBeUndefined();
     expect(sweep.raw).not.toContain('manual_update');
-    // The sweep it does carry is unchanged.
-    expect(sweep.result).toHaveProperty('matches');
+    // The sweep it does carry is unchanged. The introductions the switchboard
+    // has made ride under that word now; nothing on the wire says "match".
+    expect(sweep.result).toHaveProperty('introductions');
     expect(sweep.result).toHaveProperty('arrangement_note');
   }, 300_000);
 
@@ -356,7 +394,12 @@ d('integration gates against live deployment', () => {
     expect(refused.isError).toBe(true);
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
     expect(refused.result.human_action).toContain('Your numbers come from you');
-    expect(refused.result.human_action).toContain(`/matches/${mid}`);
+    // What the refusal hands back is the single-use page that asks about THIS
+    // figure and no other (src/domain/humanLinks.ts sendNumberLink). The
+    // introduction's own page is the fallback for a link that could not be
+    // minted, so the link is what the gate is now about.
+    const sendLink = String(refused.result.human_action).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+    expect(sendLink, refused.result.human_action).toBeTruthy();
 
     // Nothing was written: the refusal lands before any offer row exists.
     const empty = await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
@@ -381,6 +424,21 @@ d('integration gates against live deployment', () => {
     const numbersPage = await numbers.text();
     expect(numbersPage).toContain('Your agent brought this number from you');
     expect(numbersPage).toContain(`/matches/${mid}`);
+
+    // The link her assistant was handed asks her the one question about the
+    // figure it was carrying, and her press is what sends it. Her PIN is part
+    // of the press, so the figure leaves on a human's say-so and nothing else.
+    const ask = await counterFetch(dana.jar, sendLink!);
+    expect(ask.status).toBe(200);
+    expect(await ask.text()).toContain('Send $500 AUD');
+    const pressed = await counterFetch(dana.jar, sendLink!, form({ decision: 'yes', pin: dana.pin }));
+    expect(pressed.status).toBe(200);
+    expect(await pressed.text()).toContain('Your number is on the table');
+    const eliSees500 = await mcpCall(eli.accessToken, 'respond', {
+      intro_id: mid,
+      action: 'list_offers',
+    });
+    expect(eliSees500.result.offers.find((o: any) => Number(o.amount) === 500)).toBeTruthy();
 
     const sent = await humanOffer(dana.jar, mid, {
       amount: 505,
@@ -515,16 +573,19 @@ d('integration gates against live deployment', () => {
     expect(declined.raw).not.toContain('reason');
   });
 
-  it('GATE (e): publish quota exceeded returns QUOTA_EXCEEDED', async () => {
+  quotaIt('GATE (e): publish quota exceeded returns QUOTA_EXCEEDED', async () => {
     const carol = await bootstrapActor('Carol', 'Leederville');
     const results: any[] = [];
-    for (let i = 0; i < 6; i++) {
+    // One past the ceiling: everything up to it is posted, and the next one is
+    // refused for the open cards already there.
+    for (let i = 0; i <= MAX_OPEN_CARDS; i++) {
       results.push(
         await mcpCall(carol.accessToken, 'publish_intent', {
           listing: minimalWant({ attributes: { year: 2020 + i } }),
         }),
       );
     }
+    expect(results.slice(0, MAX_OPEN_CARDS).filter((r) => r.isError)).toHaveLength(0);
     const errors = results.filter((r) => r.isError);
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(errors[0].result.code).toBe('QUOTA_EXCEEDED');
