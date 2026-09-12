@@ -179,7 +179,7 @@ const notices = () =>
 
 // ---------------------------------------------------------------------------
 describe('the side that spoke first hears when the details open', () => {
-  it('tells that side, once, when the second side says it are keen too', async () => {
+  it('tells that side, once, when the second side says it is keen too', async () => {
     const m = await expressInterest(cfg, MATCH, BEPPE);
     expect(m.stage).toBe(2); // the details are open for both now
     const sent = notices();
@@ -225,7 +225,7 @@ describe('the notice itself', () => {
       { categoryLabel: 'Mountain bikes', blind: false, step: 'details' },
       links,
     );
-    expect(c.text).toContain('are keen too');
+    expect(c.text).toContain('take it further too');
     expect(c.text).toContain('about the mountain bike');
     expect(c.text).not.toContain('Mountain bikes');
     expect(c.text.trimEnd()).toContain('Ask your assistant.');
@@ -245,7 +245,7 @@ describe('the notice itself', () => {
   it('names no thing at all when the person is in blind mode', () => {
     const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: true, step: 'details' }, links);
     expect(c.text).not.toContain('mountain bike');
-    expect(c.text).toContain('are keen too');
+    expect(c.text).toContain('take it further too');
   });
 
   it('leaves the names-step wording exactly as it was', () => {
