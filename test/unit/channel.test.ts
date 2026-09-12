@@ -311,12 +311,14 @@ describe('participant gating', () => {
     expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
   });
 
-  it('closes the channel for both sides when either card is withdrawn', async () => {
+  it('leaves a channel open when a card is withdrawn: the two are still arranging things', async () => {
+    // Run 7 (12 September 2026): the seller marked the bike sold and took it
+    // down, and the buyer could not collect her "Wednesday 6pm" reply. Taking
+    // the thing down closes the door to anyone new; the conversation already
+    // open is theirs until it is archived.
     world.cards['card-h'] = 'WITHDRAWN';
     for (const who of [ANA, BEPPE]) {
-      const e = await channel.sendMessage(who, MATCH, 'still there?').catch((x) => x);
-      expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
-      expect(e.payload.human_action).toMatch(/withdrawn/);
+      await expect(channel.sendMessage(who, MATCH, 'still there?')).resolves.toBeTruthy();
     }
   });
 

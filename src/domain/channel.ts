@@ -26,7 +26,6 @@
  */
 import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
-import { getCard } from './cards.js';
 import { getMatch, sideOf, type MatchRow } from './matches.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
@@ -64,12 +63,15 @@ function channelLocked(human_action: string): OsbError {
  * Resolve the open channel a caller is a party to, or refuse.
  *
  * The gate is deliberately narrow: the match has to exist, the caller has to
- * be one of its two accounts, the match has to be open and at stage 4 with a
- * channel on it, and neither card may have been withdrawn. A withdrawn card is
- * someone saying they are done, and the channel stops carrying at that point.
- * A card that simply reached the end of its life is left alone: two people
- * already talking should not be cut off because the card that introduced them
- * aged out. Suspended agent tokens stop a send earlier still, at the door.
+ * be one of its two accounts, and the match has to be open and at stage 4 with
+ * a channel on it. The state of the cards that introduced them is not part of
+ * it. A withdrawn card closes the door to anyone new and files away the
+ * introductions that never reached a conversation (matches.ts); one already
+ * open stays open until it is archived, so two people arranging a handover are
+ * never cut off because the thing was marked sold first (run 7, 12 September
+ * 2026: the seller took the bike down and the buyer could not collect her
+ * reply). A card that aged out is left alone for the same reason. Suspended
+ * agent tokens stop a send earlier still, at the door.
  */
 export async function loadOpenChannel(
   matchId: string,
@@ -82,14 +84,6 @@ export async function loadOpenChannel(
     throw channelLocked(
       'This introduction has no open conversation yet. Both humans give the go-ahead first, and then open_conversation opens it.',
     );
-  }
-  for (const cardId of [m.card_want, m.card_have]) {
-    const card = await getCard(cardId);
-    if (!card || card.lifecycle_state === 'WITHDRAWN') {
-      throw channelLocked(
-        'This conversation has closed: what started it on one side was withdrawn.',
-      );
-    }
   }
   return {
     match: m,
