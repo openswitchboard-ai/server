@@ -59,6 +59,25 @@ const form = (o: Record<string, string>) => ({
 });
 
 /**
+ * The names step, the way a person does it: read the one question the link
+ * opens, then press Share with the PIN. The link arrives inside the refusal an
+ * agent's opt_in earns, so this is the whole of the road from agent to record.
+ */
+const pressNamesLink = async (actor: TestActor, humanAction: string): Promise<void> => {
+  const link = String(humanAction).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+  expect(link, humanAction).toBeTruthy();
+  const ask = await counterFetch(actor.jar, link!);
+  expect(ask.status).toBe(200);
+  expect(await ask.text()).toContain('Share your first name and area');
+  const pressed = await counterFetch(
+    actor.jar,
+    link!,
+    form({ decision: 'yes', pin: actor.pin }),
+  );
+  expect(pressed.status).toBe(200);
+};
+
+/**
  * The open-wants-and-haves ceiling on the deployment under test.
  *
  * The server's own default is 5 (src/config.ts), which is what GATE (e) was
@@ -214,9 +233,17 @@ d('integration gates against live deployment', () => {
     expect(locked0.isError).toBe(true);
     expect(locked0.result.code).toBe('NOT_UNLOCKED_YET');
 
-    // ONE opt-in (alice) is still not enough.
+    // ONE opt-in (alice) is still not enough. From 2026-09-12 an agent's own
+    // opt_in records nothing at all: it is refused with the single-use link its
+    // human presses, and the press is what puts the go-ahead on the record.
+    // Pressed the same way GATE (g) presses the send-a-number link.
     const o1 = await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o1.result.both_recorded).toBe(false);
+    expect(o1.isError).toBe(true);
+    expect(o1.result.code).toBe('CONSENT_REQUIRED');
+    expect(o1.result.human_action).toContain(
+      'Sharing their first name and area is theirs to press',
+    );
+    await pressNamesLink(alice, o1.result.human_action);
     const locked1 = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
@@ -228,9 +255,11 @@ d('integration gates against live deployment', () => {
     expect(ch.isError).toBe(true);
     expect(ch.result.code).toBe('NOT_UNLOCKED_YET');
 
-    // Second opt-in (bob) opens stage 3 — with the schema-required attestation.
+    // The second human's press opens stage 3.
     const o2 = await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o2.result.both_recorded).toBe(true);
+    expect(o2.isError).toBe(true);
+    expect(o2.result.code).toBe('CONSENT_REQUIRED');
+    await pressNamesLink(bob, o2.result.human_action);
     const mutual = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
