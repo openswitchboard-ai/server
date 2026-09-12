@@ -569,10 +569,20 @@ export interface OneQuestionView {
   needsPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
+  /** Set on the names question when this account has no first name or area on
+   *  file yet: the page asks for them right here, in the same form, and the
+   *  press stores them. Nothing was ever asked for at sign-up. */
+  collectProfile?: { firstName: string; locality: string };
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   const showPin = v.needsPin && !v.elevated;
+  const collect = v.collectProfile
+    ? `<h2>What should we share?</h2>
+       <p class="small">The other side sees a first name and a rough area. That is the whole of it.
+       You can change both any time on <a href="/profile">what you share on a match</a>.</p>
+       ${sharedFieldsFieldset(v.collectProfile)}`
+    : '';
   const pinBlock = showPin
     ? `<label for="pin">Confirm with your PIN</label>
        <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
@@ -586,6 +596,7 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
 ${errBox(error)}
 ${detail}
 <form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
+  ${collect}
   ${pinBlock}
   <div class="actions">
   <button type="submit" name="decision" value="yes" class="approve">${esc(v.yesLabel)}</button>

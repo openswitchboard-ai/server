@@ -126,6 +126,9 @@ interface World {
   locality: string;
   savedHearsVia: string[];
   elevatedUntil: Date | null;
+  /** The humans whose names-step press has been recorded, and how each one
+   *  was recorded. Only a press on their own page ever puts one here. */
+  optins: Map<string, string>;
 }
 let world: World;
 
@@ -365,6 +368,16 @@ function fakePool() {
       if (/FROM matches/.test(sql) && /^\s*SELECT (\*|m\.\*)/.test(sql)) {
         return rows(world.boardEmpty ? [] : [theMatch()]);
       }
+      // ---- the names step ----
+      if (/INSERT INTO consent_tokens/.test(sql)) {
+        world.optins.set(params[1], params[2]);
+        return rows([]);
+      }
+      if (/count\(DISTINCT account_id\)/.test(sql)) return rows([{ n: world.optins.size }]);
+      if (/UPDATE matches SET stage = 3/.test(sql)) {
+        world.stage = 3;
+        return rows([]);
+      }
       if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT count\(\*\)::int AS n FROM offers/.test(sql)) return rows([{ n: 0 }]);
       if (/SELECT count\(\*\)::int AS n,\s*min\(created_at\)/.test(sql)) {
@@ -418,6 +431,7 @@ beforeEach(async () => {
     locality: 'Franklin',
     savedHearsVia: [],
     elevatedUntil: null,
+    optins: new Map(),
   };
   linkSeq = 0;
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
@@ -447,6 +461,149 @@ const tokenOf = (link: string) => decodeURIComponent(link.split('/a/')[1]);
 
 const respond = (args: Record<string, unknown>) => dispatchTool(cfg, ANA, 'respond', args);
 const body = (r: any) => r.structuredContent ?? JSON.parse(r.content[0].text);
+
+// ---------------------------------------------------------------------------
+// (a) Share your name. From 2026-09-12 this is one of the three that go to the
+// human EVERY time: respond(opt_in) records nothing at all and answers with the
+// link, and the press on that page is the only thing that writes an opt-in.
+describe('(a) share your name', () => {
+  beforeEach(() => {
+    world.stage = 2; // both sides keen, neither has pressed yet
+  });
+
+  /** The link an agent is handed, whichever of the two ways it asks for it. */
+  const linkFrom = (r: any): string => {
+    const said = String(body(r).human_action ?? body(r).link ?? '');
+    const url = said.match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+    expect(url, said).toBeTruthy();
+    return encodeURIComponent(tokenOf(url!));
+  };
+
+  it('an agent that opts in is refused and handed the link, with a profile on file', async () => {
+    const r: any = await respond({ intro_id: MATCH, action: 'opt_in' });
+    expect(r.isError).toBe(true);
+    expect(body(r).code).toBe('CONSENT_REQUIRED');
+    expect(body(r).human_action).toContain(
+      'Sharing their first name and area is theirs to press. Hand them this link',
+    );
+    expect(body(r).human_action).toContain('https://my.test/a/');
+    // Nothing was recorded, and the step is exactly where it was.
+    expect(world.optins.size).toBe(0);
+    expect(world.stage).toBe(2);
+    expect(world.links).toHaveLength(1);
+    expect(world.links[0].action).toBe('stage3-disclosure');
+  });
+
+  it('hands back the same link request_share_name mints', async () => {
+    const refused: any = await respond({ intro_id: MATCH, action: 'opt_in' });
+    const asked: any = await respond({ intro_id: MATCH, action: 'request_share_name' });
+    expect(body(asked).link).toBe(
+      String(body(refused).human_action).match(/https?:\/\/\S+\/a\/\S+/)?.[0],
+    );
+    expect(world.links).toHaveLength(1); // one live link, re-used
+  });
+
+  it('asks one question, and the press is what records the go-ahead', async () => {
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).toContain('Share your first name and area with the other side?');
+    expect(page.body).toContain('Confirm with your PIN');
+    // Reading the question does not answer it.
+    expect(world.optins.size).toBe(0);
+
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(200);
+    expect(pressed.body).toContain('Shared');
+    expect([...world.optins]).toEqual([[ANA, 'counter']]);
+  });
+
+  it('two presses, one from each human, open the names step', async () => {
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(world.stage).toBe(2); // one alone changes nothing for either side
+
+    // The other human presses their own, which the fake world stands in for.
+    world.optins.set(BEPPE, 'counter');
+    world.stage = 2;
+    const again = await humanLinks.shareNameLink(cfg, ANA, MATCH);
+    const t2 = encodeURIComponent(tokenOf(again.link));
+    const pressed = await inject('POST', `/a/${t2}`, { decision: 'yes', pin: PIN });
+    expect(pressed.body).toContain('Both of you have said yes');
+    expect(world.stage).toBe(3);
+  });
+
+  it('asks for the two fields when nothing is on file, and stores them on the press', async () => {
+    world.firstName = '';
+    world.locality = '';
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).toContain('What should we share?');
+    expect(page.body).toContain('name="first_name"');
+    expect(page.body).toContain('name="locality"');
+
+    const pressed = await inject('POST', `/a/${t}`, {
+      decision: 'yes',
+      pin: PIN,
+      first_name: 'Ana',
+      locality: 'Fremantle',
+    });
+    expect(pressed.statusCode).toBe(200);
+    expect(world.firstName).toBe('Ana');
+    expect(world.locality).toBe('Fremantle');
+    expect([...world.optins]).toEqual([[ANA, 'counter']]);
+  });
+
+  it('a suburb that looks like a way to reach someone costs neither the link nor a PIN attempt', async () => {
+    world.firstName = '';
+    world.locality = '';
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    const bad = await inject('POST', `/a/${t}`, {
+      decision: 'yes',
+      pin: PIN,
+      first_name: 'Ana',
+      locality: 'ana@example.com',
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).toContain('no email, phone or web address');
+    expect(world.optins.size).toBe(0);
+    expect(world.links[0].used_at).toBeNull();
+
+    // And the same link still works with a real suburb.
+    const good = await inject('POST', `/a/${t}`, {
+      decision: 'yes',
+      pin: PIN,
+      first_name: 'Ana',
+      locality: 'Fremantle',
+    });
+    expect(good.statusCode).toBe(200);
+    expect([...world.optins]).toEqual([[ANA, 'counter']]);
+  });
+
+  it('"Not now" shares nothing and carries no reason', async () => {
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'no' });
+    expect(pressed.body).toContain('Not now');
+    expect(pressed.body).toContain('no reason was sent');
+    expect(world.optins.size).toBe(0);
+  });
+
+  it('a second press fails plainly, and records nothing twice', async () => {
+    const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    world.optins.clear();
+    const again = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(again.body).toContain('already been used');
+    expect(world.optins.size).toBe(0);
+  });
+
+  it('says the earlier step first while the other side has yet to warm up', async () => {
+    world.stage = 1;
+    const r: any = await respond({ intro_id: MATCH, action: 'opt_in' });
+    expect(r.isError).toBe(true);
+    expect(body(r).code).toBe('NOT_UNLOCKED_YET');
+    expect(world.links).toHaveLength(0);
+  });
+});
 
 // ---------------------------------------------------------------------------
 describe('(b) send a number', () => {

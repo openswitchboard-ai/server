@@ -14,6 +14,7 @@ import {
 import { inLineCount, noteMovement, ownCardIsFull } from './sequencer.js';
 import {
   counterpartyProfileConsentError,
+  namesGateConsentError,
   profileIsFilled,
   readSharedProfile,
   sharedProfileConsentError,
@@ -317,27 +318,70 @@ function counterpartyOf(m: MatchRow, accountId: string): string {
 }
 
 /**
- * Record the calling human's stage-3 opt-in (0.C: agent-attested via the
- * respond tool; 0.D moves capture to the counter). Written to the WORM
- * consent log before the token row is committed. Advances stage to 3 only
- * when BOTH humans' tokens are recorded.
+ * Where an opt-in may come from. One value, on purpose (Lachlan, 2026-09-12):
+ * sharing a first name and an area is one of the three things that go to the
+ * human every time, so the press on their own page is the only thing that
+ * writes it. The agent-attested road this once had is gone.
+ */
+export type OptInRecordedVia = 'counter';
+
+/**
+ * The refusal an agent's own opt_in earns, every time. It loads the
+ * introduction first, so a bad id, an introduction that is not theirs and one
+ * the far side has not warmed to yet each answer the way they always did, and
+ * only then hands back CONSENT_REQUIRED with the link their human presses.
  *
- * An opt-in is a promise to hand over a first name and an area, so an account
- * that has neither on file cannot make it. That case is refused BEFORE the
- * WORM write with CONSENT_REQUIRED and the human's own approval link: the
- * opt-in is not recorded, and the agent is never the one that supplies the
- * name.
+ * Nothing is written here. Pressing the link is what records the opt-in.
+ */
+export async function refuseAgentOptIn(
+  cfg: Config,
+  matchId: string,
+  accountId: string,
+): Promise<never> {
+  const m = await loadOpenMatchFor(matchId, accountId);
+  assertBothInterested(m);
+  throw await namesGateConsentError(cfg, {
+    accountId,
+    matchId,
+    counterpartyAccount: counterpartyOf(m, accountId),
+  });
+}
+
+function assertBothInterested(m: MatchRow): void {
+  if (m.stage < 2) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'Both sides have to say they are interested before this opens.',
+    });
+  }
+}
+
+/**
+ * Record the calling human's stage-3 opt-in. Written to the WORM consent log
+ * before the token row is committed. Advances stage to 3 only when BOTH
+ * humans' tokens are recorded.
+ *
+ * The only caller is the human's own page, after their press. An opt-in is a
+ * promise to hand over a first name and an area, so an account that has
+ * neither on file cannot make it: that case is refused BEFORE the WORM write
+ * with CONSENT_REQUIRED, and the page it sends them back to is the one that
+ * asks for the two fields. The agent is never the one that supplies the name,
+ * and from 2026-09-12 it is never the one that records the opt-in either.
  */
 export async function recordStage3OptIn(
   cfg: Config,
   matchId: string,
   accountId: string,
-  recordedVia: string,
+  recordedVia: OptInRecordedVia,
 ): Promise<{ match: MatchRow; both: boolean }> {
   const m = await loadOpenMatchFor(matchId, accountId);
-  if (m.stage < 2) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'Both sides have to say they are interested before this opens.',
+  assertBothInterested(m);
+  // Belt and braces on the rule the type already states: anything that is not
+  // a press on their own page is refused with the link, and writes nothing.
+  if (recordedVia !== 'counter') {
+    throw await namesGateConsentError(cfg, {
+      accountId,
+      matchId,
+      counterpartyAccount: counterpartyOf(m, accountId),
     });
   }
   const own = await readSharedProfile(accountId, {

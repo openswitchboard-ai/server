@@ -24,13 +24,13 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { validatePayload } from '../../src/protocol.js';
 import {
   TestActor,
-  approveDisclosure,
   dbExec,
   mcpCall,
   mcpRpc,
   minimalHave,
   minimalWant,
   poll,
+  reachStage3,
   registerActor,
   sendOp,
   setSharedProfile,
@@ -89,17 +89,18 @@ d('a conversation carried across an open channel', () => {
     await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
 
-    // Each human puts their first name and area on their own page, then their
-    // agent may record the opt-in.
+    // Each human puts their first name and area on their own page, then each
+    // presses the single-use link their agent was handed: the names step is
+    // the human's own press every time, and an agent's opt_in records nothing.
     expect((await setSharedProfile(ana.jar, 'Ana', 'Fremantle')).status).toBe(200);
     expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(200);
-    await approveDisclosure(ana.jar, matchId, ana.pin);
-    const optin = await mcpCall(beppe.accessToken, 'respond', {
+    await reachStage3(matchId, [{ actor: ana }, { actor: beppe }]);
+    const mutual = await mcpCall(beppe.accessToken, 'check_in', {
       intro_id: matchId,
-      action: 'opt_in',
+      step: 'names',
     });
-    expect(optin.isError).toBe(false);
-    expect(optin.result.both_recorded).toBe(true);
+    expect(mutual.isError).toBe(false);
+    expect(mutual.result.optin.both_recorded).toBe(true);
   }, 300_000);
 
   it('opens the channel for each side, on the same channel id', async () => {

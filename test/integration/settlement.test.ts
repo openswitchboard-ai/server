@@ -56,6 +56,7 @@ import {
   minimalHave,
   minimalWant,
   poll,
+  reachStage3,
   sendOp,
   waitForCardState,
 } from './helpers.js';
@@ -151,11 +152,10 @@ async function newIntroduction(): Promise<string> {
   await mcpCall(seller.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
   // Nothing holds either of them up any more (migration 030): a want or have
   // that several people have come forward on works through them one at a
-  // time, and the go-ahead on the one that is live goes through at once.
-  for (const actor of [buyer, seller]) {
-    const r = await mcpCall(actor.accessToken, 'respond', { intro_id: id, action: 'opt_in' });
-    expect(r.isError, JSON.stringify(r.result)).toBe(false);
-  }
+  // time, and the go-ahead on the one that is live goes through at once. The
+  // go-ahead is the human's own press every time: each agent's opt_in is
+  // refused with that human's single-use link, and the press records it.
+  await reachStage3(id, [{ actor: buyer }, { actor: seller }]);
   return id;
 }
 

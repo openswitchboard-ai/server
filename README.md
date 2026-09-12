@@ -73,6 +73,9 @@ These are the invariants worth reading the code to check:
   structurally absent from every disclosure payload.
 - The names step (`intro.mutual`: first name and locality) is returned only when
   both humans' opt-in consent tokens exist. The gate queries `consent_tokens` directly.
+  Those tokens are written by a human's own press and nothing else: `respond(opt_in)`
+  records nothing at all and answers `CONSENT_REQUIRED` carrying the single-use link
+  that human presses, whether or not a first name and area are already on file.
 - The only offer-accept state reachable through any agent API is
   `awaiting-human`. `accepted-by-human` is set exclusively by
   `acceptOfferByHuman()`, which has no public route — it is reachable from the
