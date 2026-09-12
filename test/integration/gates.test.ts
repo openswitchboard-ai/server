@@ -51,6 +51,13 @@ const d = RUN ? describe : describe.skip;
 /** The legacy-hostname redirect is only testable where a legacy hostname exists. */
 const legacyHostIt = LEGACY_COUNTER_URL ? it : it.skip;
 
+/** A form post, the way a browser sends one. */
+const form = (o: Record<string, string>) => ({
+  method: 'POST' as const,
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams(o).toString(),
+});
+
 let alice: TestActor; // WANT side
 let bob: TestActor; // HAVE side
 let wantId: string;
@@ -360,7 +367,12 @@ d('integration gates against live deployment', () => {
     expect(refused.isError).toBe(true);
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
     expect(refused.result.human_action).toContain('Your numbers come from you');
-    expect(refused.result.human_action).toContain(`/matches/${mid}`);
+    // What the refusal hands back is the single-use page that asks about THIS
+    // figure and no other (src/domain/humanLinks.ts sendNumberLink). The
+    // introduction's own page is the fallback for a link that could not be
+    // minted, so the link is what the gate is now about.
+    const sendLink = String(refused.result.human_action).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+    expect(sendLink, refused.result.human_action).toBeTruthy();
 
     // Nothing was written: the refusal lands before any offer row exists.
     const empty = await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
@@ -385,6 +397,21 @@ d('integration gates against live deployment', () => {
     const numbersPage = await numbers.text();
     expect(numbersPage).toContain('Your agent brought this number from you');
     expect(numbersPage).toContain(`/matches/${mid}`);
+
+    // The link her assistant was handed asks her the one question about the
+    // figure it was carrying, and her press is what sends it. Her PIN is part
+    // of the press, so the figure leaves on a human's say-so and nothing else.
+    const ask = await counterFetch(dana.jar, sendLink!);
+    expect(ask.status).toBe(200);
+    expect(await ask.text()).toContain('Send $500 AUD');
+    const pressed = await counterFetch(dana.jar, sendLink!, form({ decision: 'yes', pin: dana.pin }));
+    expect(pressed.status).toBe(200);
+    expect(await pressed.text()).toContain('Your number is on the table');
+    const eliSees500 = await mcpCall(eli.accessToken, 'respond', {
+      intro_id: mid,
+      action: 'list_offers',
+    });
+    expect(eliSees500.result.offers.find((o: any) => Number(o.amount) === 500)).toBeTruthy();
 
     const sent = await humanOffer(dana.jar, mid, {
       amount: 505,
