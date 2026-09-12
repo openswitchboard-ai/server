@@ -378,16 +378,23 @@ export async function amendIntent(
 }
 
 /**
- * Take a want or a have down. The thing is gone — sold, filled, no longer wanted — so
- * every open introduction on it is filed away in the same breath: an
- * introduction on a withdrawn want or have must not keep advancing, and must not
- * surface to either side as something new to act on. The record of who they
- * got chatting with survives, as it does with any archive.
+ * Take a want or a have down. The thing is gone — sold, filled, no longer
+ * wanted — so nobody new is introduced to it, and every open introduction that
+ * never reached a conversation is filed away in the same breath: one must not
+ * keep advancing on something the other person can no longer have. A
+ * conversation already open is left open: the two people may still be
+ * arranging the handover in it, and closing it is a separate act (archive),
+ * on the human's word, once they are done.
  */
 export async function withdrawIntent(
   accountId: string,
   intentId: string,
-): Promise<{ intent_id: string; state: string; introductions_archived: number }> {
+): Promise<{
+  intent_id: string;
+  state: string;
+  introductions_archived: number;
+  conversations_kept: number;
+}> {
   const card = await getCard(intentId);
   if (!card || card.account_id !== accountId) {
     throw Object.assign(new Error('intent not found'), { notFound: true });
@@ -400,7 +407,13 @@ export async function withdrawIntent(
   // close a cycle between the two modules.
   const { archiveOpenIntroductionsOnCard } = await import('./matches.js');
   const introductions_archived = await archiveOpenIntroductionsOnCard(intentId, accountId);
-  return { intent_id: intentId, state: 'WITHDRAWN', introductions_archived };
+  const kept = await getPool().query(
+    `SELECT count(*)::int AS n FROM matches
+      WHERE (card_want = $1 OR card_have = $1) AND state = 'open'`,
+    [intentId],
+  );
+  const conversations_kept = Number(kept.rows[0]?.n ?? 0);
+  return { intent_id: intentId, state: 'WITHDRAWN', introductions_archived, conversations_kept };
 }
 
 /** TTL expiry sweep (EventBridge schedule -> ops queue -> here). */

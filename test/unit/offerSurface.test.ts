@@ -68,6 +68,8 @@ interface OfferRow {
 interface World {
   offers: OfferRow[];
   matchState: 'open' | 'archived';
+  /** true = the two are already talking (stage 4, conversation open) */
+  talking: boolean;
   cardState: string;
   archivedMatches: { id: string; by: string; via: string }[];
   expiredMessagesFor: string[][];
@@ -94,12 +96,12 @@ const theMatch = () => ({
   account_have: BEPPE,
   score: 0.8,
   category: 'goods.bicycle.mountain',
-  stage: 2,
+  stage: world.talking ? 4 : 2,
   interest_want: true,
   interest_have: true,
   state: world.matchState,
-  channel_id: null,
-  opened_at: null,
+  channel_id: world.talking ? 'ch_11111111-2222-4333-8444-555555555555' : null,
+  opened_at: world.talking ? new Date('2026-09-11T06:00:00Z') : null,
 });
 
 function fakePool() {
@@ -145,6 +147,8 @@ function fakePool() {
       }
       if (/UPDATE matches\s+SET state = 'archived'/.test(sql)) {
         if (world.matchState !== 'open') return rows([]);
+        // The SQL keeps an open conversation: mirror the WHERE clause.
+        if (/channel_id IS NULL OR stage < 4/.test(sql) && world.talking) return rows([]);
         world.matchState = 'archived';
         world.archivedMatches.push({ id: MATCH, by: params[1], via: params[2] });
         return rows([{ id: MATCH }]);
@@ -162,6 +166,7 @@ beforeEach(() => {
   world = {
     offers: [],
     matchState: 'open',
+    talking: false,
     cardState: 'PUBLISHED',
     archivedMatches: [],
     expiredMessagesFor: [],
@@ -348,6 +353,15 @@ describe('taking a listing down takes its introductions with it', () => {
     const r = await cards.withdrawIntent(ANA, CARD_W);
     expect(r.introductions_archived).toBe(0);
     expect(world.expiredMessagesFor).toEqual([]);
+  });
+
+  it('leaves a conversation that is already open exactly as it was', async () => {
+    world.talking = true;
+    const r = await cards.withdrawIntent(ANA, CARD_W);
+    expect(r).toMatchObject({ state: 'WITHDRAWN', introductions_archived: 0 });
+    expect(world.archivedMatches).toEqual([]);
+    expect(world.expiredMessagesFor).toEqual([]);
+    expect(world.matchState).toBe('open');
   });
 
   it('is not a way to reach somebody else\'s listing', async () => {
