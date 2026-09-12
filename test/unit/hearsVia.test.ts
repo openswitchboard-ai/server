@@ -553,17 +553,44 @@ describe('what the emails say', () => {
   });
 
   it('a message waiting sends them to their assistant and nowhere else', () => {
-    const c = renderChannelWaiting({ categoryLabel: 'Mountain bikes', blind: false }, links);
+    const c = renderChannelWaiting(
+      { categoryLabel: 'Mountain bikes', blind: false, side: 'have' },
+      links,
+    );
     expect(c.text).toContain('about your mountain bike');
     expect(c.text).toContain('Ask your assistant and it will read it to you.');
     expect(c.text).not.toContain('Mountain bikes');
   });
 
   it('your move says the same thing in its own words', () => {
-    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: false }, links);
+    const c = renderYourMove({ categoryLabel: 'Mountain bikes', blind: false, side: 'have' }, links);
     expect(c.text).toContain('about your mountain bike');
     expect(c.text).toContain('Ask your assistant.');
     expect(c.text).not.toContain('Open your assistant to take the next step');
+  });
+
+  // The side is the recipient's OWN. Somebody looking for a mountain bike
+  // hears about the one they are after; they are never told it is theirs.
+  it('both nudges name the thing from the reader’s own side', () => {
+    const waiting = renderChannelWaiting(
+      { categoryLabel: 'Mountain bikes', blind: false, side: 'want' },
+      links,
+    );
+    expect(waiting.text).toContain(
+      'Someone you got talking to about the mountain bike you are after has sent you a message.',
+    );
+    expect(waiting.text).not.toContain('your mountain bike');
+    const move = renderYourMove(
+      { categoryLabel: 'Mountain bikes', blind: false, side: 'want' },
+      links,
+    );
+    expect(move.text).toContain(
+      'They have said yes to swapping first names about the mountain bike you are after.',
+    );
+    expect(move.text).not.toContain('your mountain bike');
+    for (const c of [waiting, move]) {
+      expect(lintEmailCopy(c.text + c.html + c.subject)).toEqual([]);
+    }
   });
 
   it('a number on the table names the figure, and sends them to their assistant', () => {
