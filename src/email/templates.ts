@@ -709,7 +709,7 @@ export function renderKillSwitch(
         ) +
         center(button(v.counterUrl, 'Open your account')) +
         small(
-          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and review your ledger.',
+          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and look over your approval page.',
         ),
       f,
       '#a3271f',
@@ -720,7 +720,7 @@ export function renderKillSwitch(
       `Nothing will match, be disclosed, or be accepted while it is on.\n\n` +
       `To turn things back on, sign in at ${v.counterUrl} and confirm with your PIN.\n\n` +
       `If you did not do this, your account is already safe — everything is paused. ` +
-      `Sign in when you can and review your ledger.\n\n` +
+      `Sign in when you can and look over your approval page.\n\n` +
       footerText(f);
     return { subject, html, text };
   }
@@ -905,7 +905,7 @@ export function renderSettlementUpdate(
       buyer:
         'Your payment went through and is held. It moves to the seller only after you confirm receipt.',
       seller:
-        'The buyer paid and the money is held. Hand over the goods, then lock your handover evidence from the settlement page.',
+        'The buyer paid and the money is held. Hand over the goods, then mark it handed over on the settlement page, with photos if you like.',
     },
     // The seller has said the thing changed hands, which starts the buyer's
     // window. This is the buyer's mail: their two ways to end the window, and
