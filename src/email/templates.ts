@@ -51,6 +51,34 @@ import { categoryPhrase, categoryPhraseWithArticle } from '../domain/matchRules.
 // itself lives beside the taxonomy labels it phrases.
 export { categoryPhrase, categoryPhraseWithArticle };
 
+/**
+ * WHICH SIDE THE READER IS ON. Every sentence that names the thing has to know
+ * whether the person reading it is the one offering it or the one after it —
+ * "your mountain bike" to somebody who is trying to buy one is the switchboard
+ * telling them they own what they want. The senders work it out from the
+ * recipient's own want or have at send time and pass it in.
+ */
+export type ReaderSide = 'want' | 'have';
+
+/**
+ * The thing as this reader holds it: "your mountain bike" for the person
+ * offering it, "the mountain bike you are after" for the person looking. The
+ * one place either half of that is written.
+ */
+export function theirThing(thing: string, side: ReaderSide): string {
+  return side === 'have' ? `your ${thing}` : `the ${thing} you are after`;
+}
+
+/** The side in the words a person uses about their own want or have. */
+function sideInWords(type: 'WANT' | 'HAVE'): string {
+  return type === 'HAVE' ? 'offering' : 'looking for';
+}
+
+/** First letter up, for a phrase that starts a line. Acronyms are untouched. */
+function capitalise(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
 export interface EmailContent {
   subject: string;
   html: string;
@@ -285,25 +313,39 @@ function whoCameForward(ordinal: number | undefined): string {
 }
 
 export function renderSummons(
-  v: { count: number; ordinal?: number; categoryLabel?: string; blind: boolean },
+  v: {
+    count: number;
+    ordinal?: number;
+    categoryLabel?: string;
+    blind: boolean;
+    /** The RECIPIENT'S own side. The batched summons counts arrivals across
+     *  every want and have at once and names none of them, so it has no one
+     *  side to give; without a side the sentence names nothing either. */
+    side?: ReaderSide;
+  },
   f: FooterLinks,
 ): EmailContent {
   const later = (v.ordinal ?? 1) >= 2;
   const subject = later ? 'Your assistant has more news' : 'Your assistant has news';
   const thing = categoryPhrase(v.categoryLabel);
   const who = whoCameForward(v.ordinal);
+  // Somebody offering hears about the thing they hold; somebody looking hears
+  // that a person turned up WITH one, because they hold nothing yet.
+  const named = !!thing && !!v.side;
+  const phrase = v.side === 'want' ? categoryPhraseWithArticle(v.categoryLabel) : thing;
+  const preposition = v.side === 'want' ? 'with' : 'about your';
   const textLine = v.blind
     ? v.count === 1
       ? later ? 'Something else is waiting for you.' : 'Something is waiting for you.'
       : `${v.count} things are waiting for you.`
     : v.count === 1
-      ? thing
-        ? `${who} has come forward about your ${thing}.`
+      ? named
+        ? `${who} has come forward ${preposition} ${phrase}.`
         : `${who} has come forward.`
       : `${v.count} people have come forward.`;
   const line =
-    !v.blind && v.count === 1 && thing
-      ? `${who} has come forward about your <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(thing)}</span>.`
+    !v.blind && v.count === 1 && named
+      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>.`
       : esc(textLine);
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
@@ -327,7 +369,7 @@ export function renderSummons(
 // live back-and-forth never becomes one email per line.
 // ---------------------------------------------------------------------------
 export function renderChannelWaiting(
-  v: { categoryLabel?: string; blind: boolean },
+  v: { categoryLabel?: string; blind: boolean; side: ReaderSide },
   f: FooterLinks,
 ): EmailContent {
   const subject = 'You have a message waiting';
@@ -338,7 +380,7 @@ export function renderChannelWaiting(
   const textLine = v.blind
     ? 'Someone has sent you a message.'
     : thing
-      ? `Someone you got talking to about your ${thing} has sent you a message.`
+      ? `Someone you got talking to about ${theirThing(thing, v.side)} has sent you a message.`
       : 'Someone you got talking to has sent you a message.';
   const line = esc(textLine);
   const html = shell(h1('A message is waiting.') + para(line) + small(tail), f, MATCH);
@@ -365,7 +407,7 @@ export function renderChannelWaiting(
 export type YourMoveStep = 'names' | 'details';
 
 export function renderYourMove(
-  v: { categoryLabel?: string; blind: boolean; step?: YourMoveStep },
+  v: { categoryLabel?: string; blind: boolean; step?: YourMoveStep; side: ReaderSide },
   f: FooterLinks,
 ): EmailContent {
   const thing = categoryPhrase(v.categoryLabel);
@@ -379,11 +421,15 @@ export function renderYourMove(
     return { subject: 'They are keen too', html, text };
   }
   const subject = 'It is your turn';
+  // Nobody has said a word to anybody at this step: the other side has said
+  // yes to swapping first names, and the two of them can talk once this
+  // person says yes back. The sentence says exactly that and no more.
+  const tail = 'Your yes is the last step before the two of you can talk.';
   const line = v.blind
     ? 'Someone is ready to hear back from you.'
     : thing
-      ? `Someone you got talking to about your ${thing} is keen and ready to talk.`
-      : 'Someone you got talking to is keen and ready to talk.';
+      ? `They have said yes to swapping first names about ${theirThing(thing, v.side)}. ${tail}`
+      : `They have said yes to swapping first names. ${tail}`;
   const { html, text } = notice({ heading: 'It is your move.', line, accent: MATCH }, f);
   return { subject, html, text };
 }
@@ -405,9 +451,9 @@ export function renderYourMove(
  * mountain bike you are after". Every sentence that names the thing beside a
  * figure goes through here, so no side is ever told it owns what it wants.
  */
-export function aboutThing(thing: string | undefined, side: 'want' | 'have'): string {
+export function aboutThing(thing: string | undefined, side: ReaderSide): string {
   if (!thing) return '';
-  return side === 'have' ? ` for your ${thing}` : ` for the ${thing} you are after`;
+  return ` for ${theirThing(thing, side)}`;
 }
 
 export function renderOfferOnTheTable(
