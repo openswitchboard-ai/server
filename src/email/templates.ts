@@ -371,10 +371,10 @@ export function renderYourMove(
   const thing = categoryPhrase(v.categoryLabel);
   if (v.step === 'details') {
     const line = v.blind
-      ? 'Someone you were keen on is keen too.'
+      ? 'They are keen too.'
       : thing
-        ? `Good news about the ${thing}: the person you were keen on is keen too.`
-        : 'The person you were keen on is keen too.';
+        ? `Good news about the ${thing}: they are keen too.`
+        : 'They are keen too.';
     const { html, text } = notice({ heading: 'They are keen too.', line, accent: MATCH }, f);
     return { subject: 'They are keen too', html, text };
   }
