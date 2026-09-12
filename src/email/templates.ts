@@ -520,6 +520,54 @@ export interface DigestItem {
   nearMisses: number;
 }
 
+/**
+ * The one line the digest stands on. It used to promise the counts were real
+ * and say near misses stayed near misses "until the switchboard is sure",
+ * which explains nothing to somebody who has never heard the phrase. This one
+ * says what a near miss is.
+ */
+const NEAR_MISS_LINE = 'A near miss is someone close on everything but one thing.';
+
+/**
+ * The head of a digest line, with the side said in words. HAVE and WANT are
+ * wire words and never reach a person: what they read is their own thing and
+ * what they are doing with it.
+ */
+function digestHead(it: DigestItem): string {
+  const phrase = categoryPhrase(it.categoryLabel) || it.categoryLabel.toLowerCase();
+  return it.type === 'HAVE'
+    ? `Your ${phrase} (${sideInWords(it.type)})`
+    : `${capitalise(phrase)} (${sideInWords(it.type)})`;
+}
+
+/**
+ * The counts beside it, in whole words and the right grammar for one and for
+ * many. A null count is the k-anonymity floor: the cell is too small to say
+ * anything about, so the line says that rather than a number.
+ */
+function digestCounts(it: DigestItem): string {
+  const n = it.newOpposite;
+  const arrivals =
+    n === null
+      ? 'nothing new that clears the floor'
+      : it.type === 'HAVE'
+        ? n === 0
+          ? 'nobody new looking nearby'
+          : `${n} new ${n === 1 ? 'person' : 'people'} looking nearby`
+        : n === 0
+          ? 'nothing new nearby'
+          : `${n} new nearby`;
+  const misses =
+    it.nearMisses === 0
+      ? 'no near misses'
+      : it.nearMisses === 1
+        ? '1 near miss'
+        : `${it.nearMisses} near misses`;
+  return `${arrivals}, ${misses}`;
+}
+
+const digestLine = (it: DigestItem): string => `${digestHead(it)}: ${digestCounts(it)}`;
+
 export function renderDigest(
   v: { cadence: 'daily' | 'weekly'; items: DigestItem[]; blind: boolean },
   f: FooterLinks,
@@ -537,23 +585,13 @@ export function renderDigest(
     );
     return { subject, html, text };
   }
-  const bitsOf = (it: DigestItem): string[] => {
-    const bits: string[] = [];
-    if (it.newOpposite !== null && it.newOpposite > 0) {
-      const side = it.type === 'WANT' ? 'have' : 'want';
-      bits.push(`${it.newOpposite} new ${side}${it.newOpposite === 1 ? '' : 's'} nearby`);
-    }
-    if (it.nearMisses > 0) bits.push(`${it.nearMisses} near miss${it.nearMisses === 1 ? '' : 'es'}`);
-    return bits;
-  };
   const rows = v.items
     .map((it) => {
       const badgeColor = it.type === 'WANT' ? WANT : HAVE;
       return `<tr>
 <td style="padding:10px 0;border-bottom:1px solid ${LINE}">
-<span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${it.type}</span>
-<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(it.categoryLabel)}</span><br>
-<span style="font-family:${SANS};font-size:15px;color:${MUTED}">${esc(bitsOf(it).join(' · '))}</span>
+<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${badgeColor}">${esc(digestHead(it))}</span><br>
+<span style="font-family:${SANS};font-size:15px;color:${MUTED}">${esc(digestCounts(it))}</span>
 </td></tr>`;
     })
     .join('');
@@ -562,17 +600,14 @@ export function renderDigest(
   const { html, text } = notice(
     {
       heading: `Around your wants and haves ${period}.`,
-      line: 'Counts are real and current. Near misses stay near misses until the switchboard is sure.',
+      line: NEAR_MISS_LINE,
       accent: MATCH,
       extra: `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>`,
     },
     f,
   );
-  const textRows = v.items.map((it) => `- ${it.type} ${it.categoryLabel}: ${bitsOf(it).join(', ')}`).join('\n');
-  const fullText = text.replace(
-    'Counts are real and current.',
-    `${textRows}\n\nCounts are real and current.`,
-  );
+  const textRows = v.items.map((it) => `- ${digestLine(it)}`).join('\n');
+  const fullText = text.replace(NEAR_MISS_LINE, `${textRows}\n\n${NEAR_MISS_LINE}`);
   return { subject, html, text: fullText };
 }
 
