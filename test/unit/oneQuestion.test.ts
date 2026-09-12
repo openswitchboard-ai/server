@@ -481,7 +481,7 @@ describe('(b) send a number', () => {
     expect(pressed.statusCode).toBe(200);
     expect(pressed.body).toContain('Your number is on the table for the other side.');
     // The end of a pressed link: nothing to go back to, the assistant has it.
-    expect(pressed.body).toContain('Done. Back to your assistant.');
+    expect(pressed.body).toContain('Done. Close this tab and carry on with your assistant.');
     expect(pressed.body).not.toContain('Back to your approval page');
     expect(world.offers).toHaveLength(1);
     expect(world.offers[0]).toMatchObject({ amount: 440, ccy: 'AUD', authored_by: 'human' });
