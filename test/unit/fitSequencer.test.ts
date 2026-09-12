@@ -685,7 +685,7 @@ describe('in line: what each side is shown', () => {
   });
 
   it('refuses to advance an introduction that is still in line, saying only that', async () => {
-    await expect(matches.expressInterest(introId(2), buyer(2))).rejects.toMatchObject({
+    await expect(matches.expressInterest(cfg, introId(2), buyer(2))).rejects.toMatchObject({
       payload: { code: 'NOT_UNLOCKED_YET', human_action: matches.IN_LINE_SENTENCE },
     });
   });
