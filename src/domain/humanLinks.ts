@@ -138,11 +138,30 @@ export async function sendNumberLink(
       ...(note.value ? { note: note.value } : {}),
     },
   });
+  // A best offer is one number each, sealed until the seller sees them all, so
+  // the page says so: this is the whole of your human's say on it, and nobody
+  // is going to come back with a counter.
+  const oneNumber =
+    m.account_want === accountId && (await isBestOffer(matchId))
+      ? ' This is your one number for this; it stays sealed until the seller sees them all.'
+      : '';
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does. Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does.${oneNumber} Once they press it, your next check_matches shows the result.`,
   };
+}
+
+/** Is the have behind this introduction being sold on best offer? */
+async function isBestOffer(matchId: string): Promise<boolean> {
+  const r = await getPool().query(
+    `SELECT 1 FROM matches m JOIN cards c ON c.id = m.card_have
+      WHERE m.id = $1 AND c.sale = 'best-offer'
+        AND c.gather_until IS NOT NULL AND c.gather_until > now()
+        AND c.gather_closed_at IS NULL`,
+    [matchId],
+  );
+  return !!r.rowCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,37 +240,10 @@ export async function shareNameLink(
 }
 
 // ---------------------------------------------------------------------------
-// (d) Close the window. The holder's own want or have is contested and still
-// collecting; closing it early lets them go ahead with whoever they choose.
+// (d) There used to be a link here for closing the short window on a want or
+// have of the holder's own. The window is gone (migration 030): nothing blocks
+// a holder now, so there is nothing for them to close. See domain/sequencer.ts.
 // ---------------------------------------------------------------------------
-export async function closeWindowLink(
-  cfg: Config,
-  accountId: string,
-  intentId: string,
-): Promise<HumanLink> {
-  const card = await ownCard(accountId, intentId);
-  const r = await getPool().query(
-    `SELECT collect_until FROM cards
-     WHERE id = $1 AND collect_until > now() AND collect_closed_at IS NULL`,
-    [intentId],
-  );
-  if (!r.rowCount) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'There is no window open on that one right now.',
-    });
-  }
-  const { token } = await createApprovalLink({
-    accountId,
-    action: 'collection-close',
-    refId: card.id,
-    counterpartyAccount: accountId,
-  });
-  return {
-    link: url(cfg, token),
-    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to close the window on their ${categoryPhrase(card.category)} now and go ahead with someone. Once they press it, your next check_matches shows the result.`,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // (e) Auto-negotiate. The one link an agent may offer only when BOTH halves

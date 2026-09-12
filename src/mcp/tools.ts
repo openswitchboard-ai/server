@@ -242,7 +242,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      'Post a want or a have for your human: something they are looking for, or something they are offering. Set `type` to "looking_for" or "offering". It is validated against the OpenSwitchboard intent schema, screened, and then paired up anonymously. The category is a dotted path from the shared taxonomy: `goods.*` for things, `services.*` for everyday help, `social.*` for people to do things with (`work.*` and `property.*` are reserved, as are licensed trades and dating). Give the nearest node and put the specifics in `attributes` — a MacBook Air is `goods.electronics.laptop` with a brand and model, Italian practice is `social.language-exchange` with `language: "italian"`. A category the taxonomy does not open comes back as CATEGORY_PROHIBITED with up to three of the closest open ones in `suggestions`; repost under one of those. Geo asks two separate things. WHERE THE THING IS: give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT"); the switchboard places it, so you never need to invent a location code. HOW FAR YOUR HUMAN WILL MEET SOMEONE: `reach` — leave it out (or "radius") for `radius_km` kilometres from the place, "country" for anywhere in that place\'s own country (something they would post), or "anywhere" for no limit at all (something done online). "I\'ll post it anywhere in Australia" is `place: "Canberra", reach: "country"`, never "Australia" in `place`. Both sides have to reach far enough, so a have in Canberra that reaches nationwide meets a want in Perth only when that one reaches nationwide too. It answers with where it put it and how far it reaches in `location_resolved`; read that back to your human as you confirm the posting. A bare state or country is refused with LOCATION_UNRESOLVED, and a name several towns share comes back as LOCATION_AMBIGUOUS with the candidates written out — ask which one, then repost with the fuller form it gives you. The price band (a budget ceiling when they are looking, a reserve floor when they are offering) is a private matching input and is never shown to a counterparty.',
+      'Post a want or a have for your human: something they are looking for, or something they are offering. Set `type` to "looking_for" or "offering". It is validated against the OpenSwitchboard intent schema, screened, and then paired up anonymously. The category is a dotted path from the shared taxonomy: `goods.*` for things, `services.*` for everyday help, `social.*` for people to do things with (`work.*` and `property.*` are reserved, as are licensed trades and dating). Give the nearest node and put the specifics in `attributes` — a MacBook Air is `goods.electronics.laptop` with a brand and model, Italian practice is `social.language-exchange` with `language: "italian"`. A category the taxonomy does not open comes back as CATEGORY_PROHIBITED with up to three of the closest open ones in `suggestions`; repost under one of those. Geo asks two separate things. WHERE THE THING IS: give the nearest suburb, city or region as `place` (for example "Canberra", "Newtown, NSW", "AU-ACT"); the switchboard places it, so you never need to invent a location code. HOW FAR YOUR HUMAN WILL MEET SOMEONE: `reach` — leave it out (or "radius") for `radius_km` kilometres from the place, "country" for anywhere in that place\'s own country (something they would post), or "anywhere" for no limit at all (something done online). "I\'ll post it anywhere in Australia" is `place: "Canberra", reach: "country"`, never "Australia" in `place`. Both sides have to reach far enough, so a have in Canberra that reaches nationwide meets a want in Perth only when that one reaches nationwide too. It answers with where it put it and how far it reaches in `location_resolved`; read that back to your human as you confirm the posting. A bare state or country is refused with LOCATION_UNRESOLVED, and a name several towns share comes back as LOCATION_AMBIGUOUS with the candidates written out — ask which one, then repost with the fuller form it gives you. The price band (a budget ceiling when they are looking, a reserve floor when they are offering) is a private matching input and is never shown to a counterparty. Two more fields carry your human\'s own word about how they want to meet people. `slots` is how many at once: leave it out and the switchboard introduces one person at a time and holds the rest in line, and set it where they say so ("a book club with room for four" is 4). `sale`, on something they are offering, is "straight" (the asking price as it stands, one person at a time) or "best-offer" (everyone who fits is introduced at once for a short window and each of them puts exactly ONE sealed number in, with the asking price as the floor, and your human sees them all together when it closes). Offer best offer only where your human has said something like "let people bid".',
     inputSchema: {
       type: 'object',
       properties: { listing: intentCardSchema },
@@ -259,7 +259,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Every entry carries a ready sentence written for your human — lead with that. People come to your human ONE AT A TIME (as many at a time as the `slots` they set), so an entry may come back as `in_line` with a single sentence and nothing else: that is the other side's turn not yet reached, and there is nothing to do on it but say so. On your human's own wants and haves, `line` says how many are waiting behind the one they are talking to; that number is theirs and never the other side's. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open once both sides have said they are interested), \"names\" for their first name and area (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -282,7 +282,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), close_collection (holder only: end the collection window on what your human posted, early, so you can proceed with a chosen counterpart), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step), request_accept (accept a figure that is on the table, offer_id), request_close_window (close the window on one of your human\'s own wants or haves, intent_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (record your human\'s go-ahead to share their first name and area — only with their explicit approval; the first time, your human has to say on their own approval page what first name and area they share, and until they have, opt_in answers CONSENT_REQUIRED with that link — you can never supply the name yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -291,7 +291,7 @@ export const TOOLS: ToolDef[] = [
           type: 'string',
           format: 'uuid',
           description:
-            "Required for request_close_window and request_auto_negotiate: one of your human's own wants or haves.",
+            "Required for request_auto_negotiate: one of your human's own wants or haves.",
         },
         action: {
           type: 'string',
@@ -305,11 +305,9 @@ export const TOOLS: ToolDef[] = [
             'withdraw_offer',
             'list_offers',
             'verdict',
-            'close_collection',
             'archive',
             'request_share_name',
             'request_accept',
-            'request_close_window',
             'request_auto_negotiate',
           ],
         },
@@ -397,7 +395,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'amend_intent',
     description:
-      "Amend one of your human's wants or haves (geo, attributes, ask, urgency, status, ttl_days, price). The side it is on cannot change. It is re-validated and re-screened before returning to the network.",
+      "Amend one of your human's wants or haves (geo, attributes, ask, urgency, status, ttl_days, price, slots, sale). The side it is on cannot change, and how it sells (`sale`) can only change before the first person is introduced on it. It is re-validated and re-screened before returning to the network.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -412,6 +410,8 @@ export const TOOLS: ToolDef[] = [
             status: intentCardSchema.properties.status,
             ttl_days: intentCardSchema.properties.ttl_days,
             price: intentCardSchema.properties.price,
+            slots: intentCardSchema.properties.slots,
+            sale: intentCardSchema.properties.sale,
           },
           additionalProperties: false,
         },
@@ -844,7 +844,13 @@ export async function dispatchTool(
         }
         // Two of the actions work on a want or have of your human's rather
         // than on an introduction; everything else needs the introduction.
-        const ON_AN_INTENT = ['request_close_window', 'request_auto_negotiate'];
+        // The two retired window actions are in here so they reach their own
+        // plain refusal rather than being turned away for a missing id.
+        const ON_AN_INTENT = [
+          'request_auto_negotiate',
+          'request_close_window',
+          'close_collection',
+        ];
         if (!intro_id && !ON_AN_INTENT.includes(String(action))) {
           return invalidInput(`${action ?? 'respond'} requires intro_id`);
         }
@@ -867,7 +873,7 @@ export async function dispatchTool(
             });
           }
           case 'decline': {
-            await matches.declineMatch(intro_id, accountId);
+            await matches.declineMatch(intro_id, accountId, cfg);
             return ok({ intro_id, state: 'declined' });
           }
           case 'propose_offer': {
@@ -890,12 +896,19 @@ export async function dispatchTool(
             if (!said) return invalidInput("verdict must be 'good', 'fine' or 'bad'");
             return ok(await matches.recordVerdict(intro_id, accountId, said, 'agent'));
           }
-          case 'close_collection': {
-            const r = await matches.closeCollection(intro_id, accountId, 'agent');
-            return ok({ intro_id, collection_closed: r.closed });
-          }
+          // The short window on a contested want or have is gone (migration
+          // 030). A client holding an older tool schema may still reach for
+          // either of its two actions, so both answer plainly rather than
+          // "unknown action": there is nothing to close, because nothing is
+          // being held up.
+          case 'close_collection':
+          case 'request_close_window':
+            return invalidInput(
+              'the window is gone; nothing is blocked now',
+              'Nothing is being held up on that one. People come to your human one at a time, and the next one arrives when this one settles.',
+            );
           case 'archive': {
-            const r = await matches.archiveMatch(intro_id, accountId, 'agent-attested');
+            const r = await matches.archiveMatch(intro_id, accountId, 'agent-attested', cfg);
             return ok({ intro_id, state: r.state, already_archived: r.already });
           }
           // ---------------------------------------------------------------
@@ -908,10 +921,6 @@ export async function dispatchTool(
           case 'request_accept': {
             if (!args?.offer_id) return invalidInput('request_accept requires offer_id');
             return ok(await humanLinks.acceptNumberLink(cfg, accountId, String(args.offer_id)));
-          }
-          case 'request_close_window': {
-            if (!args?.intent_id) return invalidInput('request_close_window requires intent_id');
-            return ok(await humanLinks.closeWindowLink(cfg, accountId, String(args.intent_id)));
           }
           case 'request_auto_negotiate': {
             if (!args?.intent_id) return invalidInput('request_auto_negotiate requires intent_id');

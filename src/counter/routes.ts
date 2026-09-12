@@ -36,7 +36,6 @@ import {
   type NegotiationMode,
 } from '../domain/negotiation.js';
 import {
-  closeCollectionByCard,
   declineMatch,
   getMatch,
   readVerdict,
@@ -44,7 +43,7 @@ import {
   recordVerdict,
   sideOf,
 } from '../domain/matches.js';
-import { categoryLeafLabel, defaultCollectWindowMinutes } from '../domain/matchRules.js';
+import { categoryLeafLabel } from '../domain/matchRules.js';
 import {
   draftToFields,
   newestOfferDraft,
@@ -270,12 +269,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // What this page asks for is what it is going to show: the gates. The
       // one-tap verdict moved to the introduction's own page, so the front
       // page no longer reads a list of introductions to browse.
-      const [profile, arrangement, offers, disclosures, windows, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
+      const [profile, arrangement, offers, disclosures, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
         readArrangement(s.accountId),
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
-        ops.openCollectionWindows(s.accountId),
         getPool().query(
           `SELECT count(*)::int AS total,
                   count(*) FILTER (WHERE lifecycle_state = 'PUBLISHED')::int AS published,
@@ -388,13 +386,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             matchId: a.match_id,
             category: categoryLeafLabel(a.category),
             amount: `${Number(a.amount)} ${a.ccy}`,
-          })),
-          collectionWindows: windows.map((w) => ({
-            cardId: w.card_id,
-            category: categoryLeafLabel(w.category),
-            type: w.type,
-            until: pages.localTime(w.until),
-            interestedParties: w.interested_parties,
           })),
         }),
       );
@@ -1009,25 +1000,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         };
       }
       if (row.action === 'collection-close') {
-        const r = await getPool().query(
-          `SELECT category, collect_until, collect_closed_at FROM cards
-           WHERE id = $1 AND account_id = $2`,
-          [row.ref_id, accountId],
-        );
-        const card = r.rows[0];
-        if (!card) return { error: 'Nothing like that on your ledger.' };
-        if (card.collect_closed_at || new Date(card.collect_until) <= new Date()) {
-          return { error: 'That window is already closed — you can go ahead with whoever you choose.' };
-        }
-        return {
-          ...base,
-          question: `Close the window on your ${phrase(card.category)} now and choose?`,
-          detail: [
-            'While the window is open you can hear from everyone who has come forward. Closing it lets you go ahead with one of them.',
-          ],
-          yesLabel: 'Yes, close it',
-          needsPin: false,
-        };
+        // A link minted before migration 030, opened after it. The window it
+        // was for no longer exists, so the page says so rather than failing.
+        return { error: 'Nothing is being held up on that one any more. You can go ahead whenever you like.' };
       }
       // negotiation-auto
       const r = await getPool().query(
@@ -1181,11 +1156,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           );
         }
         if (row.action === 'collection-close') {
-          await closeCollectionByCard(row.ref_id, s.accountId!, 'counter');
+          // Retired with migration 030; an old link is answered and retired
+          // rather than left to fall through to something it never meant.
           await links.recordLinkDecision(row.id, 'approved');
           return html(
             reply,
-            pages.donePage('Closed', '<p>The window is closed. You can go ahead with whoever you choose.</p>'),
+            pages.donePage(
+              'Nothing to close',
+              '<p>Nothing is being held up on that one any more. You can go ahead whenever you like.</p>',
+            ),
           );
         }
         const cardRow = await getPool().query(
@@ -1917,7 +1896,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     });
 
     // ------------------------------------------------------------------
-    // 0.F: one-tap match-quality verdicts + collection-window early close.
+    // 0.F: one-tap match-quality verdicts.
     // ------------------------------------------------------------------
     counter.post('/verdict', async (req, reply) => {
       const s = await requireSession(req, reply);
@@ -1941,16 +1920,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       return reply.redirect(back && back === matchId ? `/matches/${encodeURIComponent(matchId)}` : '/', 303);
     });
 
-    counter.post('/collect/:cardId/close', async (req, reply) => {
-      const s = await requireSession(req, reply);
-      if (!s) return;
-      try {
-        await closeCollectionByCard(String((req.params as any).cardId), s.accountId!, 'counter');
-      } catch {
-        return html(reply, pages.messagePage('Not found', '<p>Nothing like that on your ledger.</p>'), 404);
-      }
-      return reply.redirect('/', 303);
-    });
+    // The holder's early-close button lived here. The collection window is
+    // gone (migration 030): nothing blocks a holder now, so there is nothing
+    // to close.
 
     // ------------------------------------------------------------------
     // Ledger.
@@ -2030,9 +2002,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           bandMin: c.price?.band?.min != null ? String(c.price.band.min) : undefined,
           bandMax: c.price?.band?.max != null ? String(c.price.band.max) : undefined,
           bandCcy: c.price?.ccy,
-          collectWindowMinutes:
-            c.collect_window_minutes != null ? String(c.collect_window_minutes) : undefined,
-          collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
+          slots: c.slots ?? 1,
           screeningRejection: screeningRejectionView(c),
         }),
       );
@@ -2061,7 +2031,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
               status: c.protocol_status,
               ttlDays: c.ttl_days,
               attributesJson: String(b.attributes ?? ''),
-              collectWindowDefault: defaultCollectWindowMinutes(c.urgency),
+              slots: c.slots ?? 1,
               screeningRejection: screeningRejectionView(c),
             },
             'Attributes must be valid JSON.',
@@ -2083,25 +2053,6 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           band: { min: Number(b.band_min), max: Number(b.band_max) },
           ccy: String(b.band_ccy || 'AUD').toUpperCase(),
         };
-      }
-      // Collection-window override: only SHORTER than the urgency default.
-      if (b.collect_window !== undefined) {
-        const raw = String(b.collect_window).trim();
-        const dflt = defaultCollectWindowMinutes(patch.urgency);
-        const mins = raw === '' ? null : Math.floor(Number(raw));
-        if (mins !== null && (!Number.isFinite(mins) || mins < 1 || mins > dflt)) {
-          return html(
-            reply,
-            pages.messagePage(
-              'Could not save',
-              `<p>The collection window may only be shortened: 1–${dflt} minutes for this card.</p>`,
-              `/ledger/${id}/edit`,
-              'Back to editing',
-            ),
-            400,
-          );
-        }
-        await ops.setCollectWindowOverride(s.accountId!, id, mins);
       }
       try {
         await amendIntent(cfg, s.accountId!, id, patch);

@@ -40,13 +40,21 @@ export function startMatchingWorker(cfg: Config, log: (msg: string, extra?: any)
                   candidate_pool_capped: outcome.candidatePoolCapped,
                   evaluated: outcome.evaluated,
                   matches: outcome.matchesCreated.length,
+                  promoted: outcome.promoted.length,
                   near_misses: outcome.nearMisses,
                 });
-                // 0.E: hand each fresh match to the ops queue for the human
-                // summons. Queued (rather than sent inline) so a summons
-                // failure retries on its own without re-running the matcher;
-                // the send itself is idempotent (summons:{match}:{account}).
-                for (const matchId of outcome.matchesCreated) {
+                // 0.E: hand each newly LIVE introduction to the ops queue for
+                // the human summons. Queued (rather than sent inline) so a
+                // summons failure retries on its own without re-running the
+                // matcher; the send itself is idempotent
+                // (summons:{match}:{account}).
+                //
+                // 1.H: it is the ones the fit sequencer promoted, not every
+                // one it created. An introduction still in line is not
+                // something to tell a human about — they hear about it if and
+                // when its turn comes, and it reads then exactly the way any
+                // first summons reads.
+                for (const matchId of outcome.promoted) {
                   await sqs.send(
                     new SendMessageCommand({
                       QueueUrl: cfg.opsQueueUrl,

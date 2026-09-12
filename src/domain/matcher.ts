@@ -14,14 +14,17 @@ import { embedCard } from './embeddings.js';
 import {
   DEFAULT_GEO_RADIUS_KM,
   categoryCompatible,
-  collectWindowMinutes,
+  clearsAskWithRoom,
   decide,
   evaluatePair,
   isGeohash,
+  limitsOverlap,
   reachOf,
+  type Ask,
   type GeoBucket,
   type PriceBand,
 } from './matchRules.js';
+import { resequenceCard } from './sequencer.js';
 import type { CardRow } from './cards.js';
 import { geoOf } from '../geo/normalise.js';
 import type { Config } from '../config.js';
@@ -409,6 +412,13 @@ export interface MatchingOutcome {
   candidatePool: number;
   /** True when the count stopped at the cap: the pool is at least that big. */
   candidatePoolCapped: boolean;
+  /**
+   * The introductions that went LIVE on this run — a subset of matchesCreated
+   * plus, sometimes, one that was already in line and has just reached the
+   * front. These are the ones a human is summoned about. An introduction still
+   * in line summons nobody: to its holder it does not exist yet.
+   */
+  promoted: string[];
 }
 
 export async function runMatchingForCard(
@@ -455,6 +465,7 @@ export async function runMatchingForCard(
     evaluated: 0,
     candidatePool: pool.pool,
     candidatePoolCapped: pool.capped,
+    promoted: [],
   };
   const touchedCards = new Set<string>();
 
@@ -512,12 +523,31 @@ export async function runMatchingForCard(
     const decision = decide(evaled.score, bumpWant, bumpHave);
 
     if (decision === 'match') {
+      // The two facts the fit sequencer ranks a line on that only the engine
+      // can know, reduced to booleans HERE, where the bands are already
+      // decrypted and about to be thrown away. Neither the ceiling nor the
+      // floor nor any difference between them is stored or passed on: "these
+      // two limits meet" and "the buyer has a quarter's room over the ask" is
+      // the whole of what leaves this loop.
+      const ask = (have.ask ?? null) as Ask | null;
+      const overlap = limitsOverlap(wantBand, haveBand, ask);
+      const roomOverAsk = clearsAskWithRoom(wantBand, ask);
       const ins = await getPool().query(
-        `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category)
-         VALUES ($1,$2,$3,$4,$5,$6)
+        `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
+                              limits_overlap, clears_ask_25)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
-        [want.id, have.id, want.account_id, have.account_id, evaled.score, want.category],
+        [
+          want.id,
+          have.id,
+          want.account_id,
+          have.account_id,
+          evaled.score,
+          want.category,
+          overlap,
+          roomOverAsk,
+        ],
       );
       if (ins.rows[0]) {
         outcome.matchesCreated.push(ins.rows[0].id as string);
@@ -541,34 +571,18 @@ export async function runMatchingForCard(
     }
   }
 
-  if (touchedCards.size) await stampContestedWindows([...touchedCards]);
+  // A fresh introduction is a CANDIDATE, not yet an introduction anyone hears
+  // about. The sequencer decides which of them fill the slots the two sides
+  // have free, best fit first, and the ones it promotes are the ones a human
+  // is summoned about. The rest wait in line and summon nobody: to the holder
+  // they do not exist yet.
+  //
+  // This is where the collection window used to be stamped. Nothing blocks a
+  // holder now — see domain/sequencer.ts.
+  for (const cardId of touchedCards) {
+    for (const id of await resequenceCard(cardId)) {
+      if (!outcome.promoted.includes(id)) outcome.promoted.push(id);
+    }
+  }
   return outcome;
 }
-
-/**
- * Contested matches -> collection window. A card that now has >= 2
- * concurrently-open matches becomes the CONTESTED (holder) side: its
- * collection window opens once (collect_until stamped) and never reopens
- * after it closes. Window length: 15 min for urgency='today', else 6h,
- * further shortened by the card's own collect_window_minutes override.
- * The stamp is a single conditional UPDATE, so concurrent workers cannot
- * double-open or re-open a window.
- */
-export async function stampContestedWindows(cardIds: string[]): Promise<void> {
-  await getPool().query(
-    `UPDATE cards c SET
-        collect_until = now() + make_interval(mins => LEAST(
-          COALESCE(c.collect_window_minutes, 100000),
-          CASE WHEN c.urgency = 'today' THEN 120 ELSE 360 END)),
-        updated_at = now()
-     WHERE c.id = ANY($1::uuid[])
-       AND c.collect_until IS NULL
-       AND c.collect_closed_at IS NULL
-       AND (SELECT count(*) FROM matches m
-            WHERE (m.card_want = c.id OR m.card_have = c.id) AND m.state = 'open') >= 2`,
-    [cardIds],
-  );
-}
-
-// Re-export so the window constants live in one place for callers.
-export { collectWindowMinutes };

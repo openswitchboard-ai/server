@@ -561,7 +561,6 @@ describe('the pages that collect it', () => {
       killSwitchOn: false,
       cardCounts: { total: 0, published: 0, pending: 0 },
       pendingApprovals: [],
-      collectionWindows: [],
     };
     const empty = chome.dashboardPage(base);
     expect(empty).toContain('/profile');

@@ -182,15 +182,6 @@ export interface PendingApprovalItem {
   cta?: string;
 }
 
-export interface DashboardWindowItem {
-  cardId: string;
-  category: string;
-  type: string;
-  /** localTime() markup: the moment the window shuts, in the reader's clock. */
-  until: string;
-  interestedParties: number;
-}
-
 export interface DashboardView {
   /** True while an authorised agent has not yet swapped its code for a token:
    *  the page reloads itself when it regains focus and every few seconds. */
@@ -207,7 +198,6 @@ export interface DashboardView {
   killSwitchOn: boolean;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
-  collectionWindows: DashboardWindowItem[];
   /** Cards whose clock runs out within the week, if any do. `soonest` is
    *  localTime(…, 'day') markup, so the day reads in the person's own clock. */
   lapsingSoon?: { count: number; soonest: string };
@@ -290,20 +280,11 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     )
     .join('');
 
-  // 2. Windows on a clock. HOLDER-only: rivals' pages never render this.
-  const windows = v.collectionWindows
-    .map(
-      (w) => `<div class="card-row"><div class="top">
-<span class="badge ${w.type === 'WANT' ? 'want' : 'have'}">${esc(w.type)}</span>
-<span class="cat">${esc(w.category)}</span></div>
-<div class="kv">${w.interestedParties} interested ${w.interestedParties === 1 ? 'party' : 'parties'} so far
- — window open until ${w.until}.</div>
-<p class="small muted">More than one person wants this, so the switchboard is holding the door open for a while: interest and offers keep arriving, and you can talk to each of them, but you cannot share your name with one or accept a number until the window closes. Nobody on the other side is told there are others. When you have seen enough, close it and choose.</p>
-<form method="POST" action="/collect/${esc(w.cardId)}/close">
-  <button type="submit" class="secondary">Close the window now and choose</button>
-</form></div>`,
-    )
-    .join('');
+  // 2. There used to be a window on a clock here: a want or have that several
+  //    people had come forward on froze until its timer ran out, and this card
+  //    was where the holder closed it early. Nothing blocks a holder now
+  //    (migration 030). People come one at a time, the rest wait in line, and
+  //    there is nothing on this page for the person to do about it.
 
   // 2b. Messages nobody has collected. The switchboard carries a conversation
   //     without keeping it, so this block can say how many and what about, and
@@ -345,7 +326,6 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
 
   const nothingWaiting =
     !v.pendingApprovals.length &&
-    !v.collectionWindows.length &&
     !renewals &&
     !messages &&
     !agreed;
@@ -390,7 +370,6 @@ ${approvals}
 ${agreed}
 ${messages}
 ${renewals}
-${windows}
 <h2>Your switchboard</h2>
 ${nav}
 ${kill}
@@ -506,9 +485,8 @@ export interface CardEditView {
   bandMin?: string;
   bandMax?: string;
   bandCcy?: string;
-  collectWindowMinutes?: string;
-  /** default window (minutes) for this card's urgency; overrides may only shorten */
-  collectWindowDefault: number;
+  /** How many people this want or have takes at once (1-10). */
+  slots?: number;
   /** Present when screening turned this card away: why, in plain words. */
   screeningRejection?: { plain: string; code?: string };
 }
@@ -554,12 +532,11 @@ ${errBox(error)}
   <input id="band_ccy" name="band_ccy" type="text" maxlength="3" pattern="[A-Z]{3}" value="${esc(c.bandCcy ?? '')}" placeholder="AUD">
   <label for="urgency">Urgency</label>
   <select id="urgency" name="urgency">${['none', 'days', 'today'].map((u) => opt(u, c.urgency)).join('')}</select>
-  <label for="collect_window">Collection window, in minutes (optional)</label>
-  <input id="collect_window" name="collect_window" type="number" min="1" max="${c.collectWindowDefault}"
-   value="${esc(c.collectWindowMinutes ?? '')}" placeholder="${c.collectWindowDefault}">
-  <p class="field-help">When several parties match this ${thing} at once, interest is
-collected this long before you choose. It may only be SHORTER than the default
-${c.collectWindowDefault}.</p>
+  <label for="slots">How many people at once</label>
+  <input id="slots" name="slots" type="number" min="1" max="10" value="${esc(String(c.slots ?? 1))}">
+  <p class="field-help">People are introduced to this ${thing} one at a time unless you
+say otherwise, and the rest wait their turn. Put the number you can actually
+take on: a book club with room for four takes four.</p>
   <label for="status">Visibility</label>
   <select id="status" name="status">${opt('active', c.status)}${opt('latent', c.status)}</select>
   <label for="ttl_days">Days until expiry</label>
