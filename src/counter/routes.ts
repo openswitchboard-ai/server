@@ -330,6 +330,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // its own tab. The agent proves it finished by exchanging its code for a
       // token, so a fresh token for this client is the "connected" signal.
       let notice: string | undefined;
+      let awaitingConnect = false;
       const authorized = String((req.query as any)?.authorized ?? '');
       if (/^[0-9a-f-]{36}$/i.test(authorized)) {
         const c = await getPool().query(
@@ -342,15 +343,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
         const row = c.rows[0];
         if (row) {
+          awaitingConnect = !row.connected;
           notice = row.connected
             ? `${row.client_name} is connected and can work the switchboard for you.`
-            : `You authorised ${row.client_name}. It has not finished connecting yet. If the new tab showed a connection error, paste the address-bar link back into ${row.client_name} where it is waiting for it; then refresh this page.`;
+            : `You authorised ${row.client_name}. It has not finished connecting yet. This page checks again on its own. If the new tab showed a connection error, paste the address-bar link back into ${row.client_name} where it is waiting for it.`;
         }
       }
       return html(
         reply,
         home.dashboardPage({
           notice,
+          awaitingConnect,
           firstName: profile.firstName || undefined,
           sharedProfile: profileIsFilled(profile)
             ? `${profile.firstName}, ${profile.locality}`
