@@ -415,8 +415,9 @@ export async function bestOfferResult(
       reliability: Number(o.reliability) >= 0.5 ? 'well established' : 'getting started',
     };
   });
-  const { categoryLeafLabel, categoryPhrase } = await import('./matchRules.js');
-  const thing = categoryPhrase(categoryLeafLabel(card.category));
+  // The category as a person says it mid-sentence, from the taxonomy itself.
+  const { categoryPhrase } = await import('./matchRules.js');
+  const thing = categoryPhrase(card.category);
   const n = offers.length;
   return {
     offers,
