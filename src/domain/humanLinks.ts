@@ -187,7 +187,7 @@ export async function acceptNumberLink(
   return {
     link: url(cfg, token),
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table for their ${categoryLeafLabel(o.category).toLowerCase()}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryLeafLabel(o.category).toLowerCase()}` : ` for the ${categoryLeafLabel(o.category).toLowerCase()} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
   };
 }
 

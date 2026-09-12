@@ -166,7 +166,7 @@ export async function sendOfferOnTheTableEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string },
+  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string; side: 'want' | 'have' },
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
   return sendEmail(cfg, {
@@ -181,6 +181,7 @@ export async function sendOfferOnTheTableEmail(
         ccy: input.ccy,
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         blind: ctx.blind,
+        side: input.side,
       },
       ctx.links,
     ),
@@ -199,7 +200,7 @@ export async function sendDealAgreedEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string },
+  input: { offerId: string; matchId: string; amount: number; ccy: string; categoryLabel?: string; side: 'want' | 'have' },
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
   return sendEmail(cfg, {
@@ -214,6 +215,7 @@ export async function sendDealAgreedEmail(
         ccy: input.ccy,
         categoryLabel: ctx.blind ? undefined : input.categoryLabel,
         blind: ctx.blind,
+        side: input.side,
       },
       ctx.links,
     ),

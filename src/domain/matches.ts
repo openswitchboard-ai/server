@@ -899,7 +899,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // The offer sentence names the thing the way a person would say it in
       // one — "for your mountain bike" — where the signal sentence wants the
       // plural it already has.
-      const noteText = offerTableNote(table, categoryPhrase(categoryLeafLabel(m.category)));
+      const noteText = offerTableNote(
+        table,
+        categoryPhrase(categoryLeafLabel(m.category)),
+        sideOf(m, accountId),
+      );
       if (noteText) entry.offer_note = sbNote(noteText);
       // A figure one human proposed and the other took, whichever way round:
       // the deal is agreed and the switchboard has nothing further to do on it.

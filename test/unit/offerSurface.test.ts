@@ -281,7 +281,7 @@ describe('when the other side takes the figure', () => {
     const entry = await sweep();
     expect(entry.next).toBe('deal_agreed');
     expect(entry.offer_note.text).toBe(
-      "The other side has accepted your human's 415 AUD for your mountain bike. The switchboard's part is done: agree pickup or handover in the conversation.",
+      "The other side has accepted your human's 415 AUD for the mountain bike you are after. The switchboard's part is done: agree pickup or handover in the conversation.",
     );
     // The entry leads with it, so the agent relaying the note says the deal.
     expect(entry.note).toEqual(entry.offer_note);

@@ -382,8 +382,18 @@ export function renderYourMove(
 // of their own — is a sentence to their assistant, which hands them a link to
 // the one page that asks the question when it comes to that.
 // ---------------------------------------------------------------------------
+/**
+ * "for your mountain bike" is the seller's phrase; the buyer hears "for the
+ * mountain bike you are after". Every sentence that names the thing beside a
+ * figure goes through here, so no side is ever told it owns what it wants.
+ */
+export function aboutThing(thing: string | undefined, side: 'want' | 'have'): string {
+  if (!thing) return '';
+  return side === 'have' ? ` for your ${thing}` : ` for the ${thing} you are after`;
+}
+
 export function renderOfferOnTheTable(
-  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean },
+  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean; side: 'want' | 'have' },
   f: FooterLinks,
 ): EmailContent {
   const figure = offerAmountInWords(v.amount, v.ccy);
@@ -393,9 +403,9 @@ export function renderOfferOnTheTable(
     : 'A number is on the table';
   const line = v.blind
     ? 'Someone has answered you.'
-    : thing
-      ? `Someone you got talking to has offered ${figure} for your ${thing}.`
-      : `Someone you got talking to has offered ${figure}.`;
+    : v.side === 'have'
+      ? `Someone has offered ${figure}${aboutThing(thing, 'have')}.`
+      : `Someone has come back with ${figure}${aboutThing(thing, 'want')}.`;
   const { html, text } = notice(
     {
       heading: v.blind ? 'Something is waiting.' : 'There is a number on the table.',
@@ -414,7 +424,7 @@ export function renderOfferOnTheTable(
 // handover back to the two people and stops there.
 // ---------------------------------------------------------------------------
 export function renderDealAgreed(
-  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean },
+  v: { amount: number; ccy: string; categoryLabel?: string; blind: boolean; side: 'want' | 'have' },
   f: FooterLinks,
 ): EmailContent {
   const figure = offerAmountInWords(v.amount, v.ccy);
@@ -422,9 +432,7 @@ export function renderDealAgreed(
   const subject = v.blind ? 'OpenSwitchboard: something moved on your account' : 'Deal agreed';
   const line = v.blind
     ? 'Something on your account is agreed.'
-    : thing
-      ? `Deal: ${figure} agreed for your ${thing}. Where and when to hand it over is for the two of you.`
-      : `Deal: ${figure} agreed. Where and when to hand it over is for the two of you.`;
+    : `Deal: ${figure} agreed${aboutThing(thing, v.side)}. Where and when to hand it over is for the two of you.`;
   const { html, text } = notice(
     { heading: v.blind ? 'Something moved.' : 'You have a deal.', line, accent: HAVE },
     f,

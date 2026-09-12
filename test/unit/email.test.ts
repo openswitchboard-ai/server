@@ -124,7 +124,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'offer-on-the-table',
       blind: false,
       content: renderOfferOnTheTable(
-        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false, side: 'have' },
         links,
       ),
     },
@@ -140,7 +140,7 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'deal-agreed',
       blind: false,
       content: renderDealAgreed(
-        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false },
+        { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: false, side: 'have' },
         links,
       ),
     },
