@@ -304,36 +304,16 @@ export async function agentOfferAction(
 }
 
 /**
- * An agent parked a figure for its human. They are told, in a notice: no link
- * and no button, because their own assistant is what hands them the link to
- * the page that asks whether to accept (respond(request_accept)). The one
- * pipeline holds the notice back unless email is how they hear about things.
+ * An agent parked a figure for its human. Nobody is emailed: the agent that
+ * parked it is the one talking to the human right now, and hands them the
+ * link in the same breath (respond(request_accept)). The "a number is on the
+ * table" notice, sent when the figure first arrived, already covers the
+ * person who was away. Run 6 (12 September 2026): "accept the $430" produced
+ * an email telling Lachlan to ask his assistant about the thing his assistant
+ * was telling him about.
  */
-async function notifyHumanOfOffer(cfg: Config, o: OfferRow): Promise<void> {
-  const { categoryLeafLabel } = await import('./matchRules.js');
-  const { sendApprovalEmail } = await import('../counter/email.js');
-  const { accountEmail } = await import('./counterOps.js');
-  const m = await getMatch(o.match_id);
-  if (!m) throw new Error('introduction missing');
-  const humanAccount = o.proposer_account === m.account_want ? m.account_have : m.account_want;
-  const email = await accountEmail(humanAccount, 'approval-notification');
-  if (email) {
-    // Category-level only. The amount stays behind their sign-in (blind mode
-    // strips even the category — handled in sendApprovalEmail). Best-effort:
-    // the offer is already parked and shows on the person's approval page, so
-    // a failed send delays discovery without undoing it.
-    try {
-      await sendApprovalEmail(
-        cfg,
-        email,
-        humanAccount,
-        o.id,
-        `An offer on your ${categoryLeafLabel(m.category)} introduction is waiting for your decision.`,
-      );
-    } catch (err) {
-      console.warn('approval notice failed; offer stays awaiting-human', err);
-    }
-  }
+async function notifyHumanOfOffer(_cfg: Config, _o: OfferRow): Promise<void> {
+  // Deliberately nothing. Kept as the seam so the two callers read the same.
 }
 
 /**

@@ -470,17 +470,37 @@ export function messagePage(title: string, html: string, backHref = '/', backLab
 <a class="btn secondary" href="${esc(backHref)}">${esc(backLabel)}</a>`);
 }
 
+/**
+ * The end of a page reached from a link the assistant handed over. There is
+ * nothing else to do here and nowhere else to go: the conversation is back in
+ * the assistant, so the page says so and offers to close itself. A browser
+ * only closes a tab a script opened, so when it refuses, a line says to close
+ * it by hand rather than leaving a button that did nothing.
+ */
+const DONE_BLOCK = `<p class="lead">Done. Back to your assistant.</p>
+<button type="button" id="closeTab">Close</button>
+<p class="small muted" id="closeHint" hidden>Your browser kept this tab open. Close it yourself and carry on with your assistant.</p>
+<script>
+(function(){var b=document.getElementById('closeTab'),h=document.getElementById('closeHint');if(!b)return;
+b.addEventListener('click',function(){try{window.close();}catch(e){}setTimeout(function(){if(!document.hidden){h.hidden=false;b.hidden=true;}},250);});})();
+</script>`;
+
+export function donePage(title: string, html: string, backHref?: string, backLabel?: string): string {
+  if (backHref) return messagePage(title, html, backHref, backLabel);
+  return layout(title, `<h1>${esc(title)}</h1>${html}
+${DONE_BLOCK}`);
+}
+
 export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
   const text = {
-    used: `<p class="lead">This approval link has already been used. Each link works exactly once.</p>
-<p class="muted small">If you still have something waiting, it's listed on your approval page.</p>`,
-    expired: `<p class="lead">This approval link has expired — links live for 15 minutes.</p>
-<p class="muted small">Anything still waiting for you is listed on your approval page.</p>`,
+    used: `<p class="lead">This link has already been used. Each link works exactly once.</p>`,
+    expired: `<p class="lead">This link has expired. Links live for 15 minutes.</p>`,
     invalid: `<p class="lead">This approval link isn't valid.</p>`,
   }[reason];
   const title = { used: 'Already used', expired: 'Link expired', invalid: 'Not a valid link' }[reason];
   return layout(title, `<h1>${esc(title)}.</h1>${text}
-<a class="btn" href="/">Go to your approval page</a>`);
+<p>Ask your assistant for a fresh one.</p>
+${DONE_BLOCK}`);
 }
 
 // ---------------------------------------------------------------------------
