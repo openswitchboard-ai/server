@@ -133,12 +133,20 @@ d('a conversation carried across an open channel', () => {
       text: 'Are you about this week?',
     });
     expect(first.isError).toBe(false);
+    // The row is written 'sending' before the SES call and flipped to its
+    // terminal status after it (src/email/send.ts), so reading the status the
+    // moment the row appears reads the in-flight marker rather than the
+    // outcome. Wait the row out, the way the 0.E suite does: 'failed' is
+    // terminal for one attempt but reclaimed and retried, so it keeps waiting
+    // through that too.
     const sends = await poll(
       async () => {
         const rows = await channelWaitingSends();
-        return rows.length >= 1 ? rows : undefined;
+        return rows.length >= 1 && rows[0][1] !== 'sending' && rows[0][1] !== 'failed'
+          ? rows
+          : undefined;
       },
-      'the waiting-message nudge to be sent to the recipient',
+      'the waiting-message nudge to reach a terminal status',
     );
     expect(sends).toHaveLength(1);
     expect(['sent', 'sandbox-rejected']).toContain(sends[0][1]);
