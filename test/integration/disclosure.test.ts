@@ -26,12 +26,12 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import {
   TestActor,
   approveDisclosure,
-  counterFetch,
   dbExec,
   mcpCall,
   minimalHave,
   minimalWant,
   poll,
+  pressNamesLink,
   readSharedProfilePage,
   registerActor,
   sendOp,
@@ -45,46 +45,6 @@ const d = RUN ? describe : describe.skip;
 let ana: TestActor; // WANT side
 let beppe: TestActor; // HAVE side
 let matchId: string;
-
-/** A form post, the way a browser sends one. */
-const form = (o: Record<string, string>) => ({
-  method: 'POST' as const,
-  headers: { 'content-type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams(o).toString(),
-});
-
-/**
- * The names step the way a person does it: the link out of the refusal their
- * agent was handed, read once, then pressed with the PIN. Where nothing is on
- * file the same page asks for the first name and area, so the two fields ride
- * along with the press.
- */
-const pressNamesLink = async (
-  actor: TestActor,
-  humanAction: string,
-  shared?: { firstName: string; locality: string },
-): Promise<{ status: number; body: string; asked: boolean }> => {
-  const link = String(humanAction).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
-  expect(link, humanAction).toBeTruthy();
-  const ask = await counterFetch(actor.jar, link!);
-  const askBody = await ask.text();
-  expect(ask.status).toBe(200);
-  expect(askBody).toContain('Share your first name and area');
-  const pressed = await counterFetch(
-    actor.jar,
-    link!,
-    form({
-      decision: 'yes',
-      pin: actor.pin,
-      ...(shared ? { first_name: shared.firstName, locality: shared.locality } : {}),
-    }),
-  );
-  return {
-    status: pressed.status,
-    body: await pressed.text(),
-    asked: askBody.includes('name="first_name"'),
-  };
-};
 
 const optinCount = async (id: string): Promise<number> =>
   Number(

@@ -39,6 +39,7 @@ import {
   minimalHave,
   minimalWant,
   poll,
+  pressNamesLink,
   revokeAgentKey,
   sendOp,
   sha256hex,
@@ -57,25 +58,6 @@ const form = (o: Record<string, string>) => ({
   headers: { 'content-type': 'application/x-www-form-urlencoded' },
   body: new URLSearchParams(o).toString(),
 });
-
-/**
- * The names step, the way a person does it: read the one question the link
- * opens, then press Share with the PIN. The link arrives inside the refusal an
- * agent's opt_in earns, so this is the whole of the road from agent to record.
- */
-const pressNamesLink = async (actor: TestActor, humanAction: string): Promise<void> => {
-  const link = String(humanAction).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
-  expect(link, humanAction).toBeTruthy();
-  const ask = await counterFetch(actor.jar, link!);
-  expect(ask.status).toBe(200);
-  expect(await ask.text()).toContain('Share your first name and area');
-  const pressed = await counterFetch(
-    actor.jar,
-    link!,
-    form({ decision: 'yes', pin: actor.pin }),
-  );
-  expect(pressed.status).toBe(200);
-};
 
 /**
  * The open-wants-and-haves ceiling on the deployment under test.
@@ -243,7 +225,7 @@ d('integration gates against live deployment', () => {
     expect(o1.result.human_action).toContain(
       'Sharing their first name and area is theirs to press',
     );
-    await pressNamesLink(alice, o1.result.human_action);
+    expect((await pressNamesLink(alice, o1.result.human_action)).status).toBe(200);
     const locked1 = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
@@ -259,7 +241,7 @@ d('integration gates against live deployment', () => {
     const o2 = await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
     expect(o2.isError).toBe(true);
     expect(o2.result.code).toBe('CONSENT_REQUIRED');
-    await pressNamesLink(bob, o2.result.human_action);
+    expect((await pressNamesLink(bob, o2.result.human_action)).status).toBe(200);
     const mutual = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
