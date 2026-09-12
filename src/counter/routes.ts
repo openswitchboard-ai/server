@@ -89,7 +89,7 @@ import {
   verifyByLinkToken,
 } from './verification.js';
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
-import { categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
+import { aboutThing, categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
 import { verifyEmailToken } from '../email/tokens.js';
 import { emailHash } from '../domain/accounts.js';
 import * as links from './links.js';
@@ -955,7 +955,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
         return {
           ...base,
-          question: `Send ${figure} to ${name ?? 'the other side'} for your ${phrase(m.category)}?`,
+          question: `Send ${figure} to ${name ?? 'the other side'}${aboutThing(phrase(m.category), m.account_have === accountId ? 'have' : 'want')}?`,
           detail,
           yesLabel: 'Send',
           needsPin: true,
@@ -1001,7 +1001,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         detail.push('Accepting agrees the number, and your assistant takes it from there.');
         return {
           ...base,
-          question: `${name ?? 'The other side'} offers ${figure} for your ${phrase(o.category)}.`,
+          question: `${name ?? 'The other side'} ${o.account_have === accountId ? 'offers' : 'wants'} ${figure}${aboutThing(phrase(o.category), o.account_have === accountId ? 'have' : 'want')}.`,
           detail,
           yesLabel: 'Accept',
           needsPin: true,

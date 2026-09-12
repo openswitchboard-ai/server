@@ -1,3 +1,4 @@
+import { aboutThing } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, openCollectionWindow, ownCardId, sideOf } from './matches.js';
@@ -149,6 +150,7 @@ async function notifyCounterpartyOfHumanOffer(cfg: Config, o: OfferRow): Promise
       amount: Number(o.amount),
       ccy: o.ccy,
       categoryLabel: categoryLeafLabel(m.category),
+      side: counterparty === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
     console.warn('offer-on-the-table email failed; the offer stands', err);
@@ -403,6 +405,7 @@ async function notifyProposerOfAcceptance(cfg: Config, o: OfferRow): Promise<voi
       amount: Number(o.amount),
       ccy: o.ccy,
       categoryLabel: categoryLeafLabel(m.category),
+      side: o.proposer_account === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
     console.warn('deal-agreed email failed; the acceptance stands', err);
@@ -483,13 +486,17 @@ export async function offerTable(accountId: string, matchId: string): Promise<Of
  *    own human's offer as something that never went out;
  *  - one side has a number out: whose it is, and what happens next.
  */
-export function offerTableNote(lines: OfferLine[], thing: string): string | undefined {
+export function offerTableNote(
+  lines: OfferLine[],
+  thing: string,
+  side: 'want' | 'have' = 'have',
+): string | undefined {
   if (!lines.length) return undefined;
   const said = (l: OfferLine) => `${l.amount} ${l.ccy}`;
   const mine = lines.filter((l) => l.side === 'yours');
   const theirs = lines.filter((l) => l.side === 'theirs');
   const acceptedMine = mine.find((l) => l.state === 'accepted-by-human');
-  const about = thing ? ` for your ${thing}` : '';
+  const about = aboutThing(thing, side);
   if (acceptedMine) {
     return `The other side has accepted your human's ${said(acceptedMine)}${about}. The switchboard's part is done: agree pickup or handover in the conversation.`;
   }

@@ -563,7 +563,7 @@ describe('what the emails say', () => {
 
   it('a number on the table names the figure, and sends them to their assistant', () => {
     const c = renderOfferOnTheTable(
-      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false, side: 'have' },
       links,
     );
     expect(c.text).toContain('$415 AUD');
@@ -577,7 +577,7 @@ describe('what the emails say', () => {
 
   it('a deal says the deal, and hands the handover back to the two people', () => {
     const c = renderDealAgreed(
-      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: false, side: 'have' },
       links,
     );
     expect(c.text).toContain(
@@ -597,7 +597,7 @@ describe('what the emails say', () => {
       links,
     );
     const deal = renderDealAgreed(
-      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: true },
+      { amount: 415, ccy: 'AUD', categoryLabel: 'Mountain bikes', blind: true, side: 'have' },
       links,
     );
     for (const c of [offer, deal]) {

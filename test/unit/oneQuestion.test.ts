@@ -465,7 +465,8 @@ describe('(b) send a number', () => {
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
     expect(page.statusCode).toBe(200);
     // Stage 3, so the other person has a name to use.
-    expect(page.body).toContain('Send $440 AUD to Sam for your mountain bike?');
+    // Ana is the buyer, so it is the bike she is after, never 'your' bike.
+    expect(page.body).toContain('Send $440 AUD to Sam for the mountain bike you are after?');
     expect(page.body).toContain('>Send<');
     expect(page.body).toContain('>Not now<');
     expect(page.body).toContain('Confirm with your PIN');
@@ -492,7 +493,7 @@ describe('(b) send a number', () => {
     world.stage = 2;
     const { link } = await mint();
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(page.body).toContain('Send $440 AUD to the other side for your mountain bike?');
+    expect(page.body).toContain('Send $440 AUD to the other side for the mountain bike you are after?');
   });
 
   it('"Not now" sends nothing and carries no reason', async () => {
@@ -571,7 +572,7 @@ describe('(c) accept a number', () => {
     const t = encodeURIComponent(tokenOf(link));
     const page = await inject('GET', `/a/${t}`);
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('Sam offers $430 AUD for your mountain bike.');
+    expect(page.body).toContain('Sam wants $430 AUD for the mountain bike you are after.');
     expect(page.body).toContain('>Accept<');
     expect(page.body).toContain('>Not now<');
     expect(page.body).toContain('Confirm with your PIN');
@@ -594,7 +595,7 @@ describe('(c) accept a number', () => {
     world.stage = 2;
     const { link } = await mint();
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(page.body).toContain('The other side offers $430 AUD for your mountain bike.');
+    expect(page.body).toContain('The other side wants $430 AUD for the mountain bike you are after.');
   });
 
   it('"Not now" agrees nothing and carries no reason', async () => {
@@ -641,7 +642,7 @@ describe('(c) accept a number', () => {
     const r = await mint();
     expect(r.link).toContain('/a/');
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(r.link))}`);
-    expect(page.body).toContain('Sam offers $430 AUD for your mountain bike.');
+    expect(page.body).toContain('Sam wants $430 AUD for the mountain bike you are after.');
   });
 
   it('says nothing is left to accept once the figure has moved on', async () => {
