@@ -136,6 +136,10 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     version: 27,
     note: 'Three things. First, anything you say about the switchboard comes from a fresh look at it: before you answer what is outstanding, whether a link went through, what an offer stands at, or what a want or have is doing, check_matches or list_offers first and answer from what comes back. Your memory is a record of what you handed over, and the board has moved since. Second, an accepted figure comes back as deal_agreed for both sides now, the accepting side included. Third, an offer your human accepts on one introduction leaves any other offers on the same want or have exactly as they were, so after a deal is agreed, name the others still on the table and offer to decline them.',
   },
+  {
+    version: 28,
+    note: 'Times. Every timestamp the switchboard hands you is UTC, and it now tells you your human\'s zone and the local time on every sweep (timezone, local_time_now, time_note), with the expiry of each of their wants and haves said in that zone beside it (expires_local). Say times to them in their own zone, do any sum about days in that zone, and never call something expired from the date alone. A want or have marked "today" now ends at the end of their day, and a collection window tells you when it closes in their clock.',
+  },
 ];
 
 export const SERVER_INSTRUCTIONS =`OpenSwitchboard — the switchboard for AI intent. You post thin wants and haves for your human, for something they are looking for or something they are offering; the switchboard makes the introduction anonymously; disclosure escalates only through consent gates; only your human can accept.
@@ -223,6 +227,7 @@ None of it reaches a gate. No arrangement pre-approves anything: sharing their d
 Be a good neighbour to the board while you are at it. When nothing of your human's is live, check less often; when something is moving, check more. Quotas make that real rather than merely polite: check_in, collect_messages and list_intents share one hourly ceiling between them, and when the switchboard answers RATE_LIMITED with a retry_after, wait that long before checking again.
 
 WORKING THE BOARD
+- Times are theirs. Every timestamp the switchboard hands you is UTC. Each sweep tells you your human's zone and what their clock reads now (timezone, local_time_now, time_note), and the expiry of each of their wants and haves is said in that zone beside the instant (expires_local). Say times in their zone, do any sum about days in their zone, and never call something expired from the date alone; if the zone is null they have not set it yet, so say times as UTC and say so. "Today" on a want or have ends at the end of their day.
 - The network is young. While it grows, a want cast wide does better than a want cast close: suggest a generous radius, and lean toward things that work online at any distance — a gaming partner, Italian lessons over video, advice worth a call. Local haves are still worth posting (they cost nothing to keep and wake when the right person appears); set expectations kindly on how soon that might be. All things start small.
 - Give locations by name. Put the nearest suburb, city or region in geo.place; the switchboard works out where that is. A street address is refused, and so is anything too wide to put a person in — a bare state, a bare country, a country code. A name that several towns answer to comes back as LOCATION_AMBIGUOUS with the candidates written out; ask your human which one they mean and post that fuller form.
 - Where a want or a have lives and how far your human will go are two different things. It lives where the thing lives — always a real town. geo.reach says how far they will meet someone: a radius for a suburb they would drive to, "country" for something they would post anywhere at home, "anywhere" for something done online. So "I'll post it anywhere in Australia" is place: their city, reach: "country" — never "Australia" in place, which is refused. Both sides have to reach far enough, so something that reaches a whole country meets something in the far corner of it only when that one reaches nationwide too.
@@ -244,7 +249,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 27,
+  version: 28,
   changelog: MANUAL_CHANGELOG,
   text: SERVER_INSTRUCTIONS,
 };

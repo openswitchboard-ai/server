@@ -313,6 +313,8 @@ describe('the sweep carries it, for a day', () => {
       'arrangement_note',
       'hears_via',
       'runs_on_its_own',
+      'timezone',
+      'local_time_now',
     ]);
     expect(versionWrites).toEqual([]);
   });

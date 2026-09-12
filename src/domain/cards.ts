@@ -138,6 +138,16 @@ export async function publishIntent(
   if (!account) throw new Error('account not found');
 
   const ttl = card.ttl_days ?? 60;
+  // "Today" means the human's today. With their zone known, a want or have
+  // marked today ends at the last second of their day rather than 24 hours
+  // after the moment it was posted; without it, the old ttl arithmetic holds.
+  let endsAt: Date | null = null;
+  if (card.urgency === 'today') {
+    const { getTimezone } = await import('./accounts.js');
+    const { endOfLocalDay } = await import('./localTime.js');
+    const tz = await getTimezone(accountId);
+    if (tz) endsAt = endOfLocalDay(new Date(), tz);
+  }
   // The price band is a PRIVATE matching input: encrypted before it touches a
   // row, decrypted only inside the matching engine, never serialised outbound.
   const priceEnc = card.price
@@ -149,7 +159,7 @@ export async function publishIntent(
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
                         protocol_status, price_enc, ttl_days, expires_at)
      VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
-             now() + make_interval(days => $12::int))
+             COALESCE($17::timestamptz, now() + make_interval(days => $12::int)))
      RETURNING id`,
     [
       accountId,
@@ -169,6 +179,7 @@ export async function publishIntent(
       geo.lon,
       geo.radius_km,
       geo.country,
+      endsAt,
     ],
   );
   const id = r.rows[0].id as string;
@@ -198,6 +209,11 @@ export async function listIntents(accountId: string): Promise<any[]> {
      FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
     [accountId],
   );
+  // The expiry as the human would say it, beside the UTC instant, so an agent
+  // never has to do the zone sum itself.
+  const { getTimezone } = await import('./accounts.js');
+  const { localTimeText } = await import('./localTime.js');
+  const tz = await getTimezone(accountId);
   // Own-card view for the owning agent. The private price band is not stored
   // in plaintext and is not echoed back; agents keep their own record of it.
   //
@@ -239,6 +255,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
       ttl_days: row.ttl_days,
     },
     expires_at: row.expires_at,
+    ...(tz && row.expires_at ? { expires_local: localTimeText(new Date(row.expires_at), tz) } : {}),
     created_at: row.created_at,
   }));
 }
