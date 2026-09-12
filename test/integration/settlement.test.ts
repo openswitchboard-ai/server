@@ -149,13 +149,9 @@ async function newIntroduction(): Promise<string> {
   }, 'the introduction to appear');
   await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
   await mcpCall(seller.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
-  // Once these two have more than one listing apiece on the board, a second
-  // introduction opens a collection window on the listing it lands on, and
-  // opt_in is refused until the window closes. The humans close theirs early,
-  // which is the one-tap step their own page offers.
-  for (const actor of [buyer, seller]) {
-    await mcpCall(actor.accessToken, 'respond', { intro_id: id, action: 'close_collection' });
-  }
+  // Nothing holds either of them up any more (migration 030): a want or have
+  // that several people have come forward on works through them one at a
+  // time, and the go-ahead on the one that is live goes through at once.
   for (const actor of [buyer, seller]) {
     const r = await mcpCall(actor.accessToken, 'respond', { intro_id: id, action: 'opt_in' });
     expect(r.isError, JSON.stringify(r.result)).toBe(false);
