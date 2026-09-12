@@ -475,17 +475,11 @@ export function messagePage(title: string, html: string, backHref = '/', backLab
 /**
  * The end of a page reached from a link the assistant handed over. There is
  * nothing else to do here and nowhere else to go: the conversation is back in
- * the assistant, so the page says so and offers to close itself. A browser
- * only closes a tab a script opened, so when it refuses, a line says to close
- * it by hand rather than leaving a button that did nothing.
+ * the assistant, so the page says so. No Close button: a page may only close
+ * a tab a script opened, and a link handed over by a chat client is opened by
+ * the browser itself, so the button failed almost every time it was pressed.
  */
-const DONE_BLOCK = `<p class="lead">Done. Back to your assistant.</p>
-<button type="button" id="closeTab">Close</button>
-<p class="small muted" id="closeHint" hidden>Your browser kept this tab open. Close it yourself and carry on with your assistant.</p>
-<script>
-(function(){var b=document.getElementById('closeTab'),h=document.getElementById('closeHint');if(!b)return;
-b.addEventListener('click',function(){try{window.close();}catch(e){}setTimeout(function(){if(!document.hidden){h.hidden=false;b.hidden=true;}},250);});})();
-</script>`;
+const DONE_BLOCK = `<p class="lead">Done. Close this tab and carry on with your assistant.</p>`;
 
 export function donePage(title: string, html: string, backHref?: string, backLabel?: string): string {
   if (backHref) return messagePage(title, html, backHref, backLabel);
