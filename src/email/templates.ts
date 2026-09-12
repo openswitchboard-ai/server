@@ -347,20 +347,38 @@ export function renderChannelWaiting(
 }
 
 // ---------------------------------------------------------------------------
-// (c3) "Your move" nudge. The counterparty has stepped forward — said yes to
-// swapping first names — and it is now this human's turn to answer. New-match
-// is already summoned; this covers the later progression, where a passive human
-// would otherwise never learn the ball is in their court.
+// (c3) "Your move" nudge, at either of the two steps where a human who only
+// hears by email would otherwise be left waiting on a page nobody has told
+// them to open.
 //
-// A notice like the rest: the step it is about is one their assistant can hand
+//   step 'names'   — the counterparty has said yes to swapping first names,
+//                    and it is now this human's turn to answer.
+//   step 'details' — the person this human said they were keen on has said
+//                    the same back, so there is a little more to see now.
+//                    The one told is the side that spoke first, because the
+//                    other side has just heard it from their own assistant.
+//
+// New-match is already summoned; these cover the later progressions. A notice
+// like the rest: the step each one is about is one their assistant can hand
 // them a link to, so the email says what happened and stops there.
 // ---------------------------------------------------------------------------
+export type YourMoveStep = 'names' | 'details';
+
 export function renderYourMove(
-  v: { categoryLabel?: string; blind: boolean },
+  v: { categoryLabel?: string; blind: boolean; step?: YourMoveStep },
   f: FooterLinks,
 ): EmailContent {
-  const subject = 'It is your turn';
   const thing = categoryPhrase(v.categoryLabel);
+  if (v.step === 'details') {
+    const line = v.blind
+      ? 'Someone you were keen on is keen too.'
+      : thing
+        ? `Someone you were keen on about the ${thing} is keen too.`
+        : 'Someone you were keen on is keen too.';
+    const { html, text } = notice({ heading: 'They are keen too.', line, accent: MATCH }, f);
+    return { subject: 'They are keen too', html, text };
+  }
+  const subject = 'It is your turn';
   const line = v.blind
     ? 'Someone is ready to hear back from you.'
     : thing

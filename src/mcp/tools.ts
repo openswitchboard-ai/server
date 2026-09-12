@@ -844,7 +844,7 @@ export async function dispatchTool(
         }
         switch (action) {
           case 'express_interest': {
-            const m = await matches.expressInterest(intro_id, accountId);
+            const m = await matches.expressInterest(cfg, intro_id, accountId);
             // The action word, not a stage number: details_unlocked when this
             // made the interest mutual, awaiting_other_side while it has not.
             return ok({ intro_id, next: matches.nextAction(m, accountId) });
