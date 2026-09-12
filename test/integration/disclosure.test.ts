@@ -9,11 +9,14 @@
  * payload's outbound validation. What this suite proves against the real
  * service, DB and KMS:
  *
- *  - respond(opt_in) on an empty profile is refused with CONSENT_REQUIRED,
- *    the human sentence and that human's own approval link, and records
- *    nothing;
- *  - the approval page asks for the two fields at the consent moment, stores
- *    them under the account's envelope key, and then records the opt-in;
+ *  - respond(opt_in) is refused with CONSENT_REQUIRED, the human sentence and
+ *    that human's own single-use link, and records nothing — every time, with
+ *    a first name and area on file or without (Lachlan, 2026-09-12: sharing
+ *    them is one of the three that go to the human every time);
+ *  - pressing that link is what records the opt-in, and the page asks for the
+ *    two fields at the consent moment where there are none on file, storing
+ *    them under the account's envelope key;
+ *  - the approval page is the second road to the same question;
  *  - the same two fields can be viewed and changed any time on the profile
  *    page, with a signed-in session alone;
  *  - once both sides have them, the stage-3 fetch returns a conformant
@@ -23,6 +26,7 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import {
   TestActor,
   approveDisclosure,
+  counterFetch,
   dbExec,
   mcpCall,
   minimalHave,
@@ -41,6 +45,46 @@ const d = RUN ? describe : describe.skip;
 let ana: TestActor; // WANT side
 let beppe: TestActor; // HAVE side
 let matchId: string;
+
+/** A form post, the way a browser sends one. */
+const form = (o: Record<string, string>) => ({
+  method: 'POST' as const,
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams(o).toString(),
+});
+
+/**
+ * The names step the way a person does it: the link out of the refusal their
+ * agent was handed, read once, then pressed with the PIN. Where nothing is on
+ * file the same page asks for the first name and area, so the two fields ride
+ * along with the press.
+ */
+const pressNamesLink = async (
+  actor: TestActor,
+  humanAction: string,
+  shared?: { firstName: string; locality: string },
+): Promise<{ status: number; body: string; asked: boolean }> => {
+  const link = String(humanAction).match(/https?:\/\/\S+\/a\/\S+/)?.[0];
+  expect(link, humanAction).toBeTruthy();
+  const ask = await counterFetch(actor.jar, link!);
+  const askBody = await ask.text();
+  expect(ask.status).toBe(200);
+  expect(askBody).toContain('Share your first name and area');
+  const pressed = await counterFetch(
+    actor.jar,
+    link!,
+    form({
+      decision: 'yes',
+      pin: actor.pin,
+      ...(shared ? { first_name: shared.firstName, locality: shared.locality } : {}),
+    }),
+  );
+  return {
+    status: pressed.status,
+    body: await pressed.text(),
+    asked: askBody.includes('name="first_name"'),
+  };
+};
 
 const optinCount = async (id: string): Promise<number> =>
   Number(
@@ -93,7 +137,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(r.isError).toBe(true);
     expect(r.result.code).toBe('CONSENT_REQUIRED');
     expect(r.result.human_action).toContain(
-      "Add the first name and area you'd share, on your approval page",
+      'Sharing their first name and area is theirs to press. Hand them this link',
     );
     expect(r.result.human_action).toMatch(/https:\/\/[^\s]+\/a\//);
     expect(r.result.docs_url).toContain('CONSENT_REQUIRED');
@@ -133,6 +177,18 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(page.asked).toBe(false);
   });
 
+  it('and stops nothing else: the agent is refused the same way, with both on file', async () => {
+    const before = await optinCount(matchId);
+    const r = await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
+    expect(r.isError).toBe(true);
+    expect(r.result.code).toBe('CONSENT_REQUIRED');
+    expect(r.result.human_action).toContain(
+      'Sharing their first name and area is theirs to press. Hand them this link',
+    );
+    expect(r.result.human_action).toMatch(/https:\/\/[^\s]+\/a\//);
+    expect(await optinCount(matchId)).toBe(before);
+  });
+
   it('the profile page changes them any time, with a signed-in session alone', async () => {
     const res = await setSharedProfile(ana.jar, 'Ana', 'North Fremantle');
     expect(res.status).toBe(200);
@@ -165,24 +221,43 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(locked.result.code).toBe('NOT_UNLOCKED_YET');
   });
 
-  it('the second human fills their page, and their agent may then opt in', async () => {
+  it('the second human presses the link their agent was handed, and both are in', async () => {
     const refused = await mcpCall(beppe.accessToken, 'respond', {
       intro_id: matchId,
       action: 'opt_in',
     });
     expect(refused.isError).toBe(true);
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
+    expect(await optinCount(matchId)).toBe(1); // the refusal wrote nothing
 
-    expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(200);
-
-    const ok = await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(ok.isError).toBe(false);
-    expect(ok.result.both_recorded).toBe(true);
-    // respond drives the flow with the word, not a stage integer: both opted
-    // in, so the next move is to talk.
-    expect(ok.result.stage_unlocked).toBeUndefined();
-    expect(ok.result.next).toBe('ready_to_talk');
+    // Nothing is on file for Beppe, so the same page asks for the two fields
+    // and they ride along with the press.
+    const pressed = await pressNamesLink(beppe, refused.result.human_action, {
+      firstName: 'Beppe',
+      locality: 'Trastevere',
+    });
+    expect(pressed.asked, 'the page should ask for the two fields').toBe(true);
+    expect(pressed.status).toBe(200);
+    expect(pressed.body).toContain('Both of you have said yes');
     expect(await optinCount(matchId)).toBe(2);
+    expect(await readSharedProfilePage(beppe.jar)).toEqual({
+      firstName: 'Beppe',
+      locality: 'Trastevere',
+    });
+
+    // The press is what the agent hears about, on its next look.
+    const sweep = await mcpCall(beppe.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
+    expect(sweep.isError).toBe(false);
+    expect(sweep.result.optin.both_recorded).toBe(true);
+  });
+
+  it('the press is recorded as the human\'s own, never as the agent\'s word', async () => {
+    const via = await dbExec(
+      `SELECT DISTINCT recorded_via FROM consent_tokens
+       WHERE match_id = :m::uuid AND kind = 'stage3-optin'`,
+      [{ name: 'm', value: matchId }],
+    );
+    expect(via.map((r: any[]) => r[0])).toEqual(['counter']);
   });
 
   it('the stage-3 fetch now returns a conformant match.mutual to each side', async () => {

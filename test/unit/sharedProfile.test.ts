@@ -8,8 +8,13 @@
  * server, and nobody was told the one thing that would fix it.
  *
  * The rules asserted here:
- *  - opt_in on an empty profile is REFUSED before anything is recorded, with
- *    CONSENT_REQUIRED, the human sentence, and that human's own approval link;
+ *  - an agent's opt_in is REFUSED every time, with CONSENT_REQUIRED, the human
+ *    sentence and that human's own single-use link, and records nothing —
+ *    whether or not a first name and area are already on file (Lachlan,
+ *    2026-09-12: this is one of the three that go to the human every time);
+ *  - the press on that page is the only thing that writes an opt-in, and it is
+ *    itself refused while the profile is empty, which is what makes the page
+ *    ask for the two fields;
  *  - a stage-3 fetch on a match where both sides opted in but a profile is
  *    still empty answers CONSENT_REQUIRED as well — the outbound validator is
  *    never reached, and the recorded opt-ins are left alone;
@@ -258,26 +263,38 @@ describe('validateSharedProfile', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('opt_in on an empty profile', () => {
-  it('is refused with CONSENT_REQUIRED and the human sentence + link', async () => {
+// The rule from 2026-09-12: sharing a first name and an area is one of the
+// three things that go to the human every time. An agent asking to opt in is
+// answered with the link and nothing else, whatever is already on file, and the
+// press on that page is the only thing that writes an opt-in.
+describe("an agent's opt_in never records: it fetches the link, every time", () => {
+  beforeEach(() => {
     world.optins = new Set();
     world.stage = 2;
-    const err = await matches
-      .recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested')
-      .catch((e) => e);
+  });
+
+  it('is refused with CONSENT_REQUIRED, the human sentence and the link', async () => {
+    const err = await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch((e) => e);
     expect(err).toBeInstanceOf(OsbError);
     expect(err.payload.code).toBe('CONSENT_REQUIRED');
-    expect(err.payload.human_action).toContain(profile.SHARED_PROFILE_ACTION);
+    expect(err.payload.human_action).toContain(profile.NAMES_GATE_ACTION);
     expect(err.payload.human_action).toContain('https://my.test/a/');
     // The error itself is a conformant protocol error.
     expect(validateOutbound('error', err.payload).valid).toBe(true);
     expect(err.payload.human_action.length).toBeLessThanOrEqual(300);
   });
 
+  it('is refused the same way with a first name and area already on file', async () => {
+    world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
+    const err = await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch((e) => e);
+    expect(err.payload.code).toBe('CONSENT_REQUIRED');
+    expect(err.payload.human_action).toContain(profile.NAMES_GATE_ACTION);
+    expect(err.payload.human_action).toContain('https://my.test/a/');
+  });
+
   it('records NOTHING: no WORM consent event, no consent token, no stage bump', async () => {
-    world.optins = new Set();
-    world.stage = 2;
-    await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested').catch(() => {});
+    world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
+    await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch(() => {});
     expect(vi.mocked(writeConsentEvent)).not.toHaveBeenCalled();
     expect(world.writes.filter((w) => /INSERT INTO consent_tokens/.test(w.sql))).toEqual([]);
     expect(world.optins.size).toBe(0);
@@ -285,9 +302,7 @@ describe('opt_in on an empty profile', () => {
   });
 
   it('mints the link against this human and this match, and re-uses it on a retry', async () => {
-    world.optins = new Set();
-    world.stage = 2;
-    const first = await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested').catch((e) => e);
+    const first = await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch((e) => e);
     expect(world.links).toHaveLength(1);
     expect(world.links[0]).toMatchObject({
       account_id: ANA,
@@ -295,23 +310,70 @@ describe('opt_in on an empty profile', () => {
       ref_id: MATCH,
       counterparty_account: BEPPE,
     });
-    const second = await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested').catch((e) => e);
+    const second = await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch((e) => e);
     expect(world.links).toHaveLength(1); // a retry does not stack link rows
     expect(second.payload.human_action).toBe(first.payload.human_action);
   });
 
-  it('lets the opt-in through once the profile is filled', async () => {
+  it('still says the earlier step first when the other side has yet to warm up', async () => {
+    world.stage = 1;
+    const err = await matches.refuseAgentOptIn(cfg, MATCH, ANA).catch((e) => e);
+    expect(err.payload.code).toBe('NOT_UNLOCKED_YET');
+    expect(world.links).toEqual([]); // nothing minted for a step that is not open
+  });
+
+  it('the recording path itself turns away anything that is not their press', async () => {
+    world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
+    const err = await matches
+      // Only 'counter' type-checks; the guard is what holds if something
+      // untyped ever reaches for the old road.
+      .recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested' as unknown as 'counter')
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(OsbError);
+    expect(err.payload.code).toBe('CONSENT_REQUIRED');
+    expect(err.payload.human_action).toContain(profile.NAMES_GATE_ACTION);
+    expect(world.optins.size).toBe(0);
+    expect(vi.mocked(writeConsentEvent)).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('the press on their own page', () => {
+  beforeEach(() => {
     world.optins = new Set();
     world.stage = 2;
+  });
+
+  it('is refused while the profile is empty, with the sentence that names the gap', async () => {
+    const err = await matches.recordStage3OptIn(cfg, MATCH, ANA, 'counter').catch((e) => e);
+    expect(err).toBeInstanceOf(OsbError);
+    expect(err.payload.code).toBe('CONSENT_REQUIRED');
+    expect(err.payload.human_action).toContain(profile.SHARED_PROFILE_ACTION);
+    expect(world.optins.size).toBe(0);
+  });
+
+  it('records the opt-in, as counter, once the profile is filled', async () => {
     world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
-    const r = await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested');
+    const r = await matches.recordStage3OptIn(cfg, MATCH, ANA, 'counter');
     expect(r.both).toBe(false);
     expect(world.optins.has(ANA)).toBe(true);
     expect(vi.mocked(writeConsentEvent).mock.calls[0][0]).toMatchObject({
       event: 'stage3-optin',
       match_id: MATCH,
       account_id: ANA,
+      recorded_via: 'counter',
     });
+    const token = world.writes.find((w) => /INSERT INTO consent_tokens/.test(w.sql));
+    expect(token!.params[2]).toBe('counter');
+  });
+
+  it('two presses, one from each human, open the names step', async () => {
+    world.accounts[ANA] = { first_name: 'Ana', locality: 'Fremantle' };
+    world.accounts[BEPPE] = { first_name: 'Beppe', locality: 'Trastevere' };
+    expect((await matches.recordStage3OptIn(cfg, MATCH, ANA, 'counter')).both).toBe(false);
+    expect(world.stage).toBe(2);
+    expect((await matches.recordStage3OptIn(cfg, MATCH, BEPPE, 'counter')).both).toBe(true);
+    expect(world.stage).toBe(3);
   });
 });
 
@@ -386,19 +448,19 @@ describe('stage-3 fetch once both profiles are filled', () => {
     world.optins = new Set();
     world.stage = 2;
 
-    // Neither agent can opt in.
+    // Neither agent can opt in; each is handed its human's link instead.
     for (const who of [ANA, BEPPE]) {
-      const e = await matches.recordStage3OptIn(cfg, MATCH, who, 'agent-attested').catch((x) => x);
+      const e = await matches.refuseAgentOptIn(cfg, MATCH, who).catch((x) => x);
       expect(e.payload.code).toBe('CONSENT_REQUIRED');
     }
 
-    // Each human fills their own page.
+    // Each human presses their own page, which is where the two fields land.
     await profile.saveSharedProfile(ANA, { firstName: 'Ana', locality: 'Fremantle' }, 'counter');
     await profile.saveSharedProfile(BEPPE, { firstName: 'Beppe', locality: 'Trastevere' }, 'counter');
 
-    // Now both opt-ins record, and the reveal is a conformant payload.
-    expect((await matches.recordStage3OptIn(cfg, MATCH, ANA, 'agent-attested')).both).toBe(false);
-    expect((await matches.recordStage3OptIn(cfg, MATCH, BEPPE, 'agent-attested')).both).toBe(true);
+    // Now both presses record, and the reveal is a conformant payload.
+    expect((await matches.recordStage3OptIn(cfg, MATCH, ANA, 'counter')).both).toBe(false);
+    expect((await matches.recordStage3OptIn(cfg, MATCH, BEPPE, 'counter')).both).toBe(true);
     const mutual: any = await matches.getStagePayload(cfg, ANA, MATCH, 3);
     expect(validateOutbound('intro.mutual', mutual).valid).toBe(true);
     expect(mutual.counterparty.first_name).toBe('Beppe');
@@ -435,7 +497,7 @@ describe('the "your move" nudge on a one-sided opt-in', () => {
       .filter((b: any) => b.op === 'your-move-notify');
 
   it('enqueues a nudge to the counterparty when only one side has opted in', async () => {
-    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'counter');
     expect(r.both).toBe(false);
     const moves = yourMoves();
     expect(moves).toHaveLength(1);
@@ -443,16 +505,16 @@ describe('the "your move" nudge on a one-sided opt-in', () => {
   });
 
   it('sends no "your move" once the second opt-in makes it mutual', async () => {
-    await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'counter');
     vi.mocked(sqs.send).mockClear();
-    const r = await matches.recordStage3OptIn(opsCfg, MATCH, BEPPE, 'agent-attested');
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, BEPPE, 'counter');
     expect(r.both).toBe(true);
     expect(yourMoves()).toHaveLength(0); // the ball is with nobody now — both are in
   });
 
   it('does not fail the opt-in when the enqueue throws', async () => {
     vi.mocked(sqs.send).mockRejectedValueOnce(new Error('sqs down'));
-    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'agent-attested');
+    const r = await matches.recordStage3OptIn(opsCfg, MATCH, ANA, 'counter');
     expect(r.both).toBe(false); // the opt-in itself still went through
   });
 });
