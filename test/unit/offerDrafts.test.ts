@@ -478,24 +478,13 @@ describe('the pages that show a carried figure', () => {
         mode: 'relay',
         draft: { matchId: MATCH, amount: '505', ccy: 'AUD' },
       }),
-      cpages.approvalPage({
-        action: 'offer-accept',
-        refId: offerId(1),
-        facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
-        anomalies: [],
-        hasPasskey: false,
-        elevated: false,
-        postPath: '/approve',
-        counterOffer: { matchId: MATCH, ccy: 'AUD' },
-        draft: { amount: '505', ccy: 'AUD' },
-      }),
     ]) {
       expect(html).toContain(cpages.DRAFT_LINE);
       expect(lintEmailCopy(html)).toEqual([]);
     }
   });
 
-  it('the offer approval page opens its third door on the carried figure', () => {
+  it('the offer approval page carries no door and no draft: a number of your own goes through the assistant', () => {
     const html = cpages.approvalPage({
       action: 'offer-accept',
       refId: offerId(1),
@@ -504,23 +493,11 @@ describe('the pages that show a carried figure', () => {
       hasPasskey: false,
       elevated: false,
       postPath: '/approve',
-      counterOffer: { matchId: MATCH, ccy: 'AUD' },
-      draft: { amount: '505', ccy: 'AUD' },
     });
-    // Folded away when there is nothing carried; open when there is.
-    expect(html).toContain('<details class="more" open>');
-    expect(html).toContain('value="505"');
-    const bare = cpages.approvalPage({
-      action: 'offer-accept',
-      refId: offerId(1),
-      facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
-      anomalies: [],
-      hasPasskey: false,
-      elevated: false,
-      postPath: '/approve',
-      counterOffer: { matchId: MATCH, ccy: 'AUD' },
-    });
-    expect(bare).not.toContain('<details class="more" open>');
-    expect(bare).not.toContain(cpages.DRAFT_LINE);
+    expect(html).not.toContain('<details class="more"');
+    expect(html).not.toContain(cpages.DRAFT_LINE);
+    expect(html).toContain('>Accept<');
+    expect(html).toContain('>Not now<');
+    expect(html).toContain('goes through your assistant');
   });
 });

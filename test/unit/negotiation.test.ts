@@ -807,7 +807,6 @@ describe('the pages say it in plain words', () => {
         hasPasskey: false,
         elevated: false,
         postPath: '/approve',
-        counterOffer: { matchId: MATCH, ccy: 'AUD' },
       }),
     },
   ];
@@ -825,12 +824,13 @@ describe('the pages say it in plain words', () => {
     );
   });
 
-  it('the offer approval page offers a third answer beside yes and no', () => {
+  it('the offer approval page is one question: yes, not now, and nothing else', () => {
     const html = rendered.find((r) => r.name === 'offer-approval')!.html;
-    expect(html).toContain('Or reply with a number of your own');
-    expect(html).toContain(`/matches/${MATCH}/offer`);
-    // Approving still asks for the PIN; replying with a figure does not.
-    expect(html).toContain('Approve needs your PIN');
+    expect(html).not.toContain('Or reply with a number of your own');
+    expect(html).not.toContain(`/matches/${MATCH}/offer`);
+    expect(html).toContain('>Accept<');
+    expect(html).toContain('>Not now<');
+    expect(html).toMatch(/Accept needs your PIN/);
   });
 
   it('the front page reaches a negotiation through the decision waiting on it', () => {
