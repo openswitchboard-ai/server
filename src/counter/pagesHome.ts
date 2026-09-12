@@ -192,6 +192,9 @@ export interface DashboardWindowItem {
 }
 
 export interface DashboardView {
+  /** True while an authorised agent has not yet swapped its code for a token:
+   *  the page reloads itself when it regains focus and every few seconds. */
+  awaitingConnect?: boolean;
   firstName?: string;
   /** One line at the top, e.g. "Google Antigravity is connected." */
   notice?: string;
@@ -368,6 +371,11 @@ hold. Re-verify your address to switch it back on.
 <h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your approval page.'}</h1>
 <p class="lead">${esc(FRONT_PAGE_LEAD)}</p>
 ${v.notice ? `<div class="note">${esc(v.notice)}</div>` : ''}
+${v.awaitingConnect ? `<script>
+(function(){var again=function(){if(!document.hidden)location.reload();};
+window.addEventListener('focus',again);document.addEventListener('visibilitychange',again);
+var n=0,t=setInterval(function(){if(++n>40){clearInterval(t);return;}if(!document.hidden)location.reload();},4000);})();
+</script>` : ''}
 ${emailBanner}
 <h2>Waiting for you</h2>
 ${nothingWaiting ? `<div class="empty">Nothing is waiting for you.</div>` : ''}
