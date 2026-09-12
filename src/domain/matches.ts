@@ -3,7 +3,7 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
-import { getAccount, getTimezone } from './accounts.js';
+import { getAccount, getHearsVia, getTimezone } from './accounts.js';
 import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
@@ -253,8 +253,20 @@ async function loadOpenMatchFor(matchId: string, accountId: string): Promise<Mat
   return m;
 }
 
-/** Record stage-1 interest for the calling side. Advances stage to 2 when mutual. */
-export async function expressInterest(matchId: string, accountId: string): Promise<MatchRow> {
+/**
+ * Record stage-1 interest for the calling side. Advances stage to 2 when mutual.
+ *
+ * The side that spoke FIRST is told, once, when the second side makes it
+ * mutual. That human said they were keen and then heard nothing: their own
+ * assistant only wakes when spoken to, so the details opening was a thing that
+ * happened on a page nobody had told them to open. The side calling now needs
+ * no notice — its own assistant is right here and has the answer in hand.
+ */
+export async function expressInterest(
+  cfg: Config,
+  matchId: string,
+  accountId: string,
+): Promise<MatchRow> {
   const m = await loadOpenMatchFor(matchId, accountId);
   const col = sideOf(m, accountId) === 'want' ? 'interest_want' : 'interest_have';
   const r = await getPool().query(
@@ -270,9 +282,43 @@ export async function expressInterest(matchId: string, accountId: string): Promi
       `UPDATE matches SET stage = 2, updated_at = now() WHERE id = $1 RETURNING *`,
       [matchId],
     );
-    return r2.rows[0];
+    const unlocked: MatchRow = r2.rows[0];
+    await queueYourMove(cfg, matchId, counterpartyOf(unlocked, accountId), 'details');
+    return unlocked;
   }
   return updated;
+}
+
+/**
+ * Enqueue a "your move" notice, best-effort and never able to fail the action
+ * that raised it. Only for a human who hears about the switchboard by email:
+ * an always-on assistant brings the same news itself, and a second copy of it
+ * is noise. The dedupe key on the far side makes a repeat harmless.
+ */
+async function queueYourMove(
+  cfg: Config,
+  matchId: string,
+  recipientAccount: string,
+  step: 'names' | 'details',
+): Promise<void> {
+  if (!cfg.opsQueueUrl) return;
+  try {
+    if ((await getHearsVia(recipientAccount)) !== 'email') return;
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: cfg.opsQueueUrl,
+        MessageBody: JSON.stringify({
+          op: 'your-move-notify',
+          match_id: matchId,
+          account_id: recipientAccount,
+          step,
+        }),
+      }),
+    );
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error(`your-move-notify: enqueue failed (the step itself stands): ${e?.message ?? e}`);
+  }
 }
 
 /** The other party's account on a match. */
