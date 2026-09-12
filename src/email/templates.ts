@@ -629,6 +629,19 @@ export interface RenewalCardItem {
 /** The one sentence the renewal ends on, before "Ask your assistant." */
 const RENEWAL_TAIL = 'Ask your assistant to renew or let it go.';
 
+/**
+ * A renewal line: the thing, what the person is doing with it, and the day it
+ * lapses. "Within a week" was a marker in brackets; a person reads "this
+ * week".
+ */
+function renewalLine(c: RenewalCardItem): string {
+  const phrase = categoryPhrase(c.categoryLabel) || c.categoryLabel.toLowerCase();
+  const when = c.expiringSoon
+    ? `lapses this week, on ${plainDay(c.expiresAt)}`
+    : `lapses ${plainDay(c.expiresAt)}`;
+  return `${capitalise(phrase)} (${sideInWords(c.type)}): ${when}`;
+}
+
 export function renderRenewal(
   v: { cards: RenewalCardItem[]; blind: boolean },
   f: FooterLinks,
@@ -649,18 +662,24 @@ export function renderRenewal(
   const rows = v.cards
     .map((c) => {
       const badgeColor = c.type === 'WANT' ? WANT : HAVE;
-      const when = plainDay(c.expiresAt);
+      const line = renewalLine(c);
+      const head = line.slice(0, line.indexOf(':') + 1);
+      const when = line.slice(line.indexOf(':') + 2);
       return `<tr><td style="padding:9px 0;border-bottom:1px solid ${LINE}">
-<span style="font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;background:${badgeColor};border-radius:999px;padding:2px 8px">${c.type}</span>
-<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${INK}">&nbsp;${esc(c.categoryLabel)}</span><br>
-<span style="font-family:${SANS};font-size:12px;color:${c.expiringSoon ? WANT : MUTED}">lapses ${when}${c.expiringSoon ? ' — within a week' : ''}</span>
+<span style="font-family:${SANS};font-weight:600;font-size:14px;color:${badgeColor}">${esc(head)}</span><br>
+<span style="font-family:${SANS};font-size:12px;color:${c.expiringSoon ? WANT : MUTED}">${esc(when)}</span>
 </td></tr>`;
     })
     .join('');
   const first = soon[0];
-  const lead = first
-    ? `Your ${first.categoryLabel.toLowerCase()} lapses ${plainDay(first.expiresAt)}. ${RENEWAL_TAIL}`
-    : `Wants and haves on the switchboard lapse on their own. ${RENEWAL_TAIL}`;
+  // One thing lapsing is a sentence about that thing; several is a sentence
+  // about the first of them, so nobody has to read a list to learn what is
+  // about to go.
+  const lead = !first
+    ? `Wants and haves on the switchboard lapse on their own. ${RENEWAL_TAIL}`
+    : soon.length === 1
+      ? `What you put up about your ${categoryPhrase(first.categoryLabel) || first.categoryLabel.toLowerCase()} lapses on ${plainDay(first.expiresAt)}. Ask your assistant to renew it or let it go.`
+      : `${soon.length} of the things you put up lapse this week, starting with your ${categoryPhrase(first.categoryLabel) || first.categoryLabel.toLowerCase()} on ${plainDay(first.expiresAt)}. Ask your assistant to renew them or let them go.`;
   const { html, text } = notice(
     {
       heading: 'Still true?',
@@ -670,12 +689,7 @@ export function renderRenewal(
     },
     f,
   );
-  const textRows = v.cards
-    .map(
-      (c) =>
-        `- ${c.type} ${c.categoryLabel}: lapses ${plainDay(c.expiresAt)}${c.expiringSoon ? ' (within a week)' : ''}`,
-    )
-    .join('\n');
+  const textRows = v.cards.map((c) => `- ${renewalLine(c)}`).join('\n');
   return { subject, html, text: text.replace(`${lead}\n`, `${lead}\n\n${textRows}\n`) };
 }
 
