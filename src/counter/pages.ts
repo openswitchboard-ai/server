@@ -42,6 +42,8 @@ const CSS = `
      to save it on submit. A six-digit PIN typed on your own device is shown,
      the way a bank app shows it. */
   .pinbox{letter-spacing:.3em;font-variant-numeric:tabular-nums;}
+  /* The attribute must win over any display rule below, or a hidden button shows. */
+  [hidden]{display:none!important;}
 
 :root {
   /* Palette — the public site's tokens, light first. */
@@ -286,10 +288,12 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
   <img class="patch" src="${PATCH_HEADER_URL}" width="63" height="48" alt="" aria-hidden="true">
   <a href="/"><span class="brand">OpenSwitchboard</span><span class="sub">your approval page</span></a>
 </header>
+<main id="page">
 ${body}
+</main>
 <footer>openswitchboard.ai</footer>
 </div>
-${LOCAL_TIME_SCRIPT}</body></html>`;
+${LOCAL_TIME_SCRIPT}${IN_PLACE_SCRIPT}</body></html>`;
 }
 
 export const errBox = (msg?: string) => (msg ? `<div class="err">${esc(msg)}</div>` : '');
@@ -479,7 +483,46 @@ export function messagePage(title: string, html: string, backHref = '/', backLab
  * a tab a script opened, and a link handed over by a chat client is opened by
  * the browser itself, so the button failed almost every time it was pressed.
  */
-const DONE_BLOCK = `<p class="lead">Done. Close this tab and carry on with your assistant.</p>`;
+const DONE_BLOCK = `<p class="lead" data-done>Done. Close this tab and carry on with your assistant.</p>
+<button type="button" id="closeTab" hidden>Close</button>
+<p class="small muted" id="closeHint" hidden>Your browser kept this tab open. Close it yourself and carry on with your assistant.</p>`;
+
+/**
+ * Two things, both about the tab a link opened.
+ *
+ * A one-question form is pressed in place: the answer is fetched and the page
+ * body swapped, so the tab never gains a second history entry. That matters
+ * because Chrome and Edge let a page close a tab that has no history behind
+ * it, and a pressed link is exactly that. Where the swap cannot happen the
+ * form submits the ordinary way and the sentence stands.
+ *
+ * On the finished page, if the tab has no history behind it, a Close button
+ * appears beside the sentence. Safari and Firefox refuse the close whatever
+ * the history, so if the tab is still here a beat later the hint takes over.
+ */
+const IN_PLACE_SCRIPT = `<script>
+(function(){
+  function armDone(){
+    var b=document.getElementById('closeTab'),s=document.querySelector('[data-done]'),h=document.getElementById('closeHint');
+    if(!b||!s||history.length!==1)return;
+    s.textContent='Done. Back to your assistant.';b.hidden=false;
+    b.addEventListener('click',function(){try{window.close();}catch(e){}
+      setTimeout(function(){if(!document.hidden){b.hidden=true;h.hidden=false;s.textContent='Done. Close this tab and carry on with your assistant.';}},300);});
+  }
+  document.addEventListener('submit',function(e){
+    var f=e.target;if(!f||f.id!=='oneQuestion'||!window.fetch||!window.DOMParser)return;
+    e.preventDefault();
+    var fd=new FormData(f);var sub=e.submitter;if(sub&&sub.name)fd.append(sub.name,sub.value);
+    var btns=f.querySelectorAll('button');for(var i=0;i<btns.length;i++)btns[i].disabled=true;
+    fetch(f.action,{method:'POST',body:new URLSearchParams(fd),credentials:'same-origin',headers:{'accept':'text/html'}})
+      .then(function(r){return r.text();})
+      .then(function(html){var d=new DOMParser().parseFromString(html,'text/html');var n=d.getElementById('page');var p=document.getElementById('page');
+        if(!n||!p)throw new Error('no page');p.innerHTML=n.innerHTML;document.title=d.title||document.title;window.scrollTo(0,0);armDone();})
+      .catch(function(){for(var i=0;i<btns.length;i++)btns[i].disabled=false;f.submit();});
+  },true);
+  armDone();
+})();
+</script>`;
 
 export function donePage(title: string, html: string, backHref?: string, backLabel?: string): string {
   if (backHref) return messagePage(title, html, backHref, backLabel);
