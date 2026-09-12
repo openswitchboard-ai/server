@@ -217,7 +217,7 @@ describe('retrieval: an archived connection stays lookup-able', () => {
     // The recall carries a ready, jargon-free sentence the agent leads with —
     // the first name and area, plainly, with no card/match/stage/score word.
     expect(entry.note.provenance).toBe('switchboard-system');
-    expect(entry.note.text).toMatch(/got chatting with Alex over in Franklin about book club/i);
+    expect(entry.note.text).toMatch(/got chatting with Alex over in Franklin about a book club/i);
     expect(entry.note.text).not.toMatch(/\b(card|match|stage|score|listing|channel|connection)\b/i);
   });
 

@@ -45,11 +45,11 @@
  * both halves of it on every send.
  */
 
-import { categoryPhrase } from '../domain/matchRules.js';
+import { categoryPhrase, categoryPhraseWithArticle } from '../domain/matchRules.js';
 
 // Re-exported so a caller working with email copy has it to hand; the helper
 // itself lives beside the taxonomy labels it phrases.
-export { categoryPhrase };
+export { categoryPhrase, categoryPhraseWithArticle };
 
 export interface EmailContent {
   subject: string;

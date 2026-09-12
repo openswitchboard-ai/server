@@ -108,7 +108,7 @@ const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
  * shaping itself is the email templates' categoryPhrase, so a person reading
  * the email and then the page meets the same words.
  */
-const phrase = (category: string) => categoryPhrase(categoryLeafLabel(category));
+const phrase = (category: string) => categoryPhrase(category);
 
 /** Every registered human-page route (method + url), recorded at registration
  *  time so the isolation test can enumerate the ENTIRE route class. */
