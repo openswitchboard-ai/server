@@ -49,6 +49,7 @@ import {
   mcpRpc,
   minimalHave,
   minimalWant,
+  pressNamesLink,
   sendOp,
 } from '../integration/helpers.js';
 import type { Checker } from './checker.js';
@@ -411,14 +412,25 @@ export async function runMoney(
     if (!early.isError && early.id) res.notes.push(`a stage-0 proposal created settlement ${early.id}`);
   }
 
-  // --- reach stage 3: both interests, both opt-ins.
-  for (const [actor, action] of [
-    [buyer, 'express_interest'],
-    [seller, 'express_interest'],
-    [buyer, 'opt_in'],
-    [seller, 'opt_in'],
-  ] as const) {
-    await h.mcp(actor.accessToken, 'respond', { intro_id: matchId, action });
+  // --- reach stage 3: both interests, then both humans' own presses. An
+  //     agent's opt_in records nothing: it is refused with the single-use link
+  //     its human presses, and the press is the whole of the go-ahead.
+  for (const actor of [buyer, seller]) {
+    await h.mcp(actor.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+  }
+  for (const actor of [buyer, seller]) {
+    const refused = await h.mcp(actor.accessToken, 'respond', {
+      intro_id: matchId,
+      action: 'opt_in',
+    });
+    if (!refused.isError || refused.result?.code !== 'CONSENT_REQUIRED') {
+      res.notes.push(`${actor.label}'s opt_in was not refused with the names link`);
+      continue;
+    }
+    const pressed = await pressNamesLink(actor, refused.result.human_action);
+    if (pressed.status !== 200) {
+      res.notes.push(`${actor.label}'s press on the names link answered ${pressed.status}`);
+    }
   }
 
   // --- I12, second half: the wrong party, and a shape the schema must refuse.

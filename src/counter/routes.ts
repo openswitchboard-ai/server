@@ -999,6 +999,41 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           needsPin: true,
         };
       }
+      if (row.action === 'stage3-disclosure') {
+        // The names question. One of the three that come to this page every
+        // time: an agent can fetch the link and say what it asks, and the
+        // press here is the only thing that records the go-ahead.
+        const m = await getMatch(row.ref_id);
+        if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+        try {
+          sideOf(m, accountId);
+        } catch {
+          return { error: 'This introduction is not yours.' };
+        }
+        if (m.stage < 2) {
+          return { error: 'Both sides have to say they are interested before this opens.' };
+        }
+        // Nothing was ever asked for at sign-up, so the first time someone gets
+        // here the page asks for the two things it is about to share.
+        const own = await readSharedProfile(accountId, {
+          purpose: 'stage3-approval-page',
+          actor: accountId,
+          refs: { match_id: row.ref_id },
+        });
+        return {
+          ...base,
+          question: 'Share your first name and area with the other side?',
+          detail: [
+            'A first name and a rough area are the only things that ever cross. Nothing goes over until the other side says yes too.',
+            'Once you press it, your assistant picks the result up on its next look.',
+          ],
+          yesLabel: 'Share',
+          needsPin: true,
+          ...(profileIsFilled(own)
+            ? {}
+            : { collectProfile: { firstName: own.firstName, locality: own.locality } }),
+        };
+      }
       if (row.action === 'collection-close') {
         // A link minted before migration 030, opened after it. The window it
         // was for no longer exists, so the page says so rather than failing.
@@ -1113,6 +1148,26 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         );
       }
       if (decision !== 'yes') return reply.code(400).send({ error: 'bad_request' });
+      // Saying yes to the names question with nothing on file means saying,
+      // right here, what gets shared. The boxes are checked BEFORE the PIN
+      // ceremony and before the link is burnt, so a typo in a suburb costs
+      // neither a PIN attempt nor the link their assistant gave them.
+      let profileToSave: { firstName: string; locality: string } | undefined;
+      if (q.collectProfile) {
+        const checked = validateSharedProfile({
+          firstName: b.first_name,
+          locality: b.locality,
+        });
+        if (!checked.ok) {
+          q.elevated = sess.isElevated(s);
+          q.collectProfile = {
+            firstName: String(b.first_name ?? ''),
+            locality: String(b.locality ?? ''),
+          };
+          return html(reply, pages.oneQuestionPage(q, checked.error), 400);
+        }
+        profileToSave = checked.value;
+      }
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
       // someone the link their assistant gave them.
       if (q.needsPin) {
@@ -1153,6 +1208,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return html(
             reply,
             pages.donePage('Sent', '<p>Your number is on the table for the other side.</p>'),
+          );
+        }
+        if (row.action === 'stage3-disclosure') {
+          // The press itself, and the only thing that records the go-ahead.
+          if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
+          const r = await recordStage3OptIn(cfg, row.ref_id, s.accountId!, 'counter');
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.donePage(
+              'Shared',
+              r.both
+                ? '<p>Both of you have said yes. Your first name and area are with them now, and theirs with you.</p>'
+                : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
+            ),
           );
         }
         if (row.action === 'collection-close') {

@@ -31,12 +31,18 @@ export type ApprovalAction =
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
- * and the press itself is what consumes the link. The two left open the
+ * and the press itself is what consumes the link. The one left open opens the
  * approval page instead, which burns its link on the first authenticated view.
+ *
+ * stage3-disclosure joined them on 2026-09-12, when sharing a first name and an
+ * area became a press the human makes every time rather than something an agent
+ * could attest to. The "Waiting for you" list still reaches the same decision by
+ * its own session-authorized route, so there are two roads to one question.
  */
 export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   'offer-send',
   'offer-accept',
+  'stage3-disclosure',
   'collection-close',
   'negotiation-auto',
 ];

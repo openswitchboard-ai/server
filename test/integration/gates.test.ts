@@ -39,6 +39,7 @@ import {
   minimalHave,
   minimalWant,
   poll,
+  pressNamesLink,
   revokeAgentKey,
   sendOp,
   sha256hex,
@@ -214,9 +215,17 @@ d('integration gates against live deployment', () => {
     expect(locked0.isError).toBe(true);
     expect(locked0.result.code).toBe('NOT_UNLOCKED_YET');
 
-    // ONE opt-in (alice) is still not enough.
+    // ONE opt-in (alice) is still not enough. From 2026-09-12 an agent's own
+    // opt_in records nothing at all: it is refused with the single-use link its
+    // human presses, and the press is what puts the go-ahead on the record.
+    // Pressed the same way GATE (g) presses the send-a-number link.
     const o1 = await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o1.result.both_recorded).toBe(false);
+    expect(o1.isError).toBe(true);
+    expect(o1.result.code).toBe('CONSENT_REQUIRED');
+    expect(o1.result.human_action).toContain(
+      'Sharing their first name and area is theirs to press',
+    );
+    expect((await pressNamesLink(alice, o1.result.human_action)).status).toBe(200);
     const locked1 = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
@@ -228,9 +237,11 @@ d('integration gates against live deployment', () => {
     expect(ch.isError).toBe(true);
     expect(ch.result.code).toBe('NOT_UNLOCKED_YET');
 
-    // Second opt-in (bob) opens stage 3 — with the schema-required attestation.
+    // The second human's press opens stage 3.
     const o2 = await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o2.result.both_recorded).toBe(true);
+    expect(o2.isError).toBe(true);
+    expect(o2.result.code).toBe('CONSENT_REQUIRED');
+    expect((await pressNamesLink(bob, o2.result.human_action)).status).toBe(200);
     const mutual = await mcpCall(alice.accessToken, 'check_in', {
       intro_id: matchId,
       step: 'names',
