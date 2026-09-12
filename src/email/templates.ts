@@ -373,8 +373,8 @@ export function renderYourMove(
     const line = v.blind
       ? 'Someone you were keen on is keen too.'
       : thing
-        ? `Someone you were keen on about the ${thing} is keen too.`
-        : 'Someone you were keen on is keen too.';
+        ? `Good news about the ${thing}: the person you were keen on is keen too.`
+        : 'The person you were keen on is keen too.';
     const { html, text } = notice({ heading: 'They are keen too.', line, accent: MATCH }, f);
     return { subject: 'They are keen too', html, text };
   }
