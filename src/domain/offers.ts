@@ -118,6 +118,9 @@ export async function proposeOffer(
     ],
   );
   await detectLadderProbing(accountId, input.match_id);
+  // A figure is movement: the slot's clock starts again (domain/sequencer.ts).
+  const { noteMovement } = await import('./sequencer.js');
+  await noteMovement(input.match_id);
   // A figure is on the table now, so anything this side's agent parked for
   // the human to check has been answered.
   await clearOfferDrafts(accountId, input.match_id);
