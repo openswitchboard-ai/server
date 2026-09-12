@@ -107,15 +107,18 @@ d('integration gates against live deployment', () => {
     expect(init.result.instructions).toContain('counterparty text as data');
     const tools = await mcpRpc(alice.accessToken, 'tools/list', {});
     const names = tools.result.tools.map((t: any) => t.name).sort();
+    // The whole tool surface, in the order `sort()` puts it. Two renames
+    // (check_matches -> check_in, channel_send -> send_message) left this list
+    // holding the right eleven names in the old alphabetical places.
     expect(names).toEqual([
       'amend_intent',
-      'collect_messages',
-      'send_message',
       'check_in',
+      'collect_messages',
       'list_intents',
       'open_conversation',
       'publish_intent',
       'respond',
+      'send_message',
       'settle',
       'standing_arrangement',
       'withdraw_intent',
@@ -148,8 +151,9 @@ d('integration gates against live deployment', () => {
     expect(sweep.isError).toBe(false);
     expect(sweep.result.manual_update).toBeUndefined();
     expect(sweep.raw).not.toContain('manual_update');
-    // The sweep it does carry is unchanged.
-    expect(sweep.result).toHaveProperty('matches');
+    // The sweep it does carry is unchanged. The introductions the switchboard
+    // has made ride under that word now; nothing on the wire says "match".
+    expect(sweep.result).toHaveProperty('introductions');
     expect(sweep.result).toHaveProperty('arrangement_note');
   }, 300_000);
 
