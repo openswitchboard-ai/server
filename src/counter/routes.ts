@@ -1011,10 +1011,6 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           detail,
           yesLabel: 'Accept',
           needsPin: true,
-          door: {
-            href: `/matches/${encodeURIComponent(o.match_id)}`,
-            text: 'Or put a different number on the table',
-          },
         };
       }
       if (row.action === 'collection-close') {
