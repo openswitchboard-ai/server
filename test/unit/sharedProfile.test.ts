@@ -732,11 +732,15 @@ describe('the area box asks for a suburb without insisting on one', () => {
     // One area box, exactly as required as it was before the wording changed.
     expect(page.match(/name="locality"/g)).toHaveLength(1);
     expect(page).toContain('maxlength="60"');
-    // No pattern, no minlength, no list of allowed places: the guidance is the
-    // whole of it, and the browser blocks nobody.
+    // No pattern and no minlength: the browser blocks nobody. The suggestions
+    // added on 13 September 2026 are a datalist, which offers places without
+    // restricting the box to them — it ships empty and is filled by the script
+    // from the switchboard's own gazetteer as the person types, so with the
+    // script off the box is the plain text box it always was.
     expect(page).not.toContain('pattern=');
     expect(page).not.toContain('minlength=');
-    expect(page).not.toContain('<datalist');
+    expect(page).toContain('<datalist id="area-options"></datalist>');
+    expect(page).toContain('list="area-options"');
   });
 
   it('a whole state, territory or country is still accepted as typed', () => {

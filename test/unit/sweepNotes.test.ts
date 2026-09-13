@@ -63,6 +63,8 @@ interface World {
   dealAgreed: boolean;
   /** People waiting behind this one on the caller's own want or have. */
   collecting: boolean;
+  /** The area this human set on their own page, if any. */
+  locality: string;
 }
 let world: World;
 
@@ -141,7 +143,9 @@ function fakePool() {
             status: 'active',
             data_key_enc: Buffer.from('wrapped'),
             first_name_enc: Buffer.from(params[0] === ANA ? 'enc:Ana' : 'enc:Beppe'),
-            locality_enc: Buffer.from(params[0] === ANA ? 'enc:Fremantle' : 'enc:Trastevere'),
+            locality_enc: Buffer.from(
+              `enc:${params[0] === ANA ? world.locality : 'Trastevere'}`,
+            ),
           },
         ]);
       }
@@ -159,6 +163,7 @@ beforeEach(() => {
     withdrawn: 'none',
     dealAgreed: false,
     collecting: false,
+    locality: 'Fremantle',
   };
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
@@ -231,6 +236,52 @@ describe('the whole sweep: every field that changes what to say has a sentence',
 });
 
 // ---------------------------------------------------------------------------
+describe("the human's own area rides the sweep", () => {
+  // Run 8, 13 September 2026: "I've got a mountain bike to sell." The
+  // assistant asked which suburb, was given the bike, and asked again. "It
+  // seems the location didn't pass through?" It never did — the area sat on
+  // the account and was read only when first names crossed.
+  it('hands the agent its own human area, written out, with the sentence', async () => {
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
+    const body = r.structuredContent;
+    expect(body.area).toBe('Fremantle');
+    expect(body.area_resolved).toBe('Fremantle, Western Australia, Australia');
+    expect(isNote(body.area_note)).toBe(true);
+    expect(body.area_note.text).toContain('Fremantle, Western Australia, Australia');
+    // Never silently: it says to tell the human which area was used.
+    expect(body.area_note.text).toMatch(/tell them which area/i);
+    expect(lintEmailCopy(body.area_note.text)).toEqual([]);
+  });
+
+  it('says nothing at all when no area is set, so the agent asks as it does today', async () => {
+    world.locality = '';
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
+    expect(r.structuredContent.area).toBeUndefined();
+    expect(r.structuredContent.area_resolved).toBeUndefined();
+    expect(r.structuredContent.area_note).toBeUndefined();
+  });
+
+  it('keeps an area the gazetteer cannot settle as the words the human typed', async () => {
+    for (const typed of ['behind the servo', 'Perth', 'Western Australia']) {
+      world.locality = typed;
+      const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
+      expect(r.structuredContent.area, typed).toBe(typed);
+      // Nothing is claimed as settled that the posting path would refuse or
+      // ask about: a name several cities answer to, and a whole state.
+      expect(r.structuredContent.area_resolved, typed).toBeUndefined();
+      expect(r.structuredContent.area_note.text, typed).toContain(typed);
+    }
+  });
+
+  it('goes to this human alone and never into an introduction', async () => {
+    const r: any = await dispatchTool(cfg, ANA, 'check_in', {});
+    const entries = JSON.stringify(r.structuredContent.introductions);
+    expect(entries).not.toContain('Fremantle');
+    expect(entries).not.toContain('area_note');
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('the two sentences the sweep grew', () => {
   it('hears_via says what it changes about how to talk to them', () => {
     expect(hearsViaNote('email').text).toMatch(/emailed about anything that needs them/i);
@@ -256,6 +307,7 @@ describe('the two sentences the sweep grew', () => {
       'hears_via_note',
       'runs_on_its_own_note',
       'time_note',
+      'area_note',
       'arrangement_note',
     ]) {
       expect(desc, field).toContain(field);

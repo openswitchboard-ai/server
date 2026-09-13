@@ -139,6 +139,54 @@ describe('gazetteer', () => {
     expect(resolvePlace('Cracow')!.name).toBe(resolvePlace('Krakow')!.name);
   });
 
+  it('a name a bigger place merely answers to goes to the places that own it', () => {
+    // The defect (Lachlan, 13 September 2026): bare "Franklin" resolved to
+    // Columbus, Ohio — an alternate spelling the dump hangs off a city of
+    // 900,000, which beat every real Franklin on population. A person typing
+    // the name of their suburb and landing on a city on another continent is
+    // worse than landing nowhere.
+    const franklin = resolvePlace('Franklin')!;
+    expect(normaliseKey(franklin.name)).toBe('franklin');
+    // And the name is in question anyway, so the posting path asks rather
+    // than picks: the refuse-with-candidates path was always right here.
+    const candidates = ambiguousPlaces('Franklin')!;
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    for (const p of candidates) expect(normaliseKey(p.name)).toBe('franklin');
+
+    // The same rule, the other way: nothing is called "Cracow", so the
+    // alternate spelling still answers, and "New York" is still carried by
+    // the place whose own name says it.
+    expect(resolvePlace('Cracow')!.name).toBe(resolvePlace('Krakow')!.name);
+    expect(resolvePlace('Sao Paulo')!.kind).toBe('city');
+    expect(resolvePlace('Newtown')!.name).toBe('Newtown');
+  });
+
+  it('takes a hint written without a comma, the way people type it', () => {
+    // The second defect: "Newtown NSW" resolved to nothing while "Newtown,
+    // NSW" resolved fine. The data has the suburb; the parsing wanted a comma.
+    for (const [spaced, commad] of [
+      ['Newtown NSW', 'Newtown, NSW'],
+      ['Franklin ACT', 'Franklin, ACT'],
+      ['Braddon ACT', 'Braddon, ACT'],
+      ['Springfield IL', 'Springfield, IL'],
+      ['Perth Scotland', 'Perth, Scotland'],
+      ['Richmond Australia', 'Richmond, Australia'],
+    ] as [string, string][]) {
+      const a = resolvePlace(spaced);
+      const b = resolvePlace(commad)!;
+      expect(a, spaced).toBeDefined();
+      expect(haversineKm(a!, b), spaced).toBeLessThan(1);
+    }
+    // Nothing is taken apart that reads as one name on its own.
+    expect(resolvePlace('New York')!.name).toBe('New York');
+    expect(resolvePlace('Surry Hills')!.name).toBe('Surry Hills');
+    // And the refusals hold: a whole country with its own code after it is
+    // still a whole country, not a village in Cuba that shares the spelling.
+    expect(resolvePlace('Australia AU')).toBeUndefined();
+    expect(resolvePlace('New South Wales Australia')).toBeUndefined();
+    expect(resolvePlace('Nowhereville NSW')).toBeUndefined();
+  });
+
   it('names the state or territory behind a bare region string', () => {
     expect(regionNamed('ACT')).toBe('Australian Capital Territory');
     expect(regionNamed('NSW')).toBe('New South Wales');
@@ -378,6 +426,30 @@ describe('card location normalisation', () => {
     ).toBeLessThan(10);
     // A name with one clear owner still goes through silently.
     expect(normaliseGeo({ place: 'Paris', radius_km: 25 }).resolved!.country).toBe('FR');
+  });
+
+  it('the two gazetteer defects, from the posting side', () => {
+    // "Franklin" is asked about rather than answered, and every candidate
+    // offered is a place actually called Franklin.
+    const e = err(() => normaliseGeo({ place: 'Franklin', radius_km: 25 }));
+    expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
+    for (const c of e.payload.candidates!) {
+      expect(c.place.split(',')[0]).toBe('Franklin');
+      expect(normaliseGeo({ place: c.place, radius_km: 25 }).lat, c.place).not.toBeNull();
+    }
+    // A posting written the way people speak lands where it should, and in
+    // the same cell as the comma'd form matching has always used.
+    const spaced = normaliseGeo({ place: 'Franklin ACT', radius_km: 25 });
+    const commad = normaliseGeo({ place: 'Franklin, ACT', radius_km: 25 });
+    expect(spaced.geo.bucket).toBe(commad.geo.bucket);
+    expect(spaced.resolved!.display).toContain('Australian Capital Territory');
+    const newtown = normaliseGeo({ place: 'Newtown NSW', radius_km: 25 });
+    expect(newtown.geo.bucket).toBe(normaliseGeo({ place: 'Newtown, NSW', radius_km: 25 }).geo.bucket);
+    expect(newtown.resolved!.display).toContain('New South Wales');
+    // Two people describing one suburb two ways still meet.
+    expect(
+      haversineKm({ lat: spaced.lat!, lon: spaced.lon! }, { lat: commad.lat!, lon: commad.lon! }),
+    ).toBeLessThan(1);
   });
 
   it('says out loud where it put the card, and how far it reaches', () => {

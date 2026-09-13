@@ -18,7 +18,14 @@
  */
 import { decryptFields, encryptField, writeConsentEvent } from '../crypto.js';
 import { getPool } from '../db.js';
-import { countryNamed, regionNamed } from '../geo/gazetteer.js';
+import {
+  ambiguousPlaces,
+  countryNamed,
+  describePlace,
+  looksLikeStreetAddress,
+  regionNamed,
+  resolvePlace,
+} from '../geo/gazetteer.js';
 import { OsbError } from '../protocol.js';
 import { getAccount } from './accounts.js';
 import type { Config } from '../config.js';
@@ -148,6 +155,85 @@ export function wideAreaNudge(locality: string): string | undefined {
   return wide
     ? `${wide} covers a lot of ground. A suburb would tell the other person whether you are ten minutes away or two hours.`
     : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The area, handed to this human's OWN assistant.
+//
+// Run 8 (13 September 2026): a human said he had a mountain bike to sell, his
+// assistant asked which suburb, he answered with the bike, and it asked again.
+// "It seems the location didn't pass through?" It never did: the area a person
+// gives at onboarding sat on the account and was read only when first names
+// crossed, so every posting opened with a question the switchboard could
+// already answer.
+//
+// So it rides the sweep, the way the timezone does — to the agent on this
+// human's own account, about their own area, and nowhere near a counterparty
+// payload. With no area on file the sweep says nothing at all and the agent
+// asks the way it does today.
+// ---------------------------------------------------------------------------
+
+export interface OwnArea {
+  /** Exactly what the human typed on their own page. */
+  area: string;
+  /** The same place written out in full, when the gazetteer settles it. */
+  area_resolved?: string;
+  /** The one sentence saying what to do with it. */
+  note: { text: string; provenance: 'switchboard-system' };
+}
+
+/**
+ * What an agent is told about its own human's area, or undefined when there is
+ * nothing on file or the read fails. A sweep is never broken by this.
+ *
+ * The resolved line is only offered when the gazetteer settles the name on its
+ * own: a name several cities answer to, a whole state and a whole country are
+ * all left unresolved, because the posting path would refuse them and an agent
+ * reading one out as settled would be saying more than is known.
+ */
+export async function readOwnArea(accountId: string): Promise<OwnArea | undefined> {
+  let area = '';
+  try {
+    const p = await readSharedProfile(accountId, {
+      purpose: 'own-area-for-sweep',
+      actor: accountId,
+    });
+    area = p.locality.trim();
+  } catch {
+    return undefined;
+  }
+  if (!area) return undefined;
+  const resolved = resolvedAreaName(area);
+  return {
+    area,
+    ...(resolved ? { area_resolved: resolved } : {}),
+    note: { text: areaNote(resolved ?? area), provenance: 'switchboard-system' },
+  };
+}
+
+/** The area written out in full, when it settles to one place on its own. */
+export function resolvedAreaName(area: string): string | undefined {
+  const raw = (area ?? '').trim();
+  if (!raw) return undefined;
+  if (looksLikeStreetAddress(raw)) return undefined;
+  if (wideAreaNamed(raw)) return undefined;
+  if (ambiguousPlaces(raw)) return undefined;
+  const hit = resolvePlace(raw);
+  return hit ? describePlace(hit) : undefined;
+}
+
+/**
+ * The sentence that rides with it. It says the place out loud and tells the
+ * agent to say it out loud too: an agent that quietly assumed an area would be
+ * putting words in its human's mouth, and the human would find out when
+ * somebody turned up in the wrong suburb.
+ */
+export function areaNote(place: string): string {
+  return (
+    `Your human is in ${place}. Use that as the area on anything you post for them ` +
+    'unless they say somewhere else, and tell them which area you used so they can ' +
+    'correct you. They set it themselves on their own page, and they can change it there.'
+  );
 }
 
 // ---------------------------------------------------------------------------
