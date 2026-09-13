@@ -312,7 +312,7 @@ function fakePool() {
       }
 
       // --- the sweep ---------------------------------------------------------
-      if (/SELECT m\.\* FROM matches m/.test(sql)) {
+      if (/SELECT m\.\*[^;]*FROM matches m/.test(sql)) {
         const me = params[0];
         return rows(
           world.intros
