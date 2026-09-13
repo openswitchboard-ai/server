@@ -25,7 +25,7 @@ import { getHearsVia } from './accounts.js';
 import { getMatch, ownCardId, sideOf } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
-import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink } from '../counter/links.js';
+import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink, signLink } from '../counter/links.js';
 import type { Config } from '../config.js';
 
 /** What every one of these answers with, in the same four fields. */
@@ -313,6 +313,19 @@ export async function autoNegotiateLink(
 // oddly when they do, so the agent guesses. Here the agent holds the line
 // instead, and the switchboard answers the instant the button is pressed.
 //
+// The hole the waiting itself then opened, found in a live rehearsal within an
+// hour of shipping it: an agent minted a link, waited on it, and never handed
+// it over, so its human was told to press something they had never been given
+// and the whole turn went on a press that could not come. So every answer with
+// a live page behind it carries that page, worked out again from the row it was
+// minted from. The wrong order still ends with the link in front of the human.
+//
+// An expired link is not replaced here, on purpose. Minting belongs to the
+// functions above, which refuse at mint time when the thing being asked about
+// is no longer there — and this call costs nothing against the hourly ceiling,
+// so re-minting on every stale wait would let a loop spray live approval links
+// for one question. The answer says plainly to fetch a fresh one instead.
+//
 // Nothing here changes anything. It reads one row, over and over, until that
 // row says the human has answered — or until the cap, which is well short of
 // the load balancer's sixty-second idle timeout, so the call ends on our own
@@ -330,6 +343,15 @@ export interface PressAnswer {
   decision?: 'approved' | 'declined';
   /** Present only when the link ran out before anyone pressed it. */
   expired?: true;
+  /**
+   * The very page this wait is about, on every answer where there is still
+   * something for a human to press. It rides along so that an agent which
+   * waited before it handed anything over still ends the turn holding the
+   * page: the note is written to be read out with the link in it.
+   */
+  link?: string;
+  /** What the agent does next, in plain words, when waiting again is wrong. */
+  what_to_do?: string;
   note: { text: string; provenance: 'switchboard-system' };
 }
 
@@ -339,8 +361,17 @@ export const PRESS_SENTENCES = {
     'Your yes is in. I will carry it on from here and tell you the moment anything comes back.',
   declined:
     'You pressed Not now, so nothing went ahead. Say the word whenever you want to look at it again.',
-  waiting: 'Still waiting on your press — the page is open whenever you are ready.',
+  /** Lead-in only: the link itself follows it, which is the whole point. */
+  waiting: 'Here is the page again — nothing has come through yet:',
   expired: 'That page has run out. I can fetch you a fresh one whenever you are ready.',
+} as const;
+
+/** The part of a still-waiting answer that is for the agent rather than the human. */
+export const PRESS_WHAT_TO_DO = {
+  waiting:
+    'Put that page in front of your human now, in the conversation you are already having, and say what it asks. Then wait again.',
+  expired:
+    'There is nothing left to hand over, so fetch a fresh link, give them that one, and wait on the press that comes back with it.',
 } as const;
 
 const pressNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
@@ -348,10 +379,27 @@ const pressNote = (text: string) => ({ text, provenance: 'switchboard-system' as
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 interface PressRow {
+  id: string;
+  account_id: string;
+  action: string;
+  ref_id: string;
+  amount: string | number | null;
+  ccy: string | null;
+  counterparty_account: string;
+  payload: string | null;
   used_at: Date | string | null;
   decision: 'approved' | 'declined' | null;
   expires_at: Date | string;
 }
+
+/**
+ * The page this press belongs to, worked out again from the row it was minted
+ * from. Nothing is minted here and nothing is written: the token is the HMAC
+ * over the stored binding, so the same row always yields the same link, and
+ * the one the human was handed is the one that comes back. It is never logged,
+ * only handed to the agent that is already allowed to hold it.
+ */
+const linkFromRow = (cfg: Config, row: PressRow): string => url(cfg, signLink(row));
 
 /**
  * Hold the line until this human presses, and answer the moment they do.
@@ -366,6 +414,7 @@ interface PressRow {
  * writes one at all. The loop keeps looking, and the cap is the backstop.
  */
 export async function waitForPress(
+  cfg: Config,
   accountId: string,
   pressId: string,
   opts: { capMs?: number; pollMs?: number } = {},
@@ -377,7 +426,9 @@ export async function waitForPress(
 
   const read = async (): Promise<PressRow> => {
     const r = await getPool().query(
-      'SELECT used_at, decision, expires_at FROM approval_links WHERE id = $1 AND account_id = $2',
+      `SELECT id, account_id, action, ref_id, amount, ccy, counterparty_account, payload,
+              used_at, decision, expires_at
+         FROM approval_links WHERE id = $1 AND account_id = $2`,
       [pressId, accountId],
     );
     const row: PressRow | undefined = r.rows[0];
@@ -399,10 +450,21 @@ export async function waitForPress(
       };
     }
     if (!row.used_at && new Date(row.expires_at).getTime() <= Date.now()) {
-      return { pressed: false, expired: true, note: pressNote(PRESS_SENTENCES.expired) };
+      return {
+        pressed: false,
+        expired: true,
+        what_to_do: PRESS_WHAT_TO_DO.expired,
+        note: pressNote(PRESS_SENTENCES.expired),
+      };
     }
     if (Date.now() + pollMs > deadline) {
-      return { pressed: false, note: pressNote(PRESS_SENTENCES.waiting) };
+      const link = linkFromRow(cfg, row);
+      return {
+        pressed: false,
+        link,
+        what_to_do: PRESS_WHAT_TO_DO.waiting,
+        note: pressNote(`${PRESS_SENTENCES.waiting} ${link}`),
+      };
     }
     await sleep(pollMs);
   }
