@@ -45,6 +45,15 @@ export interface MatchRow {
   live?: boolean;
   live_at?: Date | null;
   last_movement_at?: Date | null;
+  /**
+   * Whether the side ASKING has already pressed their own names link. It is
+   * not a column on the table: it rides along on the reads that are made for
+   * one particular human (the sweep, the express_interest write), so the word
+   * for what to do next can account for a go-ahead that is already recorded
+   * without a second query. Absent means "not read", which reads as false —
+   * the state it was before this existed.
+   */
+  my_optin?: boolean;
 }
 
 export async function getMatch(id: string): Promise<MatchRow | undefined> {
@@ -202,14 +211,31 @@ export async function recordVerdict(
   return { intro_id: matchId, verdict };
 }
 
+/**
+ * The recorded stage-3 opt-ins on a match: how many distinct humans have
+ * pressed (0, 1 or 2), and whether the one asking is among them. The two come
+ * back together because they are always wanted together — "is it open?" and
+ * "has my own human already done their part?" — and a side that has pressed
+ * must never be told to press again (run 8, 13 September 2026).
+ */
+async function stage3OptinState(
+  matchId: string,
+  accountId?: string,
+): Promise<{ n: number; mine: boolean }> {
+  const r = await getPool().query(
+    `SELECT count(DISTINCT account_id)::int AS n,
+            count(*) FILTER (WHERE account_id = $2::uuid)::int AS mine
+       FROM consent_tokens
+      WHERE match_id = $1 AND kind = 'stage3-optin'`,
+    [matchId, accountId ?? null],
+  );
+  const row = r.rows[0] ?? {};
+  return { n: Number(row.n ?? 0), mine: Number(row.mine ?? 0) > 0 };
+}
+
 /** Count of recorded stage-3 opt-ins for a match (0, 1, or 2 distinct humans). */
 async function stage3OptinCount(matchId: string): Promise<number> {
-  const r = await getPool().query(
-    `SELECT count(DISTINCT account_id)::int AS n FROM consent_tokens
-     WHERE match_id = $1 AND kind = 'stage3-optin'`,
-    [matchId],
-  );
-  return r.rows[0].n as number;
+  return (await stage3OptinState(matchId)).n;
 }
 
 /**
@@ -263,8 +289,11 @@ export async function expressInterest(
     `UPDATE matches SET ${col} = true,
         stage = CASE WHEN stage < 2 AND interest_want AND interest_have THEN stage ELSE stage END,
         updated_at = now()
-     WHERE id = $1 RETURNING *`,
-    [matchId],
+     WHERE id = $1
+     RETURNING *, EXISTS (SELECT 1 FROM consent_tokens t
+                           WHERE t.match_id = matches.id AND t.account_id = $2::uuid
+                             AND t.kind = 'stage3-optin') AS my_optin`,
+    [matchId, accountId],
   );
   const updated: MatchRow = r.rows[0];
   // Movement: the slot's clock starts again from here.
@@ -338,9 +367,26 @@ export async function refuseAgentOptIn(
   cfg: Config,
   matchId: string,
   accountId: string,
-): Promise<never> {
+): Promise<{ intro_id: string; next: NextAction; note: ReturnType<typeof sbNote> }> {
   const m = await loadOpenMatchFor(matchId, accountId);
   assertBothInterested(m);
+  // Their human may already have pressed. If they have, the answer is what is
+  // true — their yes is in, the wait is on the other side — and NOT a second
+  // link, which is what an agent asking again used to be handed.
+  const { mine } = await stage3OptinState(matchId, accountId);
+  if (mine) {
+    m.my_optin = true;
+    const next = nextAction(m, accountId);
+    return {
+      intro_id: matchId,
+      next,
+      note: sbNote(
+        next === 'ready_to_talk'
+          ? bothInSentence(m, accountId)
+          : awaitingTheirGoAheadSentence(m, accountId),
+      ),
+    };
+  }
   throw await namesGateConsentError(cfg, {
     accountId,
     matchId,
@@ -661,6 +707,15 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  *   awaiting_other_side  this side is interested, waiting on the other side
  *   details_unlocked     both sides interested — attributes are on the entry
  *   awaiting_your_human  a stage-3 opt-in / approval sits with the human
+ *   awaiting_their_go_ahead  this human HAS pressed their own names link and
+ *                        the other side has not pressed theirs. Distinct from
+ *                        awaiting_other_side, which is the same shape one step
+ *                        earlier (interest said, not returned). This one is
+ *                        the reason the word exists at all: without it a
+ *                        recorded press looked, to the agent sweeping, exactly
+ *                        like the sweep before it, and in run 8 an assistant
+ *                        told a human who had done everything right that their
+ *                        press had not landed and offered them another link.
  *   ready_to_talk        both opted in; open the channel (or it is already open)
  *   deal_agreed          a figure on this introduction has been accepted by a
  *                        human, whichever side proposed it; the switchboard's
@@ -676,14 +731,29 @@ export type NextAction =
   | 'awaiting_other_side'
   | 'details_unlocked'
   | 'awaiting_your_human'
+  | 'awaiting_their_go_ahead'
   | 'ready_to_talk'
   | 'deal_agreed';
 
-export function nextAction(m: MatchRow, accountId: string): NextAction {
+/**
+ * `optedIn` is this side's own recorded press. It is a parameter rather than a
+ * read because this stays a pure function of what the caller already has in
+ * hand: the callers that can know pass it (or hand over a row carrying
+ * `my_optin`, which is the same fact read in the query they were making
+ * anyway), and no sweep pays a query per introduction for it.
+ */
+export function nextAction(
+  m: MatchRow,
+  accountId: string,
+  optedIn: boolean = m.my_optin === true,
+): NextAction {
   const iMine = sideOf(m, accountId) === 'want' ? m.interest_want : m.interest_have;
   if (m.channel_id) return 'ready_to_talk'; // stage 4 — channel open
   if (m.stage >= 3) return 'ready_to_talk'; // both opted in — open the channel
-  if (m.stage >= 2) return 'details_unlocked'; // mutual interest — attributes present
+  // Mutual interest. The press on this side's own names link is what separates
+  // the two words here: stage only moves to 3 when BOTH have pressed, so
+  // without this the human who pressed saw the same word as before they did.
+  if (m.stage >= 2) return optedIn ? 'awaiting_their_go_ahead' : 'details_unlocked';
   if (iMine) return 'awaiting_other_side'; // this side keen, waiting on them
   return 'show_interest'; // fresh signal
 }
@@ -725,11 +795,14 @@ export async function buildMutual(
   // HARD GATE: stage-3 data is NEVER returned without BOTH humans' recorded
   // opt-in tokens. The check queries consent_tokens directly — not the stage
   // column — so a bug elsewhere cannot open the gate.
-  const optins = await stage3OptinCount(m.id);
+  const { n: optins, mine } = await stage3OptinState(m.id, accountId);
   if (optins < 2 || m.stage < 3) {
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action:
-        'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
+      // Whose turn it is decides which of these is true. Telling someone who
+      // has already pressed to go and press is the run-8 defect in one line.
+      human_action: mine
+        ? 'Your human has given their go-ahead and it is recorded. The other side has not given theirs yet; first names are shared the moment they do, and there is nothing for your human to do again.'
+        : 'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
     });
   }
   const side = sideOf(m, accountId);
@@ -910,10 +983,36 @@ const ownThing = (m: MatchRow, accountId: string): string =>
  */
 export function expressInterestSentence(m: MatchRow, accountId: string): string {
   const thing = ownThing(m, accountId);
-  if (nextAction(m, accountId) === 'awaiting_other_side') {
+  const next = nextAction(m, accountId);
+  if (next === 'awaiting_other_side') {
     return `I have passed that on about ${thing}. They have not said yes yet, and I will tell you the moment they do.`;
   }
+  // Their own go-ahead is already recorded, so this must not ask for it again.
+  if (next === 'awaiting_their_go_ahead') return awaitingTheirGoAheadSentence(m, accountId);
+  if (next === 'ready_to_talk') {
+    return `You are both keen on ${thing}, and you have each given the go-ahead. You can talk whenever you like.`;
+  }
   return `Good news on ${thing}: they are keen too, and a little more about each of you is open to both sides now. Take a look, and when you are ready to go further, give me the go-ahead and I will share your first name and rough area so the two of you can talk.`;
+}
+
+/**
+ * THE SENTENCE FOR A PRESS THAT HAS LANDED. Run 8 (13 September 2026): a human
+ * pressed their own names link, the switchboard recorded it correctly, and
+ * their assistant — seeing the same word as the sweep before — asked them
+ * whether they had really pressed it and offered them a fresh link. Being told
+ * you failed at something you did right is the worst thing this can do to
+ * somebody, so the sentence does three things and nothing else: it confirms
+ * their own press landed, it says what is being waited on, and it asks them
+ * for NOTHING. There is no second link to hand over here, ever.
+ */
+/** Both presses are in: there is nothing left to ask anybody for. */
+export function bothInSentence(m: MatchRow, accountId: string): string {
+  return `You have both said yes on ${ownThing(m, accountId)}. You can talk whenever you like, and I will carry anything you want to say.`;
+}
+
+export function awaitingTheirGoAheadSentence(m: MatchRow, accountId: string): string {
+  const thing = ownThing(m, accountId);
+  return `Your yes is in on ${thing} — thank you. They have not given theirs yet, and the two of you can talk the moment they do. I will tell you when that happens.`;
 }
 
 /** A decline, in the words it happens in. No reason travels, by design. */
@@ -948,10 +1047,17 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     filter = 'AND (m.card_want = $2 OR m.card_have = $2)';
     params.push(intentId);
   }
+  // ONE query for the sweep, and this side's own recorded press rides on it.
+  // A per-introduction read of consent_tokens is what this EXISTS exists to
+  // avoid: fifty introductions must cost the same one query they always did.
   const r = await getPool().query(
-    `SELECT m.* FROM matches m
-     WHERE (m.account_want = $1 OR m.account_have = $1) ${filter}
-     ORDER BY m.created_at DESC LIMIT 50`,
+    `SELECT m.*,
+            EXISTS (SELECT 1 FROM consent_tokens t
+                     WHERE t.match_id = m.id AND t.account_id = $1::uuid
+                       AND t.kind = 'stage3-optin') AS my_optin
+       FROM matches m
+      WHERE (m.account_want = $1 OR m.account_have = $1) ${filter}
+      ORDER BY m.created_at DESC LIMIT 50`,
     params,
   );
   const out: any[] = [];
@@ -1158,6 +1264,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         entry.note = sbNote(
           "You are both keen. Here is a little more about what they have — take a look, and if you would like to go further, say the word and I will share your first name and rough area so the two of you can talk.",
         );
+        break;
+      case 'awaiting_their_go_ahead':
+        // Their press landed. Confirm it, say what is being waited on, and ask
+        // them for nothing — there is no link on this branch, by design.
+        entry.note = sbNote(awaitingTheirGoAheadSentence(m, accountId));
         break;
       case 'awaiting_your_human':
         // An offer waiting is its own sentence (offer_note); otherwise it is the

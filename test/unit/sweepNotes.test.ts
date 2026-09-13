@@ -70,7 +70,7 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
-      if (/^\s*SELECT m\.\* FROM matches m/.test(sql)) {
+      if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) {
         return rows([
           {
             id: MATCH,
