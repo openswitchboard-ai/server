@@ -217,7 +217,7 @@ describe('the sweep says it, on whichever side pressed', () => {
     // press is the one a new introduction arrives with: here is what they
     // have, and the go-ahead is the next step.
     expect(entry.note.text).toMatch(/Here is what they have/);
-    expect(entry.note.text).toMatch(/first name and rough area/);
+    expect(entry.note.text).toMatch(/first name and suburb/);
   });
 
   it('and the sweep is not the same as the one before the press', async () => {

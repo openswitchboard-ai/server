@@ -431,7 +431,7 @@ ${errBox(error)}
   <button type="submit">Open my account</button>
 </form>
 <p class="small muted">Both statements are recorded in a tamper-evident consent log.</p>
-<p class="small muted">Next you choose the first name and rough area your assistant may share.
+<p class="small muted">Next you choose the first name and suburb your assistant may share.
 Those are the only things that ever cross, and only after both people say yes.</p>`);
 }
 
@@ -579,7 +579,7 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   const showPin = v.needsPin && !v.elevated;
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
-       <p class="small">The other side sees a first name and a rough area. That is the whole of it.
+       <p class="small">The other side sees a first name and a suburb. That is the whole of it.
        You can change both any time on <a href="/profile">what you share on a match</a>.</p>
        ${sharedFieldsFieldset(v.collectProfile)}`
     : '';
@@ -754,7 +754,7 @@ export function approvalPage(v: ApprovalView, error?: string): string {
   // share. They are stored under this account's own key when you approve.
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
-  <p class="small">Your match sees a first name and a rough area. That is the whole of it.
+  <p class="small">Your match sees a first name and a suburb. That is the whole of it.
   You can change both any time on <a href="/profile">what you share on a match</a>.</p>
   ${sharedFieldsFieldset(v.collectProfile)}`
     : '';

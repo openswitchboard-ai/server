@@ -1024,7 +1024,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           ...base,
           question: 'Share your first name and area with the other side?',
           detail: [
-            'A first name and a rough area are the only things that ever cross. Nothing goes over until the other side says yes too.',
+            'A first name and a suburb are the only things that ever cross. Nothing goes over until the other side says yes too.',
             'Once you press it, your assistant picks the result up on its next look.',
           ],
           yesLabel: 'Share',

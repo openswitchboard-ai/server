@@ -71,7 +71,7 @@ export function sharedProfilePage(
   return layout('What you share on a match', `
 <h1>What you share on a match.</h1>
 <p class="lead">When you and someone else have both said yes, you each see a
-first name and a rough area.</p>
+first name and a suburb.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${
@@ -350,7 +350,7 @@ hold. Re-verify your address to switch it back on.
 <a href="/profile"><span class="nav-t">What you share on a match</span><span class="nav-d">${
     v.sharedProfile
       ? `A match that gets that far sees ${esc(v.sharedProfile)}.`
-      : 'A match that gets that far sees a first name and a rough area. Yours are empty.'
+      : 'A match that gets that far sees a first name and a suburb. Yours are empty.'
   }</span></a>
 <a href="/arrangement"><span class="nav-t">How your agents behave</span><span class="nav-d">${
     v.arrangementSummary
@@ -889,7 +889,7 @@ const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
  * It asks the single thing the software cannot work out for itself — whether
  * an always-on agent is going to bring them the news, or whether every step has
  * to reach them by email — and, while it has their attention, the first name
- * and rough area they would share. Both name boxes may be left blank: the names
+ * and suburb they would share. Both name boxes may be left blank: the names
  * step asks for them again when it matters, and a blank answer there costs
  * nothing but a moment later on.
  *
@@ -927,7 +927,7 @@ ${errBox(error)}
 <form method="POST" action="/hello">
   ${options}
   <h2>What your assistant may share</h2>
-  <p class="small muted">A first name and a rough area, shared only after both
+  <p class="small muted">A first name and a suburb, shared only after both
   people say yes. You can change them any time.</p>
   ${sharedFieldsFieldset({ firstName: v.firstName, locality: v.locality })}
   <input type="hidden" id="tz" name="timezone" value="${esc(v.timezone ?? '')}">

@@ -208,7 +208,7 @@ describe('express_interest, kept as an answer and doing nothing', () => {
     // It must never imply the human has just done something, and never say
     // the far side has still to decide.
     expect(r.note.text).not.toMatch(/passed that on|I have told them|have not said yes/i);
-    expect(r.note.text).toContain('first name and rough area');
+    expect(r.note.text).toContain('first name and suburb');
   });
 
   it('says the same thing from the other chair, and twice in a row', async () => {

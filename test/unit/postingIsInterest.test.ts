@@ -11,7 +11,7 @@
  * Two gates now, not three:
  *   - the details are open to BOTH sides the moment two things are put
  *     together, with no step in between;
- *   - sharing a first name and a rough area is still the human's own press,
+ *   - sharing a first name and a suburb is still the human's own press,
  *     every single time;
  *   - talking is still behind that;
  *   - decline is still how somebody says no, and still the only way an agent
@@ -206,7 +206,7 @@ describe('the first sweep sentence, on each side', () => {
     const note: string = (await sweep(ANA)).note.text;
     expect(note).toMatch(/Someone nearby has a mountain bike going/);
     expect(note).toMatch(/Here is what they have/);
-    expect(note).toMatch(/share your first name and rough area/);
+    expect(note).toMatch(/share your first name and suburb/);
     // Nothing is asked of the human about being keen, because nothing is owed.
     expect(note).not.toMatch(/let them know you're keen|tell them you are keen|if they're keen/i);
   });
@@ -215,7 +215,7 @@ describe('the first sweep sentence, on each side', () => {
     const note: string = (await sweep(BEPPE)).note.text;
     expect(note).toMatch(/Someone nearby is looking for a mountain bike like yours/);
     expect(note).toMatch(/Here is what they're after/);
-    expect(note).toMatch(/share your first name and rough area/);
+    expect(note).toMatch(/share your first name and suburb/);
   });
 
   it('names no machinery on either side', async () => {
