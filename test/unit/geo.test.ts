@@ -778,10 +778,22 @@ describe('every name the asset carries', () => {
 });
 
 describe('what the manual tells an agent about places', () => {
+  // Version 40 gave the location ARGUMENT one home. What each reach means and
+  // what the refusals are is on publish_intent, which is what an agent is
+  // reading at the moment it posts; the manual keeps the judgement — where a
+  // thing lives against how far a person will go, reading the resolved place
+  // back in their own voice, and posting wide. Every rule these two tests held
+  // is still held, on whichever of the two now carries it.
   it('says to read the resolved place back, and what the refusals mean', async () => {
     const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const publish = TOOLS.find((t) => t.name === 'publish_intent')!.description;
     expect(SERVER_INSTRUCTIONS).toContain('location_resolved');
-    expect(SERVER_INSTRUCTIONS).toContain('LOCATION_AMBIGUOUS');
+    expect(publish).toContain('location_resolved');
+    // The refusals are argument documentation and sit with the argument.
+    expect(publish).toContain('LOCATION_AMBIGUOUS');
+    expect(publish).toContain('LOCATION_UNRESOLVED');
+    expect(publish).toMatch(/ask which one, then repost with the fuller form/i);
     // The register: the place goes into what the agent says, in its own voice.
     expect(SERVER_INSTRUCTIONS).toMatch(/say if that's wrong/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/amend it there and then/i);
@@ -789,11 +801,18 @@ describe('what the manual tells an agent about places', () => {
 
   it('teaches place and reach as two different things, with the translation', async () => {
     const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const publish = TOOLS.find((t) => t.name === 'publish_intent')!.description;
     expect(SERVER_INSTRUCTIONS).toContain('geo.reach');
     expect(SERVER_INSTRUCTIONS).toMatch(/lives where the thing lives/i);
-    // The sentence an agent actually has to translate.
+    // The sentence an agent actually has to translate, in both homes: it is
+    // the one a rehearsal showed being got wrong.
     expect(SERVER_INSTRUCTIONS).toMatch(/I'll post it anywhere in Australia/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/"anywhere" for something done online/);
+    expect(publish).toMatch(/I'll post it anywhere in Australia/);
+    // What each reach means is on the tool, where the argument is filled in.
+    expect(publish).toMatch(/something done online/);
+    expect(publish).toMatch(/"country" for anywhere in that place's own country/);
+    expect(publish).toMatch(/never "Australia" in `place`/);
   });
 
   it('the reach change has a changelog note, and the log stays consistent', async () => {
