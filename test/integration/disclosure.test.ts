@@ -136,15 +136,23 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(page.asked).toBe(false);
   });
 
-  it('and stops nothing else: the agent is refused the same way, with both on file', async () => {
+  // Ana pressed her own link two tests up, so this is the side that is ALREADY
+  // in. Since 13 September 2026 opt_in does not hand that human a second link
+  // and call it a refusal: being told to press again for something you already
+  // did right is the worst thing this can do to somebody (run 8). It answers
+  // normally with where things stand — her yes is in, Beppe's is not — and the
+  // sentence to read her. What has NOT changed, and is the property this test
+  // is really about, is that opt_in still writes nothing whatever.
+  it('and opt_in still records nothing: the side that pressed is told their yes is in', async () => {
     const before = await optinCount(matchId);
+    expect(before).toBe(1); // Ana's press, and only Ana's
     const r = await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(r.isError).toBe(true);
-    expect(r.result.code).toBe('CONSENT_REQUIRED');
-    expect(r.result.human_action).toContain(
-      'Sharing their first name and area is theirs to press. Hand them this link',
-    );
-    expect(r.result.human_action).toMatch(/https:\/\/[^\s]+\/a\//);
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
+    expect(r.result.next).toBe('awaiting_their_go_ahead');
+    expect(r.result.note.text).toContain('Your yes is in');
+    // No second link, and nothing asked of her.
+    expect(JSON.stringify(r.result)).not.toMatch(/https:\/\/[^\s"]+\/a\//);
+    expect(r.result.human_action).toBeUndefined();
     expect(await optinCount(matchId)).toBe(before);
   });
 

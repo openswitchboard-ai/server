@@ -34,6 +34,7 @@ import {
   createAgentKey,
   dbExec,
   humanOffer,
+  keysMatching,
   mcpCall,
   mcpRpc,
   minimalHave,
@@ -144,7 +145,8 @@ d('integration gates against live deployment', () => {
     const names = tools.result.tools.map((t: any) => t.name).sort();
     // The whole tool surface, in the order `sort()` puts it. Two renames
     // (check_matches -> check_in, channel_send -> send_message) left this list
-    // holding the right eleven names in the old alphabetical places.
+    // holding the right names in the old alphabetical places, and
+    // wait_for_press (13 September 2026) took the count to twelve.
     expect(names).toEqual([
       'amend_intent',
       'check_in',
@@ -156,6 +158,7 @@ d('integration gates against live deployment', () => {
       'send_message',
       'settle',
       'standing_arrangement',
+      'wait_for_press',
       'withdraw_intent',
     ]);
     const publish = tools.result.tools.find((t: any) => t.name === 'publish_intent');
@@ -579,7 +582,12 @@ d('integration gates against live deployment', () => {
       offer_id: offer2.result.offer_id,
     });
     expect(declined.result.state).toBe('declined');
-    expect(declined.raw).not.toContain('reason');
+    // No reason TEXT travels with a decline: no field on the wire is named
+    // like one, at any depth, and none carries a value. The reply's sentence
+    // says as much in words ("no reason went with it"), so the assertion is on
+    // fields rather than on the word.
+    expect(keysMatching(JSON.parse(declined.raw), /reason/i)).toEqual([]);
+    expect(declined.result.reason).toBeUndefined();
   });
 
   quotaIt('GATE (e): publish quota exceeded returns QUOTA_EXCEEDED', async () => {
