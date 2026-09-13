@@ -209,11 +209,15 @@ describe('the sweep says it, on whichever side pressed', () => {
     expect(entry.note.text).toMatch(/your mountain bike/);
   });
 
-  it('says the old thing to the side that has not pressed', async () => {
+  it('says the arrival sentence to the side that has not pressed', async () => {
     world.myOptin = false;
     const [entry]: any = await checkMatches(cfg, ANA);
     expect(entry.next).toBe('details_unlocked');
-    expect(entry.note.text).toMatch(/You are both keen/);
+    // The details are open from the start now, so the sentence before the
+    // press is the one a new introduction arrives with: here is what they
+    // have, and the go-ahead is the next step.
+    expect(entry.note.text).toMatch(/Here is what they have/);
+    expect(entry.note.text).toMatch(/first name and rough area/);
   });
 
   it('and the sweep is not the same as the one before the press', async () => {

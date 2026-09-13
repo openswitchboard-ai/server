@@ -203,9 +203,9 @@ d('integration gates against live deployment', () => {
   });
 
   it('GATE (a): stage-3 fetch without both opt-ins returns NOT_UNLOCKED_YET', async () => {
-    // Unlock stage 2 first (both sides interested).
-    await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    // The details are open from the moment the introduction is made (13
+    // September 2026), so there is nothing to unlock first. The names step is
+    // the gate, and it is untouched.
 
     // No opt-ins recorded yet.
     const locked0 = await mcpCall(alice.accessToken, 'check_in', {
@@ -393,8 +393,6 @@ d('integration gates against live deployment', () => {
       const r = await mcpCall(dana.accessToken, 'check_in', { intent_id: dw.result.intent_id });
       return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'dana/eli match to appear');
-    await mcpCall(dana.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
-    await mcpCall(eli.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
 
     // Pass on is the default on a card nobody has touched.
     const refused = await mcpCall(dana.accessToken, 'respond', {
