@@ -249,6 +249,54 @@ export async function shareNameLink(
 }
 
 // ---------------------------------------------------------------------------
+// (f) Send a photo. The one image step, and the whole of an agent's part in it.
+//
+// An agent CANNOT upload. It can say a picture would help, fetch this, and hand
+// it over; the person picks the photo on their own page and presses Send. An
+// agent holding an image is a category of problem nobody needs, and the bytes
+// never reach this service in any case — the browser puts them in the bucket on
+// a presigned link.
+//
+// BOUND TO THE CONVERSATION AT MINT TIME, like every other link here. The
+// alternative — one page where a person chooses which conversation a photo
+// belongs to — is a page that can be answered wrongly, with the wrong stranger
+// on the other end of the mistake. There is nothing to choose here: the link
+// says which conversation, and the page says who it goes to.
+//
+// Refused at mint time when there is no open conversation, so an agent learns
+// why while it is still talking to its human rather than handing over a link
+// that dies.
+// ---------------------------------------------------------------------------
+export async function photoLink(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+): Promise<HumanLink> {
+  const { loadOpenChannel } = await import('./channel.js');
+  const { photosConfigured } = await import('./channelPhoto.js');
+  if (!photosConfigured(cfg)) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'Photos are not switched on here yet. Ask your human what the thing looks like and send that in words.',
+    });
+  }
+  const ch = await loadOpenChannel(matchId, accountId);
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'conversation-photo',
+    refId: matchId,
+    counterpartyAccount: ch.counterpartyAccount,
+  });
+  return {
+    link: url(cfg, token),
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does:
+      'Opens one page where your human picks a photo from their own phone and presses Send. It goes to the person they are already talking to on this one and nowhere else, it is held until that side picks it up, and then it is gone. You cannot send a photo yourself, and nothing here reads the picture.',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // (d) There used to be a link here for closing the short window on a want or
 // have of the holder's own. The window is gone (migration 030): nothing blocks
 // a holder now, so there is nothing for them to close. See domain/sequencer.ts.

@@ -209,7 +209,7 @@ function run(sql: string, params: any[] = []) {
         .map(() => ({ '?column?': 1 })),
     );
   }
-  if (/SELECT channel_id, count\(\*\)/.test(sql)) {
+  if (/SELECT channel_id, count\(\*\)::int AS n FROM channel_messages/.test(sql)) {
     const counts = new Map<string, number>();
     for (const m of world.messages) {
       if (m.recipient_account !== params[0]) continue;
@@ -649,7 +649,10 @@ describe('the relay keeps no content', () => {
 
   it('logs counts and ids at every call site, and never a body', () => {
     const calls = [...source.matchAll(/relayLog\('[^']+',\s*\{([^}]*)\}/g)].map((m) => m[1]);
-    expect(calls.length).toBe(2); // one where a message is accepted, one where a batch is collected
+    // One where a message is accepted, one where a batch is collected, and one
+    // where a photo waiting on the same conversation could not be handed over
+    // (domain/channelPhoto.ts). All three carry counts and ids and nothing else.
+    expect(calls.length).toBe(3);
     for (const call of calls) {
       for (const forbidden of ['text', 'body', 'plaintext', 'excerpt', 'message_id', 'length']) {
         expect(call, `relayLog call site must not carry '${forbidden}'`).not.toContain(forbidden);

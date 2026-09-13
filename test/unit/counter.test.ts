@@ -500,6 +500,19 @@ describe('counter pages: copy-cull render suite', () => {
       }),
     },
     {
+      // The photo page: one file, one line beside it, one press. Held to the
+      // same copy rules as every other page a person reads.
+      name: 'conversation-photo',
+      html: cpages.photoPage({
+        token: 'tok-2',
+        who: 'Sam',
+        thing: 'mountain bike',
+        maxMb: 10,
+        ttlDays: 14,
+        captionMax: 200,
+      }),
+    },
+    {
       name: 'approval-stage3-collect',
       html: cpages.approvalPage({
         action: 'stage3-disclosure',

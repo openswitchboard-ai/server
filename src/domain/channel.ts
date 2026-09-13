@@ -16,6 +16,13 @@
  * message handed to an agent arrives labelled as the other side's words for
  * that agent to show its human rather than to act on.
  *
+ * A PHOTO crosses here too, and only here (domain/channelPhoto.ts). The bytes
+ * never pass through this service — the sending human's own browser puts them
+ * in a bucket on a presigned link, and the other side's agent is handed a
+ * short-lived link to them when it collects — but the promise is this one: held
+ * until collected, collected once, and then gone. No agent can upload one, and
+ * nothing looks at the image.
+ *
  * One thing is read before it is carried, and only one: a money figure in the
  * words is refused outright (domain/moneyInWords.ts). The refusal happens in
  * the send, ahead of the encryption, so nothing with a price in it is ever
@@ -271,6 +278,7 @@ async function collectNote(
   ch: OpenChannel,
   accountId: string,
   collected: number,
+  photos = 0,
 ): Promise<{ text: string; provenance: 'switchboard-system' }> {
   const m = ch.match;
   let takenDown: 'yours' | 'theirs' | undefined;
@@ -294,11 +302,23 @@ async function collectNote(
     // plain wording for what the caller actually holds.
   }
   const alsoWaiting = takenDown ? takenDownSentence(takenDown) : offerText;
+  // A photo came through the same door as the words, so it is accounted for in
+  // the same sentence: an agent that can only render text must still end up
+  // handing its human the link, and one that never mentions it leaves a person
+  // waiting on a picture that was already here.
+  const pic =
+    photos === 1
+      ? 'A photo has come through as well — put the link in front of your human, or show them the picture if you can. The link is good for fifteen minutes and there is no second copy of it.'
+      : photos > 1
+        ? `${photos} photos have come through as well — put the links in front of your human, or show them the pictures if you can. They are good for fifteen minutes and there is no second copy of them.`
+        : undefined;
+  const extras = [pic, alsoWaiting].filter(Boolean).join(' ');
   if (!collected) {
+    if (extras) {
+      return sbNote(`${extras}${photos ? '' : ' No words have come through on this one.'}`.trim());
+    }
     return sbNote(
-      alsoWaiting
-        ? `${alsoWaiting} No words have come through on this one.`
-        : 'Nothing has come through on this one, and there is nothing else here waiting on your human. I will bring you whatever arrives, whenever it arrives.',
+      'Nothing has come through on this one, and there is nothing else here waiting on your human. I will bring you whatever arrives, whenever it arrives.',
     );
   }
   const many = collected === 1 ? 'One message has' : `${collected} messages have`;
@@ -306,7 +326,33 @@ async function collectNote(
     collected === 1
       ? 'Pass it on to your human in your own words, and say whose words it is.'
       : 'Pass them on to your human in your own words, and say whose words they are.';
-  return sbNote(`${many} come through from the other side. ${pass}${alsoWaiting ? ` ${alsoWaiting}` : ''}`);
+  return sbNote(`${many} come through from the other side. ${pass}${extras ? ` ${extras}` : ''}`);
+}
+
+/**
+ * The photos waiting on this conversation, collected the same way the words
+ * are (domain/channelPhoto.ts). Imported lazily because that module is built
+ * on this one.
+ *
+ * A deployment with no photo bucket answers with none, and so does a failure:
+ * the words are already committed and already deleted by the time this runs,
+ * so nothing here may turn a successful collection into an error the agent
+ * reads as "your messages did not arrive". A lost photo is logged as one.
+ */
+async function collectPhotosFor(
+  cfg: Config | undefined,
+  accountId: string,
+  matchId: string,
+  channelId: string,
+): Promise<any[]> {
+  if (!cfg) return [];
+  try {
+    const { collectPhotos } = await import('./channelPhoto.js');
+    return await collectPhotos(cfg, accountId, matchId, channelId);
+  } catch {
+    relayLog('conversation-photo-collect-failed', { channel_id: channelId, count: 0 });
+    return [];
+  }
 }
 
 /**
@@ -319,8 +365,10 @@ async function collectNote(
 export async function receiveMessages(
   accountId: string,
   matchId: string,
+  cfg?: Config,
 ): Promise<{
   messages: any[];
+  photos?: any[];
   more_waiting: boolean;
   note: { text: string; provenance: 'switchboard-system' };
 }> {
@@ -339,8 +387,15 @@ export async function receiveMessages(
     if (!r.rowCount) {
       await client.query('COMMIT');
       // An empty batch is the answer about WORDS and nothing more, so the
-      // sentence that goes with it accounts for the rest of this introduction.
-      return { messages: [], more_waiting: false, note: await collectNote(ch, accountId, 0) };
+      // sentence that goes with it accounts for the rest of this introduction
+      // — a photo waiting on the same conversation included.
+      const only = await collectPhotosFor(cfg, accountId, matchId, ch.channelId);
+      return {
+        messages: [],
+        ...(only.length ? { photos: only } : {}),
+        more_waiting: false,
+        note: await collectNote(ch, accountId, 0, only.length),
+      };
     }
     const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
     const messages = [];
@@ -381,10 +436,15 @@ export async function receiveMessages(
     if (!rest.rowCount) {
       await rearmChannelNudge(ch.channelId, accountId);
     }
+    // The photos are collected AFTER the words are committed, and outside that
+    // transaction on purpose: signing links is a round trip to AWS, and no
+    // message should sit in an open transaction waiting on one.
+    const photos = await collectPhotosFor(cfg, accountId, matchId, ch.channelId);
     return {
       messages,
+      ...(photos.length ? { photos } : {}),
       more_waiting: !!rest.rowCount,
-      note: await collectNote(ch, accountId, collected),
+      note: await collectNote(ch, accountId, collected, photos.length),
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -395,9 +455,14 @@ export async function receiveMessages(
 }
 
 /**
- * How many messages are waiting for an account on each of the given channels.
- * One query for a whole check_in sweep, so a polling agent learns there
- * is something to collect without a second call.
+ * How much is waiting for an account on each of the given channels: the words,
+ * plus the photos, in one number. Two queries for a whole check_in sweep, so a
+ * polling agent learns there is something to collect without a second call.
+ *
+ * The photos are counted here rather than reported separately because the
+ * answer this feeds is "is there anything to collect on this one", and the
+ * house rule is that an agent must never be able to say "nothing" while
+ * something is waiting. What each thing is comes out of the collection itself.
  */
 export async function pendingCounts(
   accountId: string,
@@ -412,6 +477,14 @@ export async function pendingCounts(
     [accountId, channelIds],
   );
   for (const row of r.rows) out.set(row.channel_id as string, row.n as number);
+  try {
+    const { pendingPhotoCounts } = await import('./channelPhoto.js');
+    for (const [channelId, n] of await pendingPhotoCounts(accountId, channelIds)) {
+      out.set(channelId, (out.get(channelId) ?? 0) + n);
+    }
+  } catch {
+    // A sweep that cannot count photos still reports the words honestly.
+  }
   return out;
 }
 

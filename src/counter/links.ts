@@ -27,12 +27,22 @@ export type ApprovalAction =
   | 'settlement-approve'
   | 'offer-send'
   | 'collection-close'
-  | 'negotiation-auto';
+  | 'negotiation-auto'
+  /** Put a photo into one open conversation. Bound to that conversation when
+   *  it is minted, so the page never asks a person to choose one. */
+  | 'conversation-photo';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
  * and the press itself is what consumes the link. The one left open opens the
  * approval page instead, which burns its link on the first authenticated view.
+ *
+ * conversation-photo is deliberately NOT one of them. It is still one page and
+ * still one press, but the person picks a file before they press, so it has a
+ * page of its own (counter/pages.ts, photoPage) with its own route. It is not
+ * the approval page either: the fall-through below burns a link on the first
+ * authenticated view, and a link burnt before the photo was chosen would be a
+ * page that dies while somebody is looking for the picture.
  *
  * stage3-disclosure joined them on 2026-09-12, when sharing a first name and an
  * area became a press the human makes every time rather than something an agent
