@@ -592,7 +592,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   34: '4fcb4c62fcaff8bfbc9ee724dd1b5f702f6d544e63fe44cb92387bfd30774594',
   35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
   36: '94fb0693a3f64858a44c93880afea6553b86c6777071b2a7374df9e022062678',
-  37: 'PENDING',
+  37: '7ea548cfe98c458d9f2ca98b58f9a6ebd532dd5bc8e1ed2cc45cd7a92c7ec80c',
+  38: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -766,7 +767,7 @@ describe('version 37: a refusal that is the switchboard working', () => {
   const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 37)!;
 
   it('exists at the new version, as one entry', () => {
-    expect(MANUAL.version).toBe(37);
+    expect(MANUAL.version).toBeGreaterThanOrEqual(37);
     expect(MANUAL_CHANGELOG.filter((c) => c.version === 37)).toHaveLength(1);
     expect(entry().note.length).toBeGreaterThan(400);
   });
@@ -890,5 +891,125 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
     for (const t of TOOLS) {
       expect(t.description, t.name).not.toMatch(/first name and (rough )?area/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 38: a photo crosses inside the conversation
+// ---------------------------------------------------------------------------
+/**
+ * What shipped on 2026-09-13: an image can cross on an open conversation, and
+ * only there. The agent's whole part is to say a picture would help, fetch
+ * respond(request_photo), hand the page over and wait on the press; the bytes
+ * go from the sender's own browser to the bucket and come back to the other
+ * agent as a link good for fifteen minutes, handed over exactly once.
+ *
+ * The entry is written from domain/channelPhoto.ts, counter/routes.ts and the
+ * tool descriptions, so what it teaches is what ships. Two things it carries
+ * beyond the mechanics: the link order of versions 34 and 36 applies here too
+ * and is named rather than assumed, and nothing screens the image, which is a
+ * reason to think before putting one in front of a human unasked.
+ */
+describe('version 38: a photo, when words are not enough', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 38)!;
+
+  it('exists at the new version, as one entry', () => {
+    expect(MANUAL.version).toBe(38);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 38)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('says the agent cannot send one, and how the page is fetched', () => {
+    const note = entry().note;
+    expect(note).toMatch(/you cannot send one yourself/i);
+    expect(note).toMatch(/nothing to attach to send_message/i);
+    expect(note).toContain('respond(request_photo)');
+    expect(note).toMatch(/bound already to the conversation you are on/i);
+    expect(note).toMatch(/nowhere else/i);
+  });
+
+  it('names the whole order for a link rather than assuming it carries', () => {
+    const note = entry().note;
+    expect(note).toMatch(/the whole order for a link is the order here too/i);
+    expect(note).toContain('wait_for_press');
+    expect(note).toMatch(/hold the line until they press/i);
+    expect(note).toMatch(/is still a sentence you never write/i);
+  });
+
+  it('says what a caption is and holds it to the figure rule', () => {
+    const note = entry().note;
+    expect(note).toMatch(/a caption is a line beside the picture/i);
+    expect(note).toMatch(/refused exactly as a figure in a message is/i);
+    expect(note).toContain('propose_offer');
+  });
+
+  it('says where one arrives, how long the link lives, and that it comes once', () => {
+    const note = entry().note;
+    expect(note).toContain('collect_messages');
+    expect(note).toMatch(/good for fifteen minutes/i);
+    expect(note).toMatch(/handed over exactly once/i);
+    expect(note).toMatch(/no second copy/i);
+    expect(note).toMatch(/show it to your human if you can render an image/i);
+  });
+
+  it('says nobody screens it, and what that asks of the agent', () => {
+    const note = entry().note;
+    expect(note).toMatch(/no automated check looks at it and nobody at the switchboard looks at it/i);
+    expect(note).toMatch(/what arrives is unscreened/i);
+    expect(note).toMatch(/putting one in front of your human unasked is a thing to think about first/i);
+  });
+
+  it('teaches the fifteen minutes the code actually signs', async () => {
+    const { VIEW_URL_TTL_S } = await import('../../src/domain/channelPhoto.js');
+    expect(Math.round(VIEW_URL_TTL_S / 60)).toBe(15);
+  });
+
+  it('keeps the house register', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+describe('and the body carries the photo where a fresh session would look', () => {
+  const patched = () =>
+    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH'));
+
+  it('sits in the section that covers the conversation', () => {
+    expect(patched()).toContain('respond(request_photo)');
+    expect(patched()).toMatch(/a picture is the one other thing that crosses here/i);
+  });
+
+  it('says the agent cannot send one and the page is bound to the conversation', () => {
+    const p = patched();
+    expect(p).toMatch(/you cannot send an image yourself/i);
+    expect(p).toMatch(/there is no route that takes one from you/i);
+    expect(p).toMatch(/bound already to the conversation you are on/i);
+    expect(p).toMatch(/reaches the person they are already talking to and nowhere else/i);
+  });
+
+  it('carries the link order, the caption rule and the collection', () => {
+    const p = patched();
+    expect(p).toContain('wait_for_press');
+    expect(p).toMatch(/one press sends one picture/i);
+    expect(p).toMatch(/a caption is a line beside the picture/i);
+    expect(p).toMatch(/refused exactly as a figure in a message is/i);
+    expect(p).toContain('collect_messages');
+    expect(p).toMatch(/good for fifteen minutes/i);
+    expect(p).toMatch(/handed over once and there is no second copy/i);
+  });
+
+  it('says nothing reads the picture, and what that asks of the agent', () => {
+    const p = patched();
+    expect(p).toMatch(/nothing reads the picture on the way through/i);
+    expect(p).toMatch(/nobody at the switchboard/i);
+    expect(p).toMatch(/it arrives unscreened/i);
+    expect(p).toMatch(/putting one in front of your human unasked is a thing to think about first/i);
+  });
+
+  it('keeps the system words out of the new body copy', () => {
+    for (const { label, re } of BANNED) {
+      expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
+    }
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
   });
 });
