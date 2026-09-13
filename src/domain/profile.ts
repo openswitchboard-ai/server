@@ -186,16 +186,23 @@ export interface OwnArea {
  * What an agent is told about its own human's area, or undefined when there is
  * nothing on file or the read fails. A sweep is never broken by this.
  *
+ * The read writes a decrypt-audit line like every other identity read, and
+ * `purpose` is what a later reader sees: the sweep by default, and the connect
+ * manual when the block in mcp/connectFacts.ts asks.
+ *
  * The resolved line is only offered when the gazetteer settles the name on its
  * own: a name several cities answer to, a whole state and a whole country are
  * all left unresolved, because the posting path would refuse them and an agent
  * reading one out as settled would be saying more than is known.
  */
-export async function readOwnArea(accountId: string): Promise<OwnArea | undefined> {
+export async function readOwnArea(
+  accountId: string,
+  purpose = 'own-area-for-sweep',
+): Promise<OwnArea | undefined> {
   let area = '';
   try {
     const p = await readSharedProfile(accountId, {
-      purpose: 'own-area-for-sweep',
+      purpose,
       actor: accountId,
     });
     area = p.locality.trim();
