@@ -139,10 +139,11 @@ d('archiving a finished connection', () => {
       intro_id: matchId,
       text: 'anyone still there?',
     });
-    expect(send.isError).toBe(true);
+    expect(send.isError).toBe(false);
+    expect(send.result.what_happened).toBe('not_open_yet');
     expect(send.result.code).toBe('NOT_UNLOCKED_YET');
     const recv = await mcpCall(beppe.accessToken, 'collect_messages', { intro_id: matchId });
-    expect(recv.isError).toBe(true);
+    expect(recv.isError).toBe(false);
     expect(recv.result.code).toBe('NOT_UNLOCKED_YET');
   });
 

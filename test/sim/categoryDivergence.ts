@@ -401,7 +401,7 @@ export async function runCategoryDivergence(
     { expectError: true },
   );
   check.sweep(slang.raw, 'pushbike refusal');
-  const refused = slang.isError && slang.result?.code === 'CATEGORY_PROHIBITED';
+  const refused = slang.result?.code === 'CATEGORY_PROHIBITED';
   const suggestions: string[] = slang.result?.suggestions ?? [];
   const pointsAtBikes = suggestions.some((s) => s.includes('bicycle'));
 

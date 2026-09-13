@@ -479,9 +479,13 @@ describe('(a) share your name', () => {
     return encodeURIComponent(tokenOf(url!));
   };
 
-  it('an agent that opts in is refused and handed the link, with a profile on file', async () => {
+  it('an agent that opts in is handed the link as an ordinary answer, with a profile on file', async () => {
     const r: any = await respond({ intro_id: MATCH, action: 'opt_in' });
-    expect(r.isError).toBe(true);
+    // Waiting on a press is the switchboard working, so nothing fails here:
+    // the word, the sentence and the link all come back together.
+    expect(r.isError).toBe(false);
+    expect(body(r).what_happened).toBe('your_human_presses');
+    expect(body(r).link).toContain('https://my.test/a/');
     expect(body(r).code).toBe('CONSENT_REQUIRED');
     expect(body(r).human_action).toContain(
       'Sharing their first name and area is theirs to press. Hand them this link',
@@ -599,7 +603,8 @@ describe('(a) share your name', () => {
   it('says the earlier step first while the other side has yet to warm up', async () => {
     world.stage = 1;
     const r: any = await respond({ intro_id: MATCH, action: 'opt_in' });
-    expect(r.isError).toBe(true);
+    expect(r.isError).toBe(false);
+    expect(body(r).what_happened).toBe('not_open_yet');
     expect(body(r).code).toBe('NOT_UNLOCKED_YET');
     expect(world.links).toHaveLength(0);
   });
@@ -943,7 +948,8 @@ describe('the assistant fetches the links and never acts', () => {
       action: 'request_auto_negotiate',
       numbers: { limit: 400, ccy: 'AUD' },
     });
-    expect(r.isError).toBe(true);
+    expect(r.isError).toBe(false);
+    expect(body(r).what_happened).toBe('your_human_presses');
     expect(JSON.stringify(r.content[0].text)).toContain('this account hears by email');
   });
 
@@ -1041,8 +1047,10 @@ describe('a figure an agent carried comes back as its own question', () => {
         expiry: new Date(Date.now() + 86_400_000).toISOString(),
       },
     });
-    expect(r.isError).toBe(true);
+    expect(r.isError).toBe(false);
     const text = String(r.content[0].text);
+    // The link travels beside the sentence as well as inside it.
+    expect(body(r).link).toContain('https://my.test/a/');
     expect(text).toContain('one press and it goes');
     expect(text).toContain('https://my.test/a/');
     const minted = world.links.find((l) => l.action === 'offer-send');

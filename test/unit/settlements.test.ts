@@ -363,10 +363,15 @@ describe('settle tool', () => {
       amount: 100,
       ccy: 'AUD',
     });
-    expect(r.isError).toBe(true);
+    // Switched off here is not broken here, so it comes back as an answer.
+    expect(r.isError).toBe(false);
+    expect((r.structuredContent as any).what_happened).toBe('not_switched_on');
     expect((r.structuredContent as any).code).toBe('SETTLEMENT_UNAVAILABLE');
-    // The error payload itself validates against the protocol error schema.
-    expect(validateOutbound('error', r.structuredContent).valid).toBe(true);
+    // The payload inside the answer still validates against the protocol error
+    // document, once the two the envelope adds are set aside: the published
+    // document takes nothing it does not name.
+    const { what_happened, link, ...payload } = r.structuredContent as any;
+    expect(validateOutbound('error', payload).valid).toBe(true);
   });
 });
 

@@ -170,7 +170,78 @@ export function loadTaxonomy(): any {
 
 export interface ValidationResult {
   valid: boolean;
+  /** The validator's own account, path first: for logs and for tests. */
   reasons: string[];
+  /**
+   * The same refusals said in words. This is what an agent is handed when a
+   * post will not go up, because the validator's own account leaks straight
+   * into a chat window and reads like a fault the person at the keyboard
+   * caused. One sentence per thing wrong, naming the thing.
+   */
+  plain: string[];
+}
+
+/** What a slot will take, in words. */
+const TYPE_WORDS: Record<string, string> = {
+  integer: 'a whole number',
+  number: 'a number',
+  string: 'words',
+  boolean: 'true or false',
+  array: 'a list',
+  object: 'a set of fields',
+  null: 'nothing at all',
+};
+
+/** Where the trouble is, as one dotted name an agent's author can find. */
+function whereIs(instancePath: string, extra?: string): string {
+  const parts = instancePath.split('/').filter(Boolean);
+  if (extra) parts.push(extra);
+  return parts.join('.') || 'what was sent';
+}
+
+/**
+ * One validator complaint, said plainly. Nothing here is a judgement about
+ * the human: it says what is missing, what is the wrong shape, and what is
+ * not taken, and it is safe to read out loud if a client ever prints it.
+ */
+export function plainReason(e: any): string {
+  const p = e?.params ?? {};
+  const at = whereIs(e?.instancePath ?? '');
+  switch (e?.keyword) {
+    case 'required':
+      return `${whereIs(e.instancePath, p.missingProperty)} is needed, and nothing was sent for it`;
+    case 'additionalProperties':
+      return `${whereIs(e.instancePath, p.additionalProperty)} is not something this takes`;
+    case 'type': {
+      const types = (Array.isArray(p.type) ? p.type : [p.type]).map(
+        (t: string) => TYPE_WORDS[t] ?? String(t),
+      );
+      return `${at} has to be ${types.join(' or ')}`;
+    }
+    case 'enum':
+      return `${at} has to be one of: ${(p.allowedValues ?? []).join(', ')}`;
+    case 'const':
+      return `${at} has to be ${String(p.allowedValue)}`;
+    case 'minimum':
+    case 'exclusiveMinimum':
+      return `${at} has to be ${p.limit} or more`;
+    case 'maximum':
+    case 'exclusiveMaximum':
+      return `${at} has to be ${p.limit} or less`;
+    case 'minLength':
+      return p.limit === 1 ? `${at} cannot be empty` : `${at} needs ${p.limit} characters or more`;
+    case 'maxLength':
+      return `${at} has to be ${p.limit} characters or fewer`;
+    case 'minItems':
+      return `${at} needs ${p.limit} of them or more`;
+    case 'maxItems':
+      return `${at} holds ${p.limit} of them or fewer`;
+    case 'pattern':
+    case 'format':
+      return `${at} is not written the way this takes it`;
+    default:
+      return `${at} ${String(e?.message ?? 'is not right').replace(/^must /, 'has to ')}`.trim();
+  }
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
@@ -205,10 +276,11 @@ function validateAgainst(id: string, schema: string, data: unknown): ValidationR
   const validate = ajv.getSchema(id);
   if (!validate) throw new Error(`unknown schema: ${schema}`);
   const valid = validate(data) as boolean;
-  const reasons = (validate.errors ?? []).map(
+  const errors = validate.errors ?? [];
+  const reasons = errors.map(
     (e) => `${e.instancePath} ${e.keyword} ${e.message} ${JSON.stringify(e.params)}`,
   );
-  return { valid, reasons };
+  return { valid, reasons, plain: errors.map(plainReason) };
 }
 
 /** Validate against the PUBLISHED document of that name — what the protocol
