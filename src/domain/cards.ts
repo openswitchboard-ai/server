@@ -544,6 +544,7 @@ export async function amendIntent(
 export async function withdrawIntent(
   accountId: string,
   intentId: string,
+  cfg?: Config,
 ): Promise<{
   intent_id: string;
   state: string;
@@ -561,7 +562,12 @@ export async function withdrawIntent(
   // Dynamic import: matches.ts reads cards, so a static import here would
   // close a cycle between the two modules.
   const { archiveOpenIntroductionsOnCard } = await import('./matches.js');
-  const introductions_archived = await archiveOpenIntroductionsOnCard(intentId, accountId);
+  const introductions_archived = await archiveOpenIntroductionsOnCard(
+    intentId,
+    accountId,
+    'withdrawn',
+    cfg,
+  );
   const kept = await getPool().query(
     `SELECT count(*)::int AS n FROM matches
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open'`,

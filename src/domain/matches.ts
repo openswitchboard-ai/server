@@ -165,12 +165,23 @@ export function readVerdict(v: unknown): Verdict | undefined {
   return typeof v === 'string' ? VERDICT_ALIASES[v] : undefined;
 }
 
+/**
+ * How it went. 'bad' is the only one that does anything beyond the record: it
+ * mutes the pairing and CLOSES the introduction, which frees the slot it held.
+ *
+ * Until run 8 (13 September 2026) it closed the introduction and stopped
+ * there, so the slot sat empty until some later action happened to resequence
+ * that want or have — the person next in line waited for nothing. It now frees
+ * the slot the same way a decline does, and hands back what went live on this
+ * human's own side.
+ */
 export async function recordVerdict(
   matchId: string,
   accountId: string,
   verdict: Verdict,
   recordedVia: string,
-): Promise<{ intro_id: string; verdict: string }> {
+  cfg?: Config,
+): Promise<{ intro_id: string; verdict: string; promoted?: string[] }> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
@@ -192,7 +203,7 @@ export async function recordVerdict(
       [accountId, counterparty],
     );
     await pool.query(
-      `UPDATE matches SET state = 'declined', updated_at = now()
+      `UPDATE matches SET state = 'declined', live = false, updated_at = now()
        WHERE id = $1 AND state = 'open'`,
       [matchId],
     );
@@ -201,6 +212,10 @@ export async function recordVerdict(
        WHERE account_id = $1`,
       [accountId, THRESHOLD_BUMP_STEP, MAX_THRESHOLD_BUMP],
     );
+    // Closing it freed the slot it held, exactly as a decline does.
+    const { resequenceAround } = await import('./sequencer.js');
+    const promoted = await mine(await resequenceAround(matchId, cfg), accountId);
+    return { intro_id: matchId, verdict, promoted };
   } else {
     await pool.query(
       `UPDATE reputation SET threshold_bump = GREATEST(threshold_bump - $2, 0), updated_at = now()
@@ -495,19 +510,43 @@ export async function recordStage3OptIn(
  * ordinary thing to want to do, and refusing it would leave them stuck behind
  * something they no longer want. Either way the slot it held (or would have
  * held) goes to whoever is next.
+ *
+ * Returns the introductions that went live in the same breath and that THIS
+ * account is a party to — what happened next, for the human who just closed
+ * one off. The promotion is synchronous, so by the time this returns the next
+ * person is already there; saying otherwise is the defect this return value
+ * exists to stop (run 8, 13 September 2026).
  */
 export async function declineMatch(
   matchId: string,
   accountId: string,
   cfg?: Config,
-): Promise<void> {
+): Promise<string[]> {
   await loadOpenMatchFor(matchId, accountId, false);
   await getPool().query(
     `UPDATE matches SET state = 'declined', live = false, updated_at = now() WHERE id = $1`,
     [matchId],
   );
   const { resequenceAround } = await import('./sequencer.js');
-  await resequenceAround(matchId, cfg);
+  return mine(await resequenceAround(matchId, cfg), accountId);
+}
+
+/**
+ * Of the introductions just promoted, the ones this account is a party to.
+ *
+ * Freeing a slot resequences BOTH sides, so the other side's line may advance
+ * too — and that promotion is the other human's business entirely. Handing it
+ * back here would be the one leak the sequencer exists to prevent, so it is
+ * filtered out at the source rather than at each caller.
+ */
+async function mine(promoted: string[], accountId: string): Promise<string[]> {
+  if (!promoted.length) return [];
+  const r = await getPool().query(
+    `SELECT id FROM matches
+      WHERE id = ANY($1::uuid[]) AND (account_want = $2 OR account_have = $2)`,
+    [promoted, accountId],
+  );
+  return (r.rows as { id: string }[]).map((x) => x.id);
 }
 
 /**
@@ -531,12 +570,12 @@ export async function archiveMatch(
   accountId: string,
   recordedVia: string,
   cfg?: Config,
-): Promise<{ intro_id: string; state: 'archived'; already: boolean }> {
+): Promise<{ intro_id: string; state: 'archived'; already: boolean; promoted: string[] }> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound when the caller is not a party
   if (m.state === 'archived') {
-    return { intro_id: matchId, state: 'archived', already: true };
+    return { intro_id: matchId, state: 'archived', already: true, promoted: [] };
   }
   if (m.state !== 'open') {
     // Only a live, open connection can be filed away as finished. A declined or
@@ -555,7 +594,7 @@ export async function archiveMatch(
   );
   if (!r.rowCount) {
     // Lost a race to another archive of the same match: treat as idempotent.
-    return { intro_id: matchId, state: 'archived', already: true };
+    return { intro_id: matchId, state: 'archived', already: true, promoted: [] };
   }
   // WORM record of who filed it and when, the recorded_via shape the verdict
   // and opt-in paths already use.
@@ -573,10 +612,12 @@ export async function archiveMatch(
     [matchId],
   );
   // The slot it held is free, so whoever is next in line on either side goes
-  // live now and their human is summoned the ordinary way.
+  // live now and their human is summoned the ordinary way. It happens in this
+  // same request, so the caller is handed the ones on this human's own side:
+  // they are already there to be talked about.
   const { resequenceAround } = await import('./sequencer.js');
-  await resequenceAround(matchId, cfg);
-  return { intro_id: matchId, state: 'archived', already: false };
+  const promoted = await mine(await resequenceAround(matchId, cfg), accountId);
+  return { intro_id: matchId, state: 'archived', already: false, promoted };
 }
 
 /**
@@ -606,6 +647,7 @@ export async function archiveOpenIntroductionsOnCard(
   cardId: string,
   accountId: string,
   recordedVia = 'withdrawn',
+  cfg?: Config,
 ): Promise<number> {
   const r = await getPool().query(
     `UPDATE matches
@@ -632,9 +674,11 @@ export async function archiveOpenIntroductionsOnCard(
     [ids],
   );
   // Each of those people had a slot of their own taken up by this. It is free
-  // now, so whoever is next in THEIR line goes live and hears about it.
+  // now, so whoever is next in THEIR line goes live and hears about it — which
+  // is what cfg carries: without it the promotion still happens and the
+  // summons does not, so somebody goes live and nobody tells them.
   const { resequenceAround } = await import('./sequencer.js');
-  for (const id of ids) await resequenceAround(id);
+  for (const id of ids) await resequenceAround(id, cfg);
   return ids.length;
 }
 
@@ -1018,6 +1062,22 @@ export function awaitingTheirGoAheadSentence(m: MatchRow, accountId: string): st
 /** A decline, in the words it happens in. No reason travels, by design. */
 export const DECLINE_SENTENCE =
   'That one is closed off now, and no reason went with it.';
+
+/**
+ * What happened next, when closing one off freed a slot and somebody who was
+ * waiting took it. The promotion is done by the time the action answers — the
+ * person is already there and has already been told — so the sentence says so
+ * outright. It must never send the human away to look again: an assistant
+ * saying "they should surface next time you check" was the whole defect (run
+ * 8, 13 September 2026).
+ */
+export const CAME_FORWARD_SENTENCE =
+  'Someone who was waiting has come forward in their place, and they are with you already.';
+
+/** The sentence for an action that freed a slot, with what filled it. */
+export function withCameForward(sentence: string, promoted: string[]): string {
+  return promoted.length ? `${sentence} ${CAME_FORWARD_SENTENCE}` : sentence;
+}
 
 /** Filing a finished introduction away. It stays retrievable afterwards. */
 export const ARCHIVE_SENTENCE =

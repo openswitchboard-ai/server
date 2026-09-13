@@ -43,6 +43,8 @@ interface World {
   declined: string[];
   bumpUp: number;
   bumpDown: number;
+  /** Every introduction whose want and have were resequenced afterwards. */
+  resequenced: string[];
 }
 let world: World;
 
@@ -50,6 +52,11 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
+      // The slot the closed introduction held, being freed for the next person.
+      if (/SELECT card_want, card_have FROM matches/.test(sql)) {
+        world.resequenced.push(params[0]);
+        return rows([{ card_want: 'card-w', card_have: 'card-h' }]);
+      }
       if (/FROM matches/.test(sql) && /^\s*SELECT/.test(sql)) {
         return rows([
           {
@@ -95,7 +102,7 @@ function fakePool() {
 }
 
 beforeEach(() => {
-  world = { stored: [], mutes: [], declined: [], bumpUp: 0, bumpDown: 0 };
+  world = { stored: [], mutes: [], declined: [], bumpUp: 0, bumpDown: 0, resequenced: [] };
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
 
@@ -108,6 +115,24 @@ describe('the three answers', () => {
     expect(world.declined).toEqual([MATCH]); // reasonless, as all declines are
     expect(world.bumpUp).toBe(1);
     expect(world.bumpDown).toBe(0);
+  });
+
+  /**
+   * Found in run 8 (13 September 2026): 'bad' closed the introduction and
+   * stopped there, so the slot it held stayed taken and the person next in
+   * line waited behind a closed door until some unrelated action happened to
+   * resequence that want or have. Closing is closing: the place is freed the
+   * same way a decline frees it.
+   */
+  it('bad frees the place the closed one held, there and then', async () => {
+    await recordVerdict(MATCH, ANA, 'bad', 'counter');
+    expect(world.resequenced).toEqual([MATCH]);
+  });
+
+  it('good and fine close nothing, so they free nothing', async () => {
+    await recordVerdict(MATCH, ANA, 'good', 'counter');
+    await recordVerdict(MATCH, ANA, 'fine', 'counter');
+    expect(world.resequenced).toEqual([]);
   });
 
   it('good relaxes the threshold, so more like it come through', async () => {

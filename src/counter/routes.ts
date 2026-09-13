@@ -1332,7 +1332,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             pages.donePage('Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
           );
         }
-        else await declineMatch(refId, s.accountId!);
+        else await declineMatch(refId, s.accountId!, cfg);
         return html(
           reply,
           pages.donePage('Declined', '<p>Nothing was shared or accepted. No reason was sent.</p>'),
@@ -1980,7 +1980,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       }
       const matchId = String(b.match_id ?? '');
       try {
-        await recordVerdict(matchId, s.accountId!, verdict, 'counter');
+        await recordVerdict(matchId, s.accountId!, verdict, 'counter', cfg);
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       }
@@ -2386,7 +2386,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       try {
-        await withdrawIntent(s.accountId!, String((req.params as any).id));
+        await withdrawIntent(s.accountId!, String((req.params as any).id), cfg);
       } catch {
         return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
       }
