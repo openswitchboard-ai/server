@@ -122,6 +122,27 @@ These pages are named `counter` throughout the code (`src/counter/`,
 `COUNTER_ORIGIN`) for historical reasons; they used to live at `/counter/*` on
 `counter.openswitchboard.ai`, and old links still 308 to the current path.
 
+### The operator metrics page
+
+`GET /ops/metrics` is a private, server-rendered page showing how much the
+switchboard is being used and whether it is healthy: accounts and how many are
+new, wants and haves open by type and category, introductions made and the
+median time to one, conversations and offers, settlements by state, email sends
+and bounce rate, and a status block with the schema and manual versions, the
+registration mode and the database round trip. `GET /ops/metrics.json` returns
+the same numbers as JSON. Both are aggregates only — no emails, names, account
+ids, card text or message content ever reach them — and the whole result is
+cached in-process for 30 seconds; the HTML refreshes itself every minute.
+
+It is protected by HTTP Basic, and only that. The credential is
+`OPS_METRICS_BASIC_AUTH`, in the form `user:password`; when the variable is
+absent the routes are never registered, so the path 404s, and a malformed value
+is a boot failure rather than a page that accepts anything. Failed attempts are
+limited to ten per IP per fifteen minutes. Deployed tasks read the value from the
+SSM SecureString `/osb/<env>/ops-metrics-basic-auth`, created out of band in each
+account (the parameter must exist before deploy). The page answers on the MCP
+hostname only; on the human hostname `/ops*` 404s.
+
 ## Layout
 
 ```
@@ -131,6 +152,7 @@ src/
   mcp/            the eleven MCP tools and their instructions
   auth/           OAuth 2.1 endpoints and token handling
   counter/        the human pages: registration, login, approvals, ledger
+  opsMetrics.ts   the private operator metrics page (Basic auth, aggregates only)
   domain/         cards, matching, disclosure gates, offers, screening, settlement
   geo/            offline gazetteer, normalisation, geohash
   email/          SES templates, sending, the banned-phrase copy lint

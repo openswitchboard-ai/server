@@ -4,6 +4,7 @@ import { registerMcpRoutes } from './mcp/mcp.js';
 import { registerCounterRoutes } from './counter/routes.js';
 import { registerPublicRoutes } from './publicApi.js';
 import { registerStripeWebhook } from './stripeWebhook.js';
+import { registerOpsMetricsRoutes } from './opsMetrics.js';
 import { SCHEMA_NAMES, SCHEMA_VERSION, validatePayload } from './protocol.js';
 import { settlementsConfigured, type Config } from './config.js';
 
@@ -51,8 +52,9 @@ export function buildApp(cfg: Config): FastifyInstance {
   });
 
   // Host separation (defence-in-depth on top of the route-class guards):
-  // /mcp is never served on the human hostname, and the human page class is
-  // never served on the MCP hostname (enforced inside the counter plugin).
+  // /mcp and the operator page are never served on the human hostname, and the
+  // human page class is never served on the MCP hostname (enforced inside the
+  // counter plugin).
   // The human pages now own the root of their own hostname, so the MCP host's
   // own root is answered here rather than by a route (the human page class
   // registers '/' too, and only one of them can be a route).
@@ -60,7 +62,12 @@ export function buildApp(cfg: Config): FastifyInstance {
   const mcpHost = new URL(cfg.publicOrigin).host.toLowerCase();
   app.addHook('onRequest', async (req, reply) => {
     const host = (req.headers.host ?? '').toLowerCase();
-    if ((req.url.startsWith('/mcp') || req.url.startsWith('/stripe')) && host === counterHost) {
+    if (
+      (req.url.startsWith('/mcp') ||
+        req.url.startsWith('/stripe') ||
+        req.url.startsWith('/ops')) &&
+      host === counterHost
+    ) {
       return reply.code(404).send({ error: 'not_found' });
     }
     if (host === mcpHost && pathOf(req.url) === '/') {
@@ -92,5 +99,9 @@ export function buildApp(cfg: Config): FastifyInstance {
   // Settlement webhook exists ONLY on deployments with Stripe configured;
   // everywhere else the route is absent and answers 404.
   if (settlementsConfigured(cfg)) registerStripeWebhook(app, cfg);
+  // The operator metrics page: registered directly on `app` rather than inside
+  // the human page plugin, because that plugin 403s any Authorization header
+  // and this page's whole auth IS one. Absent without a credential.
+  registerOpsMetricsRoutes(app, cfg);
   return app;
 }
