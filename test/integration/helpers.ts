@@ -775,6 +775,27 @@ export async function mcpRpc(token: string, method: string, params: any): Promis
 export const SCHEMA_VERSION = '0.3.0';
 
 /**
+ * Every key, at any depth, whose NAME matches `re`, reported by path.
+ *
+ * Used to hold the "a decline carries no reason" promise, which is a promise
+ * about the WIRE: no field anywhere in the reply carries a reason's text. It
+ * is deliberately not a search for the WORD. Since 13 September 2026 every
+ * action answers with the sentence to say, and a decline's sentence is "That
+ * figure is turned down, and no reason went with it." — the promise being kept
+ * out loud, in prose meant for a human, not broken. Grepping the raw JSON for
+ * /reason/i would fail on that sentence and pass on a payload that shipped the
+ * reason itself under some other wording, so it tests the wrong thing twice.
+ */
+export function keysMatching(o: unknown, re: RegExp, path = ''): string[] {
+  if (!o || typeof o !== 'object') return [];
+  if (Array.isArray(o)) return o.flatMap((v, i) => keysMatching(v, re, `${path}[${i}]`));
+  return Object.entries(o as Record<string, unknown>).flatMap(([k, v]) => [
+    ...(re.test(k) ? [`${path}.${k}`] : []),
+    ...keysMatching(v, re, `${path}.${k}`),
+  ]);
+}
+
+/**
  * Run-unique geo bucket for the minimal fixtures. Since 0.F the matcher is
  * live on dev: cards in a bucket shared with previous runs' leftovers get
  * auto-matched against them, turning fixture cards into CONTESTED holders
