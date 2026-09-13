@@ -74,6 +74,11 @@ export interface Config {
   /** WORM evidence bucket (Object Lock; 90-day retention) for settlement
    *  evidence snapshots. Required whenever stripeSecretArn is set. */
   evidenceBucket?: string;
+  /** The bucket photos cross in, on an open conversation and nowhere else: no
+   *  Object Lock and no versions, because these delete themselves (see
+   *  domain/channelPhoto.ts). Unset means photos are off in this deployment,
+   *  and the page says so rather than failing. */
+  photoBucket?: string;
   /** Platform fee, percent of the settlement amount. Kept as a parameter and
    *  SET TO 0: the introductory fee is the flat one below. */
   settlementFeePercent: number;
@@ -152,6 +157,7 @@ export function loadConfig(): Config {
     docsBase: 'https://openswitchboard.ai/docs',
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
+    photoBucket: process.env.PHOTO_BUCKET || undefined,
     settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
     settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
     settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),

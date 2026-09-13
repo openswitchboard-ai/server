@@ -631,6 +631,95 @@ document.getElementById('pkapprove').addEventListener('click', async () => {
 </script>` : ''}`);
 }
 
+// ---------------------------------------------------------------------------
+// The photo page.
+//
+// The same one-page shape as every other step, with one difference that earns
+// itself: a person picks a file before they press. The picture goes straight
+// from this phone into the store on a link signed for that one file — it never
+// passes through the service — and the press is what sends it.
+//
+// WHO IT GOES TO IS NOT A QUESTION HERE. The link was bound to one conversation
+// when the assistant fetched it, so the page states the person and the thing
+// and gives nobody a choice to get wrong.
+//
+// What the page tells the truth about, in the person's own words: nobody looks
+// at the picture, the other side gets it once, and it deletes itself.
+// ---------------------------------------------------------------------------
+export interface PhotoView {
+  token: string;
+  /** Who it goes to, once both have shared a first name; "the other side" before. */
+  who: string;
+  /** The thing they are talking about, in the words a person uses for it. */
+  thing: string;
+  /** Megabytes, whole. */
+  maxMb: number;
+  /** Days a photo waits if the other side never looks. */
+  ttlDays: number;
+  captionMax: number;
+  /** What they typed last time, when the press came back with a refusal. */
+  caption?: string;
+}
+
+export function photoPage(v: PhotoView, error?: string): string {
+  const title = `Send a photo to ${v.who}`;
+  return layout(title, `
+<h1>Send ${v.who} a photo of the ${esc(v.thing)}.</h1>
+${errBox(error)}
+<p class="small muted">It goes to ${esc(v.who)} and nobody else. They pick it up once and it is gone
+from here; if they never do, it goes by itself after ${v.ttlDays} days. JPEG, PNG or WebP, up to
+${v.maxMb} MB.</p>
+<p class="small muted">Nobody here looks at your photo. No machine reads it either, so what is in
+the picture is your call: the terms cover the rest, and a face, a number plate or an address in
+shot is a thing you have chosen to show this one person.</p>
+<div id="perr"></div>
+<label for="photo">Your photo</label>
+<input type="file" id="photo" accept="image/jpeg,image/png,image/webp">
+<form method="POST" action="/a/${encodeURIComponent(v.token)}" id="photoForm">
+  <input type="hidden" name="photo_id" id="photo_id" value="">
+  <label for="caption">A line beside it (optional)</label>
+  <input id="caption" name="caption" type="text" maxlength="${v.captionMax}"
+         value="${esc(v.caption ?? '')}" placeholder="the scratch on the down tube">
+  <p class="field-help">Words only. A price goes to your assistant, where your own limits are
+  checked before any number leaves.</p>
+  <div class="actions">
+  <button type="submit" name="decision" value="yes" class="approve" id="sendBtn" disabled>Send the photo</button>
+  <button type="submit" name="decision" value="no" class="secondary" formnovalidate>Not now</button>
+  </div>
+</form>
+<p class="small muted">This link works once. Not now changes nothing.</p>
+<script>
+const pf = document.getElementById('photo');
+const sendBtn = document.getElementById('sendBtn');
+const perr = document.getElementById('perr');
+pf.addEventListener('change', async () => {
+  const file = pf.files[0];
+  if (!file) return;
+  sendBtn.disabled = true;
+  perr.innerHTML = '';
+  try {
+    const bytes = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const sha = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    const r = await fetch('/a/${encodeURIComponent(v.token)}/photo', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size, sha256_b64: sha }),
+    });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).error) || ('HTTP ' + r.status));
+    const { url, photo_id } = await r.json();
+    const put = await fetch(url, { method: 'PUT', body: bytes,
+      headers: { 'content-type': file.type, 'x-amz-checksum-sha256': sha } });
+    if (!put.ok) throw new Error('the upload did not finish (HTTP ' + put.status + ')');
+    document.getElementById('photo_id').value = photo_id;
+    sendBtn.disabled = false;
+  } catch (e) {
+    perr.innerHTML = '<div class="err">' + String(e.message || e).replace(/[<>&]/g, '') + '</div>';
+  }
+});
+</script>`);
+}
+
 export interface ApprovalView {
   action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
   refId: string;

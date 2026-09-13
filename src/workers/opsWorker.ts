@@ -4,6 +4,7 @@ import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
 import { sweepExpiredChannelMessages } from '../domain/channel.js';
+import { sweepConversationPhotos } from '../domain/channelPhoto.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
 import { backfillCardGeo } from '../geo/backfill.js';
 import { requeueSnapped, snapCardCategories } from '../domain/categoryBackfill.js';
@@ -90,6 +91,16 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 const swept = await sweepExpiredChannelMessages();
                 if (swept.messages > 0 || swept.rate_windows > 0) {
                   log('ttl-expiry: channel sweep', swept);
+                }
+                // And the photos, on the same tick: the bytes of one that was
+                // collected go once the link handed over has run out, and the
+                // bytes of one nobody ever came for go at its expiry. Counts
+                // only — the sweep never looks at what it deletes.
+                try {
+                  const pics = await sweepConversationPhotos(cfg);
+                  if (pics.photos > 0) log('ttl-expiry: photo sweep', pics);
+                } catch (e: any) {
+                  log('ttl-expiry: photo sweep failed', { error: e?.message });
                 }
                 // The fit sequencer's two clocks ride the same tick, so they
                 // need no schedule of their own: a live slot that has shown no

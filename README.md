@@ -93,6 +93,23 @@ These are the invariants worth reading the code to check:
   written out, unless one of them plainly owns it. What does resolve comes
   back as `location_resolved` on the publish, and shows on the owner's ledger,
   so anything in the wrong city is visible to the person in the right one.
+- A photo crosses inside an open conversation and nowhere else. What a person
+  posts stays thin and carries no image, because a posting is public-ish and an
+  image carries a face, a number plate, a house; inside a conversation both
+  humans have already pressed to be there. Only a human can send one, from their
+  own page, on a single-use link bound to that one conversation when it was
+  minted — there is no route on the agent surface that takes bytes. The bytes go
+  browser → bucket on a presigned PUT and bucket → collecting agent on a
+  presigned GET, so no image ever passes through the service. JPEG, PNG or WebP,
+  10 MB, no video, enforced on the presign and again on the way out.
+  **There is NO automated image screening, of any kind.** Nothing and nobody
+  looks at the picture: the terms forbid what you would expect, the two humans
+  are the only people who can see it, and the object is deleted when the other
+  side collects it (once the short link handed over has run out) or at 14 days
+  if nobody ever does. A caption and the uploaded filename ARE read, by the same
+  `carriesMoneyFigure` rule a message is held to — a figure never travels in the
+  words. A figure written inside the image is not detectable and no claim is
+  made that it is.
 - Publish is blocked until screening passes, with no bypass. If Bedrock is
   unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.

@@ -75,6 +75,14 @@ import {
   presignEvidenceUpload,
   writeEvidenceManifest,
 } from '../domain/evidence.js';
+import {
+  MAX_CAPTION_CHARS,
+  MAX_PHOTO_BYTES,
+  PHOTO_TTL_DAYS,
+  checkCaption,
+  markPhotoSent,
+  presignPhotoUpload,
+} from '../domain/channelPhoto.js';
 import { settlementsConfigured } from '../config.js';
 import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
@@ -1069,6 +1077,77 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       };
     };
 
+    // ------------------------------------------------------------------
+    // The photo page. Same link machinery, its own page, because a person
+    // picks a file before they press — and the link is bound to ONE
+    // conversation, so there is nothing on the page to choose.
+    // ------------------------------------------------------------------
+    const photoView = async (
+      accountId: string,
+      row: ApprovalLinkRow,
+      token: string,
+      caption?: string,
+    ): Promise<pages.PhotoView | { error: string }> => {
+      const m = await getMatch(row.ref_id);
+      if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+      try {
+        sideOf(m, accountId);
+      } catch {
+        return { error: 'This introduction is not yours.' };
+      }
+      if (m.stage < 4 || !m.channel_id) {
+        return { error: 'There is no open conversation on this one yet.' };
+      }
+      const other = m.account_want === accountId ? m.account_have : m.account_want;
+      const name = await ops.disclosedFirstName(
+        accountId,
+        other,
+        { match_id: row.ref_id },
+        'photo-page',
+      );
+      return {
+        token,
+        who: name ?? 'the other side',
+        thing: phrase(m.category),
+        maxMb: Math.round(MAX_PHOTO_BYTES / (1024 * 1024)),
+        ttlDays: PHOTO_TTL_DAYS,
+        captionMax: MAX_CAPTION_CHARS,
+        ...(caption ? { caption } : {}),
+      };
+    };
+
+    /** The presign, from the photo page's own script. The link is the
+     *  authority for WHICH conversation; the session is the authority for who
+     *  is asking. Neither the bytes nor the image ever reach this process. */
+    counter.post('/a/:token/photo', async (req, reply) => {
+      const token = String((req.params as any).token ?? '');
+      const check = await verifyLinkToken(token);
+      if (!check.ok || check.row?.action !== 'conversation-photo') {
+        return reply.code(404).send({ error: 'that page is no longer live' });
+      }
+      const row = check.row as ApprovalLinkRow;
+      const s = await sess.loadSession(req);
+      if (!s?.accountId || s.accountId !== row.account_id) {
+        return reply.code(401).send({ error: 'sign in and open the link again' });
+      }
+      const b: any = req.body ?? {};
+      try {
+        const presigned = await presignPhotoUpload(cfg, s.accountId, row.ref_id, {
+          filename: String(b.filename ?? ''),
+          content_type: String(b.content_type ?? ''),
+          size: Number(b.size),
+          sha256_b64: String(b.sha256_b64 ?? ''),
+        });
+        return reply.send({ url: presigned.url, photo_id: presigned.photo_id });
+      } catch (e: any) {
+        if (e instanceof OsbError) {
+          return reply.code(400).send({ error: String(e.payload?.human_action ?? 'refused') });
+        }
+        if (e?.validation || e?.notFound) return reply.code(400).send({ error: String(e.message) });
+        throw e;
+      }
+    });
+
     counter.get('/a/:token', async (req, reply) => {
       const token = String((req.params as any).token ?? '');
       const check = await verifyLinkToken(token);
@@ -1092,6 +1171,15 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           ),
           401,
         );
+      }
+      if (row.action === 'conversation-photo') {
+        // NOT consumed on the view: the link has to survive the person going
+        // to their camera roll and back.
+        const v = await photoView(s.accountId, row, token);
+        if ('error' in v) {
+          return html(reply, pages.donePage('Nothing to send', `<p>${pages.esc(v.error)}</p>`));
+        }
+        return html(reply, pages.photoPage(v));
       }
       if (links.isOneQuestionAction(row.action)) {
         const q = await oneQuestionView(s.accountId, row, token);
@@ -1118,7 +1206,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(reply, pages.linkDeadPage('invalid'), 404);
       }
       const row = check.row as ApprovalLinkRow;
-      if (!links.isOneQuestionAction(row.action)) return reply.code(400).send({ error: 'bad_request' });
+      if (!links.isOneQuestionAction(row.action) && row.action !== 'conversation-photo') {
+        return reply.code(400).send({ error: 'bad_request' });
+      }
       const s = await sess.loadSession(req);
       if (!s?.accountId || s.accountId !== row.account_id) {
         return html(
@@ -1130,6 +1220,72 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             'Sign in',
           ),
           401,
+        );
+      }
+      // The photo press. Ordered like every other press on this page: the
+      // caption is checked BEFORE the link is burnt, so a figure typed beside
+      // the picture costs a rewrite rather than the link their assistant gave
+      // them, and the photo they already uploaded is still there to send.
+      if (row.action === 'conversation-photo') {
+        const pb: any = req.body ?? {};
+        const said = String(pb.decision ?? '');
+        if (said === 'no') {
+          await consumeLink(row.id);
+          await links.recordLinkDecision(row.id, 'declined');
+          return html(
+            reply,
+            pages.donePage('Not now', '<p>Nothing was sent, and the other side hears nothing about it.</p>'),
+          );
+        }
+        if (said !== 'yes') return reply.code(400).send({ error: 'bad_request' });
+        const v = await photoView(s.accountId, row, token, String(pb.caption ?? ''));
+        if ('error' in v) {
+          await consumeLink(row.id);
+          return html(reply, pages.donePage('Nothing to send', `<p>${pages.esc(v.error)}</p>`));
+        }
+        let caption: string | undefined;
+        try {
+          caption = checkCaption(pb.caption);
+        } catch (e: any) {
+          const why =
+            e instanceof OsbError
+              ? String(e.payload?.human_action ?? '')
+              : String(e?.message ?? 'that line will not go');
+          return html(
+            reply,
+            pages.photoPage(
+              v,
+              e instanceof OsbError
+                ? 'A price goes to your assistant, where your own limits are read first. Take the number out of that line and send the photo.'
+                : why,
+            ),
+            400,
+          );
+        }
+        const photoId = String(pb.photo_id ?? '');
+        if (!photoId) {
+          return html(reply, pages.photoPage(v, 'Pick a photo first.'), 400);
+        }
+        if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
+        try {
+          await markPhotoSent(cfg, s.accountId, row.ref_id, photoId, caption);
+        } catch (e: any) {
+          return html(
+            reply,
+            pages.donePage(
+              'It did not go',
+              `<p>${pages.esc(String(e?.message ?? 'that photo did not go'))} Ask your assistant for a fresh page.</p>`,
+            ),
+            400,
+          );
+        }
+        await links.recordLinkDecision(row.id, 'approved');
+        return html(
+          reply,
+          pages.donePage(
+            'Sent',
+            `<p>${pages.esc(v.who)} picks it up through their own assistant. It is held here until they do and gone the moment they have it.</p>`,
+          ),
         );
       }
       const b: any = req.body ?? {};
