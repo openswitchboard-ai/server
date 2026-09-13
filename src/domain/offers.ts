@@ -808,6 +808,27 @@ export function offerTableNote(
   return `The other side has offered ${said(l)}${about}${l.message ? ` — "${l.message}"` : ''}. It is your human's to weigh up; say the word and I will answer, and nothing is agreed until they say so.`;
 }
 
+/**
+ * The sentence that goes back with an offer action, so the agent says what
+ * just happened rather than reading a state word off the wire. The same rule
+ * the table note follows: plain words, no machinery named, and nothing agreed
+ * until a human says so on their own page.
+ */
+export function offerActionSentence(
+  action: 'propose_offer' | 'send_to_human' | 'decline_offer' | 'withdraw_offer',
+): string {
+  switch (action) {
+    case 'propose_offer':
+      return 'Your figure is on the table. They will see it when they next hear from their assistant, and I will bring their answer straight to you.';
+    case 'send_to_human':
+      return 'I have put that figure in front of you. Nothing is agreed until you say yes on your own page, and I can hand you the link whenever you are ready.';
+    case 'decline_offer':
+      return 'That figure is turned down, and no reason went with it. They can always come back with another.';
+    case 'withdraw_offer':
+      return 'That figure is off the table. You can put up another whenever you like.';
+  }
+}
+
 export async function listOffers(accountId: string, matchId: string) {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });

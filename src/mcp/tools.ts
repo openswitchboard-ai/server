@@ -282,7 +282,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Every action answers with the sentence to say beside the word for what happened, so lead with that sentence rather than narrating from the word. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -859,7 +859,14 @@ export async function dispatchTool(
             const m = await matches.expressInterest(cfg, intro_id, accountId);
             // The action word, not a stage number: details_unlocked when this
             // made the interest mutual, awaiting_other_side while it has not.
-            return ok({ intro_id, next: matches.nextAction(m, accountId) });
+            // The sentence beside it is what the agent says out loud — without
+            // one, a live run had an assistant tell its human the other side
+            // still had to decide when they already had (domain/matches.ts).
+            return ok({
+              intro_id,
+              next: matches.nextAction(m, accountId),
+              note: matches.sbNote(matches.expressInterestSentence(m, accountId)),
+            });
           }
           // Sharing a first name and an area is the human's press, every time
           // (Lachlan, 2026-09-12). opt_in records nothing at all now: it fetches
@@ -869,17 +876,29 @@ export async function dispatchTool(
             return await matches.refuseAgentOptIn(cfg, intro_id, accountId);
           case 'decline': {
             await matches.declineMatch(intro_id, accountId, cfg);
-            return ok({ intro_id, state: 'declined' });
+            return ok({
+              intro_id,
+              state: 'declined',
+              note: matches.sbNote(matches.DECLINE_SENTENCE),
+            });
           }
           case 'propose_offer': {
             if (!offer) return invalidInput('propose_offer requires the offer object');
-            return ok(await offers.proposeOffer(cfg, accountId, { match_id: intro_id, ...offer }));
+            const placed = await offers.proposeOffer(cfg, accountId, {
+              match_id: intro_id,
+              ...offer,
+            });
+            return ok({
+              ...placed,
+              note: matches.sbNote(offers.offerActionSentence('propose_offer')),
+            });
           }
           case 'send_to_human':
           case 'decline_offer':
           case 'withdraw_offer': {
             if (!offer_id) return invalidInput(`${action} requires offer_id`);
-            return ok(await offers.agentOfferAction(cfg, accountId, offer_id, action));
+            const done = await offers.agentOfferAction(cfg, accountId, offer_id, action);
+            return ok({ ...done, note: matches.sbNote(offers.offerActionSentence(action)) });
           }
           case 'list_offers':
             return ok({ offers: await offers.listOffers(accountId, intro_id) });
@@ -889,7 +908,8 @@ export async function dispatchTool(
             // mapped here and nothing is logged about the mapping.
             const said = matches.readVerdict(verdict);
             if (!said) return invalidInput("verdict must be 'good', 'fine' or 'bad'");
-            return ok(await matches.recordVerdict(intro_id, accountId, said, 'agent'));
+            const recorded = await matches.recordVerdict(intro_id, accountId, said, 'agent');
+            return ok({ ...recorded, note: matches.sbNote(matches.verdictSentence(said)) });
           }
           // The short window on a contested want or have is gone (migration
           // 030). A client holding an older tool schema may still reach for
@@ -904,7 +924,12 @@ export async function dispatchTool(
             );
           case 'archive': {
             const r = await matches.archiveMatch(intro_id, accountId, 'agent-attested', cfg);
-            return ok({ intro_id, state: r.state, already_archived: r.already });
+            return ok({
+              intro_id,
+              state: r.state,
+              already_archived: r.already,
+              note: matches.sbNote(matches.ARCHIVE_SENTENCE),
+            });
           }
           // ---------------------------------------------------------------
           // The link actions. Each one MINTS and RETURNS; none of them acts.
