@@ -659,6 +659,10 @@ export interface PhotoView {
   captionMax: number;
   /** What they typed last time, when the press came back with a refusal. */
   caption?: string;
+  /** The photo already uploaded, carried back through a refused press so that
+   *  a price typed in the line beside it costs a rewrite rather than a second
+   *  trip to the camera roll. */
+  photoId?: string;
 }
 
 export function photoPage(v: PhotoView, error?: string): string {
@@ -676,14 +680,14 @@ shot is a thing you have chosen to show this one person.</p>
 <label for="photo">Your photo</label>
 <input type="file" id="photo" accept="image/jpeg,image/png,image/webp">
 <form method="POST" action="/a/${encodeURIComponent(v.token)}" id="photoForm">
-  <input type="hidden" name="photo_id" id="photo_id" value="">
+  <input type="hidden" name="photo_id" id="photo_id" value="${esc(v.photoId ?? '')}">
   <label for="caption">A line beside it (optional)</label>
   <input id="caption" name="caption" type="text" maxlength="${v.captionMax}"
          value="${esc(v.caption ?? '')}" placeholder="the scratch on the down tube">
   <p class="field-help">Words only. A price goes to your assistant, where your own limits are
   checked before any number leaves.</p>
   <div class="actions">
-  <button type="submit" name="decision" value="yes" class="approve" id="sendBtn" disabled>Send the photo</button>
+  <button type="submit" name="decision" value="yes" class="approve" id="sendBtn"${v.photoId ? '' : ' disabled'}>Send the photo</button>
   <button type="submit" name="decision" value="no" class="secondary" formnovalidate>Not now</button>
   </div>
 </form>

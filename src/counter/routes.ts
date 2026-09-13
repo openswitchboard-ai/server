@@ -1086,7 +1086,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       accountId: string,
       row: ApprovalLinkRow,
       token: string,
-      caption?: string,
+      typed?: { caption?: string; photoId?: string },
     ): Promise<pages.PhotoView | { error: string }> => {
       const m = await getMatch(row.ref_id);
       if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
@@ -1112,7 +1112,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         maxMb: Math.round(MAX_PHOTO_BYTES / (1024 * 1024)),
         ttlDays: PHOTO_TTL_DAYS,
         captionMax: MAX_CAPTION_CHARS,
-        ...(caption ? { caption } : {}),
+        ...(typed?.caption ? { caption: typed.caption } : {}),
+        ...(typed?.photoId ? { photoId: typed.photoId } : {}),
       };
     };
 
@@ -1238,7 +1239,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           );
         }
         if (said !== 'yes') return reply.code(400).send({ error: 'bad_request' });
-        const v = await photoView(s.accountId, row, token, String(pb.caption ?? ''));
+        const v = await photoView(s.accountId, row, token, {
+          caption: String(pb.caption ?? ''),
+          photoId: String(pb.photo_id ?? ''),
+        });
         if ('error' in v) {
           await consumeLink(row.id);
           return html(reply, pages.donePage('Nothing to send', `<p>${pages.esc(v.error)}</p>`));
