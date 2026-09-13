@@ -16,6 +16,7 @@ import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
 import { checkReadRate } from '../domain/quotas.js';
+import { APPROVAL_LINK_TTL_MINUTES } from '../counter/links.js';
 import { settlementsConfigured, type Config } from '../config.js';
 import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
 
@@ -282,7 +283,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Every action answers with the sentence to say beside the word for what happened, so lead with that sentence rather than narrating from the word. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have ALREADY pressed it, opt_in says so instead of handing back a second link: `awaiting_their_go_ahead`, with the sentence to read them. Never ask a human to press again for something already recorded. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, expires_in_minutes, what_it_does }.',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Every action answers with the sentence to say beside the word for what happened, so lead with that sentence rather than narrating from the word. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have ALREADY pressed it, opt_in says so instead of handing back a second link: `awaiting_their_go_ahead`, with the sentence to read them. Never ask a human to press again for something already recorded. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, press_id, expires_in_minutes, what_it_does }, and so does every refusal that carries a link: hand the link over, say what the page asks, and then call wait_for_press with that press_id and hold the line until they press, rather than asking your human to come back and report that they have done it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -509,6 +510,23 @@ export const TOOLS: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'wait_for_press',
+    description:
+      `Hold the line until your human presses the one-question page you just handed them. Pass the \`press_id\` that came back beside the link. The switchboard answers the moment they press — approved or declined, each with the sentence to say to them — so hand the link over, say what the page asks, and then wait here rather than asking them to come back and tell you they have done it. One wait holds for up to ${Math.round(humanLinks.PRESS_WAIT_CAP_MS / 1000)} seconds; if it comes back with nothing pressed yet, CALL IT AGAIN to keep waiting, because the page is good for ${APPROVAL_LINK_TTL_MINUTES} minutes from the moment you fetched it. Waiting costs you nothing against your hourly reading, so waiting again is always cheaper than guessing. If the page runs out first the answer says so, and you can fetch a fresh link and hand that over instead.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        press_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'The press to wait on, as it came back with the link you handed over.',
+        },
+      },
+      required: ['press_id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 for (const t of TOOLS) t.inputSchema = grammarFriendly(t.inputSchema);
@@ -548,7 +566,17 @@ function invalidInput(message: string, humanAction?: string): ToolResult {
   };
 }
 
-/** The read surface: cheap to call, easy to loop, so it shares one ceiling. */
+/**
+ * The read surface: cheap to call, easy to loop, so it shares one ceiling.
+ *
+ * wait_for_press is deliberately NOT one of them, and costs nothing at all. A
+ * wait is not a sweep: it tells an agent one thing about one link its own human
+ * was just handed, it ends by itself inside a minute, and the only way to learn
+ * anything from it is to have minted the link first. Charging it would make an
+ * agent that waits properly run out of reads before one that pesters its human,
+ * which is backwards. The hourly ceiling still stands over check_in, so an
+ * agent that waits and then sweeps is charged for the sweep as it always was.
+ */
 const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents']);
 
 /**
@@ -962,6 +990,14 @@ export async function dispatchTool(
           default:
             return invalidInput(`unknown action '${action}'`);
         }
+      }
+      case 'wait_for_press': {
+        // Costs nothing against the hourly ceiling: see the note on READ_TOOLS.
+        const pressId = args?.press_id;
+        if (!pressId || typeof pressId !== 'string') {
+          return invalidInput('wait_for_press requires the press_id that came back with the link');
+        }
+        return ok(await humanLinks.waitForPress(accountId, pressId));
       }
       default:
         return invalidInput(`unknown tool '${name}'`);

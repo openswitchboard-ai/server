@@ -361,9 +361,17 @@ export const NO_MANDATE_ACTION =
  * one the refusal falls back to the introduction's own page, where the box
  * opens on the parked draft.
  */
-export function relayRefusal(cfg: Config, matchId: string, sendLink?: string): OsbError {
+export function relayRefusal(
+  cfg: Config,
+  matchId: string,
+  sendLink?: string,
+  pressId?: string,
+): OsbError {
   return new OsbError('CONSENT_REQUIRED', {
     human_action: withLink(RELAY_ACTION, sendLink ?? matchPageUrl(cfg, matchId)),
+    // Only the minted one-question page has a press to wait on; the fallback
+    // page is the human's own and burns no link.
+    ...(sendLink && pressId ? { press_id: pressId } : {}),
   });
 }
 

@@ -197,19 +197,20 @@ async function assertAgentMayPropose(
     // cannot be minted costs the courtesy and nothing else — the refusal still
     // stands, pointing at the page where they can type the figure themselves.
     let link: string | undefined;
+    let pressId: string | undefined;
     try {
       const { sendNumberLink } = await import('./humanLinks.js');
-      link = (
-        await sendNumberLink(cfg, accountId, matchId, {
-          amount: input.amount,
-          ccy: input.ccy,
-          ...(input.message ? { message: input.message } : {}),
-        })
-      ).link;
+      const minted = await sendNumberLink(cfg, accountId, matchId, {
+        amount: input.amount,
+        ccy: input.ccy,
+        ...(input.message ? { message: input.message } : {}),
+      });
+      link = minted.link;
+      pressId = minted.press_id;
     } catch {
       link = undefined;
     }
-    throw relayRefusal(cfg, matchId, link);
+    throw relayRefusal(cfg, matchId, link, pressId);
   }
   const neg = await readNegotiation(accountId, cardId, {
     purpose: 'mandate-offer-check',

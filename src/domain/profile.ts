@@ -183,7 +183,7 @@ export async function stage3LinkFor(
   accountId: string,
   matchId: string,
   counterpartyAccount: string,
-): Promise<string | undefined> {
+): Promise<{ link: string; press_id: string } | undefined> {
   try {
     const { createApprovalLink, signLink } = await import('../counter/links.js');
     const existing = await getPool().query(
@@ -193,17 +193,18 @@ export async function stage3LinkFor(
        ORDER BY created_at DESC LIMIT 1`,
       [accountId, matchId],
     );
-    const token = existing.rows[0]
-      ? signLink(existing.rows[0])
-      : (
-          await createApprovalLink({
-            accountId,
-            action: 'stage3-disclosure',
-            refId: matchId,
-            counterpartyAccount,
-          })
-        ).token;
-    return `${cfg.counterOrigin}/a/${encodeURIComponent(token)}`;
+    const minted = existing.rows[0]
+      ? { token: signLink(existing.rows[0]), id: existing.rows[0].id as string }
+      : await createApprovalLink({
+          accountId,
+          action: 'stage3-disclosure',
+          refId: matchId,
+          counterpartyAccount,
+        });
+    return {
+      link: `${cfg.counterOrigin}/a/${encodeURIComponent(minted.token)}`,
+      press_id: minted.id,
+    };
   } catch (err) {
     // A link is the courtesy, the refusal is the rule: if the link cannot be
     // minted the account is still refused, with the plain instruction.
@@ -241,10 +242,17 @@ async function consentErrorWithLink(
   sentence: string,
   opts: { accountId: string; matchId: string; counterpartyAccount: string },
 ): Promise<OsbError> {
-  const url = await stage3LinkFor(cfg, opts.accountId, opts.matchId, opts.counterpartyAccount);
-  const withLink = url ? `${sentence}: ${url}` : sentence;
+  const minted = await stage3LinkFor(
+    cfg,
+    opts.accountId,
+    opts.matchId,
+    opts.counterpartyAccount,
+  );
+  const withLink = minted ? `${sentence}: ${minted.link}` : sentence;
   return new OsbError('CONSENT_REQUIRED', {
     human_action: withLink.length <= 300 ? withLink : sentence,
+    // The refusal hands over a link, so it hands over the press to wait on too.
+    ...(minted ? { press_id: minted.press_id } : {}),
   });
 }
 
