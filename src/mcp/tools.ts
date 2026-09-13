@@ -901,10 +901,19 @@ export async function dispatchTool(
             const waiting = pending.get(m.conversation.conversation_id) ?? 0;
             m.conversation.messages_waiting = waiting;
             if (waiting > 0) {
-              m.conversation.note = {
-                text: `${waiting === 1 ? 'A message is' : `${waiting} messages are`} waiting from the person you have been talking to. Collect ${waiting === 1 ? 'it' : 'them'} and pass ${waiting === 1 ? 'it' : 'them'} straight on — the switchboard only holds a message until you have picked it up.`,
-                provenance: 'switchboard-system',
-              };
+              const sentence = channel.waitingWordsSentence(waiting);
+              m.conversation.note = { text: sentence, provenance: 'switchboard-system' };
+              // AND IT LEADS. checkMatches fixes the order of the lead sentence
+              // — something taken down, then a figure on the table, then the
+              // plain state — and words that have arrived and not been passed
+              // on were in none of those places: they sat one field deep, under
+              // a lead sentence that read as the whole answer. Run 8b34 is what
+              // that costs. Unread words are the newest thing that needs this
+              // human, so they go in front of every one of those sentences, and
+              // the state sentence keeps its place behind them rather than
+              // being dropped.
+              const behind = typeof m.note?.text === 'string' ? ` ${m.note.text}` : '';
+              m.note = { text: `${sentence}${behind}`, provenance: 'switchboard-system' };
             }
           }
           // A live protected payment rides the sweep too, with the sentence

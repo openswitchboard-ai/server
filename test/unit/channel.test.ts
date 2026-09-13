@@ -938,6 +938,100 @@ describe('check_in says when something is waiting', () => {
     // collect, because only collect_messages hands them over.
     expect(world.messages).toHaveLength(2);
   });
+
+  it('leads the entry with the words, ahead of the sentence for the state', async () => {
+    // RUN 8b34 (13 September 2026). Sixteen attacks came down the live relay
+    // and she answered every one of them with where the introductions had got
+    // to and nothing of what had arrived — three times over, "nothing new",
+    // with three messages waiting. The count and the sentence were both on the
+    // sweep already; they were one field deep inside `conversation`, under a
+    // lead sentence that read as the whole answer. So the words lead now, and
+    // the state sentence follows them instead of standing in their place.
+    await channel.sendMessage(ANA, MATCH, 'only one');
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (sql: string, params: any[] = []) => {
+        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 };
+        if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
+        if (/count\(DISTINCT account_id\)/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };
+        if (/max\(recorded_at\)/.test(sql)) {
+          return { rows: [{ at: '2026-09-01T00:00:00.000Z' }], rowCount: 1 };
+        }
+        if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
+          return {
+            rows: [
+              {
+                id: params[0],
+                data_key_enc: Buffer.from('wrapped'),
+                first_name_enc: Buffer.from(params[0] === ANA ? 'enc:Ana' : 'enc:Beppe'),
+                locality_enc: Buffer.from('enc:Newtown'),
+                status: 'active',
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (/SELECT arrangement FROM accounts/.test(sql)) {
+          return { rows: [{ arrangement: null }], rowCount: 1 };
+        }
+        return run(sql, params);
+      },
+      connect: async () => client,
+    } as any);
+    const r = await dispatchTool(cfg, BEPPE, 'check_in', {});
+    const entry = (r.structuredContent as any).introductions[0];
+    expect(entry.conversation.messages_waiting).toBe(1);
+    // The lead sentence — the one the manual tells an agent to lead with —
+    // starts with the message, in the singular, and says to pass it on.
+    expect(entry.note.provenance).toBe('switchboard-system');
+    expect(entry.note.text.startsWith('A message is waiting from the person you have been talking to.')).toBe(true);
+    expect(entry.note.text).toMatch(/pass it straight on/);
+    // And nothing that was there before is dropped: the state still gets said,
+    // behind the words rather than instead of them.
+    expect(entry.note.text).toMatch(/message each other through me/);
+    // One wording in the codebase, in both places it is said.
+    expect(entry.conversation.note.text).toBe(channel.waitingWordsSentence(1));
+    expect(entry.note.text.startsWith(channel.waitingWordsSentence(1))).toBe(true);
+    expect(world.messages).toHaveLength(1);
+  });
+
+  it('reads as nothing waiting only when nothing is', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (sql: string, params: any[] = []) => {
+        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 };
+        if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
+        if (/count\(DISTINCT account_id\)/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };
+        if (/max\(recorded_at\)/.test(sql)) {
+          return { rows: [{ at: '2026-09-01T00:00:00.000Z' }], rowCount: 1 };
+        }
+        if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
+          return {
+            rows: [
+              {
+                id: params[0],
+                data_key_enc: Buffer.from('wrapped'),
+                first_name_enc: Buffer.from(params[0] === ANA ? 'enc:Ana' : 'enc:Beppe'),
+                locality_enc: Buffer.from('enc:Newtown'),
+                status: 'active',
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (/SELECT arrangement FROM accounts/.test(sql)) {
+          return { rows: [{ arrangement: null }], rowCount: 1 };
+        }
+        return run(sql, params);
+      },
+      connect: async () => client,
+    } as any);
+    const r = await dispatchTool(cfg, BEPPE, 'check_in', {});
+    const entry = (r.structuredContent as any).introductions[0];
+    expect(entry.conversation.messages_waiting).toBe(0);
+    expect(entry.conversation.note).toBeUndefined();
+    expect(entry.note.text).not.toMatch(/waiting from the person/);
+  });
 });
 
 // ---------------------------------------------------------------------------

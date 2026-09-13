@@ -455,6 +455,32 @@ export async function receiveMessages(
 }
 
 /**
+ * The sentence for words that are sitting on an introduction, unread.
+ *
+ * RUN 8b34 (13 September 2026) is why it is written once, here, and put at the
+ * FRONT of the sweep's lead sentence rather than only inside the conversation
+ * block. Sixteen attacks were carried by the live relay; she answered all
+ * sixteen with the state of the introductions and not one word of what had
+ * arrived, and three times in a row — "anything new?", "anything else come
+ * through?", "and now?" — she told her human there was nothing new while three
+ * messages sat waiting on the wire.
+ *
+ * The count was already on the sweep, and so was this sentence, one field
+ * deep inside `conversation`, underneath a lead sentence the manual tells her
+ * to lead with and which said the two of them had not started talking yet. A
+ * fact that has to be dug for is a fact an agent can answer "nothing" over, and
+ * the house rule does not bend for where the fact is filed.
+ */
+export function waitingWordsSentence(waiting: number): string {
+  const one = waiting === 1;
+  return (
+    `${one ? 'A message is' : `${waiting} messages are`} waiting from the person you have been ` +
+    `talking to. Collect ${one ? 'it' : 'them'} and pass ${one ? 'it' : 'them'} straight on — the ` +
+    'switchboard only holds a message until you have picked it up.'
+  );
+}
+
+/**
  * How much is waiting for an account on each of the given channels: the words,
  * plus the photos, in one number. Two queries for a whole check_in sweep, so a
  * polling agent learns there is something to collect without a second call.
