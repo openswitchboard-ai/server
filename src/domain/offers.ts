@@ -11,6 +11,7 @@ import {
   readNegotiationMode,
   relayRefusal,
 } from './negotiation.js';
+import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
@@ -98,6 +99,15 @@ export async function proposeOffer(
   // window, all refused to the side that tried rather than silently dropped.
   await assertBestOfferRules(m, accountId, input);
   if (author === 'agent') {
+    // The offer's own amount has been checked against what the human wrote.
+    // A SECOND figure in the note beside it has been checked by nothing, and
+    // it reaches the other side's human word for word — which is the leak the
+    // relay rule closes, arriving by another door (domain/moneyInWords.ts).
+    // Refused before the mode gate, so a figure in a note is never parked as a
+    // draft and never minted into a page for the human to press.
+    if (input.message && carriesMoneyFigure(input.message)) {
+      throw new OsbError('CONSENT_REQUIRED', { human_action: FIGURE_IN_OFFER_NOTE_ACTION });
+    }
     await assertAgentMayPropose(cfg, accountId, m.id, ownCardId(m, accountId), input);
   }
   await checkOfferRate(accountId, cfg.quotas);
