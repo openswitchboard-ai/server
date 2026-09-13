@@ -402,7 +402,9 @@ describe('hand it over, then wait', () => {
     const { MANUAL, MANUAL_CHANGELOG, SERVER_INSTRUCTIONS } = await import(
       '../../src/mcp/instructions.js'
     );
-    expect(MANUAL.version).toBe(34);
+    // Version 34 is where this note shipped; later versions are welcome to
+    // stack on top of it, so the floor is what this asserts.
+    expect(MANUAL.version).toBeGreaterThanOrEqual(34);
     const entry = MANUAL_CHANGELOG.find((c) => c.version === 34)!;
     expect(entry).toBeDefined();
     expect(entry.note).toMatch(/wait_for_press/);
