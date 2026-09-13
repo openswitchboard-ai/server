@@ -265,6 +265,58 @@ function agentFacingListing(): any {
   // field actually holds.
   doc.title = 'A want or a have';
   doc.description = 'The want or have to post.';
+  // The schema package documents these fields for an implementer reading the
+  // protocol on its own. Here they are read inside publish_intent, whose own
+  // description is four lines further up the same payload and already carries
+  // the taxonomy shape, the place-and-reach distinction with its worked
+  // example, how a price band is private, how `slots` works and how the two
+  // kinds of sale work — sentence for sentence in several places. What is kept
+  // below is what the prose beside it does NOT say: what each field is, and
+  // the structural guarantees that live nowhere else (at least one of place
+  // and `bucket`; the forbidden attribute keys; nothing about the line ever
+  // crossing to a counterparty). What is cut is the second telling.
+  //
+  // Types, patterns, bounds, enums and defaults are untouched — a strict
+  // client's constrained decoder reads those, and the server validates every
+  // posting against the protocol's own document regardless.
+  const say = (path: string[], text: string) => {
+    let node = doc;
+    for (const k of path) node = node.properties[k];
+    node.description = text;
+  };
+  say(
+    ['schema_version'],
+    'Semver of the schema package this was written against.',
+  );
+  say(
+    ['category'],
+    "Dotted taxonomy path, e.g. 'goods.bicycle.mountain', 'services.repairs.bicycle' or 'social.language-exchange'.",
+  );
+  say(
+    ['geo'],
+    "Where it is, and how far your human will meet someone, as publish_intent describes. Give 'place' — the name of a suburb, city or region — or 'bucket' if you already hold one; every want and have carries at least one of the two. Exact coordinates and street addresses are structurally impossible here.",
+  );
+  say(
+    ['geo', 'reach'],
+    "How far your human will meet the other side, which is a different question from where they are: 'radius' (within radius_km of the place), 'country', or 'anywhere' for something done online.",
+  );
+  say(
+    ['price'],
+    'MATCHING INPUT ONLY. On a want: the budget ceiling. On a have: the reserve floor. Never disclosed to a counterparty at any point.',
+  );
+  say(
+    ['attributes'],
+    'Per-category typed key/values, keys in lower_snake_case. Identity keys and sensitive personal keys (health, sexuality, beliefs, ethnicity, etc.) are FORBIDDEN at the schema level: those facts live client-side only and never enter a want or a have.',
+  );
+  say(['visibility'], 'The one mode v1 has: anonymous until an introduction is made.');
+  say(
+    ['slots'],
+    'How many people this can take at once; publish_intent says how to set it. Routing only: the number itself is never disclosed to a counterparty, and neither is any count of who else is in the line.',
+  );
+  say(
+    ['sale'],
+    "Haves only: how the asking price works — 'straight' or 'best-offer', as publish_intent describes. Structurally forbidden on a want.",
+  );
   return doc;
 }
 
