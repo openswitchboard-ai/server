@@ -94,7 +94,7 @@ function run(sql: string, params: any[] = []) {
   if (/^\s*SELECT \* FROM matches WHERE id/.test(sql)) {
     return rows(params[0] === MATCH ? [theMatch()] : []);
   }
-  if (/SELECT m\.\* FROM matches m/.test(sql)) {
+  if (/SELECT m\.\*[^;]*FROM matches m/.test(sql)) {
     const mine = params[0] === ANA || params[0] === BEPPE;
     return rows(mine ? [theMatch()] : []);
   }
@@ -113,7 +113,7 @@ function run(sql: string, params: any[] = []) {
     return rows([{ id: 'm1' }]);
   }
   // Stage-3 gate: both opt-in tokens are on record for this pair.
-  if (/count\(DISTINCT account_id\)::int AS n FROM consent_tokens/.test(sql)) {
+  if (/count\(DISTINCT account_id\)::int AS n,[\s\S]*FROM consent_tokens/.test(sql)) {
     return rows([{ n: 2 }]);
   }
   if (/max\(recorded_at\) AS at FROM consent_tokens/.test(sql)) {

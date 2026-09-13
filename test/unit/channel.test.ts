@@ -717,7 +717,7 @@ describe('check_in says when something is waiting', () => {
       query: async (sql: string, params: any[] = []) => {
         if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
         if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 }; // no collection window
-        if (/^\s*SELECT m\.\* FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
+        if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
         // Stage 3 is behind stage 4, so the sweep also builds the mutual
         // reveal: both opt-ins on record and a first name and area on file.
         if (/count\(DISTINCT account_id\)/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };

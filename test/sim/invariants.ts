@@ -118,13 +118,16 @@ export function scanIdentityLeak(
 
 /** I4: the ladder of `next` words, as a monotonic rank. `awaiting_your_human`
  *  sits at the stage-3 landing (one opt-in recorded, waiting on the human), so
- *  it ranks above details_unlocked and below ready_to_talk. */
+ *  it ranks above details_unlocked and below ready_to_talk.
+ *  `awaiting_their_go_ahead` is one rung further on again: this side's own
+ *  press is recorded and the other side's is not. */
 const NEXT_RANK: Record<string, number> = {
   show_interest: 0,
   awaiting_other_side: 1,
   details_unlocked: 2,
   awaiting_your_human: 3,
-  ready_to_talk: 4,
+  awaiting_their_go_ahead: 4,
+  ready_to_talk: 5,
 };
 
 export class LadderTracker {
