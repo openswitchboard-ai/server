@@ -755,10 +755,13 @@ describe('the human page class owns both settings', () => {
     expect(res.body).not.toContain('authored_by');
   });
 
-  it('a match at stage 1 says so instead of offering a box', async () => {
+  // Nothing the switchboard makes sits below the details step any more (13
+  // September 2026), so this covers a row that predates the change: the page
+  // still refuses to offer a box on one.
+  it('a pairing below the details step says so instead of offering a box', async () => {
     world.stage = 1;
     const res = await inject('GET', `/matches/${MATCH}`);
-    expect(res.body).toContain('Offers open once both sides have shown interest');
+    expect(res.body).toContain('Offers open once the details on this one are open');
     expect(res.body).not.toContain('Send this number');
   });
 });

@@ -299,11 +299,18 @@ export function renderApproval(
 }
 
 // ---------------------------------------------------------------------------
-// (c) Match summons — the screenshot-worthy one. One clear line, and no button:
-// the next step is to tell their assistant they are interested, which is a
-// sentence rather than a press. count > 1 covers the daily/weekly summons
-// batch. Non-blind may name the category (category-level only). Blind:
-// pointer, nothing else.
+// (c) Match summons — the screenshot-worthy one. One clear line, and no button.
+//
+// From 13 September 2026 it is the first notice AND the details notice at once.
+// The posting is the statement of interest, so there is no "tell them you are
+// keen" step left to send anybody to: by the time this email goes out the other
+// side's attributes are already open, and the person's own assistant can read
+// them the moment they ask. So the second sentence says that, and the next step
+// the human hears about is the true one — asking their assistant.
+//
+// count > 1 covers the daily/weekly summons batch, which names nothing and so
+// has nothing to say about one person's details. Non-blind may name the
+// category (category-level only). Blind: pointer, nothing else.
 // ---------------------------------------------------------------------------
 const ORDINALS = ['', '', 'second', 'third', 'fourth', 'fifth'];
 /** "Someone" for the first arrival on a want or have, "A second person" after that. */
@@ -334,18 +341,27 @@ export function renderSummons(
   const named = !!thing && !!v.side;
   const phrase = v.side === 'want' ? categoryPhraseWithArticle(v.categoryLabel) : thing;
   const preposition = v.side === 'want' ? 'with' : 'about your';
+  // The details are open already, so the notice says so. Which way round it is
+  // said depends on the reader's own side: somebody looking hears that their
+  // assistant can see what the other person has, somebody offering hears that
+  // it can see what they are after.
+  const alreadyOpen =
+    v.side === 'want'
+      ? 'Your assistant can already see what they have.'
+      : v.side === 'have'
+        ? "Your assistant can already see what they're after."
+        : 'Your assistant can already see more about them.';
+  const arrival = named ? `${who} has come forward ${preposition} ${phrase}.` : `${who} has come forward.`;
   const textLine = v.blind
     ? v.count === 1
       ? later ? 'Something else is waiting for you.' : 'Something is waiting for you.'
       : `${v.count} things are waiting for you.`
     : v.count === 1
-      ? named
-        ? `${who} has come forward ${preposition} ${phrase}.`
-        : `${who} has come forward.`
+      ? `${arrival} ${alreadyOpen}`
       : `${v.count} people have come forward.`;
   const line =
     !v.blind && v.count === 1 && named
-      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>.`
+      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>. ${esc(alreadyOpen)}`
       : esc(textLine);
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +
@@ -395,13 +411,19 @@ export function renderChannelWaiting(
 //
 //   step 'names'   — the counterparty has said yes to swapping first names,
 //                    and it is now this human's turn to answer.
-//   step 'details' — the person this human said they were keen on has said
-//                    the same back, so there is a little more to see now.
-//                    The one told is the side that spoke first, because the
-//                    other side has just heard it from their own assistant.
 //
-// New-match is already summoned; these cover the later progressions. A notice
-// like the rest: the step each one is about is one their assistant can hand
+// THE 'details' STEP IS RETIRED (13 September 2026). It fired the moment
+// interest became mutual, and interest can no longer become mutual: it is
+// mutual from the introduction itself, because the posting is the statement of
+// interest. There is nothing left for that email to announce that the summons
+// does not already say in its own second sentence, so nothing renders it and
+// nothing sends it — see notifyYourMove in email/digestEngine.ts, which drops a
+// 'details' job rather than sending the wrong copy for it. The word stays in
+// the type only so a job already on the queue still type-checks on the way to
+// being dropped.
+//
+// New-match is already summoned; this covers the one progression after it. A
+// notice like the rest: the step it is about is one their assistant can hand
 // them a link to, so the email says what happened and stops there.
 // ---------------------------------------------------------------------------
 export type YourMoveStep = 'names' | 'details';
@@ -411,15 +433,6 @@ export function renderYourMove(
   f: FooterLinks,
 ): EmailContent {
   const thing = categoryPhrase(v.categoryLabel);
-  if (v.step === 'details') {
-    const line = v.blind
-      ? 'They would like to take it further too.'
-      : thing
-        ? `Good news about the ${thing}: they would like to take it further too.`
-        : 'They would like to take it further too.';
-    const { html, text } = notice({ heading: 'They are keen too.', line, accent: MATCH }, f);
-    return { subject: 'They are keen too', html, text };
-  }
   const subject = 'It is your turn';
   // Nobody has said a word to anybody at this step: the other side has said
   // yes to swapping first names, and the two of them can talk once this

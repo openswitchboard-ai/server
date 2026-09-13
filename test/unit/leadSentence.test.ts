@@ -247,6 +247,8 @@ describe('every other state the sweep writes a sentence for', () => {
     expect(entry.note).toEqual(entry.offer_note);
   });
 
+  // A row made before 13 September 2026 and never moved up: the interest words
+  // are unreachable now, and the ordering rule still has to hold over them.
   it('leads with a waiting figure while the other side has yet to answer at all', async () => {
     world.stage = 1;
     world.interestWant = false;
@@ -258,7 +260,8 @@ describe('every other state the sweep writes a sentence for', () => {
 
   it('keeps the plain sentence for each of those when no figure is out', async () => {
     world.stage = 2;
-    expect((await sweep(ANA)).note.text).toMatch(/You are both keen/);
+    // Where a new introduction starts: what they have, and the go-ahead next.
+    expect((await sweep(ANA)).note.text).toMatch(/Here is what they have/);
     world.myOptin = true;
     expect((await sweep(ANA)).note.text.length).toBeGreaterThan(20);
     world.myOptin = false;

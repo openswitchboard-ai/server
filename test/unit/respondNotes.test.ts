@@ -59,9 +59,11 @@ function row(over: Partial<MatchRow> = {}): MatchRow {
     account_want: ANA,
     account_have: BEPPE,
     category: 'goods.bicycle.mountain',
-    stage: 1,
-    interest_want: false,
-    interest_have: false,
+    // How an introduction is born since 13 September 2026: both sides keen
+    // from the posting, details open to both.
+    stage: 2,
+    interest_want: true,
+    interest_have: true,
     state: 'open',
     live: true,
     ...over,
@@ -69,7 +71,8 @@ function row(over: Partial<MatchRow> = {}): MatchRow {
 }
 
 interface World {
-  /** Has the OTHER side already said they are keen? */
+  /** Kept so the older cases below still read; both sides are keen from the
+   *  start now, so nothing turns on it any more. */
   theirInterest: boolean;
   offerState: string;
   offerProposer: string;
@@ -93,22 +96,11 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       if (/^\s*SELECT \* FROM matches WHERE id/.test(sql)) {
-        return rows([row({ interest_have: world.theirInterest })]);
+        return rows([row()]);
       }
-      // Interest is recorded for the caller's own side; the row comes back as
-      // it now stands, which is what decides which sentence is owed.
-      if (/UPDATE matches SET interest_/.test(sql)) {
-        return rows([
-          row({
-            interest_want: true,
-            interest_have: world.theirInterest,
-            stage: world.theirInterest ? 1 : 1,
-          }),
-        ]);
-      }
-      if (/UPDATE matches SET stage = 2/.test(sql)) {
-        return rows([row({ interest_want: true, interest_have: true, stage: 2 })]);
-      }
+      // The express_interest path writes nothing at all now; it reads this
+      // side's own names press for the sentence and hands the row back.
+      if (/FROM consent_tokens/.test(sql)) return rows([{ n: 0, mine: 0 }]);
       if (/UPDATE matches\s+SET state = 'archived'/.test(sql)) return rows([{ id: INTRO }]);
       if (/SELECT card_want, card_have FROM matches/.test(sql)) {
         return rows([{ card_want: CARD_W, card_have: CARD_H }]);
@@ -207,41 +199,31 @@ const respond = async (args: Record<string, unknown>, who = ANA): Promise<any> =
 // ---------------------------------------------------------------------------
 // express_interest — the reply the rehearsal was narrated from
 // ---------------------------------------------------------------------------
-describe('telling the other side your human is keen', () => {
-  it('says they are keen too and the details are open, when it just became mutual', async () => {
-    world.theirInterest = true;
+describe('express_interest, kept as an answer and doing nothing', () => {
+  it('says the details are already open and asks for nothing but the go-ahead', async () => {
     const r = await respond({ action: 'express_interest' });
     expect(r.next).toBe('details_unlocked');
     expect(isNote(r.note)).toBe(true);
-    expect(r.note.text).toContain('they are keen too');
-    expect(r.note.text).toContain('open to both sides now');
-    // The whole defect: the sentence must never say the far side has still to
-    // decide, and the only step left is the human's own go-ahead.
-    expect(r.note.text).not.toMatch(/still|waiting on them|have not said yes/i);
+    expect(r.note.text).toContain('already down as keen');
+    // It must never imply the human has just done something, and never say
+    // the far side has still to decide.
+    expect(r.note.text).not.toMatch(/passed that on|I have told them|have not said yes/i);
     expect(r.note.text).toContain('first name and rough area');
   });
 
-  it('names the thing the way this side holds it', async () => {
-    world.theirInterest = true;
-    const forTheBuyer = expressInterestSentence(
-      row({ interest_want: true, interest_have: true, stage: 2 }),
-      ANA,
-    );
-    const forTheSeller = expressInterestSentence(
-      row({ interest_want: true, interest_have: true, stage: 2 }),
-      BEPPE,
-    );
-    expect(forTheBuyer).toContain('the mountain bike you are after');
-    expect(forTheSeller).toContain('your mountain bike');
+  it('says the same thing from the other chair, and twice in a row', async () => {
+    const first = await respond({ action: 'express_interest' }, BEPPE);
+    const again = await respond({ action: 'express_interest' }, BEPPE);
+    expect(first.next).toBe('details_unlocked');
+    expect(again).toEqual(first);
+    expect(again.note.text).toContain('already down as keen');
   });
 
-  it('says it has been passed on and they have not said yes yet, when it is not mutual', async () => {
-    const r = await respond({ action: 'express_interest' });
-    expect(r.next).toBe('awaiting_other_side');
-    expect(isNote(r.note)).toBe(true);
-    expect(r.note.text).toContain('passed that on');
-    expect(r.note.text).toContain('have not said yes yet');
-    expect(r.note.text).toMatch(/tell you the moment they do/);
+  it('names the thing the way this side holds it', async () => {
+    const forTheBuyer = expressInterestSentence(row(), ANA);
+    const forTheSeller = expressInterestSentence(row(), BEPPE);
+    expect(forTheBuyer).toContain('the mountain bike you are after');
+    expect(forTheSeller).toContain('your mountain bike');
   });
 });
 
@@ -429,9 +411,9 @@ const BANNED = [
 
 describe('the copy rules, applied to every sentence shipped here', () => {
   const ALL: [string, string][] = [
-    ['express_interest (mutual)', expressInterestSentence(row({ interest_want: true, interest_have: true, stage: 2 }), ANA)],
-    ['express_interest (mutual, other side)', expressInterestSentence(row({ interest_want: true, interest_have: true, stage: 2 }), BEPPE)],
-    ['express_interest (waiting)', expressInterestSentence(row({ interest_want: true }), ANA)],
+    ['express_interest', expressInterestSentence(row(), ANA)],
+    ['express_interest (other side)', expressInterestSentence(row(), BEPPE)],
+    ['express_interest (go-ahead already given)', expressInterestSentence(row({ my_optin: true }), ANA)],
     ['decline', DECLINE_SENTENCE],
     ['archive', ARCHIVE_SENTENCE],
     ['someone came forward', CAME_FORWARD_SENTENCE],

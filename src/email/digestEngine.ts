@@ -188,13 +188,16 @@ export async function sendChannelWaitingNudge(
 //
 //   step 'names'   — one side recorded a stage-3 opt-in and the other has not,
 //                    so the ball is in the far human's court.
-//   step 'details' — the second side said it was keen, which opens the details
-//                    for both. The one told is the side that spoke first: the
-//                    other side has just heard it from its own assistant.
 //
-// One nudge per step per recipient (each dedupe key carries no timestamp, and
-// the details step carries its own suffix so the two never collide), and quiet
-// for an account that has turned match mail off.
+// The 'details' step is retired (13 September 2026): it fired when interest
+// became mutual, and interest is mutual from the introduction itself now, so
+// nothing raises it any more. A job still on the queue from before the deploy
+// is dropped here rather than sent — the summons already told that human the
+// details were open, and a second mail saying "they are keen too" would be
+// announcing something that never happened.
+//
+// One nudge per recipient (the dedupe key carries no timestamp), and quiet for
+// an account that has turned match mail off.
 // ---------------------------------------------------------------------------
 export async function notifyYourMove(
   cfg: Config,
@@ -202,6 +205,7 @@ export async function notifyYourMove(
   recipientAccount: string,
   step: YourMoveStep = 'names',
 ): Promise<void> {
+  if (step === 'details') return;
   const r = await getPool().query(
     `SELECT category, account_want, account_have FROM matches WHERE id = $1`,
     [matchId],
@@ -220,15 +224,12 @@ export async function notifyYourMove(
     accountId: recipientAccount,
     template: 'your-move',
     kind: 'bulk',
-    dedupeKey:
-      step === 'details'
-        ? `your-move:${matchId}:${recipientAccount}:details`
-        : `your-move:${matchId}:${recipientAccount}`,
+    dedupeKey: `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
       {
         categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
         blind: ctx.blind,
-        step,
+        step: 'names',
         side: sideOf(m, recipientAccount),
       },
       ctx.links,

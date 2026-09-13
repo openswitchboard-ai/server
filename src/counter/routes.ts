@@ -1011,7 +1011,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           return { error: 'This introduction is not yours.' };
         }
         if (m.stage < 2) {
-          return { error: 'Both sides have to say they are interested before this opens.' };
+          return { error: 'The details on this one are not open yet.' };
         }
         // Nothing was ever asked for at sign-up, so the first time someone gets
         // here the page asks for the two things it is about to share.
@@ -2277,7 +2277,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         m.state !== 'open'
           ? 'This match is closed, so no more figures can go across it.'
           : m.stage < 2
-            ? 'Offers open once both sides have shown interest.'
+            ? 'Offers open once the details on this one are open.'
             : undefined;
       // A figure of theirs that is still live: the form has nothing to ask for
       // until they want to change it.
