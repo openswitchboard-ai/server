@@ -72,6 +72,24 @@ export function sideOf(m: MatchRow, accountId: string): 'want' | 'have' {
  * by the internal ops interface (the 0.F matching engine will consume the
  * matching queue and call it). Price-band compatibility checking — the only
  * consumer of the encrypted bands — also lands in 0.F.
+ *
+ * THE POSTING IS THE STATEMENT OF INTEREST (Lachlan, 13 September 2026). An
+ * introduction is born with both sides already keen and the details open to
+ * both: stage 2, interest_want and interest_have true. Until today each side's
+ * agent had to call respond(express_interest) first, at a moment when the human
+ * knew only the category and which side the other person was on — so the only
+ * sane answer was always yes. A gate everybody always passes is a step, not a
+ * gate: it cost a round trip to a human on each side and told nobody anything.
+ *
+ * The two columns stay, and they stay meaning what they always meant — this
+ * side is keen — so everything downstream that reads them reads the same fact,
+ * and the audit trail still says what happened. What changed is WHEN they
+ * become true: at the posting, not at a second asking.
+ *
+ * What this knowingly gives up: the details used to flow only once a live human
+ * had engaged, so a stale posting from somebody who has already bought the bike
+ * kept its details shut. Expiry, withdrawal and the summons email cover that,
+ * and the trade was accepted.
  */
 export async function createMatch(
   cardWantId: string,
@@ -87,8 +105,9 @@ export async function createMatch(
     throw new Error(`card_have ${cardHaveId} is not a published HAVE`);
   }
   const r = await getPool().query(
-    `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
+                          stage, interest_want, interest_have)
+     VALUES ($1,$2,$3,$4,$5,$6,2,true,true)
      ON CONFLICT (card_want, card_have) DO UPDATE SET updated_at = now()
      RETURNING id`,
     [cardWantId, cardHaveId, want.account_id, have.account_id, score, want.category],
@@ -285,77 +304,39 @@ async function loadOpenMatchFor(
 }
 
 /**
- * Record stage-1 interest for the calling side. Advances stage to 2 when mutual.
+ * express_interest, RETIRED AS A STEP AND KEPT AS AN ANSWER (13 September
+ * 2026). The posting is the statement of interest, so both sides are keen from
+ * the moment the introduction is made and the details are already open. There
+ * is nothing here to record.
  *
- * The side that spoke FIRST is told, once, when the second side makes it
- * mutual. That human said they were keen and then heard nothing: their own
- * assistant only wakes when spoken to, so the details opening was a thing that
- * happened on a page nobody had told them to open. The side calling now needs
- * no notice — its own assistant is right here and has the answer in hand.
+ * It stays because old clients and old sessions keep calling it, and it must
+ * never error and never move anything backwards. So it writes nothing at all:
+ * it loads the introduction the way it always did — a bad id, an introduction
+ * that is not theirs, one that is closed and one still in line each answer
+ * exactly as they did — reads this side's own names press for the sentence,
+ * and hands the row back. It does not touch the slot's clock either: an agent
+ * calling a no-op is not two people getting somewhere, and a client looping on
+ * it must not be able to keep a dead introduction alive.
  */
 export async function expressInterest(
-  cfg: Config,
+  _cfg: Config,
   matchId: string,
   accountId: string,
 ): Promise<MatchRow> {
   const m = await loadOpenMatchFor(matchId, accountId);
-  const col = sideOf(m, accountId) === 'want' ? 'interest_want' : 'interest_have';
-  const r = await getPool().query(
-    `UPDATE matches SET ${col} = true,
-        stage = CASE WHEN stage < 2 AND interest_want AND interest_have THEN stage ELSE stage END,
-        updated_at = now()
-     WHERE id = $1
-     RETURNING *, EXISTS (SELECT 1 FROM consent_tokens t
-                           WHERE t.match_id = matches.id AND t.account_id = $2::uuid
-                             AND t.kind = 'stage3-optin') AS my_optin`,
-    [matchId, accountId],
-  );
-  const updated: MatchRow = r.rows[0];
-  // Movement: the slot's clock starts again from here.
-  await noteMovement(matchId);
-  if (updated.interest_want && updated.interest_have && updated.stage < 2) {
-    const r2 = await getPool().query(
-      `UPDATE matches SET stage = 2, updated_at = now() WHERE id = $1 RETURNING *`,
-      [matchId],
-    );
-    const unlocked: MatchRow = r2.rows[0];
-    await queueYourMove(cfg, matchId, counterpartyOf(unlocked, accountId), 'details');
-    return unlocked;
-  }
-  return updated;
+  // The reply's sentence turns on whether this human has already pressed their
+  // own names link, so read that one fact and nothing else.
+  const { mine } = await stage3OptinState(matchId, accountId);
+  m.my_optin = mine;
+  return m;
 }
 
-/**
- * Enqueue a "your move" notice, best-effort and never able to fail the action
- * that raised it. Only for a human who hears about the switchboard by email:
- * an always-on assistant brings the same news itself, and a second copy of it
- * is noise. The dedupe key on the far side makes a repeat harmless.
- */
-async function queueYourMove(
-  cfg: Config,
-  matchId: string,
-  recipientAccount: string,
-  step: 'names' | 'details',
-): Promise<void> {
-  if (!cfg.opsQueueUrl) return;
-  try {
-    if ((await getHearsVia(recipientAccount)) !== 'email') return;
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: cfg.opsQueueUrl,
-        MessageBody: JSON.stringify({
-          op: 'your-move-notify',
-          match_id: matchId,
-          account_id: recipientAccount,
-          step,
-        }),
-      }),
-    );
-  } catch (e: any) {
-    // eslint-disable-next-line no-console
-    console.error(`your-move-notify: enqueue failed (the step itself stands): ${e?.message ?? e}`);
-  }
-}
+// The "details are open now" notice is retired with the step that raised it.
+// It was enqueued the moment interest became mutual, which can no longer
+// happen: the details are open at the introduction itself, and the summons
+// that announces the introduction now says so in the same breath (see
+// renderSummons in email/templates.ts). The names notice is enqueued by
+// recordStage3OptIn, which sends its own message.
 
 /** The other party's account on a match. */
 function counterpartyOf(m: MatchRow, accountId: string): string {
@@ -409,10 +390,16 @@ export async function refuseAgentOptIn(
   });
 }
 
+/**
+ * The details step is open. Since 13 September 2026 it is open from the moment
+ * the introduction is made, so this cannot fail on anything the switchboard
+ * creates; it stands as a floor under the names step for any row that predates
+ * the change and was never moved up.
+ */
 function assertBothInterested(m: MatchRow): void {
   if (m.stage < 2) {
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'Both sides have to say they are interested before this opens.',
+      human_action: 'The details on this one are not open yet.',
     });
   }
 }
@@ -747,9 +734,16 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  * the word plus the match_id is enough to drive the next tool call, and no
  * stage number is ever handed across the boundary to be read out.
  *
- *   show_interest        a fresh signal; this side has not expressed interest
- *   awaiting_other_side  this side is interested, waiting on the other side
- *   details_unlocked     both sides interested — attributes are on the entry
+ *   show_interest        RETIRED 13 September 2026 and unreachable for anything
+ *                        made since: a posting is itself the statement of
+ *                        interest, so no introduction starts below the details
+ *                        step. The word stays in the union, and the branch
+ *                        stays under it, so a row that predates the change and
+ *                        was never moved up still reads honestly.
+ *   awaiting_other_side  RETIRED with it, for the same reason: nobody is ever
+ *                        waiting on the other side to say they are keen.
+ *   details_unlocked     both sides keen — attributes are on the entry. This is
+ *                        where a new introduction starts, on both sides at once
  *   awaiting_your_human  a stage-3 opt-in / approval sits with the human
  *   awaiting_their_go_ahead  this human HAS pressed their own names link and
  *                        the other side has not pressed theirs. Distinct from
@@ -798,15 +792,21 @@ export function nextAction(
   // the two words here: stage only moves to 3 when BOTH have pressed, so
   // without this the human who pressed saw the same word as before they did.
   if (m.stage >= 2) return optedIn ? 'awaiting_their_go_ahead' : 'details_unlocked';
-  if (iMine) return 'awaiting_other_side'; // this side keen, waiting on them
-  return 'show_interest'; // fresh signal
+  // Below the details step. Unreachable for anything made since 13 September
+  // 2026 — an introduction is born at stage 2 with both sides keen, and every
+  // open row below it was moved up by migration 031 — and kept honest for
+  // anything that somehow is not.
+  if (iMine) return 'awaiting_other_side';
+  return 'show_interest';
 }
 
 export async function buildAttributes(m: MatchRow, accountId: string) {
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
+    // Unreachable for anything made since 13 September 2026: the details are
+    // open at the introduction itself. Kept as the structural floor.
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'The details open up once both sides have said they are interested.',
+      human_action: 'The details on this one are not open yet.',
     });
   }
   const side = sideOf(m, accountId);
@@ -988,16 +988,25 @@ export const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
     ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
     : "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away.";
 
-/** The ready sentence for a fresh stage-1 signal, warmed by which side the
- *  other person is on: they have what your human is after, or they are after
- *  what your human put up. No card/match/stage words reach the human. */
+/**
+ * THE SENTENCE FOR A NEW INTRODUCTION, warmed by which side the other person is
+ * on: they have what your human is after, or they are after what your human put
+ * up. No card/match/stage words reach the human.
+ *
+ * From 13 September 2026 it carries the whole of the first sweep, because there
+ * is no interest step left to ask about: somebody has come forward, what they
+ * have is already open to read, and the one thing still to come is the human's
+ * own go-ahead on sharing a first name and rough area.
+ */
 function signalNote(category: string, counterpartyType: 'looking_for' | 'offering'): { text: string; provenance: 'switchboard-system' } {
   const thing = plainLeaf(category);
   const opening =
     counterpartyType === 'offering'
-      ? `Someone nearby has ${thing} going that could be what you're after.`
-      : `Someone nearby is looking for ${thing} like yours.`;
-  return sbNote(`${opening} Say the word and I'll let them know you're keen; if they're keen too, you'll each learn a little more.`);
+      ? `Someone nearby has ${thing} going that could be what you're after. Here is what they have.`
+      : `Someone nearby is looking for ${thing} like yours. Here is what they're after.`;
+  return sbNote(
+    `${opening} Take a look, and when you're ready, say the word and I'll share your first name and rough area so the two of you can talk.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,23 +1029,22 @@ const ownThing = (m: MatchRow, accountId: string): string =>
   theirThing(categoryPhrase(m.category) || 'this', sideOf(m, accountId));
 
 /**
- * What to say after telling the other side your human is keen. Two outcomes,
- * and the difference between them is the whole point: when it is mutual,
- * nobody is waiting on anybody, and the only step left is the human's own
- * go-ahead to share a first name and rough area.
+ * What express_interest says now that it does nothing. The rule the wording
+ * turns on: it must NOT imply the human has just done something. They have not
+ * — posting the thing was the saying-they-are-keen, and it was done days ago.
+ * So the sentence says what is already true and points at the one step that is
+ * genuinely still to come, and it is the same whichever chair the caller is in
+ * and however many times it is called.
  */
 export function expressInterestSentence(m: MatchRow, accountId: string): string {
   const thing = ownThing(m, accountId);
   const next = nextAction(m, accountId);
-  if (next === 'awaiting_other_side') {
-    return `I have passed that on about ${thing}. They have not said yes yet, and I will tell you the moment they do.`;
-  }
   // Their own go-ahead is already recorded, so this must not ask for it again.
   if (next === 'awaiting_their_go_ahead') return awaitingTheirGoAheadSentence(m, accountId);
   if (next === 'ready_to_talk') {
-    return `You are both keen on ${thing}, and you have each given the go-ahead. You can talk whenever you like.`;
+    return `You have both said yes on ${thing}. You can talk whenever you like.`;
   }
-  return `Good news on ${thing}: they are keen too, and a little more about each of you is open to both sides now. Take a look, and when you are ready to go further, give me the go-ahead and I will share your first name and rough area so the two of you can talk.`;
+  return `You are already down as keen on ${thing} — putting it up said that. What they have is open to you now, so take a look, and when you are ready, give me the go-ahead and I will share your first name and rough area so the two of you can talk.`;
 }
 
 /**
@@ -1326,14 +1334,18 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       takenDown ? sbNote(takenDownSentence(takenDown)) : (entry.offer_note ?? sbNote(stateSentence));
     switch (entry.next) {
       case 'awaiting_other_side':
+        // Unreachable since 13 September 2026 (nobody waits on the other side
+        // to say they are keen); kept for any row that predates the change.
         entry.note = lead(
           "You are keen and they know it — the next move is theirs. They will see it when they next check in with their assistant, and I will bring their reply straight to you.",
         );
         break;
       case 'details_unlocked':
-        entry.note = lead(
-          "You are both keen. Here is a little more about what they have — take a look, and if you would like to go further, say the word and I will share your first name and rough area so the two of you can talk.",
-        );
+        // Where a new introduction starts, both sides at once. The signal
+        // sentence already says the whole of it — who has come forward, that
+        // what they have is open to read, and that the next step is the
+        // human's own go-ahead — so it is the sentence here too, side-aware.
+        entry.note = lead(signalNote(m.category, signal.counterparty_type).text);
         break;
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask

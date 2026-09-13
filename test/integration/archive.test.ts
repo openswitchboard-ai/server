@@ -93,8 +93,7 @@ d('archiving a finished connection', () => {
 
     // Both interested, both opted in (with a first name + area filled), channel
     // open, a message across it — a real pair mid-connection.
-    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    // No interest step any more: the details are open at the introduction.
     await setSharedProfile(ana.jar, 'Ana', 'Fremantle');
     await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere');
     await approveDisclosure(ana.jar, matchId, ana.pin);

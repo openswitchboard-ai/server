@@ -533,9 +533,13 @@ export async function runMatchingForCard(
       const overlap = limitsOverlap(wantBand, haveBand, ask);
       const roomOverAsk = clearsAskWithRoom(wantBand, ask);
       const ins = await getPool().query(
+        // stage 2 with both interest columns true: the posting IS the
+        // statement of interest, so an introduction is born with both sides
+        // keen and the details open to both (see createMatch in matches.ts).
         `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
-                              limits_overlap, clears_ask_25)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                              limits_overlap, clears_ask_25,
+                              stage, interest_want, interest_have)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,2,true,true)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
         [

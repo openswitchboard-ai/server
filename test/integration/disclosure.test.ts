@@ -83,8 +83,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
       return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
 
-    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    // No interest step any more: the details are open at the introduction.
   }, 300_000);
 
   it('a registered account starts with nothing on file', async () => {

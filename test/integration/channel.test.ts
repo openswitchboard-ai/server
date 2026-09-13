@@ -86,8 +86,7 @@ d('a conversation carried across an open channel', () => {
       return r.result.introductions?.[0]?.intro_id as string | undefined;
     }, 'match to appear');
 
-    await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await mcpCall(beppe.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    // No interest step any more: the details are open at the introduction.
 
     // Each human puts their first name and area on their own page, then each
     // presses the single-use link their agent was handed: the names step is

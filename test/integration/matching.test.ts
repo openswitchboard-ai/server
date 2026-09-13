@@ -315,11 +315,12 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       expect(entry.signal.kind).toBe('intro.signal');
       expect(entry.signal.category).toBe('goods.electronics.camera');
       // No machine internals cross to the agent: no score, and a word for what
-      // to do next rather than a stage integer. Neither side has expressed
-      // interest yet, so this is a fresh signal.
+      // to do next rather than a stage integer. The posting is the statement
+      // of interest, so a new introduction arrives with the details already
+      // open to both sides (13 September 2026).
       expect(entry.signal.score).toBeUndefined();
       expect(entry.stage_unlocked).toBeUndefined();
-      expect(entry.next).toBe('show_interest');
+      expect(entry.next).toBe('details_unlocked');
       // The signal is THIN: no score, no attributes, no identity, no prices.
       expect(Object.keys(entry.signal).sort()).toEqual([
         'category', 'counterparty_type', 'intro_id', 'kind', 'schema_version',
@@ -388,15 +389,16 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
   });
 
   it('GATE (b): no price/band/budget/reserve anywhere in stage-1/2 payloads', async () => {
-    // respond drives the flow on the action word alone: alice expresses
-    // interest first (nobody else has), so she is left awaiting the other side;
-    // once bob matches it, the interest is mutual and the details unlock.
+    // express_interest is kept for older clients and does nothing: both sides
+    // are down as keen from the posting, so it answers details_unlocked from
+    // either chair and never moves anything.
     const aliceInterest = await mcpCall(alice.accessToken, 'respond', {
       intro_id: abMatchId,
       action: 'express_interest',
     });
     expect(aliceInterest.result.stage_unlocked).toBeUndefined();
-    expect(aliceInterest.result.next).toBe('awaiting_other_side');
+    expect(aliceInterest.result.next).toBe('details_unlocked');
+    expect(aliceInterest.result.note.text).toContain('already down as keen');
     const bobInterest = await mcpCall(bob.accessToken, 'respond', {
       intro_id: abMatchId,
       action: 'express_interest',
@@ -498,14 +500,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       [{ name: 'id', value: hankHave }],
     );
 
-    // Unlock the details step on all three (both sides express interest).
-    await Promise.all(
-      buyers.map(async (b) => {
-        const mid = hankMatchIds[b.accountId];
-        await mcpCall(b.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
-        await mcpCall(hank.accessToken, 'respond', { intro_id: mid, action: 'express_interest' });
-      }),
-    );
+    // Nothing to unlock: the details step is open on all three from the
+    // moment each introduction was made.
 
     // Every want and have starts on "Pass on", where an agent may not name a
     // figure. Each buyer's human writes a ceiling on their own first.
