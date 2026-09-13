@@ -16,6 +16,7 @@ import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords } from './screening.js';
+import { categoryPhrase, theirThing } from '../email/templates.js';
 import type { Config } from '../config.js';
 
 /**
@@ -226,6 +227,75 @@ export async function getCard(id: string): Promise<CardRow | undefined> {
   return r.rows[0];
 }
 
+/**
+ * WHO IS THERE, counted once for the whole list.
+ *
+ * The defect this exists to close (rehearsal, 2026-09-13): a human asked their
+ * assistant whether anyone had turned up yet, the assistant read this list,
+ * saw the want was published and said no. An introduction had been live on it
+ * for thirteen minutes and somebody else was waiting behind that. The list
+ * said nothing either way, so the wrong answer was the easy one.
+ *
+ * One grouped statement for every want and have returned, never one per row:
+ * how many people are with each of them right now, and how many are waiting
+ * their turn. Only open introductions count — a declined, closed or filed-away
+ * one is nobody standing there.
+ */
+async function peopleOnCards(
+  cardIds: string[],
+): Promise<Map<string, { here: number; waiting: number }>> {
+  const out = new Map<string, { here: number; waiting: number }>();
+  if (!cardIds.length) return out;
+  const r = await getPool().query(
+    `SELECT t.cid,
+            count(*) FILTER (WHERE t.live)::int     AS here,
+            count(*) FILTER (WHERE NOT t.live)::int AS waiting
+       FROM (SELECT unnest(ARRAY[m.card_want, m.card_have]) AS cid, m.live
+               FROM matches m
+              WHERE m.state = 'open'
+                AND (m.card_want = ANY($1::uuid[]) OR m.card_have = ANY($1::uuid[]))) t
+      WHERE t.cid = ANY($1::uuid[])
+      GROUP BY t.cid`,
+    [cardIds],
+  );
+  for (const row of r.rows as { cid: string; here: number; waiting: number }[]) {
+    out.set(row.cid, { here: Number(row.here ?? 0), waiting: Number(row.waiting ?? 0) });
+  }
+  return out;
+}
+
+/** People, counted and conjugated the way a person says it out loud. */
+const peopleWord = (n: number, singular: string, plural: string): string =>
+  n === 1 ? `One person ${singular}` : `${n} people ${plural}`;
+
+/**
+ * The one sentence the agent leads with about something of its human's: who
+ * has come forward on it, who is waiting their turn behind them, and where to
+ * look next. Plain words only, and the thing is named the way its owner would
+ * name it — "your mountain bike" for the person offering it, "the mountain
+ * bike you are after" for the person looking, which is the same split every
+ * notice uses (email/templates.ts).
+ */
+function peopleSentence(
+  category: string,
+  type: 'WANT' | 'HAVE',
+  here: number,
+  waiting: number,
+): string {
+  const thing = theirThing(categoryPhrase(category) || 'this', type === 'HAVE' ? 'have' : 'want');
+  if (here === 0 && waiting === 0) {
+    return `Nothing yet on ${thing}. I'll say the moment somebody comes forward.`;
+  }
+  if (here === 0) {
+    return `${peopleWord(waiting, 'is', 'are')} waiting their turn on ${thing}. Check in for what to do next.`;
+  }
+  const behind =
+    waiting > 0
+      ? `, and ${waiting === 1 ? 'one more person is' : `${waiting} more people are`} waiting their turn behind ${here === 1 ? 'them' : 'that'}`
+      : '';
+  return `${peopleWord(here, 'has', 'have')} come forward about ${thing}${behind}. Check in for what to do next.`;
+}
+
 export async function listIntents(accountId: string): Promise<any[]> {
   const r = await getPool().query(
     `SELECT id, schema_version, type, category, geo, attributes, ask, urgency, visibility,
@@ -239,6 +309,11 @@ export async function listIntents(accountId: string): Promise<any[]> {
   const { getTimezone } = await import('./accounts.js');
   const { localTimeText } = await import('./localTime.js');
   const tz = await getTimezone(accountId);
+  // Who is there, for every want and have in one statement (peopleOnCards).
+  // Only something still up can have anybody on it, so a withdrawn, expired or
+  // screening-rejected one is left alone rather than told "nothing yet".
+  const stillUp = r.rows.filter((row) => row.lifecycle_state === 'PUBLISHED');
+  const people = await peopleOnCards(stillUp.map((row) => row.id));
   // Own-card view for the owning agent. The private price band is not stored
   // in plaintext and is not echoed back; agents keep their own record of it.
   //
@@ -247,44 +322,64 @@ export async function listIntents(accountId: string): Promise<any[]> {
   // call. This is an own-card field ONLY: it is read here from the caller's
   // own rows, and no counterparty path ever reads cards.screening (the
   // disclosure payloads are schema-closed — see domain/matches.ts).
-  return r.rows.map((row) => ({
-    intent_id: row.id,
-    state: row.lifecycle_state,
-    ...(row.lifecycle_state === 'SCREENING_REJECTED'
-      ? (() => {
-          const rej = rejectionInPlainWords(row.screening);
-          return rej
-            ? {
-                screening: {
-                  ...(rej.reasonCode ? { reason_code: rej.reasonCode } : {}),
-                  reason: rej.plain,
-                  ...(rej.at ? { at: rej.at } : {}),
-                },
-              }
-            : {};
-        })()
-      : {}),
-    listing: {
-      schema_version: row.schema_version,
-      // The side, in the words the wire uses. WANT/HAVE stay in the column.
-      type: row.type === 'WANT' ? 'looking_for' : 'offering',
-      category: row.category,
-      geo: row.geo,
-      ...(row.attributes && Object.keys(row.attributes).length
-        ? { attributes: row.attributes }
+  return r.rows.map((row) => {
+    const who =
+      row.lifecycle_state === 'PUBLISHED'
+        ? (people.get(row.id) ?? { here: 0, waiting: 0 })
+        : undefined;
+    return {
+      intent_id: row.id,
+      state: row.lifecycle_state,
+      // WHO HAS COME FORWARD, and who is behind them. The two counts are for the
+      // agent; the sentence is the whole of what its human hears. Anything past
+      // the counting of them — whose move it is, a figure, a message — belongs
+      // to the sweep and is not here.
+      ...(who
+        ? {
+            people_here: who.here,
+            in_line: who.waiting,
+            note: {
+              text: peopleSentence(row.category, row.type, who.here, who.waiting),
+              provenance: 'switchboard-system' as const,
+            },
+          }
         : {}),
-      ...(row.ask ? { ask: row.ask } : {}),
-      urgency: row.urgency,
-      visibility: row.visibility,
-      status: row.protocol_status,
-      ttl_days: row.ttl_days,
-      slots: row.slots ?? 1,
-      ...(row.type === 'HAVE' ? { sale: row.sale ?? 'straight' } : {}),
-    },
-    expires_at: row.expires_at,
-    ...(tz && row.expires_at ? { expires_local: localTimeText(new Date(row.expires_at), tz) } : {}),
-    created_at: row.created_at,
-  }));
+      ...(row.lifecycle_state === 'SCREENING_REJECTED'
+        ? (() => {
+            const rej = rejectionInPlainWords(row.screening);
+            return rej
+              ? {
+                  screening: {
+                    ...(rej.reasonCode ? { reason_code: rej.reasonCode } : {}),
+                    reason: rej.plain,
+                    ...(rej.at ? { at: rej.at } : {}),
+                  },
+                }
+              : {};
+          })()
+        : {}),
+      listing: {
+        schema_version: row.schema_version,
+        // The side, in the words the wire uses. WANT/HAVE stay in the column.
+        type: row.type === 'WANT' ? 'looking_for' : 'offering',
+        category: row.category,
+        geo: row.geo,
+        ...(row.attributes && Object.keys(row.attributes).length
+          ? { attributes: row.attributes }
+          : {}),
+        ...(row.ask ? { ask: row.ask } : {}),
+        urgency: row.urgency,
+        visibility: row.visibility,
+        status: row.protocol_status,
+        ttl_days: row.ttl_days,
+        slots: row.slots ?? 1,
+        ...(row.type === 'HAVE' ? { sale: row.sale ?? 'straight' } : {}),
+      },
+      expires_at: row.expires_at,
+      ...(tz && row.expires_at ? { expires_local: localTimeText(new Date(row.expires_at), tz) } : {}),
+      created_at: row.created_at,
+    };
+  });
 }
 
 function assertOwnUsableCard(card: CardRow | undefined, accountId: string): CardRow {

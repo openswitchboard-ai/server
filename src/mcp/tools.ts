@@ -253,7 +253,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_intents',
     description:
-      "List your human's own wants and haves, and their lifecycle states. Each one comes back with its side — \"looking_for\" or \"offering\" — under `listing.type`.",
+      "List your human's own wants and haves, and their lifecycle states. Each one comes back with its side — \"looking_for\" or \"offering\" — under `listing.type`. Each one that is still up also says how many people have come forward about it and how many are waiting their turn behind them, with one ready sentence written for your human: lead with that sentence and never read a field name aloud. Those two counts are the whole of what this tool knows about those people. Everything else about them — whose move it is on each, any figure on the table, any message waiting to be collected — comes from check_in, so answer \"has anyone turned up?\" from here and anything past it from there.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
