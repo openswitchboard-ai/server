@@ -1,5 +1,5 @@
 /**
- * The shared profile — the first name and rough area that stage 3 hands over.
+ * The shared profile — the first name and suburb that stage 3 hands over.
  *
  * The defect this suite exists to hold shut: registration never asked for
  * either field, so an account carried two encrypted empty strings, both humans
@@ -640,7 +640,7 @@ describe('the pages that collect it', () => {
 
   it('the consent page says, in one line, when details ever cross', () => {
     const consent = cpages.consentPage();
-    expect(consent).toMatch(/first name and rough area/);
+    expect(consent).toMatch(/first name and suburb/);
     expect(consent).toMatch(/only things that ever cross/);
   });
 

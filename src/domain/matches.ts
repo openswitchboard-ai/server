@@ -345,7 +345,7 @@ function counterpartyOf(m: MatchRow, accountId: string): string {
 
 /**
  * Where an opt-in may come from. One value, on purpose (Lachlan, 2026-09-12):
- * sharing a first name and an area is one of the three things that go to the
+ * sharing a first name and a suburb is one of the three things that go to the
  * human every time, so the press on their own page is the only thing that
  * writes it. The agent-attested road this once had is gone.
  */
@@ -410,7 +410,7 @@ function assertBothInterested(m: MatchRow): void {
  * humans' tokens are recorded.
  *
  * The only caller is the human's own page, after their press. An opt-in is a
- * promise to hand over a first name and an area, so an account that has
+ * promise to hand over a first name and a suburb, so an account that has
  * neither on file cannot make it: that case is refused BEFORE the WORM write
  * with CONSENT_REQUIRED, and the page it sends them back to is the one that
  * asks for the two fields. The agent is never the one that supplies the name,
@@ -541,7 +541,7 @@ async function mine(promoted: string[], accountId: string): Promise<string[]> {
  * opted in, talked, and have taken it off the switchboard (swapped numbers,
  * joined the book club). Only a party to the match may archive it, and only an
  * OPEN match can be archived. The row and its disclosed-profile linkage STAY,
- * so the connection record — the counterparty's disclosed first name and area,
+ * so the connection record — the counterparty's disclosed first name and suburb,
  * the category, the dates — is retrievable afterwards. What is torn down is the
  * live channel: the state leaving 'open' is itself enough to make
  * channel_send/receive refuse (loadOpenChannel gates on state === 'open'), and
@@ -996,7 +996,7 @@ export const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
  * From 13 September 2026 it carries the whole of the first sweep, because there
  * is no interest step left to ask about: somebody has come forward, what they
  * have is already open to read, and the one thing still to come is the human's
- * own go-ahead on sharing a first name and rough area.
+ * own go-ahead on sharing a first name and suburb.
  */
 function signalNote(category: string, counterpartyType: 'looking_for' | 'offering'): { text: string; provenance: 'switchboard-system' } {
   const thing = plainLeaf(category);
@@ -1005,7 +1005,7 @@ function signalNote(category: string, counterpartyType: 'looking_for' | 'offerin
       ? `Someone nearby has ${thing} going that could be what you're after. Here is what they have.`
       : `Someone nearby is looking for ${thing} like yours. Here is what they're after.`;
   return sbNote(
-    `${opening} Take a look, and when you're ready, say the word and I'll share your first name and rough area so the two of you can talk.`,
+    `${opening} Take a look, and when you're ready, say the word and I'll share your first name and suburb so the two of you can talk.`,
   );
 }
 
@@ -1044,7 +1044,7 @@ export function expressInterestSentence(m: MatchRow, accountId: string): string 
   if (next === 'ready_to_talk') {
     return `You have both said yes on ${thing}. You can talk whenever you like.`;
   }
-  return `You are already down as keen on ${thing} — putting it up said that. What they have is open to you now, so take a look, and when you are ready, give me the go-ahead and I will share your first name and rough area so the two of you can talk.`;
+  return `You are already down as keen on ${thing} — putting it up said that. What they have is open to you now, so take a look, and when you are ready, give me the go-ahead and I will share your first name and suburb so the two of you can talk.`;
 }
 
 /**
@@ -1144,7 +1144,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // A finished connection, kept retrievable. It is never an actionable or
       // new signal — no `next`, no stage-1 signal — but it carries enough to
       // recall it: the category, when it was filed, and, where the humans
-      // reached stage 3, the disclosed first name and area.
+      // reached stage 3, the disclosed first name and suburb.
       const entry: any = {
         intro_id: m.id,
         state: 'archived',
@@ -1161,7 +1161,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         }
       }
       // A ready sentence to answer "who was that again?" from later — the first
-      // name and area if the two reached mutual disclosure, plainly, with no
+      // name and suburb if the two reached mutual disclosure, plainly, with no
       // system words. This is the whole of what the agent relays on recall.
       //
       // Two of them are not a recollection at all but news, and they are the
@@ -1356,7 +1356,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // An offer waiting is its own sentence (offer_note); otherwise it is the
         // one step left before the two can talk.
         entry.note = lead(
-          "You are both keen to talk. The last step is yours: give me the go-ahead and I will share your first name and rough area so the two of you can connect.",
+          "You are both keen to talk. The last step is yours: give me the go-ahead and I will share your first name and suburb so the two of you can talk.",
         );
         break;
       case 'ready_to_talk':

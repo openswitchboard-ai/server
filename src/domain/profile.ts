@@ -1,5 +1,5 @@
 /**
- * The shared profile: the first name and rough area a human agrees to hand
+ * The shared profile: the first name and suburb a human agrees to hand
  * over when a match reaches stage 3, and nothing beyond that.
  *
  * Two rules hold this file together.
