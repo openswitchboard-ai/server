@@ -149,7 +149,7 @@ const geoEdges: Scenario = {
       });
 
     const ambiguous = await h.publish(a, bike('Perth'), { expectError: true });
-    assert(ambiguous.isError && ambiguous.result.code === 'LOCATION_AMBIGUOUS',
+    assert(ambiguous.result?.code === 'LOCATION_AMBIGUOUS',
       `Perth should be LOCATION_AMBIGUOUS, got ${JSON.stringify(ambiguous.result)}`);
     const displays = (ambiguous.result.candidates ?? []).map((c: any) => c.display);
     assert(displays.some((d: string) => /Perth.*AU/.test(d)) && displays.some((d: string) => /Perth.*GB/.test(d)),
@@ -157,7 +157,7 @@ const geoEdges: Scenario = {
 
     for (const [place, label] of [['ACT', 'bare region'], ['AU', 'bare country']] as const) {
       const r = await h.publish(a, bike(place), { expectError: true });
-      assert(r.isError && r.result.code === 'LOCATION_UNRESOLVED',
+      assert(r.result?.code === 'LOCATION_UNRESOLVED',
         `${label} "${place}" should be LOCATION_UNRESOLVED, got ${JSON.stringify(r.result)}`);
     }
     log('homonym -> AMBIGUOUS with candidates; bare region/country -> UNRESOLVED');
@@ -257,7 +257,7 @@ const fullLadder: Scenario = {
     const arch = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'archive' });
     assert(!arch.isError && arch.result.state === 'archived', `archive failed: ${JSON.stringify(arch.result)}`);
     const blocked = await h.mcp(wA.accessToken, 'send_message', { intro_id: matchId, text: 'still there?' });
-    assert(blocked.isError && blocked.result.code === 'NOT_UNLOCKED_YET', `archived channel_send not NOT_UNLOCKED_YET: ${JSON.stringify(blocked.result)}`);
+    assert(blocked.result?.code === 'NOT_UNLOCKED_YET', `archived channel_send not NOT_UNLOCKED_YET: ${JSON.stringify(blocked.result)}`);
 
     const after = await h.mcp(hB.accessToken, 'check_in', {});
     check.sweep(after.raw, 'hB sweep after archive');
@@ -332,7 +332,7 @@ const negotiation: Scenario = {
     const passOn = await h.mcp(dA.accessToken, 'respond', {
       intro_id: matchId, action: 'propose_offer', offer: { amount: 500, ccy: 'AUD', expiry },
     });
-    assert(passOn.isError && passOn.result.code === 'CONSENT_REQUIRED',
+    assert(passOn.result?.code === 'CONSENT_REQUIRED',
       `pass-on figure not refused with CONSENT_REQUIRED: ${JSON.stringify(passOn.result)}`);
 
     // eB's human switches HIS card to Auto-negotiate with an odd box.
@@ -345,7 +345,7 @@ const negotiation: Scenario = {
     const outBox = await h.mcp(eB.accessToken, 'respond', {
       intro_id: matchId, action: 'propose_offer', offer: { amount: 400, ccy: 'AUD', expiry },
     });
-    assert(outBox.isError && outBox.result.code === 'CONSENT_REQUIRED', `out-of-box offer not refused: ${JSON.stringify(outBox.result)}`);
+    assert(outBox.result?.code === 'CONSENT_REQUIRED', `out-of-box offer not refused: ${JSON.stringify(outBox.result)}`);
     assert(String(JSON.stringify(outBox.result)).includes('733.5'), 'the edge was not named to the card owner');
 
     // The box, and the band, never cross to the counterparty.
@@ -391,7 +391,7 @@ const screening: Scenario = {
 
     // Prohibited/reserved category refused synchronously at publish.
     const weapon = await h.publish(a, card('WANT', 'goods.weapons', { bucket, radius_km: 25 }, { attributes: { condition: 'good' } }), { expectError: true });
-    assert(weapon.isError && weapon.result.code === 'CATEGORY_PROHIBITED', `prohibited category not refused: ${JSON.stringify(weapon.result)}`);
+    assert(weapon.result?.code === 'CATEGORY_PROHIBITED', `prohibited category not refused: ${JSON.stringify(weapon.result)}`);
     log('PII + injection screened out (never matchable); prohibited category refused at publish');
   },
 };

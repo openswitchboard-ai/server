@@ -264,7 +264,7 @@ async function s5_explainOptIn(ctx: Ctx): Promise<ScenarioResult> {
       let reachable = false;
       for (let i = 0; i < 6; i++) {
         const open = await ctx.cp.openChannel(ctx.state.bikeMatchId);
-        if (!open.isError) {
+        if (!open.isError && !open.result?.code) {
           reachable = true;
           break;
         }
@@ -439,7 +439,7 @@ async function emailTrack(ctx: Ctx): Promise<void> {
       await ask(ctx.emailSession, `Yes, happy to share my first name and area — go ahead.`);
       for (let i = 0; i < 6; i++) {
         const open = await ctx.cp.openChannel(matchId);
-        if (!open.isError) { reachable = true; break; }
+        if (!open.isError && !open.result?.code) { reachable = true; break; }
         await new Promise((r) => setTimeout(r, 5_000));
       }
     } catch (e) {

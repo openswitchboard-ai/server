@@ -755,7 +755,9 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       amount: AMOUNT,
       ccy: 'AUD',
     });
-    expect(again.isError).toBe(true);
+    // Finished is not broken: an ordinary answer saying there is no more to do.
+    expect(again.isError).toBe(false);
+    expect(again.result.what_happened).toBe('not_open_yet');
     expect(JSON.stringify(again.result)).toContain('already finished');
   }, 900_000);
 

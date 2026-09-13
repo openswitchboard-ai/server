@@ -15,7 +15,7 @@
  */
 import { setAutoNegotiate } from '../integration/helpers.js';
 import { Checker } from './checker.js';
-import { Harness, SCHEMA_VERSION, SimActor, log } from './harness.js';
+import { Harness, SCHEMA_VERSION, SimActor, log, wasRefused } from './harness.js';
 
 export interface RedTeamResult {
   id: string;
@@ -70,7 +70,7 @@ export async function runRedTeam(
   // R1: stage-3 before both opt-ins.
   try {
     const r = await h.mcp(attacker.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
-    record('R1', 'read stage-3 disclosure before both opt-ins', r.isError && r.result.code === 'NOT_UNLOCKED_YET',
+    record('R1', 'read stage-3 disclosure before both opt-ins', r.result?.code === 'NOT_UNLOCKED_YET',
       `code=${r.result?.code}`);
   } catch (e) { record('R1', 'read stage-3 disclosure before both opt-ins', false, String(e)); }
 
@@ -80,7 +80,7 @@ export async function runRedTeam(
   for (const action of ['accept', 'accept_offer', 'approve', 'accepted-by-human', 'confirm_deal', 'finalize']) {
     try {
       const r = await h.mcp(attacker.accessToken, 'respond', { intro_id: matchId, action });
-      if (!r.isError) { acceptRefused = false; acceptDetails.push(`${action} SUCCEEDED`); }
+      if (!wasRefused(r)) { acceptRefused = false; acceptDetails.push(`${action} SUCCEEDED`); }
     } catch { /* thrown error is still a refusal */ }
   }
   record('R2', 'accept an offer/disclosure via an invented MCP action', acceptRefused, acceptDetails.join('; ') || 'all invented accepts rejected');
@@ -108,7 +108,7 @@ export async function runRedTeam(
       const r = await h.mcp(attacker.accessToken, 'respond', {
         intro_id: matchId, action: 'propose_offer', offer: { amount, ccy: 'AUD', expiry },
       });
-      outcomes.push(r.isError ? (r.result.code ?? 'ERR') : 'ok');
+      outcomes.push(wasRefused(r) ? (r.result?.code ?? 'ERR') : 'ok');
     }
     const fourth = outcomes[3];
     const limited = fourth === 'RATE_LIMITED_OFFERS';
@@ -130,12 +130,12 @@ export async function runRedTeam(
   if (stranger !== attacker) {
     for (const action of ['archive', 'decline', 'express_interest']) {
       const r = await h.mcp(stranger.accessToken, 'respond', { intro_id: matchId, action });
-      if (!r.isError) { strangerRefused = false; strangerDetail.push(`${action} SUCCEEDED`); }
+      if (!wasRefused(r)) { strangerRefused = false; strangerDetail.push(`${action} SUCCEEDED`); }
     }
     const send = await h.mcp(stranger.accessToken, 'send_message', { intro_id: matchId, text: 'hi' });
-    if (!send.isError) { strangerRefused = false; strangerDetail.push('channel_send SUCCEEDED'); }
+    if (!wasRefused(send)) { strangerRefused = false; strangerDetail.push('channel_send SUCCEEDED'); }
     const wd = await h.mcp(stranger.accessToken, 'withdraw_intent', { intent_id: wId });
-    if (!wd.isError) { strangerRefused = false; strangerDetail.push('withdraw of foreign card SUCCEEDED'); }
+    if (!wasRefused(wd)) { strangerRefused = false; strangerDetail.push('withdraw of foreign card SUCCEEDED'); }
     record('R7', 'act on / withdraw a match+card the account is not party to', strangerRefused, strangerDetail.join('; ') || 'all foreign actions refused');
   } else {
     record('R7', 'act on a match the account is not party to', true, 'skipped — no spare actor for a stranger');
@@ -150,7 +150,7 @@ export async function runRedTeam(
       for (let i = 0; i < 65 && !sawLimit; i++) {
         const r = await h.mcp(greedy.accessToken, i % 2 ? 'list_intents' : 'check_in', {});
         calls++;
-        if (r.isError && r.result.code === 'RATE_LIMITED') { sawLimit = true; retryAfter = r.result.retry_after; }
+        if (r.result?.code === 'RATE_LIMITED') { sawLimit = true; retryAfter = r.result.retry_after; }
       }
       record('R4', 'hammer the read tools past the hourly ceiling', sawLimit && retryAfter > 0 && retryAfter <= 3600,
         `RATE_LIMITED after ${calls} calls, retry_after=${retryAfter}`);

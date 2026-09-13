@@ -166,7 +166,9 @@ d('one city, two spellings, one match', () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: card('WANT', 'ACT'),
     });
-    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    // Asking for a better place is the switchboard working, so it answers.
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
+    expect(r.result.what_happened).toBe('place_unclear');
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
     expect(r.result.human_action).toMatch(/state or territory/i);
     expect(r.result.human_action).toContain('Australian Capital Territory');
@@ -180,7 +182,9 @@ d('one city, two spellings, one match', () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: card('WANT', 'AU'),
     });
-    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    // Asking for a better place is the switchboard working, so it answers.
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
+    expect(r.result.what_happened).toBe('place_unclear');
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
     expect(r.result.human_action).toMatch(/whole country/i);
     expect(r.result.human_action).toContain('Australia');
@@ -191,7 +195,8 @@ d('one city, two spellings, one match', () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: card('WANT', 'Perth'),
     });
-    expect(r.isError, JSON.stringify(r.result)).toBe(true);
+    expect(r.isError, JSON.stringify(r.result)).toBe(false);
+    expect(r.result.what_happened).toBe('place_unclear');
     expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_AMBIGUOUS');
     const displays = (r.result.candidates ?? []).map((c: any) => c.display);
     expect(displays, JSON.stringify(r.result)).toContain('Perth, Western Australia, AU');
@@ -260,7 +265,7 @@ d('one city, two spellings, one match', () => {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
         listing: card('WANT', place),
       });
-      expect(r.isError, `${place}: ${JSON.stringify(r.result)}`).toBe(true);
+      expect(r.isError, `${place}: ${JSON.stringify(r.result)}`).toBe(false);
       expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
       expect(r.result.human_action).toMatch(hint);
     }

@@ -125,7 +125,10 @@ export async function publishIntent(
 ): Promise<PublishResult> {
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid want or have: ${v.reasons.join('; ')}`), {
+    // In words, because this sentence has been seen in a chat window: the
+    // validator's own account reads like a fault the person at the keyboard
+    // caused, and they only said what they were after.
+    throw Object.assign(new Error(`this cannot go up as it stands: ${v.plain.join('; ')}`), {
       validation: v.reasons,
     });
   }
@@ -464,7 +467,7 @@ export async function amendIntent(
   if (next.ask === null || next.ask === undefined) delete next.ask;
   const v = validatePayload('intent-card', next);
   if (!v.valid) {
-    throw Object.assign(new Error(`invalid amended want or have: ${v.reasons.join('; ')}`), {
+    throw Object.assign(new Error(`this change cannot be made as it stands: ${v.plain.join('; ')}`), {
       validation: v.reasons,
     });
   }

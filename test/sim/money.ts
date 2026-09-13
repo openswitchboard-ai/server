@@ -54,7 +54,7 @@ import {
 } from '../integration/helpers.js';
 import type { Checker } from './checker.js';
 import type { AgentMoveAttempt, ProposalAttempt } from './invariants.js';
-import { Harness, SimActor, dbExec, group, groupEnd, log, poll } from './harness.js';
+import { Harness, SimActor, dbExec, group, groupEnd, log, poll, wasRefused } from './harness.js';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -223,8 +223,8 @@ async function propose(
     description: 'Sim money group: a bicycle, as agreed.',
   });
   return {
-    id: r.isError ? undefined : (r.result?.settlement_id as string),
-    isError: r.isError,
+    id: wasRefused(r) ? undefined : (r.result?.settlement_id as string),
+    isError: wasRefused(r),
     detail: JSON.stringify(r.result).slice(0, 220),
   };
 }
@@ -324,8 +324,8 @@ async function tryAgentMoves(
     const moved = after !== stateAtStart;
     out.push({
       label: s.label,
-      refused: r.isError || !moved,
-      detail: r.isError
+      refused: wasRefused(r) || !moved,
+      detail: wasRefused(r)
         ? `refused: ${JSON.stringify(r.result).slice(0, 140)}`
         : `ignored the unknown field and answered with a plain read (state ${reported ?? '?'}, unchanged in the database)`,
     });
@@ -423,7 +423,7 @@ export async function runMoney(
       intro_id: matchId,
       action: 'opt_in',
     });
-    if (!refused.isError || refused.result?.code !== 'CONSENT_REQUIRED') {
+    if (refused.result?.code !== 'CONSENT_REQUIRED') {
       res.notes.push(`${actor.label}'s opt_in was not refused with the names link`);
       continue;
     }
@@ -444,13 +444,13 @@ export async function runMoney(
     const noCcy = await h.mcp(buyer.accessToken, 'settle', { intro_id: matchId, amount: AMOUNT });
     guards.push({
       label: 'settle proposed with an amount and no currency',
-      refused: noCcy.isError,
+      refused: wasRefused(noCcy),
       detail: JSON.stringify(noCcy.result).slice(0, 160),
     });
     const tiny = await h.mcp(buyer.accessToken, 'settle', { intro_id: matchId, amount: 0.5, ccy: 'AUD' });
     guards.push({
       label: 'settle proposed for less than the fee riding on it',
-      refused: tiny.isError,
+      refused: wasRefused(tiny),
       detail: JSON.stringify(tiny.result).slice(0, 160),
     });
   }

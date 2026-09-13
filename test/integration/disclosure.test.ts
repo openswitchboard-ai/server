@@ -93,7 +93,9 @@ d('stage-3 disclosure for accounts that came through registration', () => {
 
   it('respond(opt_in) is refused with CONSENT_REQUIRED, the sentence and the link', async () => {
     const r = await mcpCall(ana.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(r.isError).toBe(true);
+    // Waiting on a press is the switchboard working, so nothing fails.
+    expect(r.isError).toBe(false);
+    expect(r.result.what_happened).toBe('your_human_presses');
     expect(r.result.code).toBe('CONSENT_REQUIRED');
     expect(r.result.human_action).toContain(
       'Sharing their first name and area is theirs to press. Hand them this link',
@@ -112,7 +114,9 @@ d('stage-3 disclosure for accounts that came through registration', () => {
       action: 'opt_in',
       first_name: 'NotAna',
     } as any);
-    expect(r.isError).toBe(true);
+    // The extra word changed nothing: the same answer, and nothing recorded.
+    expect(r.isError).toBe(false);
+    expect(r.result.code).toBe('CONSENT_REQUIRED');
     expect(await optinCount(matchId)).toBe(0);
   });
 
@@ -184,7 +188,8 @@ d('stage-3 disclosure for accounts that came through registration', () => {
 
   it('stage 3 stays locked while only one side has opted in', async () => {
     const locked = await mcpCall(ana.accessToken, 'check_in', { intro_id: matchId, step: 'names' });
-    expect(locked.isError).toBe(true);
+    expect(locked.isError).toBe(false);
+    expect(locked.result.what_happened).toBe('not_open_yet');
     expect(locked.result.code).toBe('NOT_UNLOCKED_YET');
   });
 
@@ -193,7 +198,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
       intro_id: matchId,
       action: 'opt_in',
     });
-    expect(refused.isError).toBe(true);
+    expect(refused.isError).toBe(false);
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
     expect(await optinCount(matchId)).toBe(1); // the refusal wrote nothing
 

@@ -5,7 +5,7 @@
  */
 import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, manualUpdateSince } from './instructions.js';
-import { bundledSchema, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
+import { bundledSchema, ErrorCode, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import { getHearsVia, getTimezone, hearsViaNote } from '../domain/accounts.js';
 import { clockNote, localTimeText } from '../domain/localTime.js';
 import * as arrangement from '../domain/arrangement.js';
@@ -545,16 +545,76 @@ function ok(data: unknown): ToolResult {
   };
 }
 
-function protocolError(payload: ProtocolError): ToolResult {
+/**
+ * The refusals that ARE the switchboard working, against the plain word each
+ * one is, for an agent to branch on (Lachlan, 2026-09-13).
+ *
+ * A human whose agent is told "your human has to press this first" has done
+ * nothing wrong, and neither has the agent. Handed back as a tool error, a
+ * well-behaved client printed a bare failure at that human with no sentence
+ * under it, and another read the words of a schema complaint out loud while
+ * their want was going up. Both were seen live. So these come back the way
+ * every other answer does, carrying the sentence to say and the link to hand
+ * over, and only what an author must fix — a call that cannot be read, an id
+ * that is nobody's, a switchboard that is broken — is still a failure.
+ *
+ * A code missing from this list is a failure by that rule. `code` travels
+ * exactly as it did, so anything already branching on it keeps working.
+ */
+export const EXPECTED_REFUSALS: Partial<Record<ErrorCode, string>> = {
+  CONSENT_REQUIRED: 'your_human_presses',
+  NOT_UNLOCKED_YET: 'not_open_yet',
+  QUOTA_EXCEEDED: 'limit_reached',
+  RATE_LIMITED: 'limit_reached',
+  RATE_LIMITED_OFFERS: 'limit_reached',
+  INTENT_EXPIRED: 'it_ran_out',
+  CATEGORY_PROHIBITED: 'not_carried_here',
+  LOCATION_UNRESOLVED: 'place_unclear',
+  LOCATION_AMBIGUOUS: 'place_unclear',
+  SETTLEMENT_UNAVAILABLE: 'not_switched_on',
+};
+
+/**
+ * The link a refusal hands over, lifted out of the sentence it sits in so an
+ * agent never has to read it out of prose. Same string, second place.
+ */
+function linkIn(sentence?: string): string | undefined {
+  const m = sentence?.match(/https?:\/\/[^\s"'<>]+/);
+  return m ? m[0].replace(/[.,;:)\]]+$/, '') : undefined;
+}
+
+/**
+ * A refusal, in whichever envelope it has earned. Expected ones are ordinary
+ * answers: the plain word first, then everything the payload already carried,
+ * then the link if the sentence held one.
+ */
+export function protocolAnswer(payload: ProtocolError): ToolResult {
+  const word = EXPECTED_REFUSALS[payload.code];
+  if (!word) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+      structuredContent: payload,
+      isError: true,
+    };
+  }
+  const link = linkIn(payload.human_action);
+  const body = { what_happened: word, ...payload, ...(link ? { link } : {}) };
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
-    structuredContent: payload,
-    isError: true,
+    content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
+    structuredContent: body,
+    isError: false,
   };
 }
 
+/**
+ * A call that cannot be read: something the agent's author has to fix, so it
+ * stays a failure. The words are chosen on the assumption that they WILL be
+ * shown to somebody — they say what is missing or wrong and nothing about
+ * whose fault it is.
+ */
 function invalidInput(message: string, humanAction?: string): ToolResult {
   const payload = {
+    what_happened: 'the call could not be read',
     error: 'invalid_input',
     message,
     ...(humanAction ? { human_action: humanAction } : {}),
@@ -1028,7 +1088,7 @@ export async function dispatchTool(
         return invalidInput(`unknown tool '${name}'`);
     }
   } catch (e: any) {
-    if (e instanceof OsbError) return protocolError(e.payload);
+    if (e instanceof OsbError) return protocolAnswer(e.payload);
     if (e?.notFound) return invalidInput(e.message);
     if (e?.validation) return invalidInput(e.message);
     throw e;

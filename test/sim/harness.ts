@@ -64,6 +64,16 @@ export interface McpResult {
   isError: boolean;
 }
 
+/**
+ * Was this call turned away? From 2026-09-13 a refusal the switchboard means
+ * — your human has to press this, that is not open yet, you have hit a limit —
+ * comes back as an ordinary answer carrying its code, so a harness that reads
+ * the failure flag alone would score a refusal as a success. Either shape
+ * counts here.
+ */
+export const wasRefused = (r: { isError?: boolean; result?: any }): boolean =>
+  r.isError === true || typeof r.result?.code === 'string';
+
 export interface SimActor extends TestActor {
   label: string;
   /** The first name / area actually on this account's shared profile, if any.
@@ -114,7 +124,7 @@ export class Harness {
   async mcp(token: string, name: string, args: Record<string, unknown>): Promise<McpResult> {
     this.mcpCalls++;
     const r = (await rawMcpCall(token, name, args)) as McpResult;
-    if (r.isError && r.result?.code === 'RATE_LIMITED') this.rateLimited++;
+    if (r.result?.code === 'RATE_LIMITED') this.rateLimited++;
     return r;
   }
 
@@ -126,10 +136,10 @@ export class Harness {
     opts: { expectError?: boolean } = {},
   ): Promise<McpResult> {
     const r = await this.mcp(actor.accessToken, 'publish_intent', { listing: card });
-    if (!r.isError && r.result?.intent_id) {
+    if (!wasRefused(r) && r.result?.intent_id) {
       this.cards.push({ token: actor.accessToken, id: r.result.intent_id, label: actor.label });
     }
-    if (r.isError && !opts.expectError) {
+    if (wasRefused(r) && !opts.expectError) {
       throw new Error(`publish failed for ${actor.label}: ${JSON.stringify(r.result)}`);
     }
     return r;

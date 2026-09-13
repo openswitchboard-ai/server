@@ -122,7 +122,7 @@ export async function runFuzz(
   const step = async (actor: SimActor, tool: string, args: Record<string, unknown>) => {
     sequence.push(`mcp(${actor.label}, ${tool}, ${JSON.stringify(args)})`);
     const r = await h.mcp(actor.accessToken, tool, args);
-    if (r.isError && r.result?.code === 'RATE_LIMITED') outcome.rateLimited++;
+    if (r.result?.code === 'RATE_LIMITED') outcome.rateLimited++;
     return r;
   };
   const noteViolation = () => {
@@ -314,10 +314,10 @@ export async function runFuzz(
       ];
       for (const [actor, tool, args] of seq) {
         const r = await step(actor, tool, args);
-        if (r.isError && r.result?.code === 'RATE_LIMITED') break; // expected throttle
+        if (r.result?.code === 'RATE_LIMITED') break; // expected throttle
         if (tool === 'check_in' && !args.stage) check.matchesView(r, `fuzz r${round} ${actor.label} sweep`);
         else check.sweep(r.raw, `fuzz r${round} ${actor.label} ${tool}`);
-        if (tool === 'open_conversation' && !r.isError) outcome.channelsOpened++;
+        if (tool === 'open_conversation' && !r.isError && !r.result?.code) outcome.channelsOpened++;
         noteViolation();
       }
       await step(wA, 'respond', { intro_id: matchId, action: 'archive' });

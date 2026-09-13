@@ -412,13 +412,17 @@ describe('Pass on: an agent may not author a figure at all', () => {
     expect(world.offers).toHaveLength(0);
   });
 
-  it('the refusal reaches the agent through the tool surface as a protocol error', async () => {
+  it('the refusal reaches the agent as an ordinary answer, carrying what to do', async () => {
     const r = await dispatchTool(cfg, BEPPE, 'respond', {
       match_id: MATCH,
       action: 'propose_offer',
       offer: { amount: 5000, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
-    expect(r.isError).toBe(true);
+    // Nobody did anything wrong here, so nothing fails: the answer says what
+    // happened, in a word, with the sentence to read out.
+    expect(r.isError).toBe(false);
+    expect((r.structuredContent as any).what_happened).toBe('your_human_presses');
+    expect((r.structuredContent as any).human_action).toBeTruthy();
     expect((r.structuredContent as any).code).toBe('CONSENT_REQUIRED');
     expect(world.offers).toHaveLength(0);
   });

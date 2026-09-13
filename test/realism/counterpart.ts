@@ -147,14 +147,14 @@ export class Counterpart {
       attributes: attrs,
     };
     let r = await this.h.publish(this.actor, card, { expectError: true });
-    if (r.isError) {
+    if (!r.result?.intent_id) {
       // Retry without attributes if the schema refused a mirrored one.
       log(`counterpart publish refused (${JSON.stringify(r.result).slice(0, 160)}); retrying thin`);
       const thin = { ...card };
       delete (thin as any).attributes;
       r = await this.h.publish(this.actor, thin, { expectError: true });
     }
-    if (r.isError || !r.result?.intent_id) {
+    if (!r.result?.intent_id) {
       throw new Error(`counterpart publish failed: ${JSON.stringify(r.result).slice(0, 240)}`);
     }
     return r.result.intent_id as string;

@@ -467,7 +467,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
         intro_id: hankMatchIds[b.accountId],
         action: 'express_interest',
       });
-      expect(push.isError).toBe(true);
+      expect(push.isError).toBe(false);
+      expect(push.result.what_happened).toBe('not_open_yet');
       expect(push.result.code).toBe('NOT_UNLOCKED_YET');
       // And a rival's introduction is not addressable at all.
       const other = buyers.find((x) => x.accountId !== b.accountId)!;
@@ -544,7 +545,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     const liveIntro = hankMatchIds[buyers[0].accountId];
     const refusals = await reachStage3(liveIntro, [{ actor: hank }, { actor: buyers[0] }]);
     for (const r of refusals) {
-      expect(r.isError, JSON.stringify(r.result)).toBe(true);
+      expect(r.isError, JSON.stringify(r.result)).toBe(false);
+      expect(r.result.what_happened).toBe('your_human_presses');
       expect(r.result.code).toBe('CONSENT_REQUIRED');
       expect(r.result.human_action).toMatch(/https?:\/\/\S+\/a\//);
       expect(r.result.optin_recorded).toBeUndefined();
@@ -575,7 +577,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       action: 'propose_offer',
       offer: { amount: 130, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
-    expect(fourth.isError).toBe(true);
+    expect(fourth.isError).toBe(false);
+    expect(fourth.result.what_happened).toBe('limit_reached');
     expect(fourth.result.code).toBe('RATE_LIMITED_OFFERS');
     expect(fourth.result.retry_after).toBeGreaterThan(0);
 

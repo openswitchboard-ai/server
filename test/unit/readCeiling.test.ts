@@ -111,7 +111,9 @@ describe('which tools it covers', () => {
       await spend('collect_messages').catch(() => undefined);
     }
     const r: any = await dispatchTool(cfg, ANA, 'list_intents', {});
-    expect(r.isError).toBe(true);
+    // Hitting the ceiling is the ceiling working, so it is an ordinary answer.
+    expect(r.isError).toBe(false);
+    expect(r.structuredContent.what_happened).toBe('limit_reached');
     expect(r.structuredContent.code).toBe('RATE_LIMITED');
     expect(r.structuredContent.retry_after).toBeGreaterThan(0);
   });

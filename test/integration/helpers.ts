@@ -501,7 +501,7 @@ export async function reachStage3(
       intro_id: introId,
       action: 'opt_in',
     });
-    if (!refused.isError || refused.result?.code !== 'CONSENT_REQUIRED') {
+    if (refused.isError || refused.result?.code !== 'CONSENT_REQUIRED') {
       throw new Error(`opt_in should be refused with the link: ${JSON.stringify(refused.result)}`);
     }
     const pressed = await pressNamesLink(actor, refused.result.human_action, shared);

@@ -215,7 +215,9 @@ d('integration gates against live deployment', () => {
       intro_id: matchId,
       step: 'names',
     });
-    expect(locked0.isError).toBe(true);
+    // Not open yet is the gate working, so it is an ordinary answer.
+    expect(locked0.isError).toBe(false);
+    expect(locked0.result.what_happened).toBe('not_open_yet');
     expect(locked0.result.code).toBe('NOT_UNLOCKED_YET');
 
     // ONE opt-in (alice) is still not enough. From 2026-09-12 an agent's own
@@ -223,7 +225,9 @@ d('integration gates against live deployment', () => {
     // human presses, and the press is what puts the go-ahead on the record.
     // Pressed the same way GATE (g) presses the send-a-number link.
     const o1 = await mcpCall(alice.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o1.isError).toBe(true);
+    expect(o1.isError).toBe(false);
+    expect(o1.result.what_happened).toBe('your_human_presses');
+    expect(o1.result.link).toMatch(/https?:\/\/\S+\/a\//);
     expect(o1.result.code).toBe('CONSENT_REQUIRED');
     expect(o1.result.human_action).toContain(
       'Sharing their first name and area is theirs to press',
@@ -233,16 +237,16 @@ d('integration gates against live deployment', () => {
       intro_id: matchId,
       step: 'names',
     });
-    expect(locked1.isError).toBe(true);
+    expect(locked1.isError).toBe(false);
     expect(locked1.result.code).toBe('NOT_UNLOCKED_YET');
     // open_channel is equally locked.
     const ch = await mcpCall(alice.accessToken, 'open_conversation', { intro_id: matchId });
-    expect(ch.isError).toBe(true);
+    expect(ch.isError).toBe(false);
     expect(ch.result.code).toBe('NOT_UNLOCKED_YET');
 
     // The second human's press opens stage 3.
     const o2 = await mcpCall(bob.accessToken, 'respond', { intro_id: matchId, action: 'opt_in' });
-    expect(o2.isError).toBe(true);
+    expect(o2.isError).toBe(false);
     expect(o2.result.code).toBe('CONSENT_REQUIRED');
     expect((await pressNamesLink(bob, o2.result.human_action)).status).toBe(200);
     const mutual = await mcpCall(alice.accessToken, 'check_in', {
@@ -403,7 +407,8 @@ d('integration gates against live deployment', () => {
       action: 'propose_offer',
       offer: { amount: 500, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
-    expect(refused.isError).toBe(true);
+    expect(refused.isError).toBe(false);
+    expect(refused.result.what_happened).toBe('your_human_presses');
     expect(refused.result.code).toBe('CONSENT_REQUIRED');
     expect(refused.result.human_action).toContain('Your numbers come from you');
     // What the refusal hands back is the single-use page that asks about THIS
@@ -492,7 +497,7 @@ d('integration gates against live deployment', () => {
       action: 'propose_offer',
       offer: { amount: 400, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
     });
-    expect(outOfRange.isError).toBe(true);
+    expect(outOfRange.isError).toBe(false);
     expect(outOfRange.result.code).toBe('CONSENT_REQUIRED');
     expect(outOfRange.result.human_action).toContain('733.5');
 
@@ -652,7 +657,8 @@ d('integration gates against live deployment', () => {
       expect(r.isError, `call ${i + 1}`).toBe(false);
     }
     const over = await mcpCall(greedy.accessToken, 'check_in', {});
-    expect(over.isError).toBe(true);
+    expect(over.isError).toBe(false);
+    expect(over.result.what_happened).toBe('limit_reached');
     expect(over.result.code).toBe('RATE_LIMITED');
     expect(over.result.retry_after).toBeGreaterThan(0);
     expect(over.result.retry_after).toBeLessThanOrEqual(3600);
@@ -691,7 +697,8 @@ d('integration gates against live deployment', () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: minimalWant({ category: 'goods.weapons' }),
     });
-    expect(r.isError).toBe(true);
+    expect(r.isError).toBe(false);
+    expect(r.result.what_happened).toBe('not_carried_here');
     expect(r.result.code).toBe('CATEGORY_PROHIBITED');
   });
 
