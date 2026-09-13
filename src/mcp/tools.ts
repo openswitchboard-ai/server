@@ -155,6 +155,36 @@ const PLAIN_WORDS: [RegExp, (m: string, ...rest: any[]) => string][] = [
     if (/Match/.test(m)) return plural ? 'Introductions' : 'Introduction';
     return plural ? 'introductions' : 'introduction';
   }],
+  // The machinery's own words for an area, and the last three to reach a model
+  // through this door. The schema package titles the geo object "Bucketed
+  // location", says the switchboard "resolves it to a coarse cell", and calls
+  // the field itself "Canonical coarse cell (geohash4)". The manual has
+  // forbidden all three words since version 39 — and in the rehearsal of
+  // 2026-09-13 an assistant still told its human "location is bucketed, not
+  // exact address", because the manual was the only thing being swept and the
+  // schema was handing the word over underneath it.
+  //
+  // The plain words for the same truth: a name is held as a BROAD AREA, and
+  // what the switchboard keeps for that area is a SHORT CODE. The field name
+  // `bucket` is left standing where it is quoted as a field name, because that
+  // is what an agent has to put on the wire; the manual's own rule that a field
+  // name is never read aloud is what covers it, and every other spelling of the
+  // word stops here.
+  [/\bbucketed\b/gi, (m) => (/^B/.test(m) ? 'Broad-area' : 'broad-area')],
+  [/\b(?:canonical\s+|coarse\s+)*cell(s?)\b/gi, (m, s) => {
+    const said = s ? 'broad areas' : 'broad area';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
+  [/\bgeohash\d*(es)?\b/gi, (m, s) => {
+    const said = s ? 'short codes' : 'short code';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
+  // A bare `bucket` in prose becomes the plain phrase; a quoted or backticked
+  // one is naming the field and stays exactly as an agent must send it.
+  [/(?<!['"`])\bbucket(s?)\b(?!['"`])/gi, (m, s) => {
+    const said = s ? 'broad areas' : 'broad area';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
 ];
 
 /** "a introduction" is what a blind word-swap leaves behind. */

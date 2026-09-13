@@ -441,6 +441,25 @@ const BANNED = [
   { label: 'score', re: /\bscores?\b/i },
 ];
 
+/**
+ * Round four: the three words for an area. These came in through the pinned
+ * schema package rather than through anything written here, which is why the
+ * version 39 sweep over SERVER_INSTRUCTIONS alone did not catch them and an
+ * assistant still said "location is bucketed" out loud.
+ *
+ * `bucket` in quotes is the exception, and only in quotes: it is the wire's own
+ * property name, an agent that already holds one has to send it, and the
+ * manual's NEVER READ A FIELD NAME ALOUD is what covers a field name. Loose in
+ * a sentence it is the machinery talking, and so are all of "bucketed", "cell"
+ * and "geohash" wherever they appear.
+ */
+const AREA_WORDS = [
+  /\bbucket(ed|ing)\b/i,
+  /(?<!['"`])\bbuckets?\b(?!['"`])/i,
+  /\bgeohash(es|\d)*\b/i,
+  /\bcells?\b/i,
+];
+
 describe('what the switchboard calls things, in front of a model', () => {
   it('keeps the system words out of the manual an agent reads at connect', () => {
     for (const { label, re } of BANNED) {
@@ -1137,9 +1156,58 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(SERVER_INSTRUCTIONS).toContain(PROHIBITION);
     expect(MANUAL_CHANGELOG.find((c) => c.version === 39)!.note).toContain(PROHIBITION);
     const rest = SERVER_INSTRUCTIONS.split(PROHIBITION).join(' ');
+    // The manual is prose an agent reads end to end, so it is held to the
+    // stricter form: not even a quoted field name belongs in it.
     for (const word of [/\bbucket(ed|s|ing)?\b/i, /\bgeohash(es)?\b/i, /\bcells?\b/i]) {
       expect(word.test(rest), `${word} in SERVER_INSTRUCTIONS`).toBe(false);
     }
+  });
+
+  it('keeps them off the tool surface too, where the schema package put them', async () => {
+    // The half this sweep did not cover, and the reason the rehearsal happened
+    // anyway. The manual has forbidden these three words since version 39, but
+    // the check ran over SERVER_INSTRUCTIONS alone. The pinned schema package
+    // titled the geo object "Bucketed location", said the switchboard
+    // "resolves it to a coarse cell", and described the field as "Canonical
+    // coarse cell (geohash4)" — all of it rendered straight into the model's
+    // context by any client, which is where an assistant learned to say
+    // "location is bucketed" to its human. PLAIN_WORDS now rewrites them, and
+    // this holds the door shut on every description and every schema.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const strings = (node: any, path: string, out: [string, string][] = []): [string, string][] => {
+      if (Array.isArray(node)) node.forEach((n, i) => strings(n, `${path}[${i}]`, out));
+      else if (node && typeof node === 'object') {
+        for (const [k, v] of Object.entries(node)) strings(v, `${path}.${k}`, out);
+      } else if (typeof node === 'string') out.push([path, node]);
+      return out;
+    };
+    for (const t of TOOLS) {
+      expect(t.description.length, `${t.name} has a description`).toBeGreaterThan(0);
+      for (const word of AREA_WORDS) {
+        expect(word.test(t.name), `${word} in tool name ${t.name}`).toBe(false);
+        for (const [path, value] of strings(t, t.name)) {
+          expect(word.test(value), `${word} at ${path}: ${value.slice(0, 120)}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('leaves the wire field `bucket` itself alone, quoted as the field it is', async () => {
+    // The guard on the guard. `bucket` is the protocol's own property name and
+    // an agent that already holds one has to be able to send it, so the field
+    // stays and the one quoted reference to it in the prose stays with it.
+    // What must never survive is the word loose in a sentence, or any of
+    // "bucketed", "cell" and "geohash" at all — that is the sweep above.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const geo = (TOOLS.find((t) => t.name === 'publish_intent')!.inputSchema as any).properties
+      .listing.properties.geo;
+    expect(Object.keys(geo.properties)).toContain('bucket');
+    expect(geo.description).toContain("'bucket'");
+    // And the prose around it says plainly what the field holds.
+    expect(geo.title).not.toMatch(/bucketed/i);
+    expect(geo.properties.bucket.description).toMatch(/broad area/i);
+    expect(geo.properties.bucket.description).toMatch(/short code/i);
+    expect(geo.properties.bucket.description).toMatch(/fills this in from 'place'/);
   });
 
   it('keeps the system words out of the new body copy', () => {
