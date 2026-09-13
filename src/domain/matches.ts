@@ -939,7 +939,7 @@ const plainLeaf = (category: string) => categoryPhraseWithArticle(category);
 /** What "taken down" means, in the words the agent says it in. The thing this
  *  was about is off the switchboard, so nobody new comes into it; the two
  *  people already talking are left to finish. */
-const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
+export const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
   takenDown === 'yours'
     ? "What your human put up has been taken down, so nobody new comes into this. The conversation with this person stays open until the two of them are done; when they are, say the word and I will file it away."
     : "What they put up has been taken down, so nobody new comes into this. The conversation stays open until the two of them are done; when they are, say the word and I will file it away.";

@@ -26,7 +26,15 @@
  */
 import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
-import { getMatch, sideOf, type MatchRow } from './matches.js';
+import {
+  getMatch,
+  ownCardId,
+  sbNote,
+  sideOf,
+  takenDownSentence,
+  type MatchRow,
+} from './matches.js';
+import { categoryPhrase } from './matchRules.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -220,6 +228,73 @@ export async function sendMessage(
 }
 
 /**
+ * The sentence that rides back with a collection.
+ *
+ * RUN 8 (13 September 2026) is why this exists. A human asked "anything back on
+ * the bike?", their agent made one call — this one — and got `{ messages: [],
+ * more_waiting: false }` back. It answered "nothing yet", and said it while 400
+ * AUD from the other side was sitting on the table with an email already out
+ * about it. The bare shape was an honest read of what it was handed.
+ *
+ * So the house rule lands here too: WHICHEVER DOOR AN AGENT OPENS, IT MUST
+ * NEVER BE ABLE TO ANSWER "NOTHING" WHILE SOMETHING IS WAITING FOR THIS HUMAN.
+ * An empty batch is only ever the answer about words; this sentence accounts
+ * for everything else waiting on the same introduction.
+ *
+ * The order is the one fixed in checkMatches on the same day: something taken
+ * down first, then a figure on the table, then the plain state. The figures
+ * come from the same reader offerTable/offerTableNote the sweep uses, so there
+ * is one wording of that sentence in the codebase and no second version of it
+ * to drift. Cost: one read for the figures and the two for whether the thing
+ * was taken down — nothing that grows with the size of the batch.
+ *
+ * The message bodies never reach this sentence. They are the other side's
+ * words, they carry their own label, and they stay in `body` where an agent
+ * reads them knowing whose they are.
+ */
+async function collectNote(
+  ch: OpenChannel,
+  accountId: string,
+  collected: number,
+): Promise<{ text: string; provenance: 'switchboard-system' }> {
+  const m = ch.match;
+  let takenDown: 'yours' | 'theirs' | undefined;
+  let offerText: string | undefined;
+  try {
+    const { getCard } = await import('./cards.js');
+    const own = await getCard(ownCardId(m, accountId));
+    const theirs = await getCard(sideOf(m, accountId) === 'want' ? m.card_have : m.card_want);
+    if (own?.lifecycle_state === 'WITHDRAWN') takenDown = 'yours';
+    else if (theirs?.lifecycle_state === 'WITHDRAWN') takenDown = 'theirs';
+    if (!takenDown) {
+      const { offerTable, offerTableNote } = await import('./offers.js');
+      const table = await offerTable(accountId, m.id);
+      if (table.length) {
+        offerText = offerTableNote(table, categoryPhrase(m.category), sideOf(m, accountId));
+      }
+    }
+  } catch {
+    // A sentence is a courtesy; a collected message is the thing that must not
+    // be lost. If the extra reads fail the batch still goes back, with the
+    // plain wording for what the caller actually holds.
+  }
+  const alsoWaiting = takenDown ? takenDownSentence(takenDown) : offerText;
+  if (!collected) {
+    return sbNote(
+      alsoWaiting
+        ? `${alsoWaiting} No words have come through on this one.`
+        : 'Nothing has come through on this one, and there is nothing else here waiting on your human. I will bring you whatever arrives, whenever it arrives.',
+    );
+  }
+  const many = collected === 1 ? 'One message has' : `${collected} messages have`;
+  const pass =
+    collected === 1
+      ? 'Pass it on to your human in your own words, and say whose words it is.'
+      : 'Pass them on to your human in your own words, and say whose words they are.';
+  return sbNote(`${many} come through from the other side. ${pass}${alsoWaiting ? ` ${alsoWaiting}` : ''}`);
+}
+
+/**
  * Collect what is waiting for the caller, and let it go.
  *
  * The read, the decrypt and the delete all happen inside one transaction: a
@@ -229,7 +304,11 @@ export async function sendMessage(
 export async function receiveMessages(
   accountId: string,
   matchId: string,
-): Promise<{ messages: any[]; more_waiting: boolean }> {
+): Promise<{
+  messages: any[];
+  more_waiting: boolean;
+  note: { text: string; provenance: 'switchboard-system' };
+}> {
   const ch = await loadOpenChannel(matchId, accountId);
   const client = await getPool().connect();
   try {
@@ -244,7 +323,9 @@ export async function receiveMessages(
     );
     if (!r.rowCount) {
       await client.query('COMMIT');
-      return { messages: [], more_waiting: false };
+      // An empty batch is the answer about WORDS and nothing more, so the
+      // sentence that goes with it accounts for the rest of this introduction.
+      return { messages: [], more_waiting: false, note: await collectNote(ch, accountId, 0) };
     }
     const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
     const messages = [];
@@ -285,7 +366,11 @@ export async function receiveMessages(
     if (!rest.rowCount) {
       await rearmChannelNudge(ch.channelId, accountId);
     }
-    return { messages, more_waiting: !!rest.rowCount };
+    return {
+      messages,
+      more_waiting: !!rest.rowCount,
+      note: await collectNote(ch, accountId, collected),
+    };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     throw e;
