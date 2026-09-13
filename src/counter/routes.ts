@@ -14,10 +14,11 @@
  *  - these routes 404 on the MCP hostname (and /mcp 404s on this one).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
+import { areaSuggestLimiter, rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
 import { isValidTimeZone } from '../domain/localTime.js';
+import { suggestAreas } from '../geo/suggest.js';
 import {
   arrangementInPlainWords,
   readArrangement,
@@ -2694,6 +2695,29 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         actor: s.accountId!,
       });
       return html(reply, home.sharedProfilePage({ firstName: p.firstName, locality: p.locality }));
+    });
+
+    // ------------------------------------------------------------------
+    // The area box's suggestions. The offline gazetteer answers it, so a
+    // person typing the name of their own suburb reaches no third party and
+    // leaves no trail off this service. It is the same asset that places
+    // every posting, which is the point: the area a person shares and the
+    // area their postings match on now come from one source.
+    //
+    // Four things keep it cheap and keep it from becoming a way to walk the
+    // gazetteer or to probe the service: the human's own session, a minimum
+    // query length, eight answers at most, and the per-IP limiter.
+    // ------------------------------------------------------------------
+    counter.get('/areas', async (req, reply) => {
+      const s = await sess.loadSession(req);
+      if (!s?.accountId) return reply.code(401).send({ error: 'not_signed_in' });
+      if (!rateLimitBypassed(req.headers as any) && areaSuggestLimiter.limited(req.ip)) {
+        return reply.code(429).send({ error: 'slow_down' });
+      }
+      const q = String((req.query as any)?.q ?? '');
+      return reply
+        .header('cache-control', 'private, max-age=60')
+        .send({ places: suggestAreas(q) });
     });
 
     counter.post('/profile', async (req, reply) => {

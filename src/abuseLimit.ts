@@ -56,3 +56,13 @@ export const clientRegistrationLimiter = makeIpLimiter(5, 60 * 60 * 1000);
 
 /** Verification emails: 5 sends per IP per hour, on top of the per-email cap. */
 export const verificationEmailLimiter = makeIpLimiter(5, 60 * 60 * 1000);
+
+/**
+ * Area suggestions: 60 lookups per IP per minute, behind a signed-in session.
+ *
+ * One person typing a suburb fires a handful of these — the box waits for a
+ * pause in the typing and asks once. The cap is what stops the box being used
+ * to walk the gazetteer out of the service a few names at a time; the minimum
+ * query length and the eight-answer ceiling are the rest of that.
+ */
+export const areaSuggestLimiter = makeIpLimiter(60, 60 * 1000);

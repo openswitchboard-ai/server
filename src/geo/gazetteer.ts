@@ -202,6 +202,25 @@ function toPlace(i: number): Place {
   };
 }
 
+/**
+ * Every row in the asset, for the one caller that scans rather than looks up:
+ * the suggestion list, which walks settlement names by prefix. Read-only —
+ * the asset is loaded once and shared.
+ */
+export function allRows(): readonly GazetteerRow[] {
+  return load().file.rows;
+}
+
+/** The place a row index names. */
+export function placeAt(i: number): Place {
+  return toPlace(i);
+}
+
+/** Every spelling the asset is indexed by, with the rows answering to it. */
+export function indexKeys(): [string, number | number[]][] {
+  return Object.entries(load().file.index);
+}
+
 function rowsFor(key: string): number[] {
   const v = load().file.index[key];
   if (v === undefined) return [];
@@ -263,12 +282,39 @@ function exactOnly(segment: string): boolean {
   return normaliseKey(s).length <= 4; // Yass, Waco, Vic
 }
 
-/** Rows answering to a key; under `exact`, only those whose own name it is. */
+/**
+ * Rows answering to a key; under `exact`, only those whose own name it is.
+ *
+ * A place whose own name is the key always beats a place that merely carries
+ * it as an alternate spelling. The dump hangs every label anyone ever used on
+ * a populated place, so "Franklin" — the name of dozens of real towns — was
+ * also carried by Columbus, Ohio, which is bigger than all of them put
+ * together and won on population alone. A person typing the name of their
+ * suburb and landing on a city on another continent is worse than landing
+ * nowhere.
+ *
+ * Two kinds of alternate spelling survive that. One where nothing owns the
+ * name outright: nothing is called "Cracow", so Krakow keeps it. And one where
+ * the place's own name still says the word — "New York" is carried by New York
+ * City, which is what a person typing it means, while "Franklin" was carried
+ * by Columbus, whose own name has nothing of it in it.
+ */
+function nameSaysIt(name: string, key: string): boolean {
+  return (
+    name === key ||
+    name.startsWith(`${key} `) ||
+    name.endsWith(` ${key}`) ||
+    name.includes(` ${key} `)
+  );
+}
+
 function rowsNamed(key: string, exact: boolean): number[] {
   const hits = rowsFor(key);
-  if (!exact) return hits;
   const rows = load().file.rows;
-  return hits.filter((i) => normaliseKey(rows[i][0]) === key);
+  const own = hits.filter((i) => normaliseKey(rows[i][0]) === key);
+  if (exact) return own;
+  if (!own.length) return hits;
+  return hits.filter((i) => nameSaysIt(normaliseKey(rows[i][0]), key));
 }
 
 /**
@@ -496,5 +542,43 @@ export function resolvePlace(input: string): Place | undefined {
     }
   }
   if (wholeHit !== undefined) return toPlace(wholeHit);
+
+  // Last: a hint written without a comma. People type "Newtown NSW" and
+  // "Franklin ACT" the way they say them, and the switchboard used to answer
+  // nothing at all while "Newtown, NSW" resolved fine. Only reached once every
+  // other reading has failed, so a name that is simply two words ("New York",
+  // "Surry Hills") is never taken apart, and the trailing words have to
+  // genuinely describe the place they narrow.
+  const spaced = spacedHint(raw);
+  if (spaced !== undefined) return toPlace(spaced);
+  return undefined;
+}
+
+/** How many trailing words may be read as a hint: "NSW", "New South Wales". */
+const SPACED_HINT_WORDS = 3;
+
+/**
+ * A name narrowed by trailing words rather than by a comma, or undefined.
+ *
+ * The head has to be a place in its own right and the tail has to describe it,
+ * so nothing here invents a reading. A head that is a whole state or country
+ * on its own is left alone: "Australia AU" stays unresolved, because a country
+ * is refused upstream with guidance and a Cuban village called Australia is
+ * not what anyone meant.
+ */
+function spacedHint(raw: string): number | undefined {
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return undefined;
+  for (let k = 1; k <= Math.min(SPACED_HINT_WORDS, words.length - 1); k++) {
+    const headText = words.slice(0, words.length - k).join(' ');
+    const hint = normaliseKey(words.slice(words.length - k).join(' '));
+    if (!hint) continue;
+    if (regionNamed(headText) || countryNamed(headText)) continue;
+    const narrowed = rowsNamed(normaliseKey(headText), exactOnly(headText)).filter(
+      (i) => load().file.rows[i][6] === 0 && hintMatches(i, hint),
+    );
+    const hit = best(narrowed);
+    if (hit !== undefined) return hit;
+  }
   return undefined;
 }

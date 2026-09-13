@@ -792,13 +792,58 @@ still comes back to this page.</p>
  */
 export const AREA_HELP =
   'The other person is working out whether you are ten minutes away or two hours, ' +
-  'so a suburb tells them far more than a state does. Wider is fine if you would rather.';
+  'so a suburb tells them far more than a state does. Type a few letters and pick ' +
+  'yours from the list, and what you post goes out under the same area. ' +
+  'Wider is fine if you would rather, and anything you type yourself is kept as you wrote it.';
 
 /** The word the area box asks for, used wherever the box appears. */
 export const AREA_LABEL = 'Your suburb';
 
 /** An example that reads as a suburb rather than as a city or a state. */
 export const AREA_PLACEHOLDER = 'e.g. Braddon';
+
+/**
+ * The suggestions under the area box.
+ *
+ * A datalist rather than a typeahead of our own: the browser draws it, the
+ * keyboard and the screen reader already know it, and it is three lines of
+ * script instead of a widget. With the script off — or before it runs — the
+ * box is what it always was, a text box that takes anything typed into it and
+ * saves it. Nothing here rewrites an answer; picking from the list is the only
+ * way the box ever changes, and a person who types past it keeps every letter.
+ *
+ * The names come from the switchboard's own offline gazetteer over `/areas`,
+ * which needs this human's session. No third party sees a keystroke.
+ */
+const AREA_SUGGEST_SCRIPT = `<script>
+(function(){
+  var box = document.getElementById('locality');
+  var list = document.getElementById('area-options');
+  if (!box || !list || !window.fetch) return;
+  var timer, seq = 0;
+  box.addEventListener('input', function(){
+    var q = box.value.trim();
+    clearTimeout(timer);
+    if (q.length < 3) { list.innerHTML = ''; return; }
+    timer = setTimeout(function(){
+      var mine = ++seq;
+      fetch('/areas?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+        .then(function(r){ return r.ok ? r.json() : { places: [] }; })
+        .then(function(d){
+          if (mine !== seq) return;
+          list.innerHTML = '';
+          (d.places || []).forEach(function(p){
+            var o = document.createElement('option');
+            o.value = p.value;
+            o.textContent = p.country;
+            list.appendChild(o);
+          });
+        })
+        .catch(function(){});
+    }, 180);
+  });
+})();
+</script>`;
 
 /** The two boxes that make up everything a match ever sees about a person. */
 export function sharedFieldsFieldset(v: { firstName: string; locality: string }): string {
@@ -807,8 +852,10 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
     value="${esc(v.firstName)}" required>
   <label for="locality">${AREA_LABEL}</label>
   <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2"
+    list="area-options" autocorrect="off" spellcheck="false"
     placeholder="${AREA_PLACEHOLDER}" value="${esc(v.locality)}" required>
-  <p class="field-help">${AREA_HELP}</p>`;
+  <datalist id="area-options"></datalist>
+  <p class="field-help">${AREA_HELP}</p>${AREA_SUGGEST_SCRIPT}`;
 }
 
 export function approvalPage(v: ApprovalView, error?: string): string {
