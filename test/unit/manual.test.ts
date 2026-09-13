@@ -127,22 +127,37 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('the seller receives the agreed figure in full');
   });
 
-  it('says what a frozen payment does, and that the human is the one who unfreezes it', () => {
-    // Version 19's whole point, in the manual an agent reads at connect: the
-    // old behaviour sent the money back, and this one sends nothing anywhere.
-    expect(SERVER_INSTRUCTIONS).toContain(
-      'Saying something is wrong freezes the payment where it is and sends nothing back',
+  it('says what a frozen payment does, and that the human is the one who unfreezes it', async () => {
+    // Version 19's whole point: the old behaviour sent the money back, and
+    // this one sends nothing anywhere.
+    //
+    // As of version 40 the mechanics have ONE home, and it is the settle tool,
+    // which is what an agent is reading at the moment it needs them; the
+    // manual carried the same sentences a second time, tens of thousands of
+    // tokens earlier. Every rule below is still asserted, word for word, on
+    // whichever of the two now carries it.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const settle = TOOLS.find((t) => t.name === 'settle')!.description;
+    expect(settle).toContain(
+      'Saying something is wrong FREEZES the payment where it is and sends nothing back',
     );
     // The three roads out, named.
-    expect(SERVER_INSTRUCTIONS).toMatch(/agree how to split what is held/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/goes back with a tracking reference/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/fourteen days the payment goes to whichever side/i);
-    // And the line that keeps the agent out of every one of them.
+    expect(settle).toMatch(/agree how to split what is held/i);
+    expect(settle).toMatch(/goes back with a tracking reference/i);
+    expect(settle).toMatch(/fourteen days the payment goes to whichever side/i);
+    // And the line that keeps the agent out of every one of them, which is a
+    // rule about what to DO with what comes back, so it stays in the manual.
     expect(SERVER_INSTRUCTIONS).toContain('relay it and leave the doing to them');
     expect(SERVER_INSTRUCTIONS).toContain('presses on their own approval page');
-    // The two things a person will ask about the money.
+    expect(settle).toMatch(/Every one of those steps is theirs, on their own approval page/i);
+    // The two things a person will ask about the money. These are answers to a
+    // human's question rather than the shape of a call, they have no home on
+    // settle at all, and they stay in the manual.
     expect(SERVER_INSTRUCTIONS).toMatch(/fee and the processing cost stay paid whatever happens/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/postage in either direction is between the two people/i);
+    // And the manual still points at where the rest of it lives.
+    expect(SERVER_INSTRUCTIONS).toMatch(/written out on the settle tool/i);
+    expect(SERVER_INSTRUCTIONS).toContain('auto_release_at');
   });
 
   it('tells a connected agent about the freeze, in version 19', () => {
@@ -439,6 +454,25 @@ const BANNED = [
   // verb "connected" stays ordinary English; the noun is the machinery's.
   { label: 'connection', re: /\bconnections?\b/i },
   { label: 'score', re: /\bscores?\b/i },
+];
+
+/**
+ * Round four: the three words for an area. These came in through the pinned
+ * schema package rather than through anything written here, which is why the
+ * version 39 sweep over SERVER_INSTRUCTIONS alone did not catch them and an
+ * assistant still said "location is bucketed" out loud.
+ *
+ * `bucket` in quotes is the exception, and only in quotes: it is the wire's own
+ * property name, an agent that already holds one has to send it, and the
+ * manual's NEVER READ A FIELD NAME ALOUD is what covers a field name. Loose in
+ * a sentence it is the machinery talking, and so are all of "bucketed", "cell"
+ * and "geohash" wherever they appear.
+ */
+const AREA_WORDS = [
+  /\bbucket(ed|ing)\b/i,
+  /(?<!['"`])\bbuckets?\b(?!['"`])/i,
+  /\bgeohash(es|\d)*\b/i,
+  /\bcells?\b/i,
 ];
 
 describe('what the switchboard calls things, in front of a model', () => {
@@ -1039,7 +1073,9 @@ describe('version 39: the area comes to you, and what travels is said plainly', 
   const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 39)!;
 
   it('exists at the new version, as one entry covering both things', () => {
-    expect(MANUAL.version).toBe(39);
+    // Version 40 has shipped since; what this holds is that 39 went out as one
+    // entry covering both halves of that rehearsal, not that it is the newest.
+    expect(MANUAL.version).toBeGreaterThanOrEqual(39);
     expect(MANUAL_CHANGELOG.filter((c) => c.version === 39)).toHaveLength(1);
     expect(entry().note.length).toBeGreaterThan(400);
   });
@@ -1107,13 +1143,24 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(board).toMatch(/never rides an introduction/i);
   });
 
-  it('is used rather than asked for, where putting something up is described', () => {
+  it('is used rather than asked for, where putting something up is described', async () => {
+    // Version 39 wrote this rule into WORKING THE BOARD twice: once in the
+    // bullet about their area, and again in the bullet about giving a location
+    // by name. Version 40 collapsed the location bullets into one and the
+    // second telling went with them. The rule itself did not move — it is in
+    // the bullet that is its home, and on the sweep that carries the area,
+    // which is where an agent is standing when it would otherwise ask.
     const board = from('WORKING THE BOARD');
-    expect(board).toMatch(
-      /your human's own area comes to you on every sweep, so use that as the place/i,
-    );
-    expect(board).toMatch(/rather than opening with a question they have already answered/i);
-    expect(board).toMatch(/ask them for a suburb only where the sweep carried none/i);
+    expect(board).toMatch(/use it as the place on anything you post for them/i);
+    expect(board).toMatch(/unless they tell you somewhere else/i);
+    expect(board).toMatch(/they have set none, so ask them for a suburb the way you always would/i);
+    // And where they post it from: the location bullet still says to use their
+    // own area unless the thing itself lives somewhere else.
+    expect(board).toMatch(/their own area unless the thing itself is somewhere else/i);
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const checkIn = TOOLS.find((t) => t.name === 'check_in')!.description;
+    expect(checkIn).toMatch(/rather than opening with a question they have already answered/i);
+    expect(checkIn).toMatch(/say which area you used/i);
   });
 
   it('says what travels where posting thin is explained', () => {
@@ -1137,9 +1184,58 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(SERVER_INSTRUCTIONS).toContain(PROHIBITION);
     expect(MANUAL_CHANGELOG.find((c) => c.version === 39)!.note).toContain(PROHIBITION);
     const rest = SERVER_INSTRUCTIONS.split(PROHIBITION).join(' ');
+    // The manual is prose an agent reads end to end, so it is held to the
+    // stricter form: not even a quoted field name belongs in it.
     for (const word of [/\bbucket(ed|s|ing)?\b/i, /\bgeohash(es)?\b/i, /\bcells?\b/i]) {
       expect(word.test(rest), `${word} in SERVER_INSTRUCTIONS`).toBe(false);
     }
+  });
+
+  it('keeps them off the tool surface too, where the schema package put them', async () => {
+    // The half this sweep did not cover, and the reason the rehearsal happened
+    // anyway. The manual has forbidden these three words since version 39, but
+    // the check ran over SERVER_INSTRUCTIONS alone. The pinned schema package
+    // titled the geo object "Bucketed location", said the switchboard
+    // "resolves it to a coarse cell", and described the field as "Canonical
+    // coarse cell (geohash4)" — all of it rendered straight into the model's
+    // context by any client, which is where an assistant learned to say
+    // "location is bucketed" to its human. PLAIN_WORDS now rewrites them, and
+    // this holds the door shut on every description and every schema.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const strings = (node: any, path: string, out: [string, string][] = []): [string, string][] => {
+      if (Array.isArray(node)) node.forEach((n, i) => strings(n, `${path}[${i}]`, out));
+      else if (node && typeof node === 'object') {
+        for (const [k, v] of Object.entries(node)) strings(v, `${path}.${k}`, out);
+      } else if (typeof node === 'string') out.push([path, node]);
+      return out;
+    };
+    for (const t of TOOLS) {
+      expect(t.description.length, `${t.name} has a description`).toBeGreaterThan(0);
+      for (const word of AREA_WORDS) {
+        expect(word.test(t.name), `${word} in tool name ${t.name}`).toBe(false);
+        for (const [path, value] of strings(t, t.name)) {
+          expect(word.test(value), `${word} at ${path}: ${value.slice(0, 120)}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('leaves the wire field `bucket` itself alone, quoted as the field it is', async () => {
+    // The guard on the guard. `bucket` is the protocol's own property name and
+    // an agent that already holds one has to be able to send it, so the field
+    // stays and the one quoted reference to it in the prose stays with it.
+    // What must never survive is the word loose in a sentence, or any of
+    // "bucketed", "cell" and "geohash" at all — that is the sweep above.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const geo = (TOOLS.find((t) => t.name === 'publish_intent')!.inputSchema as any).properties
+      .listing.properties.geo;
+    expect(Object.keys(geo.properties)).toContain('bucket');
+    expect(geo.description).toContain("'bucket'");
+    // And the prose around it says plainly what the field holds.
+    expect(geo.title).not.toMatch(/bucketed/i);
+    expect(geo.properties.bucket.description).toMatch(/broad area/i);
+    expect(geo.properties.bucket.description).toMatch(/short code/i);
+    expect(geo.properties.bucket.description).toMatch(/fills this in from 'place'/);
   });
 
   it('keeps the system words out of the new body copy', () => {

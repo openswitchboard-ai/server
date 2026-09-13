@@ -155,6 +155,36 @@ const PLAIN_WORDS: [RegExp, (m: string, ...rest: any[]) => string][] = [
     if (/Match/.test(m)) return plural ? 'Introductions' : 'Introduction';
     return plural ? 'introductions' : 'introduction';
   }],
+  // The machinery's own words for an area, and the last three to reach a model
+  // through this door. The schema package titles the geo object "Bucketed
+  // location", says the switchboard "resolves it to a coarse cell", and calls
+  // the field itself "Canonical coarse cell (geohash4)". The manual has
+  // forbidden all three words since version 39 — and in the rehearsal of
+  // 2026-09-13 an assistant still told its human "location is bucketed, not
+  // exact address", because the manual was the only thing being swept and the
+  // schema was handing the word over underneath it.
+  //
+  // The plain words for the same truth: a name is held as a BROAD AREA, and
+  // what the switchboard keeps for that area is a SHORT CODE. The field name
+  // `bucket` is left standing where it is quoted as a field name, because that
+  // is what an agent has to put on the wire; the manual's own rule that a field
+  // name is never read aloud is what covers it, and every other spelling of the
+  // word stops here.
+  [/\bbucketed\b/gi, (m) => (/^B/.test(m) ? 'Broad-area' : 'broad-area')],
+  [/\b(?:canonical\s+|coarse\s+)*cell(s?)\b/gi, (m, s) => {
+    const said = s ? 'broad areas' : 'broad area';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
+  [/\bgeohash\d*(es)?\b/gi, (m, s) => {
+    const said = s ? 'short codes' : 'short code';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
+  // A bare `bucket` in prose becomes the plain phrase; a quoted or backticked
+  // one is naming the field and stays exactly as an agent must send it.
+  [/(?<!['"`])\bbucket(s?)\b(?!['"`])/gi, (m, s) => {
+    const said = s ? 'broad areas' : 'broad area';
+    return /^[A-Z]/.test(m) ? said[0].toUpperCase() + said.slice(1) : said;
+  }],
 ];
 
 /** "a introduction" is what a blind word-swap leaves behind. */
@@ -235,10 +265,105 @@ function agentFacingListing(): any {
   // field actually holds.
   doc.title = 'A want or a have';
   doc.description = 'The want or have to post.';
+  // The schema package documents these fields for an implementer reading the
+  // protocol on its own. Here they are read inside publish_intent, whose own
+  // description is four lines further up the same payload and already carries
+  // the taxonomy shape, the place-and-reach distinction with its worked
+  // example, how a price band is private, how `slots` works and how the two
+  // kinds of sale work — sentence for sentence in several places. What is kept
+  // below is what the prose beside it does NOT say: what each field is, and
+  // the structural guarantees that live nowhere else (at least one of place
+  // and `bucket`; the forbidden attribute keys; nothing about the line ever
+  // crossing to a counterparty). What is cut is the second telling.
+  //
+  // Types, patterns, bounds, enums and defaults are untouched — a strict
+  // client's constrained decoder reads those, and the server validates every
+  // posting against the protocol's own document regardless.
+  const say = (path: string[], text: string) => {
+    let node = doc;
+    for (const k of path) node = node.properties[k];
+    node.description = text;
+  };
+  say(
+    ['schema_version'],
+    'Semver of the schema package this was written against.',
+  );
+  say(
+    ['category'],
+    "Dotted taxonomy path, e.g. 'goods.bicycle.mountain', 'services.repairs.bicycle' or 'social.language-exchange'.",
+  );
+  say(
+    ['geo'],
+    "Where it is, and how far your human will meet someone, as publish_intent describes. Give 'place' — the name of a suburb, city or region — or 'bucket' if you already hold one; every want and have carries at least one of the two. Exact coordinates and street addresses are structurally impossible here.",
+  );
+  say(
+    ['geo', 'reach'],
+    "How far your human will meet the other side, which is a different question from where they are: 'radius' (within radius_km of the place), 'country', or 'anywhere' for something done online.",
+  );
+  say(
+    ['price'],
+    'MATCHING INPUT ONLY. On a want: the budget ceiling. On a have: the reserve floor. Never disclosed to a counterparty at any point.',
+  );
+  say(
+    ['attributes'],
+    'Per-category typed key/values, keys in lower_snake_case. Identity keys and sensitive personal keys (health, sexuality, beliefs, ethnicity, etc.) are FORBIDDEN at the schema level: those facts live client-side only and never enter a want or a have.',
+  );
+  say(['visibility'], 'The one mode v1 has: anonymous until an introduction is made.');
+  say(
+    ['slots'],
+    'How many people this can take at once; publish_intent says how to set it. Routing only: the number itself is never disclosed to a counterparty, and neither is any count of who else is in the line.',
+  );
+  say(
+    ['sale'],
+    "Haves only: how the asking price works — 'straight' or 'best-offer', as publish_intent describes. Structurally forbidden on a want.",
+  );
   return doc;
 }
 
 const intentCardSchema = agentFacingListing();
+
+/**
+ * The same field, with the prose taken off: every type, pattern, bound, enum
+ * and default kept exactly, every `description` and `title` dropped.
+ *
+ * `amend_intent.patch` is built by copying nine properties straight off the
+ * posting schema, and the two schemas are serialised into the SAME
+ * `tools/list` response — so the prose arrives twice, byte for byte, 4,820
+ * characters of it, the largest single lump of pure duplication in the whole
+ * connect payload. The copy an agent reads to fill a patch is the one already
+ * in its context from publish_intent a few hundred tokens earlier.
+ *
+ * What a strict client's constrained decoder needs is the shape, and the shape
+ * is untouched here. Nothing about what validates moves: the server checks an
+ * amend against the protocol's own `intent-card` document (see
+ * domain/cards.ts), never against this.
+ */
+function constraintsOnly(node: any): any {
+  if (Array.isArray(node)) return node.map(constraintsOnly);
+  if (node === null || typeof node !== 'object') return node;
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'description' || k === 'title') continue;
+    out[k] = constraintsOnly(v);
+  }
+  return out;
+}
+
+const AMENDABLE = [
+  'geo',
+  'attributes',
+  'ask',
+  'urgency',
+  'status',
+  'ttl_days',
+  'price',
+  'slots',
+  'sale',
+] as const;
+
+const patchProperties = Object.fromEntries(
+  AMENDABLE.map((k) => [k, constraintsOnly(intentCardSchema.properties[k])]),
+);
 
 export const TOOLS: ToolDef[] = [
   {
@@ -405,17 +530,9 @@ export const TOOLS: ToolDef[] = [
         intent_id: { type: 'string', format: 'uuid' },
         patch: {
           type: 'object',
-          properties: {
-            geo: intentCardSchema.properties.geo,
-            attributes: intentCardSchema.properties.attributes,
-            ask: intentCardSchema.properties.ask,
-            urgency: intentCardSchema.properties.urgency,
-            status: intentCardSchema.properties.status,
-            ttl_days: intentCardSchema.properties.ttl_days,
-            price: intentCardSchema.properties.price,
-            slots: intentCardSchema.properties.slots,
-            sale: intentCardSchema.properties.sale,
-          },
+          description:
+            'The fields to change, exactly as publish_intent takes them: same types, same bounds, same words, described there.',
+          properties: patchProperties,
           additionalProperties: false,
         },
       },
