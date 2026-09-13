@@ -1254,37 +1254,50 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     // Give every surfaced state its own ready sentence, so the agent leads with
     // the note rather than inventing a word for whose turn it is. The fresh
     // signal already reads right; the later states get their own line here.
+    //
+    // THE LEAD SENTENCE IS THE NEWEST THING THAT NEEDS THIS HUMAN, and the
+    // order never changes: something taken down first, then a figure waiting on
+    // the table, then the plain sentence for where the two of them have got to.
+    // Run 8 (13 September 2026) is why — a human asked "anything back on the
+    // bike?" nine minutes after 400 AUD landed and was told the two of them had
+    // only just been put in touch and nothing had come back, because the
+    // sentence for the state won over the figure every time.
+    const lead = (stateSentence: string) =>
+      takenDown ? sbNote(takenDownSentence(takenDown)) : (entry.offer_note ?? sbNote(stateSentence));
     switch (entry.next) {
       case 'awaiting_other_side':
-        entry.note = sbNote(
+        entry.note = lead(
           "You are keen and they know it — the next move is theirs. They will see it when they next check in with their assistant, and I will bring their reply straight to you.",
         );
         break;
       case 'details_unlocked':
-        entry.note = sbNote(
+        entry.note = lead(
           "You are both keen. Here is a little more about what they have — take a look, and if you would like to go further, say the word and I will share your first name and rough area so the two of you can talk.",
         );
         break;
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask
         // them for nothing — there is no link on this branch, by design.
-        entry.note = sbNote(awaitingTheirGoAheadSentence(m, accountId));
+        entry.note = lead(awaitingTheirGoAheadSentence(m, accountId));
         break;
       case 'awaiting_your_human':
         // An offer waiting is its own sentence (offer_note); otherwise it is the
         // one step left before the two can talk.
-        entry.note = entry.offer_note
-          ? entry.offer_note
-          : sbNote(
-              "You are both keen to talk. The last step is yours: give me the go-ahead and I will share your first name and rough area so the two of you can connect.",
-            );
+        entry.note = lead(
+          "You are both keen to talk. The last step is yours: give me the go-ahead and I will share your first name and rough area so the two of you can connect.",
+        );
         break;
       case 'ready_to_talk':
-        entry.note = sbNote(
-          takenDown
-            ? takenDownSentence(takenDown)
-            : "You are connected now — you can message each other through me whenever you like.",
-        );
+        // The one place a human is told the two of them can talk at all, and at
+        // this state the sweep may be the first since names were swapped — so
+        // when a figure leads, the short half of that sentence rides with it.
+        entry.note = takenDown
+          ? sbNote(takenDownSentence(takenDown))
+          : entry.offer_note
+            ? sbNote(
+                `${entry.offer_note.text} You can message each other through me whenever you like.`,
+              )
+            : sbNote('You are connected now — you can message each other through me whenever you like.');
         break;
       case 'deal_agreed':
         // The offer note already says the figure and whose it was, so it is
