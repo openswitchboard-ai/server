@@ -19,7 +19,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   decryptFields: vi.fn(async (_a: string, _k: Buffer, fields: Record<string, Buffer>) =>
     Object.fromEntries(
-      Object.entries(fields).map(([k, v]) => [k, v.toString('utf8').replace(/^enc:/, '')]),
+      Object.entries(fields).map(([k, v]) => [k, v === null || v === undefined ? '' : v.toString('utf8').replace(/^enc:/, '')]),
     ),
   ),
   writeConsentEvent: vi.fn(async () => 'consent-events/x'),
@@ -67,6 +67,8 @@ interface World {
   offers: OfferRow[];
   /** Which listing has come down, by the chair that reads it. */
   withdrawnCard: string | null;
+  /** Nobody has filled in the first name and suburb they would share. */
+  emptyProfile?: boolean;
 }
 let world: World;
 
@@ -149,8 +151,12 @@ function fakePool() {
             id: params[0],
             status: 'active',
             data_key_enc: Buffer.from('wrapped'),
-            first_name_enc: Buffer.from(params[0] === ANA ? 'enc:Ana' : 'enc:Beppe'),
-            locality_enc: Buffer.from(params[0] === ANA ? 'enc:Fremantle' : 'enc:Trastevere'),
+            first_name_enc: world.emptyProfile
+              ? null
+              : Buffer.from(params[0] === ANA ? 'enc:Ana' : 'enc:Beppe'),
+            locality_enc: world.emptyProfile
+              ? null
+              : Buffer.from(params[0] === ANA ? 'enc:Fremantle' : 'enc:Trastevere'),
           },
         ]);
       }
@@ -314,5 +320,36 @@ describe('the words themselves', () => {
         for (const word of BANNED) expect(text, word).not.toContain(word);
       }
     }
+  });
+});
+
+/**
+ * An open conversation is never described as still waiting on the names step.
+ *
+ * The adversary run of 13 September 2026 is why. Sixteen hostile messages rode
+ * the live relay, and on every one of them the assistant led with "give me the
+ * go-ahead and I will share your first name and suburb" — false once the two of
+ * them can already talk, and it hid every message behind it. The cause was an
+ * empty shared profile forcing the word back to the names step even with a
+ * conversation open.
+ */
+describe('an open conversation is never sent back to the names step', () => {
+  it('keeps the talking word when the shared profile is empty', async () => {
+    world.stage = 4;
+    world.emptyProfile = true;
+    const entry = await sweep(ANA);
+    expect(entry.next).toBe('ready_to_talk');
+    expect(entry.note.text).not.toMatch(/go-ahead/i);
+    // Whatever is still missing is said in its own place rather than becoming
+    // the word for where the two of them have got to.
+    if (entry.mutual_blocked) expect(entry.mutual_blocked.code).toBe('CONSENT_REQUIRED');
+  });
+
+  it('still waits on the human before there is a conversation', async () => {
+    world.stage = 2;
+    world.myOptin = true;
+    world.emptyProfile = true;
+    const entry = await sweep(ANA);
+    expect(entry.note.text.length).toBeGreaterThan(20);
   });
 });
