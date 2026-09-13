@@ -274,6 +274,13 @@ export interface ProtocolError {
   suggestions?: string[];
   /** Up to five places a bare name could have meant, largest first. */
   candidates?: ErrorCandidate[];
+  /**
+   * The press an agent may wait on, when this refusal carries a link. Added
+   * after the schema check rather than inside it: the published error document
+   * closes itself to unknown properties, and this field is ahead of it. It is
+   * additive and optional, so an agent holding the older schema ignores it.
+   */
+  press_id?: string;
   docs_url: string;
 }
 
@@ -286,6 +293,8 @@ export class OsbError extends Error {
       retry_after?: number;
       suggestions?: string[];
       candidates?: ErrorCandidate[];
+      /** The approval link row this refusal handed over, to wait on. */
+      press_id?: string;
     } = {},
   ) {
     super(code);
@@ -298,6 +307,8 @@ export class OsbError extends Error {
       ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     });
+    // After the check, deliberately: see the note on ProtocolError.press_id.
+    if (opts.press_id) this.payload.press_id = opts.press_id;
   }
 }
 

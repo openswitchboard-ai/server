@@ -28,9 +28,15 @@ import { validateMandate, validateOfferNote, type Mandate } from './negotiation.
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink } from '../counter/links.js';
 import type { Config } from '../config.js';
 
-/** What every one of these answers with, in the same three fields. */
+/** What every one of these answers with, in the same four fields. */
 export interface HumanLink {
   link: string;
+  /**
+   * The press itself, to wait on. An agent hands the link over and then calls
+   * wait_for_press with this, so the answer reaches its human the moment they
+   * press rather than when they remember to come back and say so.
+   */
+  press_id: string;
   expires_in_minutes: number;
   /** One plain sentence saying what the person will be asked. */
   what_it_does: string;
@@ -124,7 +130,7 @@ export async function sendNumberLink(
   const days = [3, 7, 14].includes(Number(input.good_for_days)) ? Number(input.good_for_days) : 7;
   const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
   const rounded = Math.round(amount * 100) / 100;
-  const { token } = await createApprovalLink({
+  const { token, id } = await createApprovalLink({
     accountId,
     action: 'offer-send',
     refId: matchId,
@@ -147,6 +153,7 @@ export async function sendNumberLink(
       : '';
   return {
     link: url(cfg, token),
+    press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does.${oneNumber} Once they press it, your next check_matches shows the result.`,
   };
@@ -195,7 +202,7 @@ export async function acceptNumberLink(
       human_action: `That figure is ${o.state} — there is nothing left to accept.`,
     });
   }
-  const { token } = await createApprovalLink({
+  const { token, id } = await createApprovalLink({
     accountId,
     action: 'offer-accept',
     refId: offerId,
@@ -205,6 +212,7 @@ export async function acceptNumberLink(
   });
   return {
     link: url(cfg, token),
+    press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
   };
@@ -229,10 +237,11 @@ export async function shareNameLink(
   }
   const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
   const { stage3LinkFor } = await import('./profile.js');
-  const link = await stage3LinkFor(cfg, accountId, matchId, counterparty);
-  if (!link) throw new Error('could not mint the names link');
+  const minted = await stage3LinkFor(cfg, accountId, matchId, counterparty);
+  if (!minted) throw new Error('could not mint the names link');
   return {
-    link,
+    link: minted.link,
+    press_id: minted.press_id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
       'Opens one page asking your human whether to share their first name and area with the other side. Nothing crosses until they say yes there. Once they press it, your next check_matches shows the result.',
@@ -269,7 +278,7 @@ export async function autoNegotiateLink(
   const checked = validateMandate(numbers, card.type);
   if (!checked.ok) throw Object.assign(new Error(checked.error), { validation: true });
   const mandate: Mandate = checked.value;
-  const { token } = await createApprovalLink({
+  const { token, id } = await createApprovalLink({
     accountId,
     action: 'negotiation-auto',
     refId: card.id,
@@ -290,9 +299,113 @@ export async function autoNegotiateLink(
       : `pay no more than ${money(mandate.limit, mandate.ccy)}`;
   return {
     link: url(cfg, token),
+    press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page asking your human whether to let you negotiate their ${thing}: ${edge}. Saying yes takes their PIN, and it writes those numbers onto that one want or have. Once they press it, your next check_matches shows the result.`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Waiting for the press.
+//
+// The hole this fills: an agent hands over a link and then has nothing to do
+// but ask its human to come back and say "done". People forget, and word it
+// oddly when they do, so the agent guesses. Here the agent holds the line
+// instead, and the switchboard answers the instant the button is pressed.
+//
+// Nothing here changes anything. It reads one row, over and over, until that
+// row says the human has answered — or until the cap, which is well short of
+// the load balancer's sixty-second idle timeout, so the call ends on our own
+// terms with a sentence rather than as a dropped request.
+// ---------------------------------------------------------------------------
+
+/** How long one wait holds the line. The balancer gives up at sixty seconds. */
+export const PRESS_WAIT_CAP_MS = 50_000;
+
+/** How often the row is re-read while the line is held. */
+export const PRESS_POLL_MS = 1_500;
+
+export interface PressAnswer {
+  pressed: boolean;
+  decision?: 'approved' | 'declined';
+  /** Present only when the link ran out before anyone pressed it. */
+  expired?: true;
+  note: { text: string; provenance: 'switchboard-system' };
+}
+
+/** The sentences, in the register every other answer is written in. */
+export const PRESS_SENTENCES = {
+  approved:
+    'Your yes is in. I will carry it on from here and tell you the moment anything comes back.',
+  declined:
+    'You pressed Not now, so nothing went ahead. Say the word whenever you want to look at it again.',
+  waiting: 'Still waiting on your press — the page is open whenever you are ready.',
+  expired: 'That page has run out. I can fetch you a fresh one whenever you are ready.',
+} as const;
+
+const pressNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+interface PressRow {
+  used_at: Date | string | null;
+  decision: 'approved' | 'declined' | null;
+  expires_at: Date | string;
+}
+
+/**
+ * Hold the line until this human presses, and answer the moment they do.
+ *
+ * The row is loaded by id AND account, so a press id belonging to somebody
+ * else is not found rather than waited on: an agent may only ever wait on a
+ * link its own human was handed.
+ *
+ * A burnt link whose decision has not landed yet is not called pressed: the
+ * page burns the link first and writes the decision after the thing itself has
+ * gone through, so the two are a moment apart and a press that failed never
+ * writes one at all. The loop keeps looking, and the cap is the backstop.
+ */
+export async function waitForPress(
+  accountId: string,
+  pressId: string,
+  opts: { capMs?: number; pollMs?: number } = {},
+): Promise<PressAnswer> {
+  if (!pressId) throw Object.assign(new Error('which press?'), { validation: true });
+  const capMs = opts.capMs ?? PRESS_WAIT_CAP_MS;
+  const pollMs = opts.pollMs ?? PRESS_POLL_MS;
+  const deadline = Date.now() + capMs;
+
+  const read = async (): Promise<PressRow> => {
+    const r = await getPool().query(
+      'SELECT used_at, decision, expires_at FROM approval_links WHERE id = $1 AND account_id = $2',
+      [pressId, accountId],
+    );
+    const row: PressRow | undefined = r.rows[0];
+    if (!row) {
+      throw Object.assign(new Error('NOT_FOUND: no press of yours with that id'), {
+        notFound: true,
+      });
+    }
+    return row;
+  };
+
+  for (;;) {
+    const row = await read();
+    if (row.used_at && (row.decision === 'approved' || row.decision === 'declined')) {
+      return {
+        pressed: true,
+        decision: row.decision,
+        note: pressNote(PRESS_SENTENCES[row.decision]),
+      };
+    }
+    if (!row.used_at && new Date(row.expires_at).getTime() <= Date.now()) {
+      return { pressed: false, expired: true, note: pressNote(PRESS_SENTENCES.expired) };
+    }
+    if (Date.now() + pollMs > deadline) {
+      return { pressed: false, note: pressNote(PRESS_SENTENCES.waiting) };
+    }
+    await sleep(pollMs);
+  }
 }
 
 /** Exported for the page that renders the question these links carry. */

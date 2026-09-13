@@ -1054,6 +1054,57 @@ describe('a figure an agent carried comes back as its own question', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Every link an agent is handed comes with the press it can wait on, so the
+// agent never has to ask its human to come back and say "done".
+// ---------------------------------------------------------------------------
+describe('every link hands back the press to wait on', () => {
+  it('each request_* answers a press_id that is the link it just minted', async () => {
+    const calls: Record<string, unknown>[] = [
+      { intro_id: MATCH, action: 'request_share_name' },
+      { intro_id: MATCH, action: 'request_accept', offer_id: OFFER },
+      {
+        intent_id: CARD_W,
+        action: 'request_auto_negotiate',
+        numbers: { limit: 400, ccy: 'AUD' },
+      },
+    ];
+    for (const args of calls) {
+      const out = body(await respond(args));
+      expect(typeof out.press_id, String(args.action)).toBe('string');
+      expect(world.links.some((l) => l.id === out.press_id), String(args.action)).toBe(true);
+      // The press named is the one behind the link handed over, not some other.
+      expect(tokenOf(String(out.link)).split('.')[0]).toBe(out.press_id);
+    }
+  });
+
+  it('the names-step refusal carries the press_id beside the link', async () => {
+    world.stage = 2;
+    const refused = body(await respond({ intro_id: MATCH, action: 'opt_in' }));
+    expect(refused.code).toBe('CONSENT_REQUIRED');
+    expect(refused.press_id).toBe(world.links[0].id);
+    // And it is the same press the deliberate ask hands back.
+    const asked = body(await respond({ intro_id: MATCH, action: 'request_share_name' }));
+    expect(asked.press_id).toBe(refused.press_id);
+  });
+
+  it('the Pass-on refusal carries the press_id of the send-number page', async () => {
+    const refused = body(
+      await respond({
+        intro_id: MATCH,
+        action: 'propose_offer',
+        offer: {
+          amount: 440,
+          ccy: 'AUD',
+          expiry: new Date(Date.now() + 86_400_000).toISOString(),
+        },
+      }),
+    );
+    expect(refused.code).toBe('CONSENT_REQUIRED');
+    expect(refused.press_id).toBe(world.links.find((l) => l.action === 'offer-send')!.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('a link belongs to one person', () => {
   it('an unsigned-in visitor is asked to sign in, and the link survives', async () => {
     const { link } = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 440, ccy: 'AUD' });
