@@ -688,14 +688,34 @@ still comes back to this page.</p>
 </form>`;
 }
 
+/**
+ * The one line under the area box. Run 8 (13 September 2026): a human had
+ * "Australian Capital Territory" on file, the other side's assistant read it
+ * back to him as where the seller was, and it told him nothing about whether
+ * the bike was ten minutes away or two hours — so it read as dodging the
+ * question. The posting itself had matched on a suburb, so the switchboard
+ * knew better than the answer it was handing over. The box asks for a suburb
+ * now and says why; a wider answer is still taken exactly as typed.
+ */
+export const AREA_HELP =
+  'The other person is working out whether you are ten minutes away or two hours, ' +
+  'so a suburb tells them far more than a state does. Wider is fine if you would rather.';
+
+/** The word the area box asks for, used wherever the box appears. */
+export const AREA_LABEL = 'Your suburb';
+
+/** An example that reads as a suburb rather than as a city or a state. */
+export const AREA_PLACEHOLDER = 'e.g. Braddon';
+
 /** The two boxes that make up everything a match ever sees about a person. */
 export function sharedFieldsFieldset(v: { firstName: string; locality: string }): string {
   return `<label for="first_name">First name</label>
   <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name"
     value="${esc(v.firstName)}" required>
-  <label for="locality">Suburb or area</label>
+  <label for="locality">${AREA_LABEL}</label>
   <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2"
-    value="${esc(v.locality)}" required>`;
+    placeholder="${AREA_PLACEHOLDER}" value="${esc(v.locality)}" required>
+  <p class="field-help">${AREA_HELP}</p>`;
 }
 
 export function approvalPage(v: ApprovalView, error?: string): string {
