@@ -283,7 +283,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Every action answers with the sentence to say beside the word for what happened, so lead with that sentence rather than narrating from the word. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have ALREADY pressed it, opt_in says so instead of handing back a second link: `awaiting_their_go_ahead`, with the sentence to read them. Never ask a human to press again for something already recorded. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, press_id, expires_in_minutes, what_it_does }, and so does every refusal that carries a link: hand the link over, say what the page asks, and then call wait_for_press with that press_id and hold the line until they press, rather than asking your human to come back and report that they have done it.',
+      'Respond to an introduction or an offer, or fetch the one-question link your human presses when a formality is needed. Every action answers with the sentence to say beside the word for what happened, so lead with that sentence rather than narrating from the word. Actions: express_interest (tell the other side your human is keen, which opens the details for both once they are keen too), opt_in (sharing their first name and area is your human\'s own press, every time: opt_in records nothing and answers CONSENT_REQUIRED carrying the single-use link they press, which is the very link request_share_name mints. Hand it over in the chat and say what it asks; their press is what records it, and your next check_in shows the result. If they have ALREADY pressed it, opt_in says so instead of handing back a second link: `awaiting_their_go_ahead`, with the sentence to read them. Never ask a human to press again for something already recorded. If they have never said what first name and area they share, that page asks them there — you can never supply either one yourself), decline (no reason carried, by design; closing one off frees the place it held, so when somebody who was waiting comes forward in the same breath the reply says so and names them under now_live_intro_id — they are there already, and check_in tells you about them), propose_offer (the numbers belong to your human: every want and have starts on "Pass on", where propose_offer answers CONSENT_REQUIRED with a link to a page asking them whether to send the exact figure you carried, and only one they have switched to "Auto-negotiate" lets you send one yourself — inside the opening figure, limit and step they wrote, with anything outside refused and the boundary named to you alone; this is where any figure travels, your human\'s asking price and whatever the two sides agree included), send_to_human (bring an offer to your human with your read on it — the only accept-direction action an agent has; acceptance itself happens on your human\'s own page, where any live offer is theirs to take whether or not you have brought it to them), decline_offer, withdraw_offer, list_offers, verdict (how it went for your human, asked in plain words and answered in one of three: good, fine or bad. Ask them "how was that: good, fine or bad?" and never read the word back off the wire. Most are fine, which records how it went and changes nothing else; good brings more like it; bad mutes the pairing and closes the introduction), archive (file a finished introduction away once the two humans have taken it off the switchboard — swapped numbers, joined the club: the live conversation winds down, and who it was and what it was about stay retrievable through check_in; a party only, idempotent). THE LINK ACTIONS mint a single-use link and RETURN it to you — they change nothing, and you hand the link to your human in the conversation you are already having, saying in your own words what it will ask: request_share_name (the first-name step, the same link opt_in hands back), request_accept (accept a figure that is on the table, offer_id), request_auto_negotiate (switch one of their wants or haves to Auto-negotiate with the numbers they gave you, intent_id + numbers). Every one answers { link, press_id, expires_in_minutes, what_it_does }, and so does every refusal that carries a link: hand the link over, say what the page asks, and then call wait_for_press with that press_id and hold the line until they press, rather than asking your human to come back and report that they have done it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -815,7 +815,9 @@ export async function dispatchTool(
       case 'amend_intent':
         return ok(await cards.amendIntent(cfg, accountId, args?.intent_id, args?.patch));
       case 'withdraw_intent':
-        return ok(await cards.withdrawIntent(accountId, args?.intent_id));
+        // cfg travels so that each person whose own line advances behind this
+        // is summoned the ordinary way.
+        return ok(await cards.withdrawIntent(accountId, args?.intent_id, cfg));
       case 'settle': {
         if (!settlementsConfigured(cfg)) {
           throw new OsbError('SETTLEMENT_UNAVAILABLE', {
@@ -906,11 +908,20 @@ export async function dispatchTool(
             // are actually in and the sentence for it — never a second link.
             return ok(await matches.refuseAgentOptIn(cfg, intro_id, accountId));
           case 'decline': {
-            await matches.declineMatch(intro_id, accountId, cfg);
+            // Closing one off frees the slot it held, and the next person in
+            // line goes live in this same request. The reply says so and names
+            // them: an assistant that answered from `state: 'declined'` alone
+            // told its human to check back for someone who was already there
+            // (run 8, 13 September 2026). One sentence and the id — everything
+            // else about them is what check_in is for.
+            const promoted = await matches.declineMatch(intro_id, accountId, cfg);
             return ok({
               intro_id,
               state: 'declined',
-              note: matches.sbNote(matches.DECLINE_SENTENCE),
+              ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
+              note: matches.sbNote(
+                matches.withCameForward(matches.DECLINE_SENTENCE, promoted),
+              ),
             });
           }
           case 'propose_offer': {
@@ -939,8 +950,21 @@ export async function dispatchTool(
             // mapped here and nothing is logged about the mapping.
             const said = matches.readVerdict(verdict);
             if (!said) return invalidInput("verdict must be 'good', 'fine' or 'bad'");
-            const recorded = await matches.recordVerdict(intro_id, accountId, said, 'agent');
-            return ok({ ...recorded, note: matches.sbNote(matches.verdictSentence(said)) });
+            // 'bad' closes the introduction, so it frees a slot the same way a
+            // decline does and answers the same way. 'good' and 'fine' close
+            // nothing and promote nobody.
+            const { promoted = [], ...recorded } = await matches.recordVerdict(
+              intro_id,
+              accountId,
+              said,
+              'agent',
+              cfg,
+            );
+            return ok({
+              ...recorded,
+              ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
+              note: matches.sbNote(matches.withCameForward(matches.verdictSentence(said), promoted)),
+            });
           }
           // The short window on a contested want or have is gone (migration
           // 030). A client holding an older tool schema may still reach for
@@ -959,7 +983,8 @@ export async function dispatchTool(
               intro_id,
               state: r.state,
               already_archived: r.already,
-              note: matches.sbNote(matches.ARCHIVE_SENTENCE),
+              ...(r.promoted[0] ? { now_live_intro_id: r.promoted[0] } : {}),
+              note: matches.sbNote(matches.withCameForward(matches.ARCHIVE_SENTENCE, r.promoted)),
             });
           }
           // ---------------------------------------------------------------
