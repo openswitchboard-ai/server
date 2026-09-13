@@ -12,9 +12,11 @@
  *       price|band|budget|reserve -> [];
  *  (c)  k-floor: a seeded 9-member pulse cell is ABSENT, a 10-member cell is
  *       present with the exact real count;
- *  (d)  the line under concurrency: parallel offers from 3 buyers,
- *       holder sees all, non-holders see no rival signal, early-close
- *       honoured, post-window proceed works;
+ *  (d)  the line: one at a time by default, so one introduction on a have is
+ *       live and the rest are rows with a single sentence; the holder sees a
+ *       count of their own line and never who is in it; the retired window
+ *       actions answer plainly; and with the slots raised, parallel offers
+ *       from 3 buyers all land and the holder is never blocked;
  *  (e)  anti-probing: 4th per-match offer in 24h -> RATE_LIMITED_OFFERS;
  *       ladder pattern flags the reputation stub; declines reasonless.
  * Plus: embedding-on-write (1024 dims), backfill op, match-quality verdicts.
@@ -30,6 +32,7 @@ import {
   TestActor,
   bootstrapActor,
   dbExec,
+  keysMatching,
   mcpCall,
   poll,
   reachStage3,
@@ -430,13 +433,13 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
   it('GATE (d): the line - one at a time, the rest in line, and nothing blocks the holder', async () => {
     // Hank's have takes one person at a time (the default), so exactly one of
     // the three introductions on it is live and the other two are in line.
-    const live = await dbExec(
+    const lineCounts = await dbExec(
       `SELECT count(*) FILTER (WHERE live), count(*) FROM matches
         WHERE card_have = :id::uuid AND state = 'open'`,
       [{ name: 'id', value: hankHave }],
     );
-    expect(Number(live[0][0])).toBe(1);
-    expect(Number(live[0][1])).toBeGreaterThanOrEqual(3);
+    expect(Number(lineCounts[0][0])).toBe(1);
+    expect(Number(lineCounts[0][1])).toBeGreaterThanOrEqual(3);
 
     // HOLDER view: the one they are talking to, and a count of their own line.
     // Nothing about who is waiting, ever — only how many.
@@ -538,8 +541,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     // 2026-09-12): each agent's opt_in records nothing and answers
     // CONSENT_REQUIRED carrying that human's single-use link, and the two
     // presses are what open the names step.
-    const live = hankMatchIds[buyers[0].accountId];
-    const refusals = await reachStage3(live, [{ actor: hank }, { actor: buyers[0] }]);
+    const liveIntro = hankMatchIds[buyers[0].accountId];
+    const refusals = await reachStage3(liveIntro, [{ actor: hank }, { actor: buyers[0] }]);
     for (const r of refusals) {
       expect(r.isError, JSON.stringify(r.result)).toBe(true);
       expect(r.result.code).toBe('CONSENT_REQUIRED');
@@ -547,7 +550,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       expect(r.result.optin_recorded).toBeUndefined();
     }
     const mutual = await mcpCall(hank.accessToken, 'check_in', {
-      intro_id: live,
+      intro_id: liveIntro,
       step: 'names',
     });
     expect(mutual.isError, JSON.stringify(mutual.result)).toBe(false);
@@ -605,7 +608,12 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     });
     expect(declined.isError).toBe(false);
     expect(declined.result.state).toBe('declined');
-    expect(declined.raw).not.toMatch(/reason/i);
+    // The promise is that no reason TEXT travels, so it is asserted on fields:
+    // nothing on the wire is named like a reason, at any depth. The reply's
+    // sentence does use the word — "no reason went with it" — which is the
+    // promise said out loud to a human, not broken.
+    expect(keysMatching(JSON.parse(declined.raw), /reason/i)).toEqual([]);
+    expect(declined.result.reason).toBeUndefined();
   });
 
   it('VERDICT: good / fine / bad stored per human; bad mutes + nudges threshold', async () => {
