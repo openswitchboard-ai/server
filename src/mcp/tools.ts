@@ -270,6 +270,49 @@ function agentFacingListing(): any {
 
 const intentCardSchema = agentFacingListing();
 
+/**
+ * The same field, with the prose taken off: every type, pattern, bound, enum
+ * and default kept exactly, every `description` and `title` dropped.
+ *
+ * `amend_intent.patch` is built by copying nine properties straight off the
+ * posting schema, and the two schemas are serialised into the SAME
+ * `tools/list` response — so the prose arrives twice, byte for byte, 4,820
+ * characters of it, the largest single lump of pure duplication in the whole
+ * connect payload. The copy an agent reads to fill a patch is the one already
+ * in its context from publish_intent a few hundred tokens earlier.
+ *
+ * What a strict client's constrained decoder needs is the shape, and the shape
+ * is untouched here. Nothing about what validates moves: the server checks an
+ * amend against the protocol's own `intent-card` document (see
+ * domain/cards.ts), never against this.
+ */
+function constraintsOnly(node: any): any {
+  if (Array.isArray(node)) return node.map(constraintsOnly);
+  if (node === null || typeof node !== 'object') return node;
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'description' || k === 'title') continue;
+    out[k] = constraintsOnly(v);
+  }
+  return out;
+}
+
+const AMENDABLE = [
+  'geo',
+  'attributes',
+  'ask',
+  'urgency',
+  'status',
+  'ttl_days',
+  'price',
+  'slots',
+  'sale',
+] as const;
+
+const patchProperties = Object.fromEntries(
+  AMENDABLE.map((k) => [k, constraintsOnly(intentCardSchema.properties[k])]),
+);
+
 export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
@@ -435,17 +478,9 @@ export const TOOLS: ToolDef[] = [
         intent_id: { type: 'string', format: 'uuid' },
         patch: {
           type: 'object',
-          properties: {
-            geo: intentCardSchema.properties.geo,
-            attributes: intentCardSchema.properties.attributes,
-            ask: intentCardSchema.properties.ask,
-            urgency: intentCardSchema.properties.urgency,
-            status: intentCardSchema.properties.status,
-            ttl_days: intentCardSchema.properties.ttl_days,
-            price: intentCardSchema.properties.price,
-            slots: intentCardSchema.properties.slots,
-            sale: intentCardSchema.properties.sale,
-          },
+          description:
+            'The fields to change, exactly as publish_intent takes them: same types, same bounds, same words, described there.',
+          properties: patchProperties,
           additionalProperties: false,
         },
       },
