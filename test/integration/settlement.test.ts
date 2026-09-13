@@ -169,8 +169,7 @@ async function newIntroduction(): Promise<string> {
     );
     return rows[0] ? String(rows[0][0]) : undefined;
   }, 'the introduction to appear');
-  await mcpCall(buyer.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
-  await mcpCall(seller.accessToken, 'respond', { intro_id: id, action: 'express_interest' });
+  // No interest step any more: the details are open at the introduction.
   // Nothing holds either of them up any more (migration 030): a want or have
   // that several people have come forward on works through them one at a
   // time, and the go-ahead on the one that is live goes through at once. The

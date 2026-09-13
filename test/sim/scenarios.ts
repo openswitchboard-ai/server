@@ -88,7 +88,9 @@ const designedMatch: Scenario = {
       assert(entry.signal?.kind === 'intro.signal', `${a.label} missing stage-1 signal`);
       assert(entry.signal.category === CAM, `${a.label} signal category wrong`);
       assert(entry.signal.score === undefined, `${a.label} signal carries a score (I7)`);
-      assert(entry.next === 'show_interest', `${a.label} next != show_interest (${entry.next})`);
+      // The posting is the statement of interest: a new introduction arrives
+      // with the details already open to both sides.
+      assert(entry.next === 'details_unlocked', `${a.label} next != details_unlocked (${entry.next})`);
     }
   },
 };
@@ -205,10 +207,11 @@ const fullLadder: Scenario = {
     ]);
     const matchId = await h.createMatch(wA, w.result.intent_id, hB, hv.result.intent_id);
 
-    // mutual interest
+    // Both sides are keen from the posting; express_interest is kept for older
+    // clients and answers with where things already stand.
     const i1 = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     check.sweep(i1.raw, 'wA express_interest');
-    assert(i1.result.next === 'awaiting_other_side', `wA next != awaiting_other_side (${i1.result.next})`);
+    assert(i1.result.next === 'details_unlocked', `wA next != details_unlocked (${i1.result.next})`);
     const i2 = await h.mcp(hB.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
     check.sweep(i2.raw, 'hB express_interest');
     assert(i2.result.next === 'details_unlocked', `hB next != details_unlocked (${i2.result.next})`);
@@ -281,9 +284,6 @@ const declineNoLeak: Scenario = {
     ]);
     const matchId = await h.createMatch(wA, w.result.intent_id, hB, hv.result.intent_id);
 
-    // wA gets keen first.
-    await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-
     // A reason attached to a decline is rejected outright.
     const withReason = await h.mcp(wA.accessToken, 'respond', { intro_id: matchId, action: 'decline', reason: 'changed my mind' });
     assert(withReason.isError, 'a decline carrying a reason was accepted');
@@ -299,7 +299,8 @@ const declineNoLeak: Scenario = {
     assert(!/"interested"|awaiting_other_side|expressed/i.test(hbView.raw),
       `hB view leaks wA's prior interest: ${hbView.raw.slice(0, 400)}`);
     const hbEntry = hbView.result.introductions.find((m: any) => m.intro_id === matchId);
-    assert(!hbEntry || hbEntry.next === 'show_interest' || hbEntry.next === undefined,
+    assert(!hbEntry || hbEntry.state === 'declined' || hbEntry.next === 'details_unlocked'
+      || hbEntry.next === undefined,
       `hB sees an actionable state that leaks interest: next=${hbEntry?.next}`);
     log('decline is reasonless and the counterparty never learns interest existed');
   },
@@ -324,8 +325,7 @@ const negotiation: Scenario = {
       h.waitCardDB(hv.result.intent_id, ['PUBLISHED']),
     ]);
     const matchId = await h.createMatch(dA, w.result.intent_id, eB, hv.result.intent_id);
-    await h.mcp(dA.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
-    await h.mcp(eB.accessToken, 'respond', { intro_id: matchId, action: 'express_interest' });
+    // The details are open from the introduction itself; nothing to unlock.
 
     // Pass on (the default) refuses an agent-authored figure.
     const expiry = new Date(Date.now() + 86_400_000).toISOString();

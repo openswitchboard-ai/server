@@ -88,8 +88,10 @@ export async function proposeOffer(
   sideOf(m, accountId);
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
+    // Unreachable for anything made since 13 September 2026 (an introduction
+    // starts at the details step); kept as the floor under a figure.
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'Offers open once both sides have said they are interested.',
+      human_action: 'Offers open once the details on this one are open.',
     });
   }
   // Best offer, if this is one: the floor, the one-number rule and the closed
