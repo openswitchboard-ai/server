@@ -16,6 +16,12 @@
  * message handed to an agent arrives labelled as the other side's words for
  * that agent to show its human rather than to act on.
  *
+ * One thing is read before it is carried, and only one: a money figure in the
+ * words is refused outright (domain/moneyInWords.ts). The refusal happens in
+ * the send, ahead of the encryption, so nothing with a price in it is ever
+ * held. That is a check on shape rather than on meaning — no model reads it,
+ * and a message that passes is carried unread the same as it always was.
+ *
  * Delivery is therefore AT-MOST-ONCE, and that is stated plainly rather than
  * papered over. The rows are deleted in the same transaction that reads them,
  * so a failure while building the reply leaves them alone, but an agent that
@@ -35,6 +41,7 @@ import {
   type MatchRow,
 } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
+import { FIGURE_IN_WORDS_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -154,6 +161,14 @@ export async function sendMessage(
       ),
       { validation: ['text'] },
     );
+  }
+  // A FIGURE NEVER TRAVELS IN THE WORDS (run 8, 13 September 2026 — see
+  // domain/moneyInWords.ts). Refused here, before the introduction is even
+  // read: nothing is stored, nothing is encrypted, no allowance is spent, and
+  // the agent is told to send the number the one way that reads its human's
+  // own limits first.
+  if (carriesMoneyFigure(text)) {
+    throw new OsbError('CONSENT_REQUIRED', { human_action: FIGURE_IN_WORDS_ACTION });
   }
   const ch = await loadOpenChannel(matchId, accountId);
   const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
