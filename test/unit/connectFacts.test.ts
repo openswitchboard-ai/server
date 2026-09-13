@@ -200,7 +200,7 @@ describe('the manual served at connect', () => {
     return instructionsFor(cfg, opts);
   }
 
-  it('serves the versioned manual whole, with the block under it', async () => {
+  it('serves the versioned manual whole, with the block above it', async () => {
     vi.resetModules();
     vi.doMock('../../src/mcp/connectFacts.js', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
@@ -208,10 +208,13 @@ describe('the manual served at connect', () => {
     }));
     try {
       const text = await instructions(SETTLING, { accountId: ACCOUNT });
-      expect(text.startsWith(SERVER_INSTRUCTIONS)).toBe(true);
-      expect(text).toContain('YOUR HUMAN, TODAY\nstand-in');
-      // And the versioned text is untouched by it.
-      expect(text.indexOf(SERVER_INSTRUCTIONS)).toBe(0);
+      // What is true of THIS human goes first: appended, it sat at 99% of a
+      // forty-thousand-character manual, and an assistant asked for a suburb
+      // it had already been handed (2026-09-13).
+      expect(text.startsWith('YOUR HUMAN, TODAY\nstand-in')).toBe(true);
+      // And the versioned text is carried whole, untouched by it.
+      expect(text).toContain(SERVER_INSTRUCTIONS);
+      expect(text.endsWith(SERVER_INSTRUCTIONS)).toBe(true);
     } finally {
       vi.doUnmock('../../src/mcp/connectFacts.js');
       vi.resetModules();
@@ -260,9 +263,16 @@ describe('the manual served at connect', () => {
       expect(off).toContain('settle answers SETTLEMENT_UNAVAILABLE');
       expect(off).not.toContain('YOUR HUMAN, TODAY');
 
+      // Both ride ahead of the manual, the human's own facts first: they are
+      // the ones an agent acts on in its first exchange.
+      expect(off.indexOf('THIS DEPLOYMENT, TODAY')).toBe(0);
+
       const both = await instructions(NO_SETTLEMENT, { accountId: ACCOUNT });
-      expect(both.indexOf('THIS DEPLOYMENT, TODAY')).toBeGreaterThan(0);
-      expect(both.indexOf('YOUR HUMAN, TODAY')).toBeGreaterThan(
+      expect(both.indexOf('YOUR HUMAN, TODAY')).toBe(0);
+      expect(both.indexOf('THIS DEPLOYMENT, TODAY')).toBeGreaterThan(
+        both.indexOf('YOUR HUMAN, TODAY'),
+      );
+      expect(both.indexOf(SERVER_INSTRUCTIONS)).toBeGreaterThan(
         both.indexOf('THIS DEPLOYMENT, TODAY'),
       );
     } finally {

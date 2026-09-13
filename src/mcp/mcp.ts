@@ -42,13 +42,20 @@ export async function instructionsFor(
   cfg: Config,
   opts: { accountId?: string; onError?: (err: unknown) => void } = {},
 ): Promise<string> {
-  let text = SERVER_INSTRUCTIONS;
-  if (!settlementsConfigured(cfg)) text += `\n\n${SETTLEMENT_OFF_BLOCK}`;
+  // Both blocks go FIRST, ahead of the versioned manual. The manual is over
+  // forty thousand characters; appended, these landed at 99% of it, which is
+  // the least-read position there is — and in a rehearsal an assistant asked
+  // its human for a suburb the switchboard had already handed it (2026-09-13).
+  // What is true of THIS human and THIS deployment is short, it is the part
+  // most likely to be acted on in the first exchange, and it belongs where an
+  // agent reads before it does anything.
+  const front: string[] = [];
   if (opts.accountId) {
     const own = await ownHumanBlock(opts.accountId, { onError: opts.onError });
-    if (own) text += `\n\n${own}`;
+    if (own) front.push(own);
   }
-  return text;
+  if (!settlementsConfigured(cfg)) front.push(SETTLEMENT_OFF_BLOCK);
+  return front.length ? `${front.join('\n\n')}\n\n${SERVER_INSTRUCTIONS}` : SERVER_INSTRUCTIONS;
 }
 
 async function buildMcpServer(
