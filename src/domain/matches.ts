@@ -1314,8 +1314,14 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         if (e.payload.code === 'CONSENT_REQUIRED') {
           entry.mutual_blocked = e.payload;
           // The one thing left is on the human's own page (their first name and
-          // area), so the word for this match is that it waits on the human.
-          entry.next = 'awaiting_your_human';
+          // suburb), so the word for this introduction is that it waits on the
+          // human. NOT once the two of them are already talking: an open
+          // conversation reported as still waiting on the names step is simply
+          // false, and in the adversary run of 13 September 2026 it was the
+          // sentence an assistant led with on all sixteen scenarios while
+          // sixteen messages sat uncollected behind it. Their empty profile is
+          // still worth saying, and mutual_blocked above is where it is said.
+          if (!m.channel_id) entry.next = 'awaiting_your_human';
         }
       }
     }
