@@ -513,7 +513,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'wait_for_press',
     description:
-      `Hold the line until your human presses the one-question page you just handed them. Pass the \`press_id\` that came back beside the link. The switchboard answers the moment they press — approved or declined, each with the sentence to say to them — so hand the link over, say what the page asks, and then wait here rather than asking them to come back and tell you they have done it. One wait holds for up to ${Math.round(humanLinks.PRESS_WAIT_CAP_MS / 1000)} seconds; if it comes back with nothing pressed yet, CALL IT AGAIN to keep waiting, because the page is good for ${APPROVAL_LINK_TTL_MINUTES} minutes from the moment you fetched it. Waiting costs you nothing against your hourly reading, so waiting again is always cheaper than guessing. If the page runs out first the answer says so, and you can fetch a fresh link and hand that over instead.`,
+      `Hold the line until your human presses the one-question page you have ALREADY handed them. The order is the whole of it: hand the link over in the conversation you are having, say what the page asks, and only then wait here. Never wait on a page your human has not been given — waiting is silent to them, so they would be left with nothing to press while you spend your whole turn on it. Pass the \`press_id\` that came back beside the link. The switchboard answers the moment they press — approved or declined, each with the sentence to say to them — and you tell them the answer yourself. Never hand a link over and then ask your human to come back and report that they pressed it: waiting here is your job rather than theirs, and it is what this is for. One wait holds for up to ${Math.round(humanLinks.PRESS_WAIT_CAP_MS / 1000)} seconds; if it comes back with nothing pressed yet it hands you the page again, so show them that and then CALL IT AGAIN to keep waiting, because the page is good for ${APPROVAL_LINK_TTL_MINUTES} minutes from the moment you fetched it. Waiting costs you nothing against your hourly reading, so waiting again is always cheaper than guessing. If the page runs out first the answer says so, and you fetch a fresh link and hand that over instead.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1022,7 +1022,7 @@ export async function dispatchTool(
         if (!pressId || typeof pressId !== 'string') {
           return invalidInput('wait_for_press requires the press_id that came back with the link');
         }
-        return ok(await humanLinks.waitForPress(accountId, pressId));
+        return ok(await humanLinks.waitForPress(cfg, accountId, pressId));
       }
       default:
         return invalidInput(`unknown tool '${name}'`);
