@@ -334,7 +334,9 @@ describe('the manual', () => {
     const { MANUAL, MANUAL_CHANGELOG, SERVER_INSTRUCTIONS } = await import(
       '../../src/mcp/instructions.js'
     );
-    expect(MANUAL.version).toBe(35);
+    // Version 35 is where this rule shipped; later versions stack on top of
+    // it, so the floor is what this asserts.
+    expect(MANUAL.version).toBeGreaterThanOrEqual(35);
     const entry = MANUAL_CHANGELOG.find((c) => c.version === 35)!;
     expect(entry).toBeTruthy();
     expect(entry.note).toMatch(/send_message refuses/);

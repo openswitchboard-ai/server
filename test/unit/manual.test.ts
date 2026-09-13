@@ -16,6 +16,8 @@
  *    manual instead, with a line saying it replaces what they read at connect;
  *  - the manual itself says what a manual_update is and what to do with it.
  */
+import { createHash } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as db from '../../src/db.js';
@@ -30,7 +32,7 @@ import {
   type ManualChange,
 } from '../../src/mcp/instructions.js';
 import { dispatchTool, type ToolSession } from '../../src/mcp/tools.js';
-import { lintEmailCopy } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = {
@@ -532,5 +534,215 @@ describe('what the switchboard calls things, in front of a model', () => {
     expect(twelve.note).toContain('open_conversation');
     expect(twelve.note).toContain('send_message');
     expect(twelve.note).toContain('collect_messages');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shipped entries are frozen
+// ---------------------------------------------------------------------------
+/**
+ * THE MOST IMPORTANT TEST IN THIS FILE.
+ *
+ * A changelog note is delivered once, to whatever sessions are on the wire
+ * that day, and then it is history: sessions out there counted from it, and a
+ * note reworded afterwards is a note nobody will ever be told about again. So
+ * the header of instructions.ts says never renumber or reword an entry that
+ * has shipped, and this is that rule with teeth on it.
+ *
+ * A hash rather than the text, so adding an entry costs nothing and changing
+ * one costs a failing test. IF THIS FAILS: you edited a note that has already
+ * gone out. Put it back exactly as it was and say the new thing in a NEW entry
+ * at a new version. The only legitimate edit here is appending the hash of a
+ * version that did not exist before.
+ */
+const SHIPPED_NOTE_SHA256: Record<number, string> = {
+  1: '1ced45c2ad7e8df82a4466e87f6b1ad58d43a7c8386608f3cbd914d90b6445b7',
+  2: '08fa891fbf5cc3f269cf15eb0ffb2fa4bd8ce8c20b8a6f52cfb8357309d5a90d',
+  3: 'e11c3a00c9dcc8d9e2d7343bcd47acff8f281c600cf77375bda13a5959ada25a',
+  4: 'dc5c378e7b0be94a31d7c7101ac71ac3d3dc44319b9c88ed005a328ed0ef57e2',
+  5: '7ca3779da9a39af7f40edb3dfad7b17bb757a09f7d8725c5f2341c35a27fb622',
+  6: 'b0f00c12b6d8a43913a0349b631c16f5ae6f07c1701ae2db2766eeec6451890e',
+  7: '6c311a9c0efd47944a0e75a2dfd33ccaa7380833082be3e0c1f5015f9a5a9d59',
+  8: 'd5ea3370cf8755fbcfc241cde6fceac479587ccd70736ef50bd5b36a69d48d73',
+  9: '307905eae32d1e4cfe05d3088700978277da546eceb739e1ca5c1cb0670e32f9',
+  10: '893d935d39de2244112cd6e8ecbf55b4dad73803465eefc06184244378089dd7',
+  11: '0dd9978310d6763db1669b17eedc292458484304c32aa0bb739ab8bbbf3df11b',
+  12: '579ce7f86dda2330167a4f4a38a7858266e4c91112f52e49961f36591c7e267b',
+  13: 'ec8734efeaf2ad0c8a810e7990b42f932f154726e1b6a2dec976a782522c1484',
+  14: '4a7b9ce9ea60fbece78fc8d9f6f7cd827217c1b0d642da745de480e8d8c0a25b',
+  15: '654ecfef8372a9a9a0dee8aade16a815f3a60cb4808a0bd1f9103dbd1007179e',
+  16: '288fe1a83b778de5e182215fec2af0efcba7241e5e08046c50b85ad71e25b63c',
+  17: '7a594ba713fe097e70c5b7df33af3eb9b060c6ea5ce264bbbf7ef7f5344b7861',
+  18: 'b74609fd712e53dc7672b209e921576dd0d60c40c81eab5461f54fca34684fc1',
+  19: 'b428c85db3d984a5ecd8e3c3a0b8a62dd4f769e59b236e77a9efda82930689af',
+  20: 'b7da28ac71b09b068c4c929fe190f76771193a4fdc86965c985df5ddddf9ba9d',
+  21: 'ff8029e117e28b85fdc22e5c81df9c37588f3e3ef9a84bc7b24e75f9bf8792b3',
+  22: 'be5b17e7f29b08e8ceb5b087f94bad68c3e87cf9ee359722b70a86e33f2f8b12',
+  23: '86336453498e68e362173b764a2f0a0e8f1abe022e0b4974130ebb8f0ce68528',
+  24: '715f18a34cc92286f90be48b3fe7086ec143dea8c6559445de373d52ec4d0c80',
+  25: '1f5cb00d92c0cd538dfb83678d706f4501f56125756f0bf8f9702a4a0891e9dc',
+  26: '7d1f60451675ece9efdf02690e92a6a633cbb4411e0c232e9d26ab1b1598c46b',
+  27: '0d35b09ea252a29c9c122b52916883ccc778e7b093ea8ca36fa67b415b5d9af6',
+  28: 'b06cd26d7781ae56fb61a1846f1d25f062de093f264ffc5462894af154fbff4e',
+  29: '6ade5a9dcf2733fa2c93de7ebc6ad476575786aa4dd03fc39c519e77311e9f50',
+  30: '12131db6b550450de3ffbe8585d5fc4abc3ab62d8147700554a189fc7b3ea1c7',
+  31: '260e7d194e17347bd33fb2b8341f713b563e1a325a384c5ce82c7523f41e8578',
+  32: '3fd17c4d4397dfa078878f18657067e6ad852513b3c5d7183f154558c054ad5a',
+  33: 'e92fb3baeaf523e89ab07e94bd4db456225e8e13e2ee15a99b36ace9a4780e9e',
+  34: '4fcb4c62fcaff8bfbc9ee724dd1b5f702f6d544e63fe44cb92387bfd30774594',
+  35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
+  36: 'PENDING',
+};
+
+const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+describe('an entry that has shipped is never reworded', () => {
+  it('every note below the newest version is byte-identical to the day it went out', () => {
+    for (const c of MANUAL_CHANGELOG) {
+      const frozen = SHIPPED_NOTE_SHA256[c.version];
+      if (!frozen || frozen === 'PENDING') continue;
+      expect(sha256(c.note), `version ${c.version} was reworded after it shipped`).toBe(frozen);
+    }
+  });
+
+  it('and every shipped version still has a note here to be checked against', () => {
+    // The other way an entry disappears: deleted rather than edited.
+    for (const version of Object.keys(SHIPPED_NOTE_SHA256).map(Number)) {
+      if (version > MANUAL.version) continue;
+      expect(
+        MANUAL_CHANGELOG.some((c) => c.version === version),
+        `version ${version} went missing from the changelog`,
+      ).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 36: six things live rehearsals got wrong
+// ---------------------------------------------------------------------------
+/**
+ * Six behaviours that real assistants got wrong with real people on
+ * 2026-09-13, every one of them something the manual should have prevented:
+ * never asking which kind of sale it was; posting inside a few kilometres of a
+ * suburb when the guidance is wide; inventing a ceiling out of "could stretch
+ * a little"; telling a waiting human there was "someone in the queue already";
+ * handing over a link and then asking to be told it had been pressed; and
+ * saying "rough area" where the page asks for a suburb.
+ *
+ * They go in ONE entry, because a running session is told the notes once and
+ * six entries of one sentence read as six unrelated errands. And each one is
+ * also written into the body section that covers it, because the changelog is
+ * what a running session hears and the body is what a fresh session reads.
+ */
+describe('version 36: what the rehearsals taught', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 36)!;
+
+  it('exists at the new version, as one entry rather than six', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(36);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 36)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('says all six things to a session already on the wire', () => {
+    const note = entry().note;
+    // (a) which kind of sale, asked rather than assumed.
+    expect(note).toMatch(/ask which kind of sale it is before you post it/i);
+    expect(note).toMatch(/one person at a time at the price they are asking/i);
+    expect(note).toMatch(/one sealed figure/i);
+    // (b) wide unless told otherwise, and say what you chose.
+    expect(note).toMatch(/unless your human hands you a distance themselves, post wide/i);
+    expect(note).toMatch(/say out loud what you chose/i);
+    expect(note).toMatch(/only where both their areas overlap/i);
+    // (c) the figure is theirs, and the exact question to ask.
+    expect(note).toMatch(/could stretch a little/i);
+    expect(note).toMatch(/what is the most you would pay\?/i);
+    expect(note).toMatch(/what is the least you would take\?/i);
+    // (d) in line, and nothing else.
+    expect(note).toMatch(/tell them they are in line and stop there/i);
+    expect(note).toMatch(/no count and no position/i);
+    // (e) wait on the press yourself.
+    expect(note).toMatch(/wait_for_press/);
+    expect(note).toMatch(/let me know once you've pressed it/i);
+    // (f) a suburb, said as a suburb.
+    expect(note).toMatch(/a first name and a SUBURB/);
+    expect(note).toMatch(/never invite anything vaguer/i);
+  });
+
+  it('keeps the house register', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('and the body carries all six, where a fresh session reads them', () => {
+  const from = (heading: string) =>
+    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
+
+  it('asks which kind of sale it is, in the section that describes the two', () => {
+    const sale = from('3d. Two ways to sell');
+    expect(sale).toMatch(/your human's to choose and never yours to assume/i);
+    expect(sale).toMatch(/ask them before anything they are selling goes up/i);
+    expect(sale).toContain('do you want one person at a time at your price');
+    expect(sale).toMatch(/straight is the quieter road/i);
+  });
+
+  it('makes wide the default and the choice something said out loud', () => {
+    const board = from('WORKING THE BOARD');
+    expect(board).toMatch(/unless your human hands you a distance themselves, wide is what you post/i);
+    expect(board).toMatch(/you need no permission to use it/i);
+    expect(board).toMatch(/say plainly what you chose, so they can correct you/i);
+    expect(board).toMatch(/two people meet only where both areas overlap/i);
+    expect(board).toMatch(/it hides it in silence/i);
+  });
+
+  it('gives the ceiling rule a check and an exact question, where the numbers live', () => {
+    const numbers = from('THE NUMBERS ARE THEIRS');
+    expect(numbers).toMatch(/this is the one that keeps going wrong/i);
+    expect(numbers).toMatch(/a word beside it is a feeling rather than a second number/i);
+    expect(numbers).toContain('"About $420, could stretch a little" is four hundred and twenty dollars');
+    expect(numbers).toMatch(/which words of theirs that exact number came from/i);
+    expect(numbers).toContain('what is the most you would pay?');
+    expect(numbers).toContain('what is the least you would take?');
+    expect(numbers).toMatch(/a reason to ask again rather than a licence to pick/i);
+  });
+
+  it('stops at "you are in line", and names the glosses that are inventions', () => {
+    const inLine = from('3c. When it is your human who is waiting');
+    expect(inLine).toMatch(/anything you add to that sentence is something you have made up/i);
+    expect(inLine).toContain("There's someone in the queue already");
+    expect(inLine).toMatch(/the switchboard carries no count and no position/i);
+    expect(inLine).toMatch(/tell them they are in line, say you will bring them their turn/i);
+  });
+
+  it('puts the whole link order beside the link actions themselves', () => {
+    const page = from('WHAT GOES TO THEIR PAGE');
+    // The order is now three numbered steps in the same paragraph that names
+    // request_share_name, request_accept and request_auto_negotiate — the
+    // paragraph an agent is reading at the moment it reaches for a link.
+    const para = page.split('\n').find((l) => l.includes('respond(request_share_name)'))!;
+    expect(para).toBeDefined();
+    expect(para).toContain('wait_for_press');
+    expect(para).toContain('Hand the page over first, then wait on it.');
+    expect(para).toMatch(/handing one over is THREE steps/);
+    expect(para).toMatch(/unfinished until step three has come back/i);
+    expect(para).toMatch(/never ask them to come back and report a press you could have waited for/i);
+    expect(para).toMatch(/never wait on a page your human has not been given/i);
+    // The sentence an assistant actually wrote, quoted so it can be recognised.
+    expect(para).toContain("let me know once you've pressed it");
+    expect(para).toMatch(/those are sentences you never write/i);
+  });
+
+  it('says suburb everywhere it describes what crosses at the first step', () => {
+    const page = from('WHAT GOES TO THEIR PAGE');
+    expect(page).toMatch(/what crosses at that first step is a first name and a suburb/i);
+    expect(page).toMatch(/so say suburb when you explain it to them/i);
+    expect(page).toMatch(/ten minutes away or two hours/i);
+    expect(page).toMatch(/never invite something vaguer than the page asks for/i);
+    // And the body no longer teaches the vaguer phrase anywhere an agent reads
+    // it as instruction. Shipped changelog notes keep their own day's words.
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/rough area/i);
+    expect(SERVER_INSTRUCTIONS).toContain('first name + suburb');
+    expect(SERVER_INSTRUCTIONS).toContain('the first name and suburb they shared');
   });
 });
