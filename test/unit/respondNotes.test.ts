@@ -24,9 +24,11 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 import * as db from '../../src/db.js';
 import {
   ARCHIVE_SENTENCE,
+  CAME_FORWARD_SENTENCE,
   DECLINE_SENTENCE,
   expressInterestSentence,
   verdictSentence,
+  withCameForward,
   type MatchRow,
 } from '../../src/domain/matches.js';
 import { offerActionSentence } from '../../src/domain/offers.js';
@@ -71,8 +73,20 @@ interface World {
   theirInterest: boolean;
   offerState: string;
   offerProposer: string;
+  /** Is somebody waiting behind this one, on each side's own thing? */
+  inLine: boolean;
 }
 let world: World;
+
+/** The person waiting behind Ana on what she is after, and behind Beppe's. */
+const NEXT_FOR_ANA = '11111111-7777-4777-8777-111111111111';
+const NEXT_FOR_BEPPE = '22222222-8888-4888-8888-222222222222';
+const nextOn = (cardId: string) => (cardId === CARD_W ? NEXT_FOR_ANA : NEXT_FOR_BEPPE);
+/** Who is a party to each of those: the filter that keeps the line private. */
+const partiesOf: Record<string, string[]> = {
+  [NEXT_FOR_ANA]: [ANA],
+  [NEXT_FOR_BEPPE]: [BEPPE],
+};
 
 function fakePool() {
   const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
@@ -134,6 +148,44 @@ function fakePool() {
         ]);
       }
       if (/SELECT hears_via FROM accounts/.test(sql)) return rows([{ hears_via: 'assistant' }]);
+      // ---- the line behind this one, as the sequencer reads it ----
+      // Everyone still waiting on one want or have (lineOf). One person each,
+      // when the world says somebody is waiting.
+      if (/FROM matches m\s+JOIN cards own/.test(sql)) {
+        if (!world.inLine) return rows([]);
+        const card = String(params[0]);
+        return rows([
+          {
+            id: nextOn(card),
+            live: false,
+            limits_overlap: true,
+            created_at: new Date(),
+            other_card: card === CARD_W ? CARD_H : CARD_W,
+            own_urgency: null,
+            own_slots: 1,
+            own_sale: null,
+            own_gather_open: false,
+            other_urgency: null,
+            own_lat: null,
+            own_lon: null,
+            other_lat: null,
+            other_lon: null,
+            reliability: 0.5,
+          },
+        ]);
+      }
+      // Room on the far side of that waiting one (freeSlots).
+      if (/FROM cards c WHERE c\.id/.test(sql)) {
+        return rows([{ slots: 1, sale: null, gather_open: false, live_now: 0 }]);
+      }
+      // The promotion itself: it goes live in this same request.
+      if (/UPDATE matches SET live = true/.test(sql)) return rows([{ id: params[0] }]);
+      // Which of the promoted ones this human is a party to. The other side's
+      // line advancing is the other human's business, and never crosses.
+      if (/SELECT id FROM matches\s+WHERE id = ANY/.test(sql)) {
+        const ids = params[0] as string[];
+        return rows(ids.filter((id) => partiesOf[id]?.includes(String(params[1]))).map((id) => ({ id })));
+      }
       void params;
       return rows([]);
     },
@@ -141,7 +193,7 @@ function fakePool() {
 }
 
 beforeEach(() => {
-  world = { theirInterest: false, offerState: 'proposed', offerProposer: BEPPE };
+  world = { theirInterest: false, offerState: 'proposed', offerProposer: BEPPE, inLine: false };
   vi.spyOn(db, 'getPool').mockImplementation(() => fakePool());
 });
 
@@ -241,6 +293,94 @@ describe('closing, filing away, and saying how it went', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Freeing a slot: what happened next, in the same breath
+// ---------------------------------------------------------------------------
+/**
+ * The defect, from the same 13 September 2026 rehearsal: a seller told their
+ * assistant to close off the person they were talking to. The switchboard
+ * promoted the next person in line in that same request and summoned them —
+ * and the reply said only `state: 'declined'`, so the assistant told its human
+ * "the next person should surface on your listing when you check in again".
+ * They were already there.
+ *
+ * The rule: every action that frees a slot hands back what filled it — the id,
+ * and the sentence that says somebody has come forward. Nothing else about
+ * them: the sweep already answers that, in the words the sweep answers it in.
+ */
+describe('what happened next, when closing one off freed the place it held', () => {
+  it('a decline names the person who came forward and says they are here', async () => {
+    world.inLine = true;
+    const r = await respond({ action: 'decline' });
+    expect(r.state).toBe('declined');
+    expect(r.now_live_intro_id).toBe(NEXT_FOR_ANA);
+    expect(r.note.text).toBe(`${DECLINE_SENTENCE} ${CAME_FORWARD_SENTENCE}`);
+    expect(r.note.text).toContain('no reason went with it');
+    expect(r.note.text).toMatch(/with you already/);
+  });
+
+  it('a decline with nobody waiting says exactly what it always said', async () => {
+    const r = await respond({ action: 'decline' });
+    expect(r.note.text).toBe(DECLINE_SENTENCE);
+    expect(r.now_live_intro_id).toBeUndefined();
+  });
+
+  it('an archive says it too', async () => {
+    world.inLine = true;
+    const r = await respond({ action: 'archive' });
+    expect(r.state).toBe('archived');
+    expect(r.now_live_intro_id).toBe(NEXT_FOR_ANA);
+    expect(r.note.text).toBe(`${ARCHIVE_SENTENCE} ${CAME_FORWARD_SENTENCE}`);
+  });
+
+  it('an archive with nobody waiting is unchanged', async () => {
+    const r = await respond({ action: 'archive' });
+    expect(r.note.text).toBe(ARCHIVE_SENTENCE);
+    expect(r.now_live_intro_id).toBeUndefined();
+  });
+
+  it('a bad verdict frees the place too, and says who took it', async () => {
+    world.inLine = true;
+    const r = await respond({ action: 'verdict', verdict: 'bad' });
+    expect(r.verdict).toBe('bad');
+    expect(r.now_live_intro_id).toBe(NEXT_FOR_ANA);
+    expect(r.note.text).toBe(`${verdictSentence('bad')} ${CAME_FORWARD_SENTENCE}`);
+  });
+
+  it('a bad verdict with nobody waiting is unchanged', async () => {
+    const r = await respond({ action: 'verdict', verdict: 'bad' });
+    expect(r.note.text).toBe(verdictSentence('bad'));
+    expect(r.now_live_intro_id).toBeUndefined();
+  });
+
+  it('good and fine close nothing, so they never say anybody came forward', async () => {
+    world.inLine = true;
+    for (const said of ['good', 'fine'] as const) {
+      const r = await respond({ action: 'verdict', verdict: said });
+      expect(r.note.text, said).toBe(verdictSentence(said));
+      expect(r.now_live_intro_id, said).toBeUndefined();
+    }
+  });
+
+  it('works from either chair, and names only this human’s own side', async () => {
+    world.inLine = true;
+    const seller = await respond({ action: 'decline' }, BEPPE);
+    // Beppe hears about the person waiting on HIS have, and never about the
+    // one who just went live on Ana's side. The line is nobody else's.
+    expect(seller.now_live_intro_id).toBe(NEXT_FOR_BEPPE);
+    expect(JSON.stringify(seller)).not.toContain(NEXT_FOR_ANA);
+    const buyer = await respond({ action: 'decline' }, ANA);
+    expect(buyer.now_live_intro_id).toBe(NEXT_FOR_ANA);
+    expect(JSON.stringify(buyer)).not.toContain(NEXT_FOR_BEPPE);
+  });
+
+  it('never sends the human away to look for somebody who is already there', () => {
+    expect(CAME_FORWARD_SENTENCE).not.toMatch(/check|later|next time|surface|should/i);
+    expect(withCameForward(DECLINE_SENTENCE, [])).toBe(DECLINE_SENTENCE);
+    expect(withCameForward(DECLINE_SENTENCE, [NEXT_FOR_ANA])).toContain(CAME_FORWARD_SENTENCE);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The offer actions
 // ---------------------------------------------------------------------------
 describe('the offer actions answer with words too', () => {
@@ -294,6 +434,10 @@ describe('the copy rules, applied to every sentence shipped here', () => {
     ['express_interest (waiting)', expressInterestSentence(row({ interest_want: true }), ANA)],
     ['decline', DECLINE_SENTENCE],
     ['archive', ARCHIVE_SENTENCE],
+    ['someone came forward', CAME_FORWARD_SENTENCE],
+    ['decline + came forward', withCameForward(DECLINE_SENTENCE, [NEXT_FOR_ANA])],
+    ['archive + came forward', withCameForward(ARCHIVE_SENTENCE, [NEXT_FOR_ANA])],
+    ['verdict bad + came forward', withCameForward(verdictSentence('bad'), [NEXT_FOR_ANA])],
     ['verdict good', verdictSentence('good')],
     ['verdict fine', verdictSentence('fine')],
     ['verdict bad', verdictSentence('bad')],
