@@ -255,7 +255,9 @@ d('one city, two spellings, one match', () => {
       listing: card('WANT', '12 Smith St'),
     });
     expect(numbered.isError).toBe(true);
-    expect(JSON.stringify(numbered.result)).toContain('/geo/place');
+    // The validator's complaint is now said plainly, so the path reads
+    // geo.place rather than /geo/place (2026-09-13).
+    expect(JSON.stringify(numbered.result)).toContain('geo.place');
 
     // Shapes the schema pattern allows are refused by the server.
     for (const [place, hint] of [

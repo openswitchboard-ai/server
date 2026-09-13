@@ -607,11 +607,17 @@ d('integration gates against live deployment', () => {
         }),
       );
     }
-    expect(results.slice(0, MAX_OPEN_CARDS).filter((r) => r.isError)).toHaveLength(0);
-    const errors = results.filter((r) => r.isError);
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors[0].result.code).toBe('QUOTA_EXCEEDED');
-    expect(errors[0].result.docs_url).toContain('QUOTA_EXCEEDED');
+    // Hitting a ceiling is the switchboard working, so since 2026-09-13 it
+    // comes back as an ordinary answer carrying the sentence to say, rather
+    // than as something gone wrong. Everything it always carried is still on
+    // it, including the code an agent may already branch on.
+    expect(results.filter((r) => r.isError)).toHaveLength(0);
+    const refused = results.filter((r) => r.result?.code === 'QUOTA_EXCEEDED');
+    expect(refused.length).toBeGreaterThanOrEqual(1);
+    expect(refused[0].result.what_happened).toBe('limit_reached');
+    expect(refused[0].result.human_action).toBeTruthy();
+    expect(refused[0].result.docs_url).toContain('QUOTA_EXCEEDED');
+    expect(results.slice(0, MAX_OPEN_CARDS).filter((r) => r.result?.code)).toHaveLength(0);
   });
 
   it('GATE (f): an agent key issued by hand works on MCP, dies on revoke, and is refused at the approval pages', async () => {
