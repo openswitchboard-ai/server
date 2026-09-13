@@ -591,7 +591,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   33: 'e92fb3baeaf523e89ab07e94bd4db456225e8e13e2ee15a99b36ace9a4780e9e',
   34: '4fcb4c62fcaff8bfbc9ee724dd1b5f702f6d544e63fe44cb92387bfd30774594',
   35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
-  36: 'PENDING',
+  36: '94fb0693a3f64858a44c93880afea6553b86c6777071b2a7374df9e022062678',
+  37: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -744,5 +745,150 @@ describe('and the body carries all six, where a fresh session reads them', () =>
     expect(SERVER_INSTRUCTIONS).not.toMatch(/rough area/i);
     expect(SERVER_INSTRUCTIONS).toContain('first name + suburb');
     expect(SERVER_INSTRUCTIONS).toContain('the first name and suburb they shared');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 37: an expected refusal is an answer, not something gone wrong
+// ---------------------------------------------------------------------------
+/**
+ * What shipped on 2026-09-13: a refusal that is the switchboard working —
+ * the human must press, this is not open yet, a ceiling was reached, it ran
+ * out, that category is not carried, the place was unclear, settlement is not
+ * switched on — comes back the way any ordinary call does, leading with a
+ * plain word for what happened, with the sentence to say and the link beside
+ * it. Only a call that cannot be read is still a failure.
+ *
+ * The entry is written from EXPECTED_REFUSALS and protocolAnswer in tools.ts,
+ * so the words it teaches are the words that ship.
+ */
+describe('version 37: a refusal that is the switchboard working', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 37)!;
+
+  it('exists at the new version, as one entry', () => {
+    expect(MANUAL.version).toBe(37);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 37)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('teaches exactly the plain words the switchboard ships', async () => {
+    const { EXPECTED_REFUSALS } = await import('../../src/mcp/tools.js');
+    const note = entry().note;
+    for (const word of new Set(Object.values(EXPECTED_REFUSALS))) {
+      expect(note, word).toContain(word);
+    }
+  });
+
+  it('says it is an answer now, what rides with it, and what is still a failure', () => {
+    const note = entry().note;
+    expect(note).toMatch(/no longer handed back as a failure/i);
+    expect(note).toMatch(/leads with a plain word for what happened/i);
+    // Everything the refusal always carried is still beside that word.
+    expect(note).toMatch(/the sentence to say to your human/i);
+    expect(note).toMatch(/the code you may already branch on/i);
+    expect(note).toMatch(/the link is lifted out and handed to you separately/i);
+    // The word is the agent's and the sentence is the human's.
+    expect(note).toMatch(/never read the plain word out to them/i);
+    // And the one thing that still fails.
+    expect(note).toMatch(/a call that cannot be read/i);
+  });
+
+  it('keeps the house register', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+describe('the body no longer tells an agent to expect a failure', () => {
+  it('says a refusal that is the switchboard working answers like any other call', () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/a refusal that is the switchboard working is an answer/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/only a call that cannot be read still comes back as a failure/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/never read the word out and never tell them something has gone wrong/i);
+    // The old framing, where every refusal was an error to be read as one.
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/errors are machine-readable/i);
+  });
+
+  it('stops naming a prohibited category as an error with a code on it', () => {
+    const oneA = SERVER_INSTRUCTIONS.slice(
+      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
+      SERVER_INSTRUCTIONS.indexOf('2. Price bands are private'),
+    );
+    expect(oneA).toMatch(/does not go up, and that comes back as an ordinary answer/i);
+    expect(oneA).toMatch(/up to three of the closest open ones in suggestions/i);
+    expect(oneA).not.toContain('CATEGORY_PROHIBITED');
+    expect(oneA).not.toMatch(/the error names/i);
+  });
+
+  it('says the limit plainly where the read ceiling is explained', () => {
+    // The ceiling still has a retry_after to wait out; what changed is that
+    // the agent is no longer taught to read a code where a plain word ships.
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /answers that the limit has been reached and hands you a retry_after/i,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The six wordings the rehearsals asked for, on the tools themselves
+// ---------------------------------------------------------------------------
+/**
+ * The changelog is what a running session hears; a tool description is what
+ * every session reads at the moment it reaches for that tool. These six lines
+ * sit where the mistake was made.
+ */
+describe('the tools carry the rehearsal wordings where they are used', () => {
+  const desc = async (name: string) => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    return TOOLS.find((t) => t.name === name)!.description;
+  };
+
+  it('publish_intent asks which kind of sale it is, before anything goes up', async () => {
+    const d = await desc('publish_intent');
+    expect(d).toContain(
+      'ask which kind of sale they want before you post it: one person at a time at their price, or everyone who is interested puts in one sealed figure and they take the one they like',
+    );
+    expect(d).toContain('The choice is theirs and never yours to assume.');
+  });
+
+  it('publish_intent makes wide the default and the choice something said out loud', async () => {
+    const d = await desc('publish_intent');
+    expect(d).toContain(
+      'Unless your human hands you a distance themselves, post wide — that is the default and needs no permission — and say out loud what you chose so they can correct you.',
+    );
+    expect(d).toMatch(/two people meet only where both areas overlap/i);
+    expect(d).toMatch(/hides the thing in silence/i);
+  });
+
+  it('respond says the figure is the one their human said, and the question to ask', async () => {
+    const d = await desc('respond');
+    expect(d).toContain('The figure is the figure your human said, in the words they said it');
+    expect(d).toContain('"about $420, could stretch a little" is $420 and nothing else');
+    expect(d).toContain('what is the most you would pay?');
+    expect(d).toContain('what is the least you would take?');
+  });
+
+  it('check_in stops at the in-line sentence', async () => {
+    const d = await desc('check_in');
+    expect(d).toContain('When your human is the one waiting, say the in_line sentence and nothing else.');
+    expect(d).toMatch(/there is no count and no position here/i);
+    expect(d).toContain("there's someone in the queue already");
+  });
+
+  it('wait_for_press names the sentence that is never written', async () => {
+    const d = await desc('wait_for_press');
+    expect(d).toContain('"Let me know once you\'ve pressed it" is a sentence you never write');
+    expect(d).toMatch(/where it was going to go, this call goes instead/i);
+  });
+
+  it('respond says suburb wherever the first step is described', async () => {
+    const d = await desc('respond');
+    expect(d).toContain('sharing their first name and their suburb');
+    expect(d).toContain('If they have never said what first name and suburb they share, that page asks them there');
+    expect(d).toMatch(/request_share_name \(the step where their first name and suburb cross/);
+    // And nothing on the tool surface still teaches the vaguer word.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    for (const t of TOOLS) {
+      expect(t.description, t.name).not.toMatch(/first name and (rough )?area/i);
+    }
   });
 });
