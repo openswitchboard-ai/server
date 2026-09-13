@@ -20,6 +20,7 @@ import {
   sharedProfileConsentError,
   type SharedProfile,
 } from './profile.js';
+import { theirThing } from '../email/templates.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
 
@@ -854,7 +855,7 @@ export async function getStagePayload(
 /** A switchboard-authored, human-facing sentence that rides beside a match
  *  entry. The agent leads with this verbatim rather than inventing a noun for
  *  the machinery — every one is written plain, warm and jargon-free. */
-const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
+export const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
 
 /** The leaf category as a human would say it mid-sentence, with the article
  *  the sentences here need in front of it: "a mountain bike", "climbing gear",
@@ -880,6 +881,63 @@ function signalNote(category: string, counterpartyType: 'looking_for' | 'offerin
       ? `Someone nearby has ${thing} going that could be what you're after.`
       : `Someone nearby is looking for ${thing} like yours.`;
   return sbNote(`${opening} Say the word and I'll let them know you're keen; if they're keen too, you'll each learn a little more.`);
+}
+
+// ---------------------------------------------------------------------------
+// THE ACTION REPLIES.
+//
+// Every reply to a `respond` action that changes what the human is living
+// through carries the sentence to say, beside the word for what happened. The
+// rule is the one the sweep already follows: an agent should never have to
+// invent the words for something the switchboard did. Run 8 (13 September
+// 2026) is why — an assistant whose reply said only `details_unlocked` told
+// its human "they still need to say yes too" when the other side had already
+// said yes and the details were open to both.
+//
+// Each one is a pure function of what the caller already has in hand, so
+// nothing here costs a read the reply was not making anyway.
+// ---------------------------------------------------------------------------
+
+/** The thing, as the person on this side of it would name it. */
+const ownThing = (m: MatchRow, accountId: string): string =>
+  theirThing(categoryPhrase(m.category) || 'this', sideOf(m, accountId));
+
+/**
+ * What to say after telling the other side your human is keen. Two outcomes,
+ * and the difference between them is the whole point: when it is mutual,
+ * nobody is waiting on anybody, and the only step left is the human's own
+ * go-ahead to share a first name and rough area.
+ */
+export function expressInterestSentence(m: MatchRow, accountId: string): string {
+  const thing = ownThing(m, accountId);
+  if (nextAction(m, accountId) === 'awaiting_other_side') {
+    return `I have passed that on about ${thing}. They have not said yes yet, and I will tell you the moment they do.`;
+  }
+  return `Good news on ${thing}: they are keen too, and a little more about each of you is open to both sides now. Take a look, and when you are ready to go further, give me the go-ahead and I will share your first name and rough area so the two of you can talk.`;
+}
+
+/** A decline, in the words it happens in. No reason travels, by design. */
+export const DECLINE_SENTENCE =
+  'That one is closed off now, and no reason went with it.';
+
+/** Filing a finished introduction away. It stays retrievable afterwards. */
+export const ARCHIVE_SENTENCE =
+  'Filed away. Who it was and what it was about stay here, so I can bring it back whenever you ask.';
+
+/**
+ * How it went, said back in the words it was given in. `bad` is the only one
+ * that does anything beyond the record, so it is the only one that says more:
+ * the pairing is muted and the introduction is closed.
+ */
+export function verdictSentence(verdict: Verdict): string {
+  switch (verdict) {
+    case 'good':
+      return 'Glad that one went well. I will keep an eye out for more like it.';
+    case 'bad':
+      return 'Sorry that one did not work out. I have closed it off, and you will not hear from that person again.';
+    default:
+      return 'Noted, thanks. Nothing else changes on that one.';
+  }
 }
 
 /** All matches visible to an account, as stage-appropriate payloads. */
