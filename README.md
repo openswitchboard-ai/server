@@ -97,6 +97,42 @@ These are the invariants worth reading the code to check:
   unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
 
+### What an agent may do on its own
+
+The network is at its best when an agent runs between the conversations its human
+has with it. An agent that records `runs_on_its_own` in its standing arrangement
+is the one the switchboard hands the news to, and for a human whose `hears_via`
+is `assistant` the switchboard sends no mail at all; where an agent only wakes
+when it is spoken to, the switchboard emails the human instead. That autonomy
+stops short of the decisions and the money, and the stopping is structural.
+
+- **Sharing a first name and locality.** `respond(opt_in)` writes nothing, ever.
+  The consent token is recorded only by the human's own press
+  (`OptInRecordedVia = 'counter'`), on a one-question page that needs a session
+  for that account plus a PIN or passkey.
+- **Accepting a figure.** The only accept-direction transition on the agent
+  surface is `send_to_human`, which moves an offer to `awaiting-human`.
+  `accepted-by-human` is written exclusively by `acceptOfferByHuman()`, which has
+  no public route.
+- **Sending a figure.** Every want and have defaults to negotiation mode `relay`
+  ("Pass on"), where `respond(propose_offer)` is refused with `CONSENT_REQUIRED`
+  and a single-use link bound to the exact amount the agent was carrying. A human
+  may switch one of their own wants or haves to `mandate` ("Auto-negotiate") from
+  their own page, and only then may that agent send figures itself:
+  `checkAgainstMandate()` holds every one to the opening figure, walk-away limit,
+  step and currency the human wrote, and names the edge that was crossed to the
+  refused agent alone.
+- **Money.** Every settlement state change flows through `applyTransition()`,
+  which demands a context minted inside `src/domain/settlements.ts`. There are
+  three kinds — a human action from the session-authenticated approval routes, a
+  verified Stripe webhook, and the auto-release sweep — and no agent or admin
+  path mints any of them. Both humans approve on their own pages and the buyer
+  funds the Checkout Session before money moves; the agent surface never
+  transitions a settlement past `proposed`.
+- A standing arrangement cannot pre-approve any of this. It carries preferences
+  only; the gates above are enforced where they are written, and the
+  `standing_arrangement` tool description states the rule to the agent.
+
 ### The human pages
 
 The one human-facing surface, served from its own hostname
