@@ -26,6 +26,7 @@ import {
   type Mandate,
   type NegotiationMode,
 } from '../domain/negotiation.js';
+import { wideAreaNudge } from '../domain/profile.js';
 import { categoryPhrase, offerAmountInWords } from '../email/templates.js';
 import {
   counterOfferForm,
@@ -62,6 +63,11 @@ export function sharedProfilePage(
   opts: { error?: string; notice?: string } = {},
 ): string {
   const filled = v.firstName && v.locality;
+  // Nothing is refused here. An area already on file that turns out to be a
+  // whole state, territory or country gets one quiet line pointing at the
+  // suburb; anything narrower, or anything the gazetteer does not know, gets
+  // silence.
+  const wide = wideAreaNudge(v.locality);
   return layout('What you share on a match', `
 <h1>What you share on a match.</h1>
 <p class="lead">When you and someone else have both said yes, you each see a
@@ -74,6 +80,7 @@ ${
     : `<div class="note">Nothing is filled in yet. Until it is, a match can get to
 the point of swapping details and then stall there.</div>`
 }
+${wide ? `<div class="note">${esc(wide)}</div>` : ''}
 <form method="POST" action="/profile">
   ${sharedFieldsFieldset(v)}
   <button type="submit">Save</button>
@@ -922,12 +929,7 @@ ${errBox(error)}
   <h2>What your assistant may share</h2>
   <p class="small muted">A first name and a rough area, shared only after both
   people say yes. You can change them any time.</p>
-  <label for="first_name">First name</label>
-  <input id="first_name" name="first_name" type="text" maxlength="40" autocomplete="given-name" required
-    value="${esc(v.firstName)}">
-  <label for="locality">Suburb or area</label>
-  <input id="locality" name="locality" type="text" maxlength="60" autocomplete="address-level2" required
-    value="${esc(v.locality)}">
+  ${sharedFieldsFieldset({ firstName: v.firstName, locality: v.locality })}
   <input type="hidden" id="tz" name="timezone" value="${esc(v.timezone ?? '')}">
   <button type="submit">Save and carry on</button>
 </form>

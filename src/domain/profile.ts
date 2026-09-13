@@ -18,6 +18,7 @@
  */
 import { decryptFields, encryptField, writeConsentEvent } from '../crypto.js';
 import { getPool } from '../db.js';
+import { countryNamed, regionNamed } from '../geo/gazetteer.js';
 import { OsbError } from '../protocol.js';
 import { getAccount } from './accounts.js';
 import type { Config } from '../config.js';
@@ -108,6 +109,45 @@ export function validateSharedProfile(input: {
     return { ok: false, error: 'Just a suburb or area here — no email, phone or web address.' };
   }
   return { ok: true, value: { firstName, locality } };
+}
+
+// ---------------------------------------------------------------------------
+// The quiet nudge. Nothing here blocks or rewrites an answer: a person who
+// wants to stay vague stays vague, and a coarse area is stored and shared
+// exactly as typed. This only names, for the person's own page, the cases
+// where what is on file is a whole state, territory or country.
+//
+// The same offline gazetteer the posting path uses answers this, so there is
+// no network call, no autocomplete and no third party in it. `regionNamed`
+// and `countryNamed` already exist to tell a wide area from a place people
+// live in, and they stay silent on a suburb, a town or a city.
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole state, territory or country this area names, when that is all it
+ * names. Undefined for a suburb, a town, a city, or anything the gazetteer
+ * does not recognise — silence is the default, so an unusual answer is never
+ * second-guessed.
+ *
+ * A trailing country hint is looked through, because "Australian Capital
+ * Territory, Australia" is the same answer written out longer.
+ */
+export function wideAreaNamed(locality: string): string | undefined {
+  const raw = (locality ?? '').trim();
+  if (!raw) return undefined;
+  const wide = (s: string): string | undefined => regionNamed(s) ?? countryNamed(s);
+  const direct = wide(raw);
+  if (direct) return direct;
+  const head = raw.split(',')[0]!.trim();
+  return head && head !== raw ? wide(head) : undefined;
+}
+
+/** The line a person reads on their own page when what is on file is wide. */
+export function wideAreaNudge(locality: string): string | undefined {
+  const wide = wideAreaNamed(locality);
+  return wide
+    ? `${wide} covers a lot of ground. A suburb would tell the other person whether you are ten minutes away or two hours.`
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------

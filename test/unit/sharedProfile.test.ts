@@ -48,7 +48,7 @@ import * as matches from '../../src/domain/matches.js';
 import * as profile from '../../src/domain/profile.js';
 import * as cpages from '../../src/counter/pages.js';
 import * as chome from '../../src/counter/pagesHome.js';
-import { lintEmailCopy } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { OsbError, validateOutbound } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
@@ -579,7 +579,7 @@ describe('the pages that collect it', () => {
     expect(approvalWithCollection).toContain('What should we share?');
     expect(approvalWithCollection).toContain('name="first_name"');
     expect(approvalWithCollection).toContain('name="locality"');
-    expect(approvalWithCollection).toContain('Suburb or area');
+    expect(approvalWithCollection).toContain('Your suburb');
     // One form: the boxes travel with the approve decision.
     expect(approvalWithCollection.split('<form').length - 1).toBe(1);
     expect(approvalWithCollection).toContain('name="decision" value="approve"');
@@ -656,5 +656,143 @@ describe('the pages that collect it', () => {
       expect(htmlBody.toLowerCase(), name).not.toContain('the counter');
       expect(htmlBody.toLowerCase(), name).not.toContain('your counter');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The area box asks for a suburb (run 8, 13 September 2026).
+//
+// What went wrong: one human's shared area read "Australian Capital
+// Territory". The other side's assistant handed that back as where the seller
+// was, which says nothing about whether the bike is ten minutes away or two
+// hours, and reads as dodging the question. The posting had matched on an 8 km
+// radius around a suburb, so the switchboard knew the suburb all along.
+//
+// The fix is guidance and nothing else: the box asks for a suburb, shows one
+// as its example, and says why it helps. A coarse answer is still taken, still
+// stored and still shared exactly as typed.
+// ---------------------------------------------------------------------------
+describe('the area box asks for a suburb without insisting on one', () => {
+  const withBox: [string, string][] = [
+    ['profile', chome.sharedProfilePage({ firstName: 'Ana', locality: 'Fremantle' })],
+    [
+      'hello',
+      chome.helloPage({ hearsVia: 'agent', firstName: 'Ana', locality: '', timezone: null }),
+    ],
+    [
+      'approval',
+      cpages.approvalPage({
+        action: 'stage3-disclosure',
+        refId: MATCH,
+        facts: [{ k: 'What gets shared', v: 'first name + locality' }],
+        anomalies: [],
+        collectProfile: { firstName: '', locality: '' },
+        hasPasskey: false,
+        elevated: false,
+        postPath: '/approve',
+      }),
+    ],
+    [
+      'names-press',
+      cpages.oneQuestionPage({
+        token: 't',
+        question: 'Share your first name and area with the other side?',
+        yesLabel: 'Share',
+        noLabel: 'Not now',
+        needsPin: true,
+        hasPasskey: false,
+        elevated: false,
+        collectProfile: { firstName: '', locality: '' },
+      }),
+    ],
+  ];
+
+  for (const [name, page] of withBox) {
+    it(`${name}: the label, the example and the one line saying why`, () => {
+      expect(page, name).toContain('Your suburb');
+      expect(page, name).toContain('placeholder="e.g. Braddon"');
+      expect(page, name).toContain('ten minutes away or two hours');
+      expect(page, name).toContain('Wider is fine if you would rather');
+    });
+
+    it(`${name}: passes the copy lint every counter page is held to`, () => {
+      expect(lintHumanCopy(page), name).toEqual([]);
+    });
+  }
+
+  it('every page with the box says it the same way', () => {
+    for (const [name, page] of withBox) {
+      expect(page, name).toContain(cpages.AREA_LABEL);
+      expect(page, name).toContain(cpages.AREA_HELP);
+    }
+  });
+
+  it('nothing new became required, and the caps are where they were', () => {
+    const page = chome.sharedProfilePage({ firstName: '', locality: '' });
+    // One area box, exactly as required as it was before the wording changed.
+    expect(page.match(/name="locality"/g)).toHaveLength(1);
+    expect(page).toContain('maxlength="60"');
+    // No pattern, no minlength, no list of allowed places: the guidance is the
+    // whole of it, and the browser blocks nobody.
+    expect(page).not.toContain('pattern=');
+    expect(page).not.toContain('minlength=');
+    expect(page).not.toContain('<datalist');
+  });
+
+  it('a whole state, territory or country is still accepted as typed', () => {
+    for (const coarse of [
+      'Australian Capital Territory',
+      'New South Wales',
+      'Australia',
+      'ACT',
+      'somewhere near the lake',
+    ]) {
+      const checked = profile.validateSharedProfile({ firstName: 'Ana', locality: coarse });
+      expect(checked.ok, coarse).toBe(true);
+      if (checked.ok) expect(checked.value.locality).toBe(coarse);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The nudge for an account that already has a wide area on file. It is one
+// line on the person's own page, answered by the offline gazetteer the
+// posting path already loads — no network call, no autocomplete, no block.
+// ---------------------------------------------------------------------------
+describe('the quiet nudge for an area already on file', () => {
+  it('names the wide area it found', () => {
+    expect(profile.wideAreaNamed('Australian Capital Territory')).toBe(
+      'Australian Capital Territory',
+    );
+    expect(profile.wideAreaNamed('New South Wales')).toBe('New South Wales');
+    expect(profile.wideAreaNamed('Australia')).toBe('Australia');
+    // Written out longer, same answer.
+    expect(profile.wideAreaNamed('Australian Capital Territory, Australia')).toBe(
+      'Australian Capital Territory',
+    );
+  });
+
+  it('stays quiet on a suburb, a town, a city, and on anything it does not know', () => {
+    for (const fine of ['Braddon', 'Fremantle', 'Canberra', 'Sydney', '', '   ', 'up the coast']) {
+      expect(profile.wideAreaNamed(fine), JSON.stringify(fine)).toBeUndefined();
+      expect(profile.wideAreaNudge(fine), JSON.stringify(fine)).toBeUndefined();
+    }
+  });
+
+  it('the line says what is missing and why it matters', () => {
+    const line = profile.wideAreaNudge('Australian Capital Territory');
+    expect(line).toContain('Australian Capital Territory covers a lot of ground');
+    expect(line).toContain('ten minutes away or two hours');
+    expect(lintHumanCopy(line!)).toEqual([]);
+  });
+
+  it('shows on the page when the area is wide and nowhere else', () => {
+    const wide = chome.sharedProfilePage({ firstName: 'Ana', locality: 'Australian Capital Territory' });
+    expect(wide).toContain('covers a lot of ground');
+    expect(lintHumanCopy(wide)).toEqual([]);
+    const suburb = chome.sharedProfilePage({ firstName: 'Ana', locality: 'Braddon' });
+    expect(suburb).not.toContain('covers a lot of ground');
+    // Nothing is refused: what the person typed is still in the box.
+    expect(wide).toContain('value="Australian Capital Territory"');
   });
 });
