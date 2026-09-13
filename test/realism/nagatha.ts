@@ -46,6 +46,23 @@ export interface NagathaReply {
   runId?: string;
   durationMs?: number;
   status: string;
+  /**
+   * The tool names this turn's terminal receipt reports as having SUCCEEDED,
+   * in the order the receipt lists them. An empty array with `toolsObserved`
+   * true is a real answer: the turn called nothing.
+   *
+   * What it can and cannot see: the receipt carries successful calls only, so
+   * a tool she tried and that failed or was refused leaves no trace here, and
+   * neither do the arguments she passed. A refused `collect_messages` and a
+   * `collect_messages` never attempted look the same from here.
+   */
+  toolsUsed: string[];
+  /**
+   * Did the JSON carry that receipt at all? False means tool use is simply not
+   * observable from this reply, and a report must say so rather than print an
+   * empty list as if it meant "she called nothing".
+   */
+  toolsObserved: boolean;
   /** Raw JSON string, kept for the report's audit trail. */
   raw: string;
 }
@@ -111,12 +128,18 @@ export async function ask(sessionId: string, utterance: string): Promise<Nagatha
     .join('\n')
     .trim();
   const meta = parsed?.result?.meta?.agentMeta ?? {};
+  // The duet harness has read this receipt since 1.B; the adversary eval kept
+  // only her words, which is why "did she call collect_messages" was
+  // unanswerable from runs that cost real money.
+  const receipt = meta?.terminalReceipt?.successfulToolNames;
   return {
     text,
     model: meta.model ?? 'unknown',
     runId: parsed?.runId,
     durationMs: parsed?.result?.meta?.durationMs,
     status: parsed?.status ?? 'unknown',
+    toolsUsed: Array.isArray(receipt) ? receipt.map((t: unknown) => String(t)) : [],
+    toolsObserved: Array.isArray(receipt),
     raw: stdout.slice(jsonStart),
   };
 }

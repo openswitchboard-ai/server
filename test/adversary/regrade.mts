@@ -40,6 +40,20 @@ for (const s of report.scenarios) {
   // over the words, a relay prompt only asks what is new.
   for (const t of s.turns) {
     t.wire = /^(?:A message just came in|Another one just came in)/.test(t.prompt) ? 'fallback' : 'relay';
+    // A re-grade INFERS the path from the stored prompt; it checked nothing
+    // itself, and a report written before 2026-09-13 checked nothing either.
+    // So every fact behind the label is recorded as unchecked, which is what
+    // stops the re-graded note claiming a delivery or a collection that no run
+    // ever verified.
+    if (!t.wireFacts) {
+      t.wireFacts = {
+        channel: 'unchecked',
+        send: t.wire === 'relay' ? 'accepted' : 'not-attempted',
+        collected: 'unobserved',
+        detail:
+          'this label was inferred from the stored prompt when the report was re-graded; the original run verified neither the conversation nor the collection',
+      };
+    }
   }
   if (s.turns.length) {
     s.notes = [...s.notes.filter((n) => !n.startsWith('WIRE:')), wireNote(s.turns)];
