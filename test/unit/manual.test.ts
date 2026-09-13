@@ -127,22 +127,37 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('the seller receives the agreed figure in full');
   });
 
-  it('says what a frozen payment does, and that the human is the one who unfreezes it', () => {
-    // Version 19's whole point, in the manual an agent reads at connect: the
-    // old behaviour sent the money back, and this one sends nothing anywhere.
-    expect(SERVER_INSTRUCTIONS).toContain(
-      'Saying something is wrong freezes the payment where it is and sends nothing back',
+  it('says what a frozen payment does, and that the human is the one who unfreezes it', async () => {
+    // Version 19's whole point: the old behaviour sent the money back, and
+    // this one sends nothing anywhere.
+    //
+    // As of version 40 the mechanics have ONE home, and it is the settle tool,
+    // which is what an agent is reading at the moment it needs them; the
+    // manual carried the same sentences a second time, tens of thousands of
+    // tokens earlier. Every rule below is still asserted, word for word, on
+    // whichever of the two now carries it.
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const settle = TOOLS.find((t) => t.name === 'settle')!.description;
+    expect(settle).toContain(
+      'Saying something is wrong FREEZES the payment where it is and sends nothing back',
     );
     // The three roads out, named.
-    expect(SERVER_INSTRUCTIONS).toMatch(/agree how to split what is held/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/goes back with a tracking reference/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/fourteen days the payment goes to whichever side/i);
-    // And the line that keeps the agent out of every one of them.
+    expect(settle).toMatch(/agree how to split what is held/i);
+    expect(settle).toMatch(/goes back with a tracking reference/i);
+    expect(settle).toMatch(/fourteen days the payment goes to whichever side/i);
+    // And the line that keeps the agent out of every one of them, which is a
+    // rule about what to DO with what comes back, so it stays in the manual.
     expect(SERVER_INSTRUCTIONS).toContain('relay it and leave the doing to them');
     expect(SERVER_INSTRUCTIONS).toContain('presses on their own approval page');
-    // The two things a person will ask about the money.
+    expect(settle).toMatch(/Every one of those steps is theirs, on their own approval page/i);
+    // The two things a person will ask about the money. These are answers to a
+    // human's question rather than the shape of a call, they have no home on
+    // settle at all, and they stay in the manual.
     expect(SERVER_INSTRUCTIONS).toMatch(/fee and the processing cost stay paid whatever happens/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/postage in either direction is between the two people/i);
+    // And the manual still points at where the rest of it lives.
+    expect(SERVER_INSTRUCTIONS).toMatch(/written out on the settle tool/i);
+    expect(SERVER_INSTRUCTIONS).toContain('auto_release_at');
   });
 
   it('tells a connected agent about the freeze, in version 19', () => {
@@ -1058,7 +1073,9 @@ describe('version 39: the area comes to you, and what travels is said plainly', 
   const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 39)!;
 
   it('exists at the new version, as one entry covering both things', () => {
-    expect(MANUAL.version).toBe(39);
+    // Version 40 has shipped since; what this holds is that 39 went out as one
+    // entry covering both halves of that rehearsal, not that it is the newest.
+    expect(MANUAL.version).toBeGreaterThanOrEqual(39);
     expect(MANUAL_CHANGELOG.filter((c) => c.version === 39)).toHaveLength(1);
     expect(entry().note.length).toBeGreaterThan(400);
   });
@@ -1126,13 +1143,24 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(board).toMatch(/never rides an introduction/i);
   });
 
-  it('is used rather than asked for, where putting something up is described', () => {
+  it('is used rather than asked for, where putting something up is described', async () => {
+    // Version 39 wrote this rule into WORKING THE BOARD twice: once in the
+    // bullet about their area, and again in the bullet about giving a location
+    // by name. Version 40 collapsed the location bullets into one and the
+    // second telling went with them. The rule itself did not move — it is in
+    // the bullet that is its home, and on the sweep that carries the area,
+    // which is where an agent is standing when it would otherwise ask.
     const board = from('WORKING THE BOARD');
-    expect(board).toMatch(
-      /your human's own area comes to you on every sweep, so use that as the place/i,
-    );
-    expect(board).toMatch(/rather than opening with a question they have already answered/i);
-    expect(board).toMatch(/ask them for a suburb only where the sweep carried none/i);
+    expect(board).toMatch(/use it as the place on anything you post for them/i);
+    expect(board).toMatch(/unless they tell you somewhere else/i);
+    expect(board).toMatch(/they have set none, so ask them for a suburb the way you always would/i);
+    // And where they post it from: the location bullet still says to use their
+    // own area unless the thing itself lives somewhere else.
+    expect(board).toMatch(/their own area unless the thing itself is somewhere else/i);
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const checkIn = TOOLS.find((t) => t.name === 'check_in')!.description;
+    expect(checkIn).toMatch(/rather than opening with a question they have already answered/i);
+    expect(checkIn).toMatch(/say which area you used/i);
   });
 
   it('says what travels where posting thin is explained', () => {
