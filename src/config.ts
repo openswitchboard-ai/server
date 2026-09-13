@@ -105,6 +105,10 @@ export interface Config {
    *  ground that a posted item never arrived. No tracking by then refunds the
    *  buyer the agreed amount. */
   settlementTrackingGraceDays: number;
+  /** HTTP Basic credential for the operator metrics page, as `user:password`.
+   *  Unset = the /ops/metrics routes are never registered and the path 404s,
+   *  the same spirit as the Stripe webhook on a deployment without Stripe. */
+  opsMetricsBasicAuth?: string;
 }
 
 export function loadConfig(): Config {
@@ -156,6 +160,7 @@ export function loadConfig(): Config {
     settlementDisputeDeadlockDays: Number(process.env.SETTLEMENT_DISPUTE_DEADLOCK_DAYS ?? 14),
     settlementReturnSilenceDays: Number(process.env.SETTLEMENT_RETURN_SILENCE_DAYS ?? 7),
     settlementTrackingGraceDays: Number(process.env.SETTLEMENT_TRACKING_GRACE_DAYS ?? 7),
+    opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
   };
 }
 
@@ -173,6 +178,25 @@ export function registrationModeFrom(
 ): 'open' | 'dev-bootstrap' | 'closed' {
   if (raw === 'open' || raw === 'closed' || raw === 'dev-bootstrap') return raw;
   return envName === 'prod' ? 'closed' : 'dev-bootstrap';
+}
+
+/**
+ * The operator page's credential, as `user:password`. Absent is fine and means
+ * the page does not exist. Present but malformed is a boot failure rather than
+ * a page that quietly accepts anything: a colon is required, and so is a
+ * password after it.
+ */
+export function opsMetricsBasicAuthFrom(raw: string | undefined): string | undefined {
+  const v = (raw ?? '').trim();
+  if (!v) return undefined;
+  const i = v.indexOf(':');
+  if (i === -1) {
+    throw new Error('OPS_METRICS_BASIC_AUTH must be user:password');
+  }
+  if (!v.slice(0, i) || !v.slice(i + 1)) {
+    throw new Error('OPS_METRICS_BASIC_AUTH must be user:password with both halves set');
+  }
+  return v;
 }
 
 export function settlementsConfigured(cfg: Config): boolean {
