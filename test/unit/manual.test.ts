@@ -593,7 +593,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
   36: '94fb0693a3f64858a44c93880afea6553b86c6777071b2a7374df9e022062678',
   37: '7ea548cfe98c458d9f2ca98b58f9a6ebd532dd5bc8e1ed2cc45cd7a92c7ec80c',
-  38: 'PENDING',
+  38: 'e30726148ece9cc697ba539646d670815aefefc436b6d6ef75f6355041e02068',
+  39: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -914,7 +915,7 @@ describe('version 38: a photo, when words are not enough', () => {
   const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 38)!;
 
   it('exists at the new version, as one entry', () => {
-    expect(MANUAL.version).toBe(38);
+    expect(MANUAL.version).toBeGreaterThanOrEqual(38);
     expect(MANUAL_CHANGELOG.filter((c) => c.version === 38)).toHaveLength(1);
     expect(entry().note.length).toBeGreaterThan(400);
   });
@@ -1009,6 +1010,142 @@ describe('and the body carries the photo where a fresh session would look', () =
   it('keeps the system words out of the new body copy', () => {
     for (const { label, re } of BANNED) {
       expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
+    }
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 39: the area rides the sweep, and how to say what travels
+// ---------------------------------------------------------------------------
+/**
+ * Two things a rehearsal found on 2026-09-13, in ONE entry because a running
+ * session is told the notes once.
+ *
+ * The first: a human said they had a mountain bike to sell, their assistant
+ * asked which suburb, was told, and asked again on the very next thing it
+ * posted — "it seems the location didn't pass through?" It never did. The area
+ * a person sets on their own page was used only when two first names crossed,
+ * and was never offered to their own agent. check_in now carries area,
+ * area_resolved and area_note at the top level beside timezone (see the
+ * check_in handler in mcp/tools.ts and readOwnArea in domain/profile.ts).
+ *
+ * The second: the same assistant told its human "location is bucketed, not
+ * exact address". The machinery's own words for the area are never a human's
+ * words, so the manual now says what actually travels and names the three
+ * words an agent must never say.
+ */
+describe('version 39: the area comes to you, and what travels is said plainly', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 39)!;
+
+  it('exists at the new version, as one entry covering both things', () => {
+    expect(MANUAL.version).toBe(39);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 39)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('says their area rides the sweep, and names what ships', () => {
+    const note = entry().note;
+    expect(note).toContain('check_in');
+    expect(note).toContain('area_resolved');
+    expect(note).toContain('area_note');
+    expect(note).toMatch(/in the words they typed/i);
+    expect(note).toMatch(/written out in full/i);
+    expect(note).toMatch(/settles to one place on its own/i);
+  });
+
+  it('says to use it, to say which area was used, and what to do when there is none', () => {
+    const note = entry().note;
+    expect(note).toMatch(/use their area as the place on anything you post for them/i);
+    expect(note).toMatch(/unless they tell you somewhere else/i);
+    expect(note).toMatch(/say which area you used/i);
+    expect(note).toMatch(/so they can correct you/i);
+    expect(note).toMatch(/set no area the sweep says nothing at all about one/i);
+    expect(note).toMatch(/ask them for a suburb the way you always did/i);
+  });
+
+  it('gives the plain words for what travels, and bans the machinery ones', () => {
+    const note = entry().note;
+    expect(note).toContain(
+      'What goes out with anything you post is the suburb they gave and how far they are happy to travel',
+    );
+    expect(note).toMatch(/their street and their address stay with them and go nowhere/i);
+    expect(note).toMatch(/should never hear one of them/i);
+  });
+
+  it('keeps the house register, with no antithesis in the new wording', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    for (const { label, re } of BANNED) {
+      expect(re.test(entry().note), `${label} in the version 39 entry`).toBe(false);
+    }
+  });
+
+  it('matches what the check_in handler actually ships', async () => {
+    const { readOwnArea, areaNote, resolvedAreaName } = await import('../../src/domain/profile.js');
+    expect(typeof readOwnArea).toBe('function');
+    // The sentence the sweep hands over says the same thing the entry teaches.
+    expect(areaNote('Franklin, ACT')).toMatch(/use that as the area on anything you post/i);
+    expect(areaNote('Franklin, ACT')).toMatch(/tell them which area you used/i);
+    // And the written-out form only appears where one place answers to it.
+    expect(resolvedAreaName('Australia')).toBeUndefined();
+  });
+});
+
+describe('and the body carries the area where a fresh session reads it', () => {
+  const from = (heading: string) =>
+    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
+
+  it('sits with the clock, where what an agent knows about its human is described', () => {
+    const board = from('WORKING THE BOARD');
+    expect(board).toMatch(/where they are is theirs too, and it comes to you/i);
+    expect(board).toContain('area_resolved');
+    expect(board).toContain('area_note');
+    expect(board).toMatch(/use it as the place on anything you post for them/i);
+    expect(board).toMatch(/say which area you used when you confirm the posting/i);
+    expect(board).toMatch(/where nothing about an area comes back they have set none/i);
+    expect(board).toMatch(/never rides an introduction/i);
+  });
+
+  it('is used rather than asked for, where putting something up is described', () => {
+    const board = from('WORKING THE BOARD');
+    expect(board).toMatch(
+      /your human's own area comes to you on every sweep, so use that as the place/i,
+    );
+    expect(board).toMatch(/rather than opening with a question they have already answered/i);
+    expect(board).toMatch(/ask them for a suburb only where the sweep carried none/i);
+  });
+
+  it('says what travels where posting thin is explained', () => {
+    const postThin = SERVER_INSTRUCTIONS.slice(
+      SERVER_INSTRUCTIONS.indexOf('1. Post thin.'),
+      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
+    );
+    expect(postThin).toContain(
+      'the suburb they gave and how far they are happy to travel',
+    );
+    expect(postThin).toMatch(/their street and their address stay with them and go nowhere/i);
+  });
+
+  it('never says bucketed, geohash or cell to an agent, except to forbid them', () => {
+    // The machinery's own words for an area. An assistant that reads one says
+    // it: in the rehearsal it told its human "location is bucketed". The one
+    // place they may appear is the sentence that rules them out, so that
+    // sentence comes out before the sweep runs.
+    const PROHIBITION =
+      "Bucketed, cell and geohash are the machinery's own words for it and your human should never hear one of them.";
+    expect(SERVER_INSTRUCTIONS).toContain(PROHIBITION);
+    expect(MANUAL_CHANGELOG.find((c) => c.version === 39)!.note).toContain(PROHIBITION);
+    const rest = SERVER_INSTRUCTIONS.split(PROHIBITION).join(' ');
+    for (const word of [/\bbucket(ed|s|ing)?\b/i, /\bgeohash(es)?\b/i, /\bcells?\b/i]) {
+      expect(word.test(rest), `${word} in SERVER_INSTRUCTIONS`).toBe(false);
+    }
+  });
+
+  it('keeps the system words out of the new body copy', () => {
+    const board = from('WORKING THE BOARD');
+    for (const { label, re } of BANNED) {
+      expect(re.test(board), `${label} in WORKING THE BOARD`).toBe(false);
     }
     expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
   });
