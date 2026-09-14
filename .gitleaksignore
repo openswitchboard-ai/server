@@ -1,0 +1,6 @@
+# Two dev test-agent keys committed by mistake on 2026-09-13 (commit 1924688e).
+# Both keys belonged to dev accounts since wiped; each was verified rejected
+# (HTTP 401) on dev and on production on 2026-09-14 before being listed here.
+# Listing a fingerprint only silences a finding whose secret is proven dead.
+1924688e02037e9dcfaae3d66c59d30b5f8b911c:bilby-fixed.json:generic-api-key:1
+1924688e02037e9dcfaae3d66c59d30b5f8b911c:nagatha-fresh.json:generic-api-key:1
