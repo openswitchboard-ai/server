@@ -14,3 +14,9 @@ realism-reports/
 cdk.out/
 *.pem
 *.key
+
+# Test-agent credential files written by the dev reset script. Never commit.
+bilby-fixed.json
+nagatha-fresh.json
+*-fresh.json
+*-fixed.json
