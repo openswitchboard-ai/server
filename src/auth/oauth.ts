@@ -330,7 +330,16 @@ export async function validateAuthorizeRequest(
     .query('SELECT * FROM oauth_clients WHERE client_id = $1', [q.client_id])
     .catch(() => ({ rows: [] as any[] }));
   const client = clientRow.rows[0];
-  if (!client) return { error: 'unknown client_id' };
+  if (!client) {
+    // The app is presenting a registration this switchboard has no record of:
+    // a client registered against a different deployment, or one whose record
+    // is gone (a dev wipe does exactly this). A person reading it needs the
+    // remedy rather than the word for what is missing.
+    return {
+      error:
+        'this app is not registered with the switchboard. Remove the OpenSwitchboard connection in your assistant and add it again, which registers it afresh, then authorise from there.',
+    };
+  }
   const uris: string[] = client.redirect_uris;
   if (typeof q.redirect_uri !== 'string' || !uris.includes(q.redirect_uri)) {
     return { error: 'redirect_uri is not registered for this client' };
