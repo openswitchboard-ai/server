@@ -28,13 +28,27 @@
  * looked at, and the line goes to the operator's log.
  *
  * WHAT IS WRITTEN DOWN ON A REFUSAL: the reason code, and nothing else. Not the
- * labels, not the key, not the caption. The object is deleted in the same breath
- * — the switchboard has no reason to keep a picture it has just refused, and the
- * row behind it is left unsent for the sweep.
+ * labels, not the key, not the caption. The row behind it is left unsent for the
+ * sweep.
+ *
+ * AND WHAT HAPPENS TO THE BYTES DEPENDS ON WHICH FAMILY REFUSED THEM. A photo
+ * refused for violence, hate or drugs is deleted in the same breath, as it
+ * always was: the switchboard has no reason to keep it. A photo refused for
+ * anything on the SEXUAL list is NOT deleted — it is moved to a quarantine
+ * prefix (src/safety/photoQuarantine.ts). Rekognition says "Explicit"; it does
+ * not say "a child", and it cannot. Under s 474.25 of the Criminal Code (Cth) a
+ * host that becomes aware of child abuse material must refer it to the
+ * Australian Federal Police, and a delete on sight destroys the referrable
+ * thing fastest in exactly the cases where that is worst. A person decides
+ * afterwards; the machine only holds.
+ *
+ * THE SENDER READS THE SAME SENTENCE EITHER WAY. Nothing about quarantine
+ * reaches any user, on either side. There is one refusal here, not two.
  */
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { DetectModerationLabelsCommand } from '@aws-sdk/client-rekognition';
 import { rekognition, s3 } from '../../aws.js';
+import { quarantinePhoto } from '../../safety/photoQuarantine.js';
 import { passed, type Check, type CheckResult } from '../types.js';
 
 /**
@@ -50,8 +64,12 @@ import { passed, type Check, type CheckResult } from '../types.js';
  * What is deliberately NOT here: Alcohol, Gambling and Rude Gestures. A bottle
  * of wine or a poker set is a thing somebody may lawfully be handing over, and
  * this check is not a taste filter.
+ *
+ * THE LIST IS IN TWO HALVES, AND THE HALVES ARE NOT A MATTER OF DEGREE. They
+ * decide what happens to the bytes: the sexual half is quarantined, everything
+ * else is deleted. See the note at the top of this file and s 474.25.
  */
-export const REFUSED_MODERATION_LABELS: readonly string[] = [
+export const SEXUAL_LABELS: readonly string[] = [
   // Sexual and nude, in every name the taxonomy has used for it.
   'Explicit',
   'Explicit Nudity',
@@ -59,6 +77,10 @@ export const REFUSED_MODERATION_LABELS: readonly string[] = [
   'Suggestive',
   'Sexual Activity',
   'Swimwear or Underwear',
+];
+
+/** The rest: refused just as hard, and deleted on refusal as they always were. */
+export const OTHER_REFUSED_LABELS: readonly string[] = [
   // Violence and the images that go with it.
   'Violence',
   'Visually Disturbing',
@@ -71,6 +93,13 @@ export const REFUSED_MODERATION_LABELS: readonly string[] = [
   'Tobacco',
 ];
 
+/** Everything that sends a photo back, for the callers that want the whole list. */
+export const REFUSED_MODERATION_LABELS: readonly string[] = [
+  ...SEXUAL_LABELS,
+  ...OTHER_REFUSED_LABELS,
+];
+
+const SEXUAL = new Set(SEXUAL_LABELS.map((l) => l.toLowerCase()));
 const REFUSED = new Set(REFUSED_MODERATION_LABELS.map((l) => l.toLowerCase()));
 
 /** Rekognition's own default. Lower than this is not offered; higher lets more through. */
@@ -104,6 +133,25 @@ async function forget(bucket: string, key: string): Promise<void> {
   } catch {
     /* the refusal stands; the sweep will come past */
   }
+}
+
+/**
+ * Which names on the list this answer hit, canonicalised to the list's own
+ * spelling. The quarantine row wants them (an operator deciding what to do
+ * needs to know what fired); the refusal itself still carries none of them.
+ */
+export function matchedLabels(
+  labels: { Name?: string; ParentName?: string }[],
+): string[] {
+  const out = new Set<string>();
+  for (const l of labels) {
+    for (const candidate of [l.Name, l.ParentName]) {
+      const lower = String(candidate ?? '').toLowerCase();
+      if (!lower || !REFUSED.has(lower)) continue;
+      out.add(REFUSED_MODERATION_LABELS.find((n) => n.toLowerCase() === lower)!);
+    }
+  }
+  return [...out];
 }
 
 export const photoModeration: Check = {
@@ -142,14 +190,21 @@ export const photoModeration: Check = {
     // A top-level name, or the top-level parent of a finer one: Rekognition
     // returns the parent alongside the child, and reading both means a renamed
     // child under a known parent is still caught.
-    const hit = labels.some(
-      (l) =>
-        REFUSED.has(String(l.Name ?? '').toLowerCase()) ||
-        REFUSED.has(String(l.ParentName ?? '').toLowerCase()),
-    );
-    if (!hit) return passed('photoModeration');
+    const hits = matchedLabels(labels);
+    if (!hits.length) return passed('photoModeration');
 
-    await forget(bucket, key);
+    // THE FORK. Anything sexual is held; everything else goes, as before.
+    if (hits.some((l) => SEXUAL.has(l.toLowerCase()))) {
+      await quarantinePhoto({
+        bucket,
+        key,
+        match_id: item.match_id,
+        sender_account: item.sender_account,
+        labels: hits,
+      });
+    } else {
+      await forget(bucket, key);
+    }
     // The reason code and nothing else: no label, no key, no picture.
     moderationLog('photo-refused', { reason_code: 'sexual-or-prohibited-image' });
     return {

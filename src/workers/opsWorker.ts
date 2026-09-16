@@ -15,6 +15,7 @@ import { refreshPulseAggregates } from '../domain/pulse.js';
 import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
 import { sweepLedgerEntries } from '../safety/ledger.js';
+import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
 import {
   notifyMatchCreated,
   notifyYourMove,
@@ -112,6 +113,19 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   if (led.entries > 0) log('ttl-expiry: ledger sweep', led);
                 } catch (e: any) {
                   log('ttl-expiry: ledger sweep failed', { error: e?.message });
+                }
+                // And photo quarantine, on the same tick — with one rule the
+                // other sweeps do not have. It may take only what an operator
+                // has CLEARED, past its ninety days. A held item past expiry is
+                // a decision nobody has made: it is counted, said out loud and
+                // left alone, because a cron that deletes something that might
+                // have had to be referred is the defect this table exists to
+                // fix. A referred item is never swept at any age.
+                try {
+                  const q = await sweepPhotoQuarantine();
+                  if (q.items > 0 || q.overdue > 0) log('ttl-expiry: quarantine sweep', q);
+                } catch (e: any) {
+                  log('ttl-expiry: quarantine sweep failed', { error: e?.message });
                 }
                 // The fit sequencer's two clocks ride the same tick, so they
                 // need no schedule of their own: a live slot that has shown no
