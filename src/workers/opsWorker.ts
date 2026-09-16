@@ -14,6 +14,7 @@ import { acceptOfferByHuman } from '../domain/offers.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
 import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
+import { sweepLedgerEntries } from '../safety/ledger.js';
 import {
   notifyMatchCreated,
   notifyYourMove,
@@ -101,6 +102,16 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   if (pics.photos > 0) log('ttl-expiry: photo sweep', pics);
                 } catch (e: any) {
                   log('ttl-expiry: photo sweep failed', { error: e?.message });
+                }
+                // And the ledger, on the same tick: an entry past its thirty
+                // days goes, unless lawful process asked us to hold it. Counts
+                // only, and the sweep could not read what it deletes if it
+                // wanted to — the key to do that is not on this machine.
+                try {
+                  const led = await sweepLedgerEntries();
+                  if (led.entries > 0) log('ttl-expiry: ledger sweep', led);
+                } catch (e: any) {
+                  log('ttl-expiry: ledger sweep failed', { error: e?.message });
                 }
                 // The fit sequencer's two clocks ride the same tick, so they
                 // need no schedule of their own: a live slot that has shown no

@@ -13,7 +13,8 @@ import { denyListPath } from './checks/denyListPath.js';
 import { modelScreen } from './checks/modelScreen.js';
 import { moneyFigure } from './checks/moneyFigure.js';
 import { photoMetadata } from './checks/photoMetadata.js';
-import { noLedger, type Check, type CheckResult, type IntakeItem, type Ledger, type Verdict } from './types.js';
+import { ledgerFromConfig } from '../safety/ledger.js';
+import { type Check, type CheckResult, type IntakeItem, type Ledger, type Verdict } from './types.js';
 import type { Config } from '../config.js';
 
 /**
@@ -48,7 +49,9 @@ export async function runIntake(
   item: IntakeItem,
   opts: IntakeOptions = {},
 ): Promise<Verdict> {
-  const ledger = opts.ledger ?? noLedger;
+  // The thirty-day ledger where this deployment has a safety public key, and
+  // nothing at all where it does not (src/safety/ledger.ts).
+  const ledger = opts.ledger ?? ledgerFromConfig(cfg);
   const results: CheckResult[] = [];
   for (const check of checksForDoor(item.door, opts.checks ?? CHECKS)) {
     let result: CheckResult;
@@ -74,8 +77,9 @@ export async function runIntake(
     ...(decisive?.plain_words ? { plain_words: decisive.plain_words } : {}),
     checks: results,
   };
-  // A no-op until step two builds the thirty-day ledger behind it. It can
-  // never change the verdict, so it is awaited and its own failure swallowed.
+  // The ledger can never change the verdict, so it is awaited and its own
+  // failure swallowed: losing evidence is bad, and refusing to carry something
+  // because the evidence store hiccuped is worse.
   try {
     await ledger.recordVerdict(item, verdict);
   } catch {
