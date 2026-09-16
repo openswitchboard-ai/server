@@ -32,6 +32,10 @@ export interface MatchRow {
   account_have: string;
   score: number;
   category: string;
+  /** The poster's own plain words for the thing, copied from the want beside
+   *  the category, so every sentence written here can name it (matchRules.ts
+   *  categoryPhrase). Null where the posting gave none. */
+  kind?: string | null;
   stage: number;
   interest_want: boolean;
   interest_have: boolean;
@@ -106,11 +110,11 @@ export async function createMatch(
   }
   const r = await getPool().query(
     `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
-                          stage, interest_want, interest_have)
-     VALUES ($1,$2,$3,$4,$5,$6,2,true,true)
+                          kind, stage, interest_want, interest_have)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,2,true,true)
      ON CONFLICT (card_want, card_have) DO UPDATE SET updated_at = now()
      RETURNING id`,
-    [cardWantId, cardHaveId, want.account_id, have.account_id, score, want.category],
+    [cardWantId, cardHaveId, want.account_id, have.account_id, score, want.category, want.kind ?? null],
   );
   // A new candidate joins a line rather than arriving on somebody's doorstep,
   // so the sequencer decides whether there is a slot free for it right now.
@@ -977,8 +981,12 @@ export const sbNote = (text: string) => ({ text, provenance: 'switchboard-system
 /** The leaf category as a human would say it mid-sentence, with the article
  *  the sentences here need in front of it: "a mountain bike", "climbing gear",
  *  "a book club". The words come from the taxonomy, so nothing looks like a
- *  code and no acronym arrives lower-cased. */
-const plainLeaf = (category: string) => categoryPhraseWithArticle(category);
+ *  code and no acronym arrives lower-cased — and where the taxonomy has never
+ *  heard of the leaf, from the poster's own `kind`, which is required on
+ *  exactly those postings for exactly this reason: "a bouldering partner",
+ *  "vintage synth repair". */
+const plainLeaf = (category: string, kind?: string | null) =>
+  categoryPhraseWithArticle(category, kind);
 
 /** What "taken down" means, in the words the agent says it in. The thing this
  *  was about is off the switchboard, so nobody new comes into it; the two
@@ -998,8 +1006,12 @@ export const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
  * have is already open to read, and the one thing still to come is the human's
  * own go-ahead on sharing a first name and suburb.
  */
-function signalNote(category: string, counterpartyType: 'looking_for' | 'offering'): { text: string; provenance: 'switchboard-system' } {
-  const thing = plainLeaf(category);
+function signalNote(
+  category: string,
+  counterpartyType: 'looking_for' | 'offering',
+  kind?: string | null,
+): { text: string; provenance: 'switchboard-system' } {
+  const thing = plainLeaf(category, kind);
   const opening =
     counterpartyType === 'offering'
       ? `Someone nearby has ${thing} going that could be what you're after. Here is what they have.`
@@ -1026,7 +1038,7 @@ function signalNote(category: string, counterpartyType: 'looking_for' | 'offerin
 
 /** The thing, as the person on this side of it would name it. */
 const ownThing = (m: MatchRow, accountId: string): string =>
-  theirThing(categoryPhrase(m.category) || 'this', sideOf(m, accountId));
+  theirThing(categoryPhrase(m.category, m.kind) || 'this', sideOf(m, accountId));
 
 /**
  * What express_interest says now that it does nothing. The rule the wording
@@ -1171,7 +1183,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       const c = entry.mutual?.counterparty;
       if (m.archived_via === 'lapsed') {
         entry.note = sbNote(
-          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category)}; say the word if you would like me to look again.`,
+          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category, m.kind)}; say the word if you would like me to look again.`,
         );
       } else if (m.archived_via === 'not-chosen') {
         // No figure, no count, nothing about anyone else: the losing side is
@@ -1181,8 +1193,8 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         );
       } else {
         entry.note = c
-          ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category)} a while back. The conversation and any number you swapped are here in our chat.`)
-          : sbNote(`You had ${plainLeaf(m.category)} sorted with someone a while back; it has since been filed away.`);
+          ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category, m.kind)} a while back. The conversation and any number you swapped are here in our chat.`)
+          : sbNote(`You had ${plainLeaf(m.category, m.kind)} sorted with someone a while back; it has since been filed away.`);
       }
       out.push(entry);
       continue;
@@ -1218,7 +1230,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       signal,
       // The ready human sentence for a fresh signal rides right here on the
       // entry, so the agent leads with it instead of naming the machinery.
-      note: signalNote(m.category, signal.counterparty_type),
+      note: signalNote(m.category, signal.counterparty_type, m.kind),
     };
     // THE LINE, and it is the HOLDER'S OWN. How many people are waiting behind
     // this one on the caller's own want or have: their queue, on their own
@@ -1292,7 +1304,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       // The offer sentence names the thing the way a person would say it in
       // one — "for your mountain bike" — where the signal sentence wants the
       // article in front of it as well.
-      const noteText = offerTableNote(table, categoryPhrase(m.category), sideOf(m, accountId));
+      const noteText = offerTableNote(table, categoryPhrase(m.category, m.kind), sideOf(m, accountId));
       if (noteText) entry.offer_note = sbNote(noteText);
       // A figure one human proposed and the other took, whichever way round:
       // the deal is agreed and the switchboard has nothing further to do on it.
@@ -1351,7 +1363,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // sentence already says the whole of it — who has come forward, that
         // what they have is open to read, and that the next step is the
         // human's own go-ahead — so it is the sentence here too, side-aware.
-        entry.note = lead(signalNote(m.category, signal.counterparty_type).text);
+        entry.note = lead(signalNote(m.category, signal.counterparty_type, m.kind).text);
         break;
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask

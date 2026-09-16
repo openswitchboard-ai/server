@@ -1012,7 +1012,7 @@ in on this device and lets you approve what is waiting.</p>
             k: party === 'buyer' ? 'You would pay' : 'You would be paid',
             v: party === 'buyer' ? money.buyerTotal : money.amount,
           },
-          { k: 'For', v: m ? categoryLeafLabel(m.category) : 'your match' },
+          { k: 'For', v: m ? categoryLeafLabel(m.category, m.kind) : 'your match' },
           { k: 'What you agreed', v: money.amount },
           { k: 'Introductory fee', v: `${money.fee}, paid by the buyer` },
           { k: 'Card processing', v: `${money.processing}, at Stripe's standard rate` },
@@ -1068,7 +1068,7 @@ in on this device and lets you approve what is waiting.</p>
         const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
         facts.push(
           { k: 'What gets shared', v: 'first name + locality' },
-          { k: 'For', v: categoryLeafLabel(m.category) },
+          { k: 'For', v: categoryLeafLabel(m.category, m.kind) },
           { k: 'Shared with', v: 'your matched counterparty' },
         );
         const cp = await newCounterpartyAnomaly(counterparty, 'stage3-disclosure');
@@ -1832,7 +1832,7 @@ in on this device and lets you approve what is waiting.</p>
         role,
         state: row.state,
         ...settlementMoneyLines(row),
-        category: m ? categoryLeafLabel(m.category) : 'your match',
+        category: m ? categoryLeafLabel(m.category, m.kind) : 'your match',
         descriptionText: row.description?.text,
         myApprovalPending:
           !myApproval && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(row.state),

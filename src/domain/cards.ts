@@ -10,7 +10,7 @@ import {
   checkSchemaVersion,
   validatePayload,
 } from '../protocol.js';
-import { categoryStatus } from '../denylist.js';
+import { categoryGate } from '../denylist.js';
 import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
@@ -47,6 +47,8 @@ export interface CardRow {
   schema_version: string;
   type: 'WANT' | 'HAVE';
   category: string;
+  /** The poster's own plain words for the thing, where they gave any. */
+  kind: string | null;
   geo: any;
   geo_lat: number | null;
   geo_lon: number | null;
@@ -69,32 +71,120 @@ export interface CardRow {
 }
 
 /**
- * The category gate, identical on every deployment: the taxonomy decides, and
- * nothing else does. When it refuses, the switchboard adds up to three of the
- * closest open categories so the agent can correct itself on the next call.
- * Working those out is a courtesy — it never changes the decision, and a
- * refusal stands whether or not the suggestions arrive.
+ * The category gate, identical on every deployment. The catalogue is a DENY
+ * LIST (docs/taxonomy-question.md, denylist.ts categoryGate): a want or a have
+ * goes up unless somebody deliberately closed the door on it, which means a
+ * reserved family or a top level the taxonomy has no name for. A leaf nobody
+ * has written down is not a closed door, so it goes up.
  *
- * The refusal is also the only place the switchboard hears what the taxonomy is
- * missing, so it is written down on the way past (domain/categoryMisses.ts).
- * That write is best-effort in the strong sense: it is awaited so the row is
- * really there before the error leaves, but it cannot throw, and nothing about
- * it reaches the agent. The refusal is unchanged whether the log succeeded,
- * failed, or was never attempted.
+ * What it costs is the word for the thing, and that is what `kind` buys back:
+ * an unknown leaf has to say in plain words what it is, or none of the
+ * sentences the switchboard writes about it can name it. That refusal is a
+ * validation refusal rather than CATEGORY_PROHIBITED, because the category was
+ * fine and the posting was short of a field.
+ *
+ * When it does refuse, the switchboard adds up to three of the closest open
+ * categories so the agent can correct itself on the next call. Working those
+ * out is a courtesy — it never changes the decision, and a refusal stands
+ * whether or not the suggestions arrive.
+ *
+ * Returns whether the taxonomy knew the leaf, because the caller writes the
+ * unknown ones down AFTER the posting is up (recordUnknownLeaf below).
  */
 export async function assertCategoryOpen(
   cfg: Config,
   category: string,
   accountId: string,
+  kind?: unknown,
+): Promise<{ known: boolean }> {
+  const gate = categoryGate(category);
+  if (!gate.ok) {
+    const { categories } = await suggestCategories(cfg, category, 3);
+    throw new OsbError('CATEGORY_PROHIBITED', {
+      human_action: suggestionSentence(gate.refusal ?? 'unknown', categories),
+      ...(categories.length ? { suggestions: categories } : {}),
+    });
+  }
+  if (!gate.known) assertKindPresent(kind);
+  return { known: gate.known };
+}
+
+/**
+ * WHAT THE THING IS, IN THE AGENT'S OWN WORDS. Required on a posting the
+ * catalogue has no leaf for, welcome on any other.
+ *
+ * Two checks stand between `kind` and the row, and they answer to different
+ * masters. This one is synchronous and cheap, and it is about SHAPE: a noun
+ * phrase is words, and words have no digits, no dollar sign, no address and no
+ * link in them. It runs here so an agent that sent prose, a price or a contact
+ * detail hears about it in the same call rather than finding the posting
+ * rejected minutes later.
+ *
+ * The other one is the model screen, off the queue, at the posting door of the
+ * one pipe, where `kind` is handed over beside the rest of the free text
+ * (src/intake, docs/trust-and-safety.md). That is the check that reads what it
+ * MEANS. Neither stands in for the other.
+ */
+const KIND_MAX_WORDS = 6;
+
+export function kindComplaint(kind: unknown): string | undefined {
+  if (typeof kind !== 'string') return 'say in a few plain words what the thing is';
+  const k = kind.trim();
+  if (!k) return 'say in a few plain words what the thing is';
+  if (k.length > 60) return 'what the thing is has to fit in sixty characters';
+  if (/\d/.test(k)) return 'what the thing is takes plain words rather than numbers';
+  if (/[$£€¥]/.test(k)) return 'what the thing is carries no price';
+  if (/@|https?:\/\/|www\./i.test(k)) {
+    return 'what the thing is carries no email address, phone number or link';
+  }
+  if (k.split(/\s+/).length > KIND_MAX_WORDS) {
+    return `what the thing is takes ${KIND_MAX_WORDS} words at most`;
+  }
+  return undefined;
+}
+
+function assertKindPresent(kind: unknown): void {
+  const complaint = kindComplaint(kind);
+  if (!complaint) return;
+  throw Object.assign(
+    new Error(
+      `this cannot go up as it stands: the catalogue has no leaf for that category, so ${complaint}`,
+    ),
+    { validation: ['kind'] },
+  );
+}
+
+/** `kind` as it is stored: trimmed, or null where the posting gave none. */
+const kindOf = (card: any): string | null => {
+  const k = typeof card?.kind === 'string' ? card.kind.trim() : '';
+  return k ? k : null;
+};
+
+/**
+ * WHAT THE CATALOGUE IS MISSING, written down once the posting is UP.
+ *
+ * It used to be written on the refusal, because the refusal was the only place
+ * the switchboard ever heard of the gap. Now there is no refusal, so the
+ * record moves to the posting itself and changes meaning with it: this is a
+ * growth list, not a complaints book. Every row is a person, through their
+ * agent, saying "this is the errand I actually have", and the thing went up.
+ *
+ * Best-effort in the same strong sense it always was: awaited so the row is
+ * really there, unable to throw, and invisible to the agent either way.
+ */
+async function recordUnknownLeaf(
+  cfg: Config,
+  accountId: string,
+  category: string,
+  kind: string | null,
 ): Promise<void> {
-  const status = categoryStatus(category);
-  if (status.status === 'open') return;
-  const { categories } = await suggestCategories(cfg, category, 3);
-  await recordCategoryMiss(accountId, category, categories);
-  throw new OsbError('CATEGORY_PROHIBITED', {
-    human_action: suggestionSentence(status.status, categories),
-    ...(categories.length ? { suggestions: categories } : {}),
-  });
+  let categories: string[] = [];
+  try {
+    categories = (await suggestCategories(cfg, category, 3)).categories;
+  } catch {
+    /* the suggester is a courtesy; the record is the point */
+  }
+  await recordCategoryMiss(accountId, category, categories, kind);
 }
 
 /**
@@ -135,19 +225,29 @@ export async function publishIntent(
   }
   checkSchemaVersion(card.schema_version);
 
-  await assertCategoryOpen(cfg, card.category, accountId);
+  const { known } = await assertCategoryOpen(cfg, card.category, accountId, card.kind);
+  const kind = kindOf(card);
   // Everything a person hands over goes through the one pipe (src/intake,
   // docs/trust-and-safety.md). At the posting door, synchronously, that is the
-  // deny-list path check: the only thing that can refuse here, which is why the
-  // refusal is still CATEGORY_PROHIBITED and still word for word what it was.
-  // The words on the card are screened afterwards, off the queue, by the
-  // screening worker through the same pipe — so none are handed over here.
+  // deny-list path check and the figure check over `kind`: the only two things
+  // that can refuse here, which is why a category refusal is still
+  // CATEGORY_PROHIBITED and still word for word what it was. The rest of the
+  // words on the card are screened afterwards, off the queue, by the screening
+  // worker through the same pipe — so none are handed over here.
   const intake = await runIntake(cfg, {
     door: 'posting',
     sender_account: accountId,
-    fields: { category: card.category },
+    fields: { category: card.category, ...(kind ? { kind } : {}) },
   });
   if (intake.outcome === 'refuse') {
+    // A figure in `kind` is not a category decision, so it does not wear the
+    // category's word. It comes back the way the money check comes back
+    // everywhere else: the sentence the check wrote, and the field to fix.
+    if (intake.reason_code === 'money-figure-in-words') {
+      throw Object.assign(new Error(intake.plain_words ?? 'this cannot go up as it stands'), {
+        validation: ['kind'],
+      });
+    }
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
 
@@ -186,10 +286,10 @@ export async function publishIntent(
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
-                        protocol_status, price_enc, ttl_days, expires_at, slots, sale)
+                        protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind)
      VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
-             $18::int, $19)
+             $18::int, $19, $20)
      RETURNING id`,
     [
       accountId,
@@ -215,9 +315,14 @@ export async function publishIntent(
       // see domain/sequencer.ts for the line they drive.
       slotsOf(card),
       saleOf(card),
+      kind,
     ],
   );
   const id = r.rows[0].id as string;
+  // The catalogue's gaps, counted from what went UP rather than from what was
+  // turned away. Nothing about this reaches the agent, and nothing about it can
+  // fail the publish.
+  if (!known) await recordUnknownLeaf(cfg, accountId, card.category, kind);
   await getPool().query(
     'INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)',
     [accountId, id],
@@ -307,7 +412,7 @@ function peopleSentence(
 
 export async function listIntents(accountId: string): Promise<any[]> {
   const r = await getPool().query(
-    `SELECT id, schema_version, type, category, geo, attributes, ask, urgency, visibility,
+    `SELECT id, schema_version, type, category, kind, geo, attributes, ask, urgency, visibility,
             protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at,
             screening, slots, sale
      FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
@@ -372,6 +477,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
         // The side, in the words the wire uses. WANT/HAVE stay in the column.
         type: row.type === 'WANT' ? 'looking_for' : 'offering',
         category: row.category,
+        ...(row.kind ? { kind: row.kind } : {}),
         geo: row.geo,
         ...(row.attributes && Object.keys(row.attributes).length
           ? { attributes: row.attributes }
@@ -420,6 +526,9 @@ export async function amendIntent(
     schema_version: card.schema_version,
     type: card.type === 'WANT' ? 'looking_for' : 'offering',
     category: card.category,
+    // Not amendable, for the same reason the category is not: what the thing
+    // IS is what the posting was, and a different thing is a different posting.
+    ...(card.kind ? { kind: card.kind } : {}),
     geo: card.geo,
     ...(card.attributes && Object.keys(card.attributes).length
       ? { attributes: card.attributes }
@@ -480,7 +589,7 @@ export async function amendIntent(
   // An amend is a re-publish, so the category faces the same gate. A card
   // whose category left the taxonomy since it was posted cannot be renewed
   // under it; the error names where to go instead.
-  await assertCategoryOpen(cfg, next.category, accountId);
+  await assertCategoryOpen(cfg, next.category, accountId, next.kind);
   // Same canonicalisation as publish, on the same terms: an amend is a
   // re-publish, and the re-screen that follows re-embeds from this row, so
   // the amended card's vector is built from the canonical form as well.

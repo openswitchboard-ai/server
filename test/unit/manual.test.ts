@@ -632,7 +632,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   40: '1850fe97d047c43b48ef55abb034d67fb7ac71672f7acaf6b4f620b9b6eee2c9',
   41: '90334c69390a256145abd9ef55678aca5562a2b47786f994840dca569a104021',
   42: '018e63c59ca4d7d8370fc4dbebb53ab6d84b40c732326e4949e3f2de8270403b',
-  43: 'PENDING',
+  43: '1bfa7c69974b24e1639c564a3fadef3d5eb6f679a4cd63d177b1163e447bab1f',
+  44: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -856,10 +857,28 @@ describe('the body no longer tells an agent to expect a failure', () => {
       SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
       SERVER_INSTRUCTIONS.indexOf('2. Price bands are private'),
     );
-    expect(oneA).toMatch(/does not go up, and that comes back as an ordinary answer/i);
-    expect(oneA).toMatch(/up to three of the closest open ones in suggestions/i);
+    expect(oneA).toMatch(/comes back as an ordinary answer with the sentence to say/i);
+    expect(oneA).toMatch(/closest open ones in suggestions/i);
     expect(oneA).not.toContain('CATEGORY_PROHIBITED');
     expect(oneA).not.toMatch(/the error names/i);
+  });
+
+  it('1a says the catalogue is a deny list, and names what kind is for', () => {
+    const oneA = SERVER_INSTRUCTIONS.slice(
+      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
+      SERVER_INSTRUCTIONS.indexOf('2. Price bands are private'),
+    );
+    // What to do when the catalogue has nothing: file it under what it does
+    // have, and say the thing in your own words.
+    expect(oneA).toMatch(/post under the nearest node above it, at least the top level/i);
+    expect(oneA).toMatch(/say what the thing is yourself in kind/i);
+    expect(oneA).toMatch(/never stops one going up/i);
+    // And the only two things that still do not.
+    expect(oneA).toMatch(/reserved families — jobs, property, licensed trades, dating/i);
+    expect(oneA).toMatch(/anything prohibited/i);
+    // The instruction that is gone: there is nothing to repost under any more.
+    expect(oneA).not.toMatch(/repost under one of those/i);
+    expect(oneA).not.toMatch(/rather than inventing a path/i);
   });
 
   it('says the limit plainly where the read ceiling is explained', () => {
