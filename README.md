@@ -115,9 +115,13 @@ These are the invariants worth reading the code to check:
   does not state the file was stripped (`metadata_removed`) — a claim the browser
   makes, which this service cannot verify without holding the image. A browser
   that runs no script cannot upload and cannot press Send.
-  **There is NO automated image screening, of any kind.** Nothing here opens the
-  picture: the terms forbid what you would expect, the two humans are the only
-  people who can see it, and the object is deleted when the other
+  **Every photo is looked at once by a machine before it is sent on.** At the
+  send press, before the other side is told a photo exists, the object goes
+  through Rekognition's moderation labels (`src/intake/checks/photoModeration.ts`):
+  anything sexual or nude at all, violence, hate symbols or drugs, and the photo
+  is deleted with nothing but the reason code kept. A moderation error is a
+  hold, never a pass. No person at the switchboard sees it; the two humans are
+  the only people who can, and the object is deleted when the other
   side collects it (once the short link handed over has run out) or at 14 days
   if nobody ever does. A caption and the uploaded filename ARE read, by the same
   `carriesMoneyFigure` rule a message is held to — a figure never travels in the
@@ -126,6 +130,15 @@ These are the invariants worth reading the code to check:
 - Publish is blocked until screening passes, with no bypass. If Bedrock is
   unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
+- Everything one person hands over for another to see goes through one pipe
+  (`src/intake/`): postings, messages, photos, reports. Each check is one file;
+  the verdict is pass, hold or refuse; what passed is kept encrypted for thirty
+  days in a ledger the server can write but never read (`src/safety/`, a key
+  split 2-of-3 between people). Reporting, suspension, and how a lawful request
+  is met are in [docs/safety.md](docs/safety.md); the design and its open
+  questions in [docs/trust-and-safety.md](docs/trust-and-safety.md). The terms
+  and privacy policy for openswitchboard.ai live on the site only; anyone
+  running their own switchboard writes their own.
 
 ### What an agent may do on its own
 
