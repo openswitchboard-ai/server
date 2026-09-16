@@ -14,6 +14,7 @@ import { modelScreen } from './checks/modelScreen.js';
 import { moneyFigure } from './checks/moneyFigure.js';
 import { photoMetadata } from './checks/photoMetadata.js';
 import { photoModeration } from './checks/photoModeration.js';
+import { SUSPENDED_REASON_CODE, suspended } from './checks/suspended.js';
 import { ledgerFromConfig } from '../safety/ledger.js';
 import { type Check, type CheckResult, type IntakeItem, type Ledger, type Verdict } from './types.js';
 import type { Config } from '../config.js';
@@ -21,8 +22,13 @@ import type { Config } from '../config.js';
 /**
  * Every check, in the order they run. Cheap and deterministic before slow and
  * paid for: a category the deny list already refuses never costs a model call.
+ *
+ * `suspended` is FIRST, at every door. It is the one check whose answer does
+ * not depend on the item at all, and an account the operator has stopped must
+ * not cost the switchboard a category lookup, let alone a model call.
  */
 export const CHECKS: Check[] = [
+  suspended,
   denyListPath,
   modelScreen,
   moneyFigure,
@@ -34,6 +40,24 @@ export const CHECKS: Check[] = [
 export function checksForDoor(door: IntakeItem['door'], checks: Check[] = CHECKS): Check[] {
   return checks.filter((c) => c.doors.includes(door));
 }
+
+/**
+ * The doors where a refusal becomes a HOLD (docs/trust-and-safety.md, step 5).
+ *
+ * One door is on this list, and the reason it is here rather than being an
+ * exception buried in the report code: a report is never refused for its
+ * words. The money-figure rule and the personal-details screen are worth
+ * RUNNING on a report — somebody frightened enough to report a stranger may
+ * well type a phone number or a price into the box — but the answer to either
+ * of them is to hold the words for a person to read, never to hand the report
+ * back and ask them to phrase it better. Refusing a report is the one refusal
+ * this system must not make.
+ *
+ * A hold keeps the body in the ledger, where a refusal would have kept only
+ * the reason code; so the words are still there to be read under the ordinary
+ * two-keyholder ceremony, which is exactly where the words of a report belong.
+ */
+export const REFUSAL_FREE_DOORS: ReadonlySet<IntakeItem['door']> = new Set(['report']);
 
 export interface IntakeOptions {
   ledger?: Ledger;
@@ -60,10 +84,23 @@ export async function runIntake(
   // nothing at all where it does not (src/safety/ledger.ts).
   const ledger = opts.ledger ?? ledgerFromConfig(cfg);
   const results: CheckResult[] = [];
+  // At a refusal-free door a check that refuses is heard as a hold instead,
+  // before anything else reads the result — so the run does not stop, the
+  // verdict is a hold, and the ledger keeps the body.
+  //
+  // The one thing it does not soften is a suspended account: that refusal is
+  // about who is at the door rather than about what they wrote, and a door
+  // shut to an account is shut to its report as well.
+  const soften = (r: CheckResult): CheckResult =>
+    REFUSAL_FREE_DOORS.has(item.door) &&
+    r.outcome === 'refuse' &&
+    r.reason_code !== SUSPENDED_REASON_CODE
+      ? { ...r, outcome: 'hold' }
+      : r;
   for (const check of checksForDoor(item.door, opts.checks ?? CHECKS)) {
     let result: CheckResult;
     try {
-      result = await check.run(item, cfg);
+      result = soften(await check.run(item, cfg));
     } catch (e: any) {
       result = {
         name: check.name,

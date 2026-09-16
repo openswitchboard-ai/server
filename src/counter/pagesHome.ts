@@ -701,6 +701,10 @@ export interface MatchOffersView {
   /** This person's own call on the introduction, if they have made one. The
    *  ask sits at the foot of this page, where the introduction is. */
   verdict?: string;
+  /** True while this one is open, which is while there is something to close.
+   *  The report road sits beside every open introduction, so that reporting
+   *  somebody never depends on an assistant being in the room. */
+  canReport?: boolean;
 }
 
 /**
@@ -731,6 +735,22 @@ function verdictLine(v: MatchOffersView): string {
 <p class="small muted">Your answer tunes what comes to you next. "Fine" is a real
 answer and changes nothing else. "Bad" also mutes this pairing, and no reason is
 ever sent to the other side.</p>`;
+}
+
+/**
+ * Report this person. Quieter than the verdict line and under it, because most
+ * people will never want it — and always there while the introduction is open,
+ * because the person who does want it should not have to ask an assistant for
+ * a link to it first.
+ *
+ * It goes to a page that asks before it does anything, so this is a link
+ * rather than a button: nothing here is the report.
+ */
+function reportLine(v: MatchOffersView): string {
+  if (!v.canReport) return '';
+  return `<p class="small muted">Is something wrong with this one?
+<a href="/matches/${esc(v.matchId)}/report">Report this person</a>. It closes this
+one straight away, and they are told only that the switchboard closed it.</p>`;
 }
 
 /** The box's heading when the assistant carried the figure here. */
@@ -869,7 +889,8 @@ ${negotiationControl(v)}
 ${rows}
 <a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
 <a class="btn secondary" href="/">Back to your approval page</a>
-${verdictLine(v)}`);
+${verdictLine(v)}
+${reportLine(v)}`);
 }
 
 /**

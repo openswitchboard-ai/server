@@ -31,6 +31,47 @@
 import { getTimezone } from '../domain/accounts.js';
 import { clockNote } from '../domain/localTime.js';
 import { areaNote, readOwnArea, type OwnArea } from '../domain/profile.js';
+import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
+
+/**
+ * THE SUSPENDED BLOCK, and why it is the first thing in the whole payload
+ * (docs/trust-and-safety.md, "Telling their assistant").
+ *
+ * We cannot make an assistant remember anything, so the switchboard tells it
+ * every time instead: this block at connect, `SUSPENDED` on every tool call,
+ * and the manual asking the agent to keep the fact in its own memory. Told
+ * every time beats remembered once.
+ *
+ * It goes ahead of YOUR HUMAN, TODAY because everything under that heading is
+ * about work this agent is not going to be doing. An agent that reads the area
+ * and the clock first will start composing a posting before it reaches the one
+ * sentence that matters.
+ */
+export const SUSPENDED_HEADING = 'THIS ACCOUNT IS SUSPENDED';
+
+export const SUSPENDED_BLOCK = `${SUSPENDED_HEADING}\n${SUSPENDED_WORDS} Keep it in your own memory as well as reading it here: this text is served once, at connect, and a client that never reconnects reads it once.`;
+
+/**
+ * The block, or an empty string. Fail-soft like everything else in this file:
+ * a read that fails means the agent is not told at connect, and every tool
+ * call it makes still answers SUSPENDED — so the worst case is a later answer
+ * rather than a failed handshake.
+ */
+export async function suspendedBlock(
+  accountId: string,
+  opts: { timeoutMs?: number; onError?: (err: unknown) => void } = {},
+): Promise<string> {
+  try {
+    const stopped = await withTimeout(
+      isSuspended(accountId),
+      opts.timeoutMs ?? OWN_HUMAN_READ_TIMEOUT_MS,
+    );
+    return stopped ? SUSPENDED_BLOCK : '';
+  } catch (err) {
+    opts.onError?.(err);
+    return '';
+  }
+}
 
 /** The heading, in the manual's own register and beside THIS DEPLOYMENT, TODAY. */
 export const OWN_HUMAN_HEADING = 'YOUR HUMAN, TODAY';

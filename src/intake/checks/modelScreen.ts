@@ -133,7 +133,11 @@ export function prohibitedReason(flags: ModelFlags): string {
 
 export const modelScreen: Check = {
   name: 'modelScreen',
-  doors: ['posting'],
+  // And the report door, for the personal-details half of what it reads: a
+  // report often names somebody or quotes an address, and those words are held
+  // for a person to read rather than written beside the report. It never
+  // refuses a report — see REFUSAL_FREE_DOORS in intake/pipe.ts.
+  doors: ['posting', 'report'],
   async run(item, cfg): Promise<CheckResult> {
     if (!item.text) return passed('modelScreen');
     if (!cfg) throw new Error('modelScreen needs the deployment config');

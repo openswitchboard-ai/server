@@ -61,6 +61,10 @@ describe('the refusals that are the switchboard working', () => {
         'RATE_LIMITED',
         'RATE_LIMITED_OFFERS',
         'SETTLEMENT_UNAVAILABLE',
+        // An account the operator has stopped. The agent did nothing wrong,
+        // its human is owed a sentence, and there is nothing to retry — which
+        // is exactly why it must not arrive as a bare failure line.
+        'SUSPENDED',
       ].sort(),
     );
   });
