@@ -1,6 +1,6 @@
 # Trust and safety: one intake pipe
 
-Design, 2026-09-17. Not built. Raised by Lachlan alongside the decision to open
+Design, 2026-09-17; built the same day, steps 1–8 (step 9, PhotoDNA, pending). Raised by Lachlan alongside the decision to open
 the catalogue (see `taxonomy-question.md`): if anyone can post anything in plain
 words, the switchboard needs a real answer to abuse, to reporting, and to a
 lawful request for what it holds.
