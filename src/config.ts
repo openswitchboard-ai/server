@@ -115,6 +115,13 @@ export interface Config {
    *  ground that a posted item never arrived. No tracking by then refunds the
    *  buyer the agreed amount. */
   settlementTrackingGraceDays: number;
+  /** PEM of the PUBLIC half of the safety key, and only ever the public half.
+   *  It is what lets the service write the thirty-day ledger it cannot read
+   *  (src/safety/, docs/trust-and-safety.md). Unset = the ledger is off for
+   *  this deployment: everything is still checked and refused as it always
+   *  was, but nothing that passes is kept, so a report has no evidence behind
+   *  it. The service says so once at startup rather than failing to boot. */
+  safetyPublicKey?: string;
   /** HTTP Basic credential for the operator metrics page, as `user:password`.
    *  Unset = the /ops/metrics routes are never registered and the path 404s,
    *  the same spirit as the Stripe webhook on a deployment without Stripe. */
@@ -172,6 +179,7 @@ export function loadConfig(): Config {
     settlementDisputeDeadlockDays: Number(process.env.SETTLEMENT_DISPUTE_DEADLOCK_DAYS ?? 14),
     settlementReturnSilenceDays: Number(process.env.SETTLEMENT_RETURN_SILENCE_DAYS ?? 7),
     settlementTrackingGraceDays: Number(process.env.SETTLEMENT_TRACKING_GRACE_DAYS ?? 7),
+    safetyPublicKey: safetyPublicKeyFrom(process.env.SAFETY_PUBLIC_KEY),
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
   };
 }
@@ -209,6 +217,19 @@ export function opsMetricsBasicAuthFrom(raw: string | undefined): string | undef
     throw new Error('OPS_METRICS_BASIC_AUTH must be user:password with both halves set');
   }
   return v;
+}
+
+/**
+ * The safety key's public half, as it arrives. Absent is fine and means the
+ * ledger is off. A PEM that has been through a parameter store often comes
+ * back with its line breaks written out as `\n`, so those are put back; a
+ * value that is not a PEM at all is left alone and refused later, by the
+ * crypto, with a message that says what it got.
+ */
+export function safetyPublicKeyFrom(raw: string | undefined): string | undefined {
+  const v = (raw ?? '').trim();
+  if (!v) return undefined;
+  return v.includes('\\n') ? v.replace(/\\n/g, '\n') : v;
 }
 
 export function settlementsConfigured(cfg: Config): boolean {

@@ -9,6 +9,7 @@ import { startMatchingWorker } from './workers/matchingWorker.js';
 import { startOpsWorker } from './workers/opsWorker.js';
 import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 import { warmCategoryCorpus } from './domain/categorySuggest.js';
+import { warnIfLedgerDisabled } from './safety/ledger.js';
 
 async function main() {
   const cfg = loadConfig();
@@ -53,6 +54,10 @@ async function main() {
     // until a prod Stripe account exists.
     app.log.info('settlements disabled: no Stripe secret configured for this deployment');
   }
+
+  // One plain line where this deployment has no safety public key: everything
+  // is still checked, and nothing that passes is kept.
+  warnIfLedgerDisabled(cfg, (msg) => app.log.warn(msg));
 
   // Embed the taxonomy's open nodes once per process so a refused category
   // can name the closest open ones. Nothing waits on this: until it finishes,
