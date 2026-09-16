@@ -10,7 +10,8 @@ import {
   checkSchemaVersion,
   validatePayload,
 } from '../protocol.js';
-import { categoryDenied, categoryStatus } from '../denylist.js';
+import { categoryStatus } from '../denylist.js';
+import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { recordCategoryMiss } from './categoryMisses.js';
@@ -135,14 +136,19 @@ export async function publishIntent(
   checkSchemaVersion(card.schema_version);
 
   await assertCategoryOpen(cfg, card.category, accountId);
-  const denied = categoryDenied(card.category);
-  if (denied) {
-    throw new OsbError('CATEGORY_PROHIBITED', {
-      human_action:
-        denied.status === 'vertical-policy-pending'
-          ? `The '${card.category}' vertical is not open yet (${denied.reason_code}).`
-          : undefined,
-    });
+  // Everything a person hands over goes through the one pipe (src/intake,
+  // docs/trust-and-safety.md). At the posting door, synchronously, that is the
+  // deny-list path check: the only thing that can refuse here, which is why the
+  // refusal is still CATEGORY_PROHIBITED and still word for word what it was.
+  // The words on the card are screened afterwards, off the queue, by the
+  // screening worker through the same pipe — so none are handed over here.
+  const intake = await runIntake(cfg, {
+    door: 'posting',
+    sender_account: accountId,
+    fields: { category: card.category },
+  });
+  if (intake.outcome === 'refuse') {
+    throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
 
   // One agreed spelling before the row is written, so two people who meant

@@ -48,7 +48,7 @@ import {
   type MatchRow,
 } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
-import { FIGURE_IN_WORDS_ACTION, carriesMoneyFigure } from './moneyInWords.js';
+import { runIntake } from '../intake/pipe.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -169,13 +169,21 @@ export async function sendMessage(
       { validation: ['text'] },
     );
   }
-  // A FIGURE NEVER TRAVELS IN THE WORDS (run 8, 13 September 2026 — see
+  // The one pipe every person-to-person thing goes through (src/intake,
+  // docs/trust-and-safety.md). At this door it is the money-figure rule: A
+  // FIGURE NEVER TRAVELS IN THE WORDS (run 8, 13 September 2026 — see
   // domain/moneyInWords.ts). Refused here, before the introduction is even
   // read: nothing is stored, nothing is encrypted, no allowance is spent, and
   // the agent is told to send the number the one way that reads its human's
   // own limits first.
-  if (carriesMoneyFigure(text)) {
-    throw new OsbError('CONSENT_REQUIRED', { human_action: FIGURE_IN_WORDS_ACTION });
+  const intake = await runIntake(cfg, {
+    door: 'message',
+    sender_account: accountId,
+    match_id: matchId,
+    text,
+  });
+  if (intake.outcome === 'refuse') {
+    throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
   }
   const ch = await loadOpenChannel(matchId, accountId);
   const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
