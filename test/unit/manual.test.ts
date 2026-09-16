@@ -630,8 +630,9 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   38: 'e30726148ece9cc697ba539646d670815aefefc436b6d6ef75f6355041e02068',
   39: '525d610e711324e03c33f7064b60d889dd823166fe5e9ab21cdb0002140e39bf',
   40: '1850fe97d047c43b48ef55abb034d67fb7ac71672f7acaf6b4f620b9b6eee2c9',
-  41: 'PENDING',
-  42: 'PENDING',
+  41: '90334c69390a256145abd9ef55678aca5562a2b47786f994840dca569a104021',
+  42: '018e63c59ca4d7d8370fc4dbebb53ab6d84b40c732326e4949e3f2de8270403b',
+  43: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -727,11 +728,14 @@ describe('and the body carries all six, where a fresh session reads them', () =>
     expect(sale).toMatch(/straight is the quieter road/i);
   });
 
-  it('makes wide the default and the choice something said out loud', () => {
+  // (b) was "post wide unless your human hands you a distance", and version 43
+  // replaced the default itself after a $450 bike went up to a whole country.
+  // What survives from the rehearsal is the half that was always right: the
+  // choice is said out loud, and a small radius hides a thing in silence.
+  it('still says the choice out loud and still warns about a small radius', () => {
     const board = from('WORKING THE BOARD');
-    expect(board).toMatch(/unless your human hands you a distance themselves, wide is what you post/i);
-    expect(board).toMatch(/you need no permission to use it/i);
-    expect(board).toMatch(/say plainly what you chose, so they can correct you/i);
+    expect(board).toMatch(/say which reach you chose and why, so your human can correct you/i);
+    expect(board).toMatch(/going quiet about it does not/i);
     expect(board).toMatch(/two people meet only where both areas overlap/i);
     expect(board).toMatch(/it hides it in silence/i);
   });
@@ -889,11 +893,12 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
     expect(d).toContain('The choice is theirs and never yours to assume.');
   });
 
-  it('publish_intent makes wide the default and the choice something said out loud', async () => {
+  // The wide-by-default half of this was retired at version 43; see the block
+  // at the foot of this file. The half that stands is saying the choice out
+  // loud, and the warning about a few kilometres around one suburb.
+  it('publish_intent says the reach choice out loud and warns about a small radius', async () => {
     const d = await desc('publish_intent');
-    expect(d).toContain(
-      'Unless your human hands you a distance themselves, post wide — that is the default and needs no permission — and say out loud what you chose so they can correct you.',
-    );
+    expect(d).toContain('Say which reach you chose and why when you confirm the posting');
     expect(d).toMatch(/two people meet only where both areas overlap/i);
     expect(d).toMatch(/hides the thing in silence/i);
   });
@@ -1330,5 +1335,165 @@ describe('and the body carries it where an agent reads before replying', () => {
       expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
     }
     expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 43: how far something reaches follows the thing
+// ---------------------------------------------------------------------------
+/**
+ * Live rehearsal, 2026-09-16. The owner said he was thinking of selling his
+ * Trek mountain bike, thinking around $450, and his assistant posted it from
+ * Canberra reaching the whole of Australia. His words: "Selling a bike
+ * australia wide would be difficult as postage would be exorbitant."
+ *
+ * The assistant was obeying the manual. Version 36(b) said "unless your human
+ * hands you a distance themselves, post wide", which is right for a language
+ * partner and silly for a bicycle. So the default goes, and the thing itself
+ * decides: a parcel reaches a country, something bulky or heavy takes a
+ * radius, anything in person takes a radius, anything online reaches anywhere,
+ * and a genuinely unclear one is one plain question to the human.
+ *
+ * The version 36 entry keeps its own day's words, as every shipped entry does;
+ * what changes is the body a fresh session reads, and publish_intent.
+ */
+describe('version 43: reach follows the thing', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 43)!;
+
+  it('exists at the new version, as one entry', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(43);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 43)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('names the failure that caused it', () => {
+    const note = entry().note;
+    expect(note).toMatch(/trek mountain bike/i);
+    expect(note).toContain('$450');
+    expect(note).toMatch(/canberra reaching the whole of australia/i);
+    expect(note).toMatch(/postage would be exorbitant/i);
+  });
+
+  it('carries all four cases, and the question for an unclear one', () => {
+    const note = entry().note;
+    // Goes in a parcel: country, and posting is said out loud.
+    expect(note).toMatch(/goes in a parcel/i);
+    expect(note).toContain('reach "country"');
+    expect(note).toMatch(/posting is how it would get there/i);
+    expect(note).toMatch(/if they will not post it/i);
+    // Bulky or heavy: a radius, because the postage beats the price.
+    expect(note).toMatch(/bulky or heavy/i);
+    expect(note).toMatch(/postage would cost more than the thing/i);
+    // In person: a radius, always.
+    expect(note).toMatch(/happens in person/i);
+    expect(note).toMatch(/is a radius, always/i);
+    // Online: anywhere, and distance stops mattering.
+    expect(note).toMatch(/happens online/i);
+    expect(note).toContain('reach "anywhere"');
+    expect(note).toMatch(/distance means nothing to it at all/i);
+    // And the unclear one is a question rather than a guess.
+    expect(note).toMatch(/genuinely unclear/i);
+    expect(note).toMatch(/ask your human one plain question rather than guessing/i);
+  });
+
+  it('keeps the rule that the choice is said out loud', () => {
+    expect(entry().note).toMatch(/say which reach you chose and why/i);
+  });
+
+  it('keeps the house register', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    for (const { label, re } of BANNED) {
+      expect(re.test(entry().note), `${label} in the version 43 entry`).toBe(false);
+    }
+  });
+});
+
+describe('and the body teaches the new rule where a fresh session reads it', () => {
+  const board = () => SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('WORKING THE BOARD'));
+
+  it('no longer teaches post-wide-by-default anywhere in the manual body', () => {
+    // The shipped version 30 and version 36 entries keep their own words; the
+    // body is what a session reads fresh, and it must not teach the old rule.
+    for (const old of [
+      /post wide/i,
+      /wide is what you post/i,
+      /widest reach/i,
+      /hands you a distance themselves/i,
+      /since it posts easily/i,
+    ]) {
+      expect(old.test(board()), `${old} still in WORKING THE BOARD`).toBe(false);
+    }
+  });
+
+  it('teaches the four cases instead', () => {
+    const b = board();
+    expect(b).toMatch(/how far something reaches follows the thing itself/i);
+    expect(b).toMatch(/goes in a parcel/i);
+    expect(b).toContain('reach "country"');
+    expect(b).toMatch(/posting is how it would get there/i);
+    expect(b).toMatch(/bulky or heavy/i);
+    expect(b).toMatch(/postage would cost more than the thing/i);
+    expect(b).toMatch(/happens in person/i);
+    expect(b).toMatch(/is a radius, always/i);
+    expect(b).toMatch(/happens online/i);
+    expect(b).toContain('reach "anywhere"');
+    expect(b).toMatch(/ask your human one plain question rather than guessing/i);
+  });
+
+  it('names the bike in the body too, so the reason travels with the rule', () => {
+    expect(board()).toMatch(/\$450 Trek mountain bike/);
+    expect(board()).toMatch(/postage would be exorbitant/i);
+  });
+
+  it('keeps the system words out of the new body copy', () => {
+    for (const { label, re } of BANNED) {
+      expect(re.test(board()), `${label} in WORKING THE BOARD`).toBe(false);
+    }
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+describe('publish_intent carries the rule where the posting is made', () => {
+  const desc = async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    return TOOLS.find((t) => t.name === 'publish_intent')!.description;
+  };
+
+  it('says the thing decides, and gives the four cases', async () => {
+    const d = await desc();
+    expect(d).toContain('HOW FAR IS DECIDED BY THE THING, never by a default.');
+    expect(d).toMatch(/goes in a parcel/i);
+    expect(d).toMatch(/posting is how it would get there/i);
+    expect(d).toMatch(/bulky or heavy/i);
+    expect(d).toMatch(/postage would cost more than the thing/i);
+    expect(d).toMatch(/happens in person.*is a radius, always/i);
+    expect(d).toMatch(/done online.*"anywhere"/i);
+    expect(d).toMatch(/ask your human one plain question rather than guessing/i);
+  });
+
+  it('tells the agent to say which reach it chose and why', async () => {
+    const d = await desc();
+    expect(d).toContain(
+      'Say which reach you chose and why when you confirm the posting, so they can correct you',
+    );
+    expect(d).toMatch(/\$450 mountain bike put up from canberra reaching the whole of australia/i);
+  });
+
+  it('stays consistent with the reach enum the schema package ships', async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const geo = (TOOLS.find((t) => t.name === 'publish_intent')!.inputSchema as any).properties
+      .listing.properties.geo;
+    expect(geo.properties.reach.enum).toEqual(['radius', 'country', 'anywhere']);
+    expect(geo.properties.reach.default).toBe('radius');
+    // The field's own prose carries the same four cases in one line.
+    expect(geo.properties.reach.description).toMatch(/a parcel is 'country'/);
+    expect(geo.properties.reach.description).toMatch(/anything bulky or heavy is a radius/);
+    expect(geo.properties.reach.description).toMatch(/anything in person is a radius/);
+    expect(geo.properties.reach.description).toMatch(/anything done online is 'anywhere'/);
+  });
+
+  it('keeps the house register', async () => {
+    expect(lintHumanCopy(await desc())).toEqual([]);
   });
 });
