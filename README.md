@@ -102,9 +102,22 @@ These are the invariants worth reading the code to check:
   browser → bucket on a presigned PUT and bucket → collecting agent on a
   presigned GET, so no image ever passes through the service. JPEG, PNG or WebP,
   10 MB, no video, enforced on the presign and again on the way out.
-  **There is NO automated image screening, of any kind.** Nothing and nobody
-  looks at the picture: the terms forbid what you would expect, the two humans
-  are the only people who can see it, and the object is deleted when the other
+  **The metadata is stripped in the sender's own browser, before the upload.**
+  `src/counter/photoScrub.ts` is inlined into the photo page and rebuilds the
+  file keeping only what draws the picture: every JPEG APPn and comment segment
+  goes (EXIF with its GPS, XMP, the ICC profile, the EXIF thumbnail, and any
+  trailer appended behind the end-of-image marker), PNG keeps a chunk allowlist
+  and loses its text, time and `eXIf` chunks, and WebP loses `EXIF`, `XMP ` and
+  `ICCP` with the announcing flag bits in `VP8X` cleared. The orientation tag is
+  read before it is dropped and a sideways photo is redrawn upright through a
+  canvas, so nothing lands on its side. The page proves the result with a second
+  pass before it asks for an upload URL, and the presign refuses any caller that
+  does not state the file was stripped (`metadata_removed`) — a claim the browser
+  makes, which this service cannot verify without holding the image. A browser
+  that runs no script cannot upload and cannot press Send.
+  **There is NO automated image screening, of any kind.** Nothing here opens the
+  picture: the terms forbid what you would expect, the two humans are the only
+  people who can see it, and the object is deleted when the other
   side collects it (once the short link handed over has run out) or at 14 days
   if nobody ever does. A caption and the uploaded filename ARE read, by the same
   `carriesMoneyFigure` rule a message is held to — a figure never travels in the

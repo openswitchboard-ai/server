@@ -22,6 +22,7 @@
  * dark both designed, aligned with the public site's tokens.
  */
 import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
+import { PHOTO_SCRUB_JS } from './photoScrub.js';
 
 export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) =>
@@ -643,8 +644,17 @@ document.getElementById('pkapprove').addEventListener('click', async () => {
 // when the assistant fetched it, so the page states the person and the thing
 // and gives nobody a choice to get wrong.
 //
-// What the page tells the truth about, in the person's own words: nobody looks
-// at the picture, the other side gets it once, and it deletes itself.
+// THE PAGE IS WHERE THE LOCATION COMES OUT OF THE PICTURE (16 September 2026).
+// counter/photoScrub.ts is inlined below and runs on the sender's own device:
+// the file is rebuilt with every metadata block dropped, the result is checked
+// again, and only then is an upload link asked for. A sideways photo is redrawn
+// the right way up through a canvas first, because the tag that said which way
+// up it went is one of the things being dropped. Where any of that fails, the
+// page says so and no link is ever minted, so nothing is uploaded.
+//
+// What the page tells the truth about, in the person's own words: what is taken
+// out of the file and what is kept, that nothing here opens the picture, that
+// the other side gets it once, and that it deletes itself.
 // ---------------------------------------------------------------------------
 export interface PhotoView {
   token: string;
@@ -673,9 +683,16 @@ ${errBox(error)}
 <p class="small muted">It goes to ${esc(v.who)} and nobody else. They pick it up once and it is gone
 from here; if they never do, it goes by itself after ${v.ttlDays} days. JPEG, PNG or WebP, up to
 ${v.maxMb} MB.</p>
-<p class="small muted">Nobody here looks at your photo. No machine reads it either, so what is in
-the picture is your call: the terms cover the rest, and a face, a number plate or an address in
-shot is a thing you have chosen to show this one person.</p>
+<p class="small muted">This page takes the hidden details out of the file before it leaves your
+device: where the photo was taken, when it was taken, the phone that took it, and the small
+preview tucked inside it. The picture itself is kept, the right way up.</p>
+<p class="small muted">Nothing here opens the picture. The cleaning happens on your own device
+and the file goes straight from there to the store, so no machine at the switchboard reads what
+is in the frame and no person at the switchboard sees it. What is in shot crosses as it is, so a
+face, a number plate or a house in the background is a thing you are choosing to show this one
+person. A browser that cannot do the cleaning is refused, and nothing is uploaded.</p>
+<noscript><p class="small muted">This page needs scripts switched on. The cleaning happens here
+on your device, and with scripts off it cannot happen, so nothing can be sent from this page.</p></noscript>
 <div id="perr"></div>
 <label for="photo">Your photo</label>
 <input type="file" id="photo" accept="image/jpeg,image/png,image/webp">
@@ -693,27 +710,64 @@ shot is a thing you have chosen to show this one person.</p>
 </form>
 <p class="small muted">This link works once. Not now changes nothing.</p>
 <script>
+${PHOTO_SCRUB_JS}
 const pf = document.getElementById('photo');
 const sendBtn = document.getElementById('sendBtn');
 const perr = document.getElementById('perr');
+
+/** A sideways photo, turned. The tag that said which way up it went has already
+ *  been dropped by the scrub, so the browser draws the raw pixels and the plan
+ *  decides the turn; the redrawn file is then scrubbed again, because a canvas
+ *  writes a fresh file and a fresh file gets the same treatment as any other. */
+async function osbRedraw(clean) {
+  const blob = new Blob([clean.bytes], { type: clean.type });
+  const src = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((ok, no) => {
+      const im = new Image();
+      im.onload = () => ok(im);
+      im.onerror = () => no(new Error(OSB_SCRUB_UNREADABLE));
+      im.src = src;
+    });
+    const plan = __osbPhotoScrub.drawPlan(clean.orientation, img.naturalWidth, img.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = plan.width;
+    c.height = plan.height;
+    const ctx = c.getContext('2d');
+    if (!ctx) throw new Error(OSB_SCRUB_UNREADABLE);
+    ctx.setTransform.apply(ctx, plan.transform);
+    ctx.drawImage(img, 0, 0);
+    const out = await new Promise((ok) => c.toBlob(ok, clean.type, 0.92));
+    if (!out) throw new Error(OSB_SCRUB_UNREADABLE);
+    return __osbPhotoScrub.scrub(new Uint8Array(await out.arrayBuffer()));
+  } finally {
+    URL.revokeObjectURL(src);
+  }
+}
+
 pf.addEventListener('change', async () => {
   const file = pf.files[0];
   if (!file) return;
   sendBtn.disabled = true;
+  document.getElementById('photo_id').value = '';
   perr.innerHTML = '';
   try {
-    const bytes = await file.arrayBuffer();
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    let clean = __osbPhotoScrub.scrub(new Uint8Array(await file.arrayBuffer()));
+    if (clean.orientation > 1) clean = await osbRedraw(clean);
+    // The proof, before a link to upload with is even asked for.
+    __osbPhotoScrub.assertClean(clean.bytes);
+    const digest = await crypto.subtle.digest('SHA-256', clean.bytes);
     const sha = btoa(String.fromCharCode(...new Uint8Array(digest)));
     const r = await fetch('/a/${encodeURIComponent(v.token)}/photo', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size, sha256_b64: sha }),
+      body: JSON.stringify({ filename: file.name, content_type: clean.type,
+        size: clean.bytes.length, sha256_b64: sha, metadata_removed: true }),
     });
     if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).error) || ('HTTP ' + r.status));
     const { url, photo_id } = await r.json();
-    const put = await fetch(url, { method: 'PUT', body: bytes,
-      headers: { 'content-type': file.type, 'x-amz-checksum-sha256': sha } });
+    const put = await fetch(url, { method: 'PUT', body: clean.bytes,
+      headers: { 'content-type': clean.type, 'x-amz-checksum-sha256': sha } });
     if (!put.ok) throw new Error('the upload did not finish (HTTP ' + put.status + ')');
     document.getElementById('photo_id').value = photo_id;
     sendBtn.disabled = false;

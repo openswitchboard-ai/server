@@ -24,6 +24,17 @@
  * signs URLs, keeps a row, and HEADs an object to check it landed. It never
  * holds an image in memory, which is also why it cannot look at one.
  *
+ * THE FILE IS STRIPPED BEFORE IT LEAVES THE DEVICE (16 September 2026). The
+ * bytes never touching this service is also why this service cannot take the
+ * GPS out of a photo, and a photo off a phone carries the coordinates of the
+ * place it was taken. So the stripping happens in the one other place the bytes
+ * exist: the sender's own browser, in counter/photoScrub.ts, which rebuilds the
+ * file with every metadata block dropped, turns a sideways picture the right way
+ * up first, and proves the result before an upload link is asked for. The
+ * presign refuses anything that does not state it was stripped, which is a claim
+ * the browser makes and this service cannot check — checking would mean holding
+ * the image. What it buys is that a page that cannot strip gets no URL.
+ *
  * NO AUTOMATED IMAGE SCREENING, AND THAT IS THE WHOLE STATEMENT. Words are
  * screened before they are published; an image here is not screened at all, by
  * a model or by anything else. Nobody at the switchboard looks at it. The terms
@@ -210,9 +221,28 @@ export async function presignPhotoUpload(
   cfg: Config,
   accountId: string,
   matchId: string,
-  input: { filename?: string; content_type: string; size: number; sha256_b64: string },
+  input: {
+    filename?: string;
+    content_type: string;
+    size: number;
+    sha256_b64: string;
+    metadata_removed?: unknown;
+  },
 ): Promise<PresignedPhoto> {
   const bucket = mustBucket(cfg);
+  // NO URL FOR A PAGE THAT CANNOT CLEAN THE FILE. The stripping happens in the
+  // sender's browser (counter/photoScrub.ts) because that is the only place the
+  // bytes exist that is not this service, and the shipped page can only say
+  // this after its own second pass came back with nothing left to remove. This
+  // is a claim the browser makes and the server cannot check it without holding
+  // the image, which is the one thing it must never do — stated plainly rather
+  // than dressed up. What it does buy: a page too old or too plain to strip is
+  // refused here instead of quietly uploading a photo with GPS in it.
+  if (input.metadata_removed !== true) {
+    throw validation(
+      'this page could not take the hidden details out of the picture, so nothing was uploaded. Open the link again in a browser that runs scripts.',
+    );
+  }
   const ext = ALLOWED_PHOTO_TYPES[String(input.content_type)];
   if (!ext) {
     throw validation('a photo here is a JPEG, a PNG or a WebP. Nothing else crosses, and no video.');

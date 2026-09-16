@@ -80,6 +80,10 @@ const jpeg = (over = false) => ({
   content_type: 'image/jpeg',
   size: over ? photo.MAX_PHOTO_BYTES + 1 : 2_000_000,
   sha256_b64: SHA,
+  // The page states it took the location and the camera details out of the file
+  // before asking for anywhere to put it (counter/photoScrub.ts). Without this
+  // there is no URL at all — see "a page that cannot clean the file" below.
+  metadata_removed: true,
 });
 
 interface Pic {
@@ -444,6 +448,28 @@ describe('the photo is bound to the conversation', () => {
 // ---------------------------------------------------------------------------
 // The limits, and the one place they live
 // ---------------------------------------------------------------------------
+describe('a page that cannot clean the file gets nowhere to put it', () => {
+  it('refuses the presign where the caller never says the file was cleaned', async () => {
+    for (const claim of [undefined, false, 'yes', 1, null]) {
+      const input: any = { ...jpeg(), metadata_removed: claim };
+      const e = await photo.presignPhotoUpload(cfg, ANA, MATCH, input).catch((x) => x);
+      expect(e.validation, String(claim)).toBe(true);
+      expect(e.message).toMatch(/hidden details out of the picture/);
+    }
+    // Nothing signed, nothing written: there is no URL to upload an untouched
+    // photo with.
+    expect(signed).toHaveLength(0);
+    expect(world.photos).toHaveLength(0);
+  });
+
+  it('refuses before it so much as looks the conversation up', async () => {
+    const e = await photo
+      .presignPhotoUpload(cfg, STRANGER, MATCH, { ...jpeg(), metadata_removed: undefined })
+      .catch((x) => x);
+    expect(e.validation).toBe(true);
+  });
+});
+
 describe('limits', () => {
   it('takes three image types and nothing else', async () => {
     expect(Object.keys(photo.ALLOWED_PHOTO_TYPES)).toEqual([
@@ -684,8 +710,13 @@ describe('the page the human is handed', () => {
     expect(html).not.toMatch(/name="intro|name="conversation|name="to"/i);
   });
 
-  it('says plainly that nobody looks at the picture', () => {
-    expect(page()).toMatch(/Nobody here looks at your photo\. No machine reads it either/);
+  it('says plainly that nothing here opens the picture, and what is taken out of it', () => {
+    // The old sentence said no machine reads it, which stopped being true the
+    // day the page started cleaning the file. Both halves are said now: the
+    // cleaning happens on the device, and nothing at this end opens the image.
+    expect(page()).not.toContain('No machine reads it either');
+    expect(page()).toMatch(/Nothing here opens the picture\./);
+    expect(page()).toMatch(/where the photo was taken/);
   });
 
   it('takes the three types and nothing else, and says the cap and the days', () => {

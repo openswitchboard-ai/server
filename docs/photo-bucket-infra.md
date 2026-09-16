@@ -28,6 +28,18 @@ else.
 CORS is PUT and GET from the human origin only: the sending human's browser PUTs
 the bytes, and a collecting agent's GET rides a presigned link as a plain fetch.
 
+WHAT LANDS IN IT (16 September 2026). Not the file that came off the phone. The
+photo page inlines `server/src/counter/photoScrub.ts` and rebuilds the file on
+the sender's own device before the PUT, keeping only what draws the picture:
+JPEG loses every APPn and comment segment (EXIF and its GPS, XMP, the ICC
+profile, the EXIF thumbnail) and anything appended after the end-of-image
+marker; PNG keeps a chunk allowlist and loses its text, time and `eXIf` chunks;
+WebP loses `EXIF`, `XMP ` and `ICCP`, with the flag bits in `VP8X` that announce
+them cleared. A sideways photo is redrawn upright through a canvas first,
+because the tag saying which way up it goes is one of the things being dropped.
+The bucket therefore holds stripped bytes, and the service still never sees the
+original — which is the point: the service cannot strip what it must never hold.
+
 ## 1. `lib/foundation-stack.ts` — after `const consentKey = makeKey('Consent');`
 
 ```ts
