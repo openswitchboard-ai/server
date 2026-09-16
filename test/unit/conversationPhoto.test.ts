@@ -724,12 +724,16 @@ describe('the page the human is handed', () => {
     expect(html).not.toMatch(/name="intro|name="conversation|name="to"/i);
   });
 
-  it('says plainly that nothing here opens the picture, and what is taken out of it', () => {
-    // The old sentence said no machine reads it, which stopped being true the
-    // day the page started cleaning the file. Both halves are said now: the
-    // cleaning happens on the device, and nothing at this end opens the image.
+  it('says plainly that a machine checks the picture once, and what is taken out of it', () => {
+    // Two earlier sentences each stopped being true in turn: "no machine
+    // reads it" the day the page started cleaning the file, and "nothing
+    // here opens the picture" the day moderation started looking at it
+    // before it is sent on. The page now says all three halves: the cleaning
+    // happens on the device, a machine checks it once, no person looks.
     expect(page()).not.toContain('No machine reads it either');
-    expect(page()).toMatch(/Nothing here opens the picture\./);
+    expect(page()).not.toContain('Nothing here opens the picture.');
+    expect(page()).toMatch(/checks the picture once/);
+    expect(page()).toMatch(/No person at the switchboard looks at it\./);
     expect(page()).toMatch(/where the photo was taken/);
   });
 

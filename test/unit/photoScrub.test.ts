@@ -452,9 +452,11 @@ describe('the page the sender reads', () => {
     expect(html).toMatch(/What is in shot crosses as it is/);
   });
 
-  it('no longer claims no machine reads the file', () => {
+  it('says a machine checks the picture once, and that no person looks', () => {
     expect(page()).not.toContain('No machine reads it either');
-    expect(page()).toContain('Nothing here opens the picture.');
+    expect(page()).not.toContain('Nothing here opens the picture.');
+    expect(page()).toContain('checks the picture once');
+    expect(page()).toContain('No person at the switchboard looks at it.');
   });
 
   it('tells a browser that cannot do it that nothing can be sent', () => {
