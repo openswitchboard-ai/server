@@ -10,13 +10,13 @@ import {
   checkSchemaVersion,
   validatePayload,
 } from '../protocol.js';
-import { categoryGate } from '../denylist.js';
+import { categoryDenied, categoryGate } from '../denylist.js';
 import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
-import { rejectionInPlainWords } from './screening.js';
+import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
 import type { Config } from '../config.js';
 
@@ -103,6 +103,17 @@ export async function assertCategoryOpen(
     throw new OsbError('CATEGORY_PROHIBITED', {
       human_action: suggestionSentence(gate.refusal ?? 'unknown', categories),
       ...(categories.length ? { suggestions: categories } : {}),
+    });
+  }
+  // A path the deny list names is refused HERE, before anything asks for
+  // `kind`: a weapon filed under goods.weapons is a category decision, and the
+  // answer to it is the category's word, never "say what the thing is". The
+  // pipe's denyListPath check says the same thing a moment later for a caller
+  // that reaches it; this is the door for the ones that never do.
+  const denied = categoryDenied(category);
+  if (denied) {
+    throw new OsbError('CATEGORY_PROHIBITED', {
+      human_action: screeningReasonInPlainWords(denied.reason_code),
     });
   }
   if (!gate.known) assertKindPresent(kind);

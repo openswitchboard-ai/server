@@ -220,3 +220,13 @@ describe('the sentences still read as English for a leaf nobody wrote down', () 
     expect(categoryLeafLabel('services.repairs.vintage-synthesiser')).toBe('vintage-synthesiser');
   });
 });
+
+describe('a deny-listed path is refused at the door, before kind is asked for', () => {
+  it('goods.weapons without kind is CATEGORY_PROHIBITED, never a kind complaint', async () => {
+    const { assertCategoryOpen } = await import('../../src/domain/cards.js');
+    await expect(assertCategoryOpen(undefined as any, 'goods.weapons', 'acct')).rejects.toMatchObject({
+      message: 'CATEGORY_PROHIBITED',
+      payload: { code: 'CATEGORY_PROHIBITED' },
+    });
+  });
+});
