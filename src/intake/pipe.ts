@@ -13,6 +13,7 @@ import { denyListPath } from './checks/denyListPath.js';
 import { modelScreen } from './checks/modelScreen.js';
 import { moneyFigure } from './checks/moneyFigure.js';
 import { photoMetadata } from './checks/photoMetadata.js';
+import { photoModeration } from './checks/photoModeration.js';
 import { noLedger, type Check, type CheckResult, type IntakeItem, type Ledger, type Verdict } from './types.js';
 import type { Config } from '../config.js';
 
@@ -20,7 +21,13 @@ import type { Config } from '../config.js';
  * Every check, in the order they run. Cheap and deterministic before slow and
  * paid for: a category the deny list already refuses never costs a model call.
  */
-export const CHECKS: Check[] = [denyListPath, modelScreen, moneyFigure, photoMetadata];
+export const CHECKS: Check[] = [
+  denyListPath,
+  modelScreen,
+  moneyFigure,
+  photoMetadata,
+  photoModeration,
+];
 
 /** The checks that stand at one door. */
 export function checksForDoor(door: IntakeItem['door'], checks: Check[] = CHECKS): Check[] {

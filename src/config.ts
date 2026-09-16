@@ -79,6 +79,11 @@ export interface Config {
    *  domain/channelPhoto.ts). Unset means photos are off in this deployment,
    *  and the page says so rather than failing. */
   photoBucket?: string;
+  /** Whether a photo is looked at by Rekognition before it is delivered
+   *  (intake/checks/photoModeration.ts). Derived, not its own switch: it is on
+   *  exactly where photos are on, because a deployment that carries photos
+   *  without the look is not a deployment this code offers. */
+  photoModeration: boolean;
   /** Platform fee, percent of the settlement amount. Kept as a parameter and
    *  SET TO 0: the introductory fee is the flat one below. */
   settlementFeePercent: number;
@@ -158,6 +163,7 @@ export function loadConfig(): Config {
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
     photoBucket: process.env.PHOTO_BUCKET || undefined,
+    photoModeration: !!(process.env.PHOTO_BUCKET || ''),
     settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
     settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
     settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),

@@ -35,14 +35,17 @@
  * the browser makes and this service cannot check — checking would mean holding
  * the image. What it buys is that a page that cannot strip gets no URL.
  *
- * NO AUTOMATED IMAGE SCREENING, AND THAT IS THE WHOLE STATEMENT. Words are
- * screened before they are published; an image here is not screened at all, by
- * a model or by anything else. Nobody at the switchboard looks at it. The terms
- * forbid what you would expect, the same two humans are the only ones who can
- * ever see it, and it deletes itself. Anything more would be a claim this code
- * does not earn. It is written down in three places a reader can reach it: the
- * page the sender uses, the description the collecting agent reads, and the
- * README's list of what the server enforces.
+ * THE IMAGE IS SCREENED, BY MACHINE, BEFORE IT IS DELIVERED (17 September
+ * 2026, docs/trust-and-safety.md step four). Until this date the honest
+ * statement here was that nothing looked at an image at all. What looks at it
+ * now is Rekognition, asked about the object in the bucket by reference at the
+ * send press, and it refuses anything sexual, nude, violent, hateful or drugged
+ * outright (intake/checks/photoModeration.ts holds the list and the reasoning).
+ * Everything else about the statement stands: no person at the switchboard sees
+ * it, the bytes still never pass through this process, the same two humans are
+ * the only ones who can ever open it, and it deletes itself. The sender's page,
+ * the description the collecting agent reads and the README still carry the
+ * older sentence and have to be brought into line with this one.
  *
  * WHAT IS CHECKED. A caption, and the filename that rides along with the
  * upload, are WORDS — so they go through carriesMoneyFigure exactly as a
@@ -335,7 +338,7 @@ export async function markPhotoSent(
 ): Promise<{ photo_id: string }> {
   const bucket = mustBucket(cfg);
   const r = await getPool().query(
-    `SELECT id, s3_key, channel_id FROM conversation_photos
+    `SELECT id, s3_key, channel_id, content_type FROM conversation_photos
       WHERE id = $1 AND sender_account = $2 AND match_id = $3 AND sent_at IS NULL`,
     [photoId, accountId, matchId],
   );
@@ -345,6 +348,34 @@ export async function markPhotoSent(
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.s3_key }));
   } catch {
     throw validation('that photo never finished uploading.');
+  }
+  // THE PICTURE IS LOOKED AT HERE, and this is the only moment it can be: the
+  // bytes exist now and the other side has not been told about them yet. The
+  // object goes to the same pipe every other thing a person hands over goes to
+  // (docs/trust-and-safety.md), by reference — a bucket and a key, never bytes
+  // through this process. A refusal has already deleted the object and the row
+  // is left unsent for the sweep; a hold leaves both alone and says so.
+  const intake = await runIntake(cfg, {
+    door: 'photo',
+    sender_account: accountId,
+    match_id: matchId,
+    // The claim the browser made was checked at presign, where refusing it was
+    // the whole point of asking. It is restated so the metadata gate is a pass
+    // rather than a second refusal of something already settled.
+    fields: { metadata_removed: 'true' },
+    object: {
+      bucket,
+      key: row.s3_key as string,
+      content_type: row.content_type as string,
+    },
+  });
+  if (intake.outcome !== 'pass') {
+    photoLog('conversation-photo-not-relayed', {
+      channel_id: row.channel_id,
+      outcome: intake.outcome,
+      reason_code: intake.reason_code ?? 'unknown',
+    });
+    throw validation(intake.plain_words ?? 'that photo has not gone.');
   }
   const captionEnc = caption
     ? await encryptForChannel(
