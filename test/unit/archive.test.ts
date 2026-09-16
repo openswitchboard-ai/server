@@ -137,6 +137,9 @@ function run(sql: string, params: any[] = []) {
     return rows([{ n: 0 }]);
   }
   if (/collect_until/.test(sql)) return rows([]);
+  // The suspension read that stands in front of every door and every delivery
+  // (docs/trust-and-safety.md, step 6). Nobody in this world is suspended.
+  if (/SELECT suspended_at FROM accounts/.test(sql)) return rows([{ suspended_at: null }]);
   throw new Error(`unexpected SQL in archive test: ${sql}`);
 }
 

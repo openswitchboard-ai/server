@@ -15,7 +15,7 @@ import { authenticate, recordManualVersion, unauthorized, type AuthContext } fro
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
 import { TOOLS, dispatchTool } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
-import { ownHumanBlock } from './connectFacts.js';
+import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
 export const SETTLEMENT_OFF_BLOCK =
   'THIS DEPLOYMENT, TODAY\nSettlement is switched off here: the switchboard has no part in any payment, holds no money, and settle answers SETTLEMENT_UNAVAILABLE. Any paying is arranged entirely between the two humans, and anyone claiming the switchboard is holding or expecting money is lying.';
@@ -49,8 +49,15 @@ export async function instructionsFor(
   // What is true of THIS human and THIS deployment is short, it is the part
   // most likely to be acted on in the first exchange, and it belongs where an
   // agent reads before it does anything.
+  //
+  // And ahead of BOTH of them, where there is one: this account is suspended.
+  // Everything the other two blocks are for is work this agent will not be
+  // doing, and an agent that reads a suburb and a clock first starts composing
+  // a posting before it reaches the sentence that matters.
   const front: string[] = [];
   if (opts.accountId) {
+    const stopped = await suspendedBlock(opts.accountId, { onError: opts.onError });
+    if (stopped) front.push(stopped);
     const own = await ownHumanBlock(opts.accountId, { onError: opts.onError });
     if (own) front.push(own);
   }

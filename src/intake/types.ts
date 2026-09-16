@@ -19,7 +19,14 @@ export type Door =
   | 'message'
   | 'photo'
   | 'offer_words'
-  | 'shared_identity';
+  | 'shared_identity'
+  /**
+   * The words on a report (docs/trust-and-safety.md, step 5). It is a door like
+   * any other — the checks run, the ledger keeps what came through — with one
+   * rule of its own: see REFUSAL_FREE_DOORS in pipe.ts. A report is never
+   * refused for how it was written.
+   */
+  | 'report';
 
 /**
  * What arrived, normalised. `text` is free words the sender wrote; `fields`

@@ -215,6 +215,31 @@ export async function sweepLedgerEntries(): Promise<{ entries: number }> {
 }
 
 /**
+ * Everything behind ONE introduction, held past the window. What a report
+ * reaches for (src/safety/reports.ts): the entries it wants are exactly the
+ * ones carrying that introduction's id, they are not known by id at the moment
+ * somebody presses the button, and a report that had to enumerate them first
+ * would be a report that lost evidence to a sweep running in between.
+ *
+ * Like the freeze below, it reads nothing and decrypts nothing.
+ */
+export async function preserveEntriesForMatch(
+  matchId: string,
+  until: Date,
+): Promise<{ preserved: number }> {
+  if (!matchId) return { preserved: 0 };
+  const r = await getPool().query(
+    `UPDATE ledger_entries SET preserved_until = $2
+      WHERE match_id = $1::uuid
+        AND (preserved_until IS NULL OR preserved_until < $2)`,
+    [matchId, until],
+  );
+  const n = r.rowCount ?? 0;
+  ledgerLog('ledger-preserved', { count: n, until: until.toISOString() });
+  return { preserved: n };
+}
+
+/**
  * Hold named entries past the window. The freeze half of a lawful request: it
  * reads nothing and decrypts nothing, and needs no keyholder.
  */

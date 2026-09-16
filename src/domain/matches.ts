@@ -45,6 +45,13 @@ export interface MatchRow {
   archived_at?: Date | null;
   archived_by?: string | null;
   archived_via?: string | null;
+  /** When the SWITCHBOARD closed this one itself — a report, or a suspension
+   *  (migration 035). The state column goes to 'closed' in the same breath. */
+  severed_at?: Date | null;
+  /** The account whose report severed it; null where the switchboard severed
+   *  it on its own. It decides which of the two sentences each side reads, and
+   *  it never crosses to the other party in any form. */
+  severed_by?: string | null;
   /** In a slot right now. An introduction that is not live is in line. */
   live?: boolean;
   live_at?: Date | null;
@@ -523,6 +530,52 @@ export async function declineMatch(
 }
 
 /**
+ * SEVER. The switchboard closing an introduction itself, rather than a human
+ * closing one off (docs/trust-and-safety.md, "Enforcement").
+ *
+ * It happens on a report and on a suspension, and it does the same four things
+ * either way, in the order a decline and an archive already do them:
+ *
+ *  1. the state leaves 'open', which is the whole of what stops delivery —
+ *     loadOpenChannel gates on it, so nothing more is carried either way;
+ *  2. `severed_at` is stamped, so the sweep can say WHY this one ended rather
+ *     than reporting a bare closed state at two people;
+ *  3. anything uncollected is expired, the way archiveMatch does it, so the
+ *     ordinary sweep clears it rather than leaving it to sit out its TTL;
+ *  4. the slot it held is freed, so whoever was in line behind it comes
+ *     forward — a person who reports somebody is not made to wait for it.
+ *
+ * `by` is the account that asked for it, or undefined where the switchboard
+ * severed it on its own. It is written down and it never crosses: the other
+ * side is told the switchboard closed this and nothing else at all.
+ *
+ * Idempotent: severing an introduction that is not open changes nothing.
+ */
+export async function severMatch(
+  matchId: string,
+  by: string | undefined,
+  cfg?: Config,
+): Promise<{ severed: boolean; promoted: string[] }> {
+  const pool = getPool();
+  const r = await pool.query(
+    `UPDATE matches
+        SET state = 'closed', severed_at = now(), severed_by = $2,
+            live = false, updated_at = now()
+      WHERE id = $1 AND state = 'open'
+      RETURNING id`,
+    [matchId, by ?? null],
+  );
+  if (!r.rowCount) return { severed: false, promoted: [] };
+  await pool.query(
+    `UPDATE channel_messages SET expires_at = now() WHERE match_id = $1 AND expires_at > now()`,
+    [matchId],
+  );
+  const { resequenceAround } = await import('./sequencer.js');
+  const promoted = await resequenceAround(matchId, cfg);
+  return { severed: true, promoted };
+}
+
+/**
  * Of the introductions just promoted, the ones this account is a party to.
  *
  * Freeing a slot resequences BOTH sides, so the other side's line may advance
@@ -957,6 +1010,14 @@ export async function getStagePayload(
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
+  // A severed one answers with the reason it is closed, at every step. The
+  // sweep says it too; this is the same sentence for the agent that asks about
+  // this one introduction directly rather than sweeping.
+  if (m.severed_at) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: severedSentence(m.severed_by === accountId),
+    });
+  }
   switch (stage) {
     case 1:
       if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
@@ -1099,6 +1160,34 @@ export function withCameForward(sentence: string, promoted: string[]): string {
   return promoted.length ? `${sentence} ${CAME_FORWARD_SENTENCE}` : sentence;
 }
 
+/**
+ * THE TWO SENTENCES FOR A SEVERED INTRODUCTION, and they are deliberately not
+ * the same sentence (docs/trust-and-safety.md, "Reporting").
+ *
+ * The person who reported somebody is told their report landed and that this
+ * one is closed, so they are never left wondering whether the press did
+ * anything. The other person is told the switchboard closed the conversation
+ * and NOTHING else: never that they were reported, never by whom, never what
+ * was said. A sentence that hinted at any of it would hand a reporter's name
+ * to the person they were frightened enough to report.
+ *
+ * A suspension severs with no reporter at all, and then both sides read the
+ * second sentence — which is already the honest one, because the switchboard
+ * is exactly what closed it.
+ */
+export const SEVERED_REPORTER_SENTENCE =
+  'You reported this one, so it is closed. Nothing more goes either way, and the person on the other side is never told who said anything or what was said.';
+
+export const SEVERED_OTHER_SENTENCE =
+  'This conversation has been closed by the switchboard. Nothing more goes either way on it.';
+
+/** The state word for a severed introduction, in place of a bare "closed". */
+export const SEVERED_STATE = 'closed_by_switchboard';
+
+/** Which of the two this account reads. `mine` is "my own report closed it". */
+export const severedSentence = (mine: boolean): string =>
+  mine ? SEVERED_REPORTER_SENTENCE : SEVERED_OTHER_SENTENCE;
+
 /** Filing a finished introduction away. It stays retrievable afterwards. */
 export const ARCHIVE_SENTENCE =
   'Filed away. Who it was and what it was about stay here, so I can bring it back whenever you ask.';
@@ -1152,6 +1241,19 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       actor: accountId,
     }));
   for (const m of r.rows as MatchRow[]) {
+    // SEVERED, and so answered before anything else. "No door answers nothing
+    // while something waits" (run 8): a closed introduction handed back as a
+    // bare state word leaves an agent to guess out loud at its human, and the
+    // one thing it must not guess at is why a stranger stopped answering. One
+    // sentence, side-aware, and nothing else on the entry.
+    if (m.severed_at) {
+      out.push({
+        intro_id: m.id,
+        state: SEVERED_STATE,
+        note: sbNote(severedSentence(m.severed_by === accountId)),
+      });
+      continue;
+    }
     if (m.state === 'archived') {
       // A finished connection, kept retrievable. It is never an actionable or
       // new signal — no `next`, no stage-1 signal — but it carries enough to
