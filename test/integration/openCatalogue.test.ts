@@ -81,7 +81,7 @@ d('an unknown leaf goes up', () => {
       [{ name: 'c', value: UNKNOWN_LEAF }],
     );
     expect(misses).toHaveLength(1);
-    expect(misses[0].kind).toBe('vintage synth repair');
+    expect(misses[0]?.[1]).toBe('vintage synth repair');
   }, 400_000);
 
   it('still refuses a reserved family, and an unknown leaf inside one', async () => {
