@@ -320,7 +320,7 @@ everything it never can.</p>
 ${foldedDetail(
   'What happens here',
   `<p class="small">Your agent posts your wants &amp; haves, checks matches and
-negotiates. Opening the account, setting your PIN, approving what gets shared
+negotiates. Opening the account, choosing how you approve things, approving what gets shared
 or paid, reading the ledger and pulling the plug all happen on this page, with
 you signed in.</p>`,
 )}`);
@@ -357,17 +357,20 @@ ${errBox(params.error)}
 </form>`);
 }
 
-export function pinSetPage(error?: string): string {
-  return layout('Set your PIN', `
-<h1>Set your PIN.</h1>
+const PIN_FIELDS = `  <label for="pin">PIN (6+ digits)</label>
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+  <label for="pin2">PIN again</label>
+  <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>`;
+
+export function pinSetPage(error?: string, v?: { hasPin?: boolean }): string {
+  const title = v?.hasPin ? 'Change your PIN' : 'Set a PIN';
+  return layout(title, `
+<h1>${v?.hasPin ? 'Change your PIN.' : 'Set a PIN.'}</h1>
 <p class="lead">Six or more digits. Your PIN approves the sensitive stuff.</p>
 ${errBox(error)}
 <form method="POST" action="/pin/set">
-  <label for="pin">PIN (6+ digits)</label>
-  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required autofocus>
-  <label for="pin2">PIN again</label>
-  <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
-  <button type="submit">Set PIN</button>
+${PIN_FIELDS}
+  <button type="submit">${v?.hasPin ? 'Change my PIN' : 'Set my PIN'}</button>
 </form>
 <p class="small muted">Disclosures, settlements and turning things back on all ask
 for it. It never touches your agent.</p>`);
@@ -383,19 +386,169 @@ async function postJson(url,body){const r=await fetch(url,{method:'POST',headers
   if(!r.ok)throw new Error((await r.text())||('HTTP '+r.status));return r.json();}
 </script>`;
 
-export function passkeyOfferPage(): string {
-  return layout('Add a passkey', `
-<h1>Add a passkey?</h1>
-<p class="lead">Optional, recommended: sign in and approve with Face&nbsp;ID, a
-fingerprint, or your device passcode instead of email codes.</p>
-<div id="pkerr"></div>
-<div class="actions">
-  <button id="enrol">Add a passkey</button>
-  <form method="POST" action="/passkey/skip"><button class="secondary" type="submit">Skip for now</button></form>
-</div>
-${WEBAUTHN_HELPERS}
-<script>
-document.getElementById('enrol').addEventListener('click', async () => {
+// ---------------------------------------------------------------------------
+// The sensitive-action ceremony, in one place.
+//
+// A PIN is no longer the only way to hold an account (2026-09-16). A person
+// can finish registration with a passkey and never set one, so every page that
+// used to print a PIN box has to ask for whichever credential the account
+// actually holds.
+//
+// WHY A PASSKEY ALONE IS ENOUGH, since the question comes up on every one of
+// these pages:
+//   - getting back in after losing everything is an emailed code either way,
+//     so a PIN adds nothing to what recovery can do;
+//   - a PIN is the only credential on the account a phishing page could ever
+//     harvest, because it is the only one a person can read out and type;
+//   - a passkey cannot be handed over, even by someone who wants to hand it
+//     over, because the private half never leaves the device.
+// A PIN stays on offer for a device that cannot make a passkey, and for the
+// person who sets a passkey on a laptop and then presses an approval link on
+// a phone that has never seen it.
+//
+// Three states, and the helpers below render all three:
+//   elevated            — a ceremony already happened in the last few minutes;
+//                         the form carries an empty PIN field and asks nothing.
+//   a PIN on the account — the PIN box, plus a passkey button beside it where
+//                         the account also holds a passkey.
+//   a passkey and no PIN — no box at all: the action button IS the ceremony,
+//                         and the emailed-code way through is written on the
+//                         page for the device that has no passkey on it.
+// ---------------------------------------------------------------------------
+export interface CeremonyView {
+  /** This account has a PIN set. */
+  hasPin: boolean;
+  /** This account holds at least one passkey. */
+  hasPasskey: boolean;
+  /** Inside a PIN or passkey ceremony's window: nothing more is asked. */
+  elevated: boolean;
+}
+
+/** True where the button itself has to run the passkey ceremony first. */
+export function passkeyOnlyCeremony(v: CeremonyView): boolean {
+  return !v.elevated && !v.hasPin && v.hasPasskey;
+}
+
+/**
+ * The PIN box, the hidden field an elevated session needs, or nothing at all
+ * on a passkey-only account.
+ *
+ * `which` makes the id unique, because two of these can stand on one page: a
+ * seller looking at a returned item they can close AND a split the buyer has
+ * put up are both money-moving and both theirs to press. Two inputs sharing an
+ * id would leave the second one's label pointing at the first one's box.
+ */
+export function ceremonyField(v: CeremonyView, which: string): string {
+  if (v.elevated) return `<input type="hidden" name="pin" value="">`;
+  if (!v.hasPin) return `<input type="hidden" name="pin" value="">`;
+  return `<label for="pin-${which}">Confirm with your PIN</label>
+         <input id="pin-${which}" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
+}
+
+/**
+ * The button that carries the action. On a passkey-only account it runs the
+ * passkey ceremony and then submits the form it belongs to; everywhere else it
+ * is an ordinary submit button and the PIN box beside it does the work.
+ */
+export function ceremonySubmit(
+  v: CeremonyView,
+  opts: { formId: string; label: string; className?: string; name?: string; value?: string },
+): string {
+  const cls = opts.className ? ` class="${opts.className}"` : '';
+  const nv = opts.name ? ` name="${esc(opts.name)}" value="${esc(opts.value ?? '')}"` : '';
+  if (!passkeyOnlyCeremony(v)) {
+    return `<button type="submit"${nv}${cls}>${esc(opts.label)}</button>`;
+  }
+  const data = opts.name
+    ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
+    : '';
+  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
+}
+
+/** The passkey button beside a PIN box, for an account that holds both. */
+export function ceremonyAlt(v: CeremonyView, formId: string): string {
+  if (v.elevated || !v.hasPasskey || !v.hasPin) return '';
+  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}">Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
+}
+
+/**
+ * The plain line under a ceremony: what this press takes, and — on a passkey
+ * with no PIN — the way through on a device that has never seen that passkey.
+ * The emailed code is the same code that signs a person in, so nobody is left
+ * staring at a box they cannot fill.
+ */
+export function ceremonyNote(v: CeremonyView): string {
+  if (v.elevated) return '';
+  if (passkeyOnlyCeremony(v)) {
+    return `<p class="small muted">This takes your passkey. On a device that does not
+have it, <a href="/confirm/code">have a code emailed to you</a> and press it from your own
+page once you are back in.</p>`;
+  }
+  if (v.hasPin && v.hasPasskey) {
+    return `<p class="small muted">This takes your PIN or your passkey.</p>`;
+  }
+  return `<p class="small muted">This takes your PIN.</p>`;
+}
+
+/**
+ * The one passkey handler for a whole page. Any number of buttons can carry
+ * `data-pk-form`; the click runs the assertion, elevates the session, and
+ * submits that button's form with whatever the button was going to send.
+ */
+export const CEREMONY_SCRIPT = `${WEBAUTHN_HELPERS}<script>
+document.addEventListener('click', async function(ev){
+  var btn = ev.target && ev.target.closest && ev.target.closest('button[data-pk-form]');
+  if(!btn) return;
+  ev.preventDefault();
+  var form = document.getElementById(btn.getAttribute('data-pk-form'));
+  if(!form) return;
+  var slot = btn.nextElementSibling && btn.nextElementSibling.hasAttribute('data-pk-err')
+    ? btn.nextElementSibling : null;
+  // The PIN box is the only field a passkey replaces; everything else on the
+  // form still has to be filled in before a ceremony is worth running.
+  var pins = form.querySelectorAll('input[name="pin"]');
+  for (var i=0;i<pins.length;i++) pins[i].removeAttribute('required');
+  if (form.reportValidity && !form.reportValidity()) return;
+  btn.disabled = true;
+  try {
+    var opts = await postJson('/login/passkey/options');
+    opts.challenge = b64uToBuf(opts.challenge);
+    (opts.allowCredentials||[]).forEach(function(c){c.id=b64uToBuf(c.id);});
+    var cred = await navigator.credentials.get({ publicKey: opts });
+    await postJson('/login/passkey/verify', { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+      response: { clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+                  authenticatorData: bufToB64u(cred.response.authenticatorData),
+                  signature: bufToB64u(cred.response.signature),
+                  userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
+      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true });
+    if (btn.getAttribute('data-pk-name')) {
+      var h = document.createElement('input'); h.type='hidden';
+      h.name = btn.getAttribute('data-pk-name'); h.value = btn.getAttribute('data-pk-value')||'';
+      form.appendChild(h);
+    }
+    form.submit();
+  } catch (e) {
+    btn.disabled = false;
+    for (var j=0;j<pins.length;j++) pins[j].setAttribute('required','');
+    if (slot) { slot.hidden = false; slot.innerHTML = '<div class="err">Passkey ceremony failed: '
+      + String(e.message||e).replace(/[<>&]/g,'') + '</div>'; }
+  }
+});
+</script>`;
+
+/** The script goes on a page only where something on it can use a passkey. */
+export function ceremonyScript(...views: CeremonyView[]): string {
+  return views.some((v) => !v.elevated && v.hasPasskey) ? CEREMONY_SCRIPT : '';
+}
+
+/**
+ * The enrolment ceremony, as a script. `ENROL_SCRIPT(buttonId)` wires one
+ * button to /passkey/options + /passkey/verify and follows the `next` the
+ * server hands back, so the same block serves the registration choice and the
+ * add-one-later page.
+ */
+const ENROL_SCRIPT = (buttonId: string, errId: string) => `${WEBAUTHN_HELPERS}<script>
+document.getElementById('${buttonId}').addEventListener('click', async () => {
   try {
     const opts = await postJson('/passkey/options');
     opts.challenge = b64uToBuf(opts.challenge);
@@ -407,14 +560,134 @@ document.getElementById('enrol').addEventListener('click', async () => {
                   attestationObject: bufToB64u(cred.response.attestationObject),
                   transports: cred.response.getTransports ? cred.response.getTransports() : [] },
       clientExtensionResults: cred.getClientExtensionResults() };
-    await postJson('/passkey/verify', body);
-    location.href = '/consent';
+    const r = await postJson('/passkey/verify', body);
+    location.href = r.next || '/';
   } catch (e) {
-    document.getElementById('pkerr').innerHTML = '<div class="err">Passkey enrolment failed: '
+    document.getElementById('${errId}').innerHTML = '<div class="err">Passkey enrolment failed: '
       + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
   }
 });
-</script>`);
+</script>`;
+
+/**
+ * Only the browser knows whether this device can make a passkey, so the offer
+ * is hidden markup until it says so. Where the answer is no, or where the
+ * question cannot be asked at all, the page stands as the PIN alone: a button
+ * that cannot work is worse than a button that was never there.
+ */
+const PLATFORM_AUTHENTICATOR_PROBE = `<script>
+(function(){
+  var box = document.getElementById('pkoffer');
+  if (!box) return;
+  if (!window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return;
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+    .then(function(available){ if (available) { box.hidden = false; document.body.setAttribute('data-passkey','yes'); } })
+    .catch(function(){});
+})();
+</script>`;
+
+/**
+ * The step that used to demand a PIN and nothing else (2026-09-16).
+ *
+ * A person picks how they will approve things: a passkey, where the device in
+ * their hand can make one, or a PIN. Whichever they pick finishes registration
+ * on its own — an account with a passkey needs no PIN, and the pages that ask
+ * for a sensitive-action ceremony ask for whichever one the account holds.
+ *
+ * The passkey half is hidden until the browser reports a platform
+ * authenticator, so a device that cannot make one is offered the PIN alone.
+ */
+export function credentialChoicePage(error?: string): string {
+  return layout('How you approve things', `
+<h1>How will you approve things?</h1>
+<p class="lead">Sharing your details, accepting a figure and moving money all come
+back to you. Pick how you say yes.</p>
+${errBox(error)}
+<div id="pkoffer" hidden>
+  <h2>A passkey</h2>
+  <p>A passkey uses the fingerprint or face check your device already has, so there is
+  nothing for you to remember and nothing for you to type. We recommend it.</p>
+  <div id="pkerr"></div>
+  <button id="enrol">Use a passkey</button>
+</div>
+<h2>A PIN</h2>
+<p>A PIN is six digits you type. Every device can use one.</p>
+<form method="POST" action="/pin/set">
+${PIN_FIELDS}
+  <button type="submit" class="secondary">Set my PIN</button>
+</form>
+<p class="small muted">You can add the other one later on your own page. Signing in on a
+new device uses a code we email you either way.</p>
+${PLATFORM_AUTHENTICATOR_PROBE}
+${ENROL_SCRIPT('enrol', 'pkerr')}`);
+}
+
+export function passkeyOfferPage(v?: { hasPasskey?: boolean; skipLabel?: string }): string {
+  return layout('Add a passkey', `
+<h1>Add a passkey${v?.hasPasskey ? '' : '?'}</h1>
+<p class="lead">${
+    v?.hasPasskey
+      ? 'You already have one on this account. Adding another lets a second device approve things on its own.'
+      : 'Sign in and approve with Face ID, a fingerprint, or your device passcode. There is nothing to remember and nothing to type.'
+  }</p>
+<div id="pkerr"></div>
+<div class="actions">
+  <button id="enrol">Add a passkey</button>
+  <form method="POST" action="/passkey/skip"><button class="secondary" type="submit">${esc(v?.skipLabel ?? 'Skip for now')}</button></form>
+</div>
+${ENROL_SCRIPT('enrol', 'pkerr')}`);
+}
+
+/**
+ * Confirm it is you, before changing how you approve things. Adding or
+ * changing either credential takes a fresh ceremony of whatever the account
+ * holds now, so a borrowed session cannot quietly fit itself a key.
+ */
+export function confirmItsYouPage(v: CeremonyView, next: string, error?: string): string {
+  return layout('Confirm it is you', `
+<h1>Confirm it is you.</h1>
+<p class="lead">Changing how you approve things takes the way you approve things now.</p>
+${errBox(error)}
+<form method="POST" action="/confirm" id="confirmForm">
+  <input type="hidden" name="next" value="${esc(next)}">
+  ${ceremonyField(v, 'confirm')}
+  <div class="actions">
+  ${ceremonySubmit(v, { formId: 'confirmForm', label: 'Confirm', className: 'approve' })}
+  ${ceremonyAlt(v, 'confirmForm')}
+  </div>
+</form>
+${ceremonyNote(v)}
+<a class="btn secondary" href="/security">Back</a>
+${ceremonyScript(v)}`);
+}
+
+/**
+ * How you approve things, on your own page: what this account holds now, and
+ * the two doors to add or change either one.
+ */
+export function securityPage(
+  v: { hasPin: boolean; passkeyCount: number },
+  notice?: string,
+): string {
+  const held = [
+    v.hasPin ? 'a PIN' : undefined,
+    v.passkeyCount === 1 ? 'a passkey' : v.passkeyCount > 1 ? `${v.passkeyCount} passkeys` : undefined,
+  ].filter(Boolean);
+  return layout('How you approve things', `
+<h1>How you approve things.</h1>
+${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+<p class="lead">You have ${held.length ? esc(held.join(' and ')) : 'nothing set yet'}. Either one
+approves everything on this page; holding both means the device in your hand decides which
+you use.</p>
+<div class="navlist">
+<a href="/passkey"><span class="nav-t">${v.passkeyCount ? 'Add another passkey' : 'Add a passkey'}</span>
+<span class="nav-d">The fingerprint or face check your device already has. Nothing to remember.</span></a>
+<a href="/pin"><span class="nav-t">${v.hasPin ? 'Change your PIN' : 'Set a PIN'}</span>
+<span class="nav-d">Six digits you type. Useful on a device your passkey has never seen.</span></a>
+</div>
+<p class="small muted">Signing in on a new device uses a code we email you, whichever of these
+you hold. That emailed code is also the way back in if you lose the lot.</p>
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 export function consentPage(error?: string): string {
@@ -565,8 +838,11 @@ export interface OneQuestionView {
   detail?: string[];
   yesLabel: string;
   noLabel: string;
-  /** True where identity or money moves: the PIN ceremony rides along. */
+  /** True where identity or money moves: the ceremony rides along. */
   needsPin: boolean;
+  /** This account has a PIN. False on a passkey-only account, where the press
+   *  itself runs the passkey ceremony and no box is printed. */
+  hasPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
   /** Set on the names question when this account has no first name or area on
@@ -576,19 +852,16 @@ export interface OneQuestionView {
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
-  const showPin = v.needsPin && !v.elevated;
+  // The ceremony rides along only where identity or money moves; a question
+  // that moves neither is two buttons and nothing else.
+  const c: CeremonyView = v.needsPin
+    ? { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated }
+    : { hasPin: false, hasPasskey: false, elevated: true };
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
        <p class="small">The other side sees a first name and a suburb. That is the whole of it.
        You can change both any time on <a href="/profile">what you share on a match</a>.</p>
        ${sharedFieldsFieldset(v.collectProfile)}`
-    : '';
-  const pinBlock = showPin
-    ? `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
-    : '';
-  const passkeyBtn = v.needsPin && v.hasPasskey && !v.elevated
-    ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
     : '';
   const detail = (v.detail ?? []).map((d) => `<p class="small muted">${esc(d)}</p>`).join('');
   return layout(v.question, `
@@ -597,38 +870,16 @@ ${errBox(error)}
 ${detail}
 <form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
   ${collect}
-  ${pinBlock}
+  ${v.needsPin ? ceremonyField(c, 'q') : ''}
   <div class="actions">
-  <button type="submit" name="decision" value="yes" class="approve">${esc(v.yesLabel)}</button>
+  ${ceremonySubmit(c, { formId: 'oneQuestion', label: v.yesLabel, className: 'approve', name: 'decision', value: 'yes' })}
   <button type="submit" name="decision" value="no" class="secondary" formnovalidate>${esc(v.noLabel)}</button>
   </div>
 </form>
-${passkeyBtn}
-<p class="small muted">This link works once${showPin ? ', and this step takes your PIN' : ''}. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
-
-${v.needsPin && v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
-document.getElementById('pkapprove').addEventListener('click', async () => {
-  try {
-    const opts = await postJson('/login/passkey/options');
-    opts.challenge = b64uToBuf(opts.challenge);
-    (opts.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
-    const cred = await navigator.credentials.get({ publicKey: opts });
-    const body = { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
-      response: { clientDataJSON: bufToB64u(cred.response.clientDataJSON),
-                  authenticatorData: bufToB64u(cred.response.authenticatorData),
-                  signature: bufToB64u(cred.response.signature),
-                  userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
-      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true };
-    await postJson('/login/passkey/verify', body);
-    const f = document.getElementById('oneQuestion');
-    const i = document.createElement('input'); i.type='hidden'; i.name='decision'; i.value='yes';
-    f.appendChild(i); f.querySelector('#pin')?.removeAttribute('required'); f.submit();
-  } catch (e) {
-    document.getElementById('pkerr').innerHTML = '<div class="err">Passkey ceremony failed: '
-      + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
-  }
-});
-</script>` : ''}`);
+${ceremonyAlt(c, 'oneQuestion')}
+<p class="small muted">This link works once. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
+${v.needsPin ? ceremonyNote(c) : ''}
+${ceremonyScript(c)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +983,7 @@ export interface ApprovalView {
   /** Set on a stage-3 approval when this account has no first name / area on
    *  file yet: the page asks for them right here, and approving stores them. */
   collectProfile?: { firstName: string; locality: string };
+  hasPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
   postPath: string; // decision endpoint
@@ -883,13 +1135,6 @@ export function approvalPage(v: ApprovalView, error?: string): string {
         .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
         .join('')}</div>`
     : '';
-  const pinBlock = v.elevated
-    ? `<input type="hidden" name="pin" value="">`
-    : `<label for="pin">Confirm with your PIN</label>
-       <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
-  const passkeyBtn = v.hasPasskey && !v.elevated
-    ? `<div id="pkerr"></div><button type="button" id="pkapprove" class="secondary">Use your passkey instead</button>`
-    : '';
   // First time through: the page collects the two things it is about to
   // share. They are stored under this account's own key when you approve.
   const collect = v.collectProfile
@@ -907,38 +1152,17 @@ ${headlineHtml}
   <input type="hidden" name="ref_id" value="${esc(v.refId)}">
   <input type="hidden" name="action" value="${esc(v.action)}">
   ${collect}
-  ${pinBlock}
+  ${ceremonyField(v, 'approve')}
   <div class="actions">
-  <button type="submit" name="decision" value="approve" class="approve">${yesLabel}</button>
+  ${ceremonySubmit(v, { formId: 'approveForm', label: yesLabel, className: 'approve', name: 'decision', value: 'approve' })}
   <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Not now</button>
   </div>
 </form>
-${passkeyBtn}
-<p class="small muted">${yesLabel} needs your PIN${v.hasPasskey ? ' or passkey' : ''}. Not now changes nothing and sends no reason. A number of your own goes through your assistant.</p>
+${ceremonyAlt(v, 'approveForm')}
+<p class="small muted">Not now changes nothing and sends no reason. A number of your own goes through your assistant.</p>
+${ceremonyNote(v)}
 ${restHtml}
-${v.hasPasskey && !v.elevated ? WEBAUTHN_HELPERS + `<script>
-document.getElementById('pkapprove').addEventListener('click', async () => {
-  try {
-    const opts = await postJson('/login/passkey/options');
-    opts.challenge = b64uToBuf(opts.challenge);
-    (opts.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
-    const cred = await navigator.credentials.get({ publicKey: opts });
-    const body = { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
-      response: { clientDataJSON: bufToB64u(cred.response.clientDataJSON),
-                  authenticatorData: bufToB64u(cred.response.authenticatorData),
-                  signature: bufToB64u(cred.response.signature),
-                  userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
-      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true };
-    await postJson('/login/passkey/verify', body);
-    const f = document.getElementById('approveForm');
-    const i = document.createElement('input'); i.type='hidden'; i.name='decision'; i.value='approve';
-    f.appendChild(i); f.querySelector('#pin')?.removeAttribute('required'); f.submit();
-  } catch (e) {
-    document.getElementById('pkerr').innerHTML = '<div class="err">Passkey ceremony failed: '
-      + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
-  }
-});
-</script>` : ''}`);
+${ceremonyScript(v)}`);
 }
 
 export function authorizePage(clientName: string, postPath: string, hidden: Record<string, string>, clientId = ''): string {
@@ -1014,6 +1238,7 @@ export interface SettlementView {
   canDispute: boolean;
   /** buyer, evidence-locked+: presigned links to the frozen evidence */
   evidence: { label: string; url: string }[];
+  hasPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
   /** SETTLEMENT_AUTO_RELEASE_DAYS: how long the buyer's window runs. */
@@ -1115,19 +1340,12 @@ const STATE_LINES: Record<string, string> = {
 };
 
 /**
- * The PIN box, or the hidden field an already-elevated session needs. Every
- * money-moving button on this page carries one.
- *
- * `which` makes the id unique, because two of these can stand on one page: a
- * seller looking at a returned item they can close AND a split the buyer has
- * put up are both money-moving and both theirs to press. Two inputs sharing an
- * id would leave the second one's label pointing at the first one's box.
+ * Every money-moving button on this page carries a ceremony: the PIN box, or
+ * the passkey the account holds instead of one. See CeremonyView above for why
+ * an account with no PIN is a whole account.
  */
-function pinField(elevated: boolean, which: string): string {
-  return elevated
-    ? `<input type="hidden" name="pin" value="">`
-    : `<label for="pin-${which}">Confirm with your PIN</label>
-         <input id="pin-${which}" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
+function pinField(v: SettlementView, which: string): string {
+  return ceremonyField(v, which);
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
@@ -1192,7 +1410,7 @@ That comes to ${esc(v.buyerTotal)}. The money is held here and moves to the sell
 you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in full.</p>`);
   }
   if (v.canRetryRelease) {
-    const pinBlock = pinField(v.elevated, 'retry');
+    const pinBlock = pinField(v, 'retry');
     blocks.push(`<h2>Send the release again</h2>
 <p>${
       v.autoReleased
@@ -1202,10 +1420,12 @@ through yet, and the switchboard tries again by itself every hour`
 yet`
     }. Nothing has moved, and sending it again is safe: the seller can only ever
 be paid once for this settlement.</p>
-<form method="POST" action="/settlements/${esc(v.id)}/confirm">
+<form method="POST" action="/settlements/${esc(v.id)}/confirm" id="retryForm">
   ${pinBlock}
-  <button type="submit" class="approve">Send the release again</button>
-</form>`);
+  ${ceremonySubmit(v, { formId: 'retryForm', label: 'Send the release again', className: 'approve' })}
+</form>
+${ceremonyAlt(v, 'retryForm')}
+${ceremonyNote(v)}`);
   }
   // The handover notice: the same two dates for both sides, above whatever
   // each of them can do about it.
@@ -1227,10 +1447,12 @@ payment is released to you on that day.</p>`,
 The introductory fee and the card processing were separate lines on your payment, so
 nothing comes off the seller's side. Do this once the goods are in your hands and as
 described.</p>
-<form method="POST" action="/settlements/${esc(v.id)}/confirm">
-  ${pinField(v.elevated, 'confirm')}
-  <button type="submit" class="approve">It arrived as agreed — release the payment</button>
-</form>`);
+<form method="POST" action="/settlements/${esc(v.id)}/confirm" id="confirmForm">
+  ${pinField(v, 'confirm')}
+  ${ceremonySubmit(v, { formId: 'confirmForm', label: 'It arrived as agreed — release the payment', className: 'approve' })}
+</form>
+${ceremonyAlt(v, 'confirmForm')}
+${ceremonyNote(v)}`);
   }
   if (v.canLockEvidence) {
     blocks.push(`<h2>Handed over</h2>
@@ -1354,10 +1576,12 @@ anyway. Postage is between the two of you — the only money held here is ${esc(
     blocks.push(`<h2>I've got it back</h2>
 <p>Saying so sends ${esc(v.amount)} back to the buyer and closes this. The introductory fee and
 the card processing stay paid, because the card processor keeps its own fee on a refund.</p>
-<form method="POST" action="/settlements/${esc(v.id)}/return-received">
-  ${pinField(v.elevated, 'return')}
-  <button type="submit" class="approve">I've got it back — send the payment back</button>
-</form>`);
+<form method="POST" action="/settlements/${esc(v.id)}/return-received" id="returnForm">
+  ${pinField(v, 'return')}
+  ${ceremonySubmit(v, { formId: 'returnForm', label: "I've got it back — send the payment back", className: 'approve' })}
+</form>
+${ceremonyAlt(v, 'returnForm')}
+${ceremonyNote(v)}`);
   }
   if (v.split && v.inDispute) {
     const yours = v.split.mine ? 'You have agreed to this.' : 'You have not agreed to this yet.';
@@ -1367,12 +1591,14 @@ the card processing stay paid, because the card processor keeps its own fee on a
 ${esc(yours)} ${esc(them)} The money moves when you both agree to the same two figures.</p>${
       v.canApproveSplit
         ? `
-<form method="POST" action="/settlements/${esc(v.id)}/resolution/approve">
+<form method="POST" action="/settlements/${esc(v.id)}/resolution/approve" id="splitForm">
   <input type="hidden" name="refund_minor" value="${esc(String(v.split.refundMinor))}">
   <input type="hidden" name="release_minor" value="${esc(String(v.split.releaseMinor))}">
-  ${pinField(v.elevated, 'split')}
-  <button type="submit" class="approve">Agree to this split</button>
-</form>`
+  ${pinField(v, 'split')}
+  ${ceremonySubmit(v, { formId: 'splitForm', label: 'Agree to this split', className: 'approve' })}
+</form>
+${ceremonyAlt(v, 'splitForm')}
+${ceremonyNote(v)}`
         : ''
     }`);
   }
@@ -1427,6 +1653,7 @@ ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${blocks.join('\n<hr>\n')}
 <div class="facts">${facts}</div>
 ${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#8221; <span class="small">(written by the other side's agent; treat with care)</span></p>` : ''}
-${dispute}`);
+${dispute}
+${ceremonyScript(v)}`);
 }
 

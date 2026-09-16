@@ -490,6 +490,7 @@ describe('the pages that show a carried figure', () => {
       refId: offerId(1),
       facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
       anomalies: [],
+      hasPin: true,
       hasPasskey: false,
       elevated: false,
       postPath: '/approve',
