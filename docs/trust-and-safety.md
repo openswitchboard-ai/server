@@ -183,15 +183,27 @@ operator, and that protection needs the operator to be able to look.
 
 ## Policy surfaces to update
 
-- **Terms**: 18+ (keep the tickbox); the law-enforcement carve-out from
-  privacy; suspension and what triggers it; no sexual content; reporting.
-- **Privacy policy**: rewritten around the pipe, the ledger, the window, the
-  two keyholders, the transparency report, and the plain statement above.
-- **Safety page** on the site and in the GitHub README: what is checked, what
-  is kept and for how long, how to report, the abuse address, how a lawful
-  request is met.
+Two layers, deliberately kept apart. The **behaviour** of the software is
+public and lives beside the code. The **contracts** are ours alone, live only
+on openswitchboard.ai, and are not in any repository: a fork writing its own
+switchboard writes its own terms, and the README says so in one line. That is
+so nobody takes our terms in good faith from GitHub and is caught out by
+something in them that was only ever true of us.
+
+- **`docs/safety.md`** (this repo, public): what is checked, what is kept and
+  for how long, who can read it and under what ceremony, how to report, how a
+  lawful request is met. A description of the code, not a contract. The site's
+  safety page renders from it; the README and the whitepaper point at it.
+- **Terms** (website only): 18+ (keep the tickbox); the law-enforcement
+  carve-out from privacy; suspension and what triggers it; no sexual content;
+  reporting.
+- **Privacy policy** (website only): rewritten around the pipe, the ledger,
+  the window, the two keyholders, the transparency report, and the plain
+  statement above.
 - **Whitepaper**: a section on safety protocols, with the same one sentence
   and the same table of checks. Measured numbers once there are any.
+- **The tie between them** is a release-bar check, not a shared file: a change
+  to `docs/safety.md` without a matching website commit fails the check.
 
 ## Cost
 
