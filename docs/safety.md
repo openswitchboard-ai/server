@@ -53,7 +53,7 @@ of these, and the classifier is told so.
   then deleted.
 - **Message bodies never go into logs.** Operator log lines carry ids and
   reason codes only.
-- No IP addresses beyond the load balancer's own short-lived logs.
+- IP addresses appear in the application's request logs, kept for one month.
 
 ## Who can read it
 
@@ -104,14 +104,22 @@ them.
 3. A warrant or its equivalent triggers the two-keyholder ceremony
    (`scripts/safety/export.mts`): a bundle of the named entries, decrypted,
    with a manifest and a hash over the whole.
-4. Child sexual abuse material is reported to the relevant authority without
-   waiting to be asked, as the law requires, and preserved for them.
+4. Child sexual abuse material is reported to the Australian Federal Police,
+   through the Australian Centre to Counter Child Exploitation, without
+   waiting to be asked, as the law requires, and preserved for them. Account
+   details may be given on a written request from a law-enforcement body
+   naming the law it acts under; content only on a warrant or its equivalent.
+   Where the operator reasonably believes it necessary to prevent a serious
+   threat to someone's life, health or safety, what a report or the classifier
+   surfaced may go to the police without waiting to be asked, and that is
+   recorded.
 5. Every request is a line in a transparency report: date, kind, what was
    produced, nothing identifying.
 
-Anything without lawful process, anything asking for more than the window
-holds, and anything asking for a way to read the ledger without two
-keyholders is refused.
+The operator produces what lawful process compels and nothing more, and
+contests by every lawful means any demand that would weaken the two-keyholder
+record for everyone, since the law does not permit a demand for a systemic
+weakness.
 
 ## What is not built yet
 
