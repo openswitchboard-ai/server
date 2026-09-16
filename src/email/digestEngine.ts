@@ -126,7 +126,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
           {
             count: 1,
             ordinal: Math.max(1, rank.rows[0]?.n ?? 1),
-            categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+            categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
             blind: ctx.blind,
             side: sideOf(m, accountId),
           },
@@ -172,7 +172,7 @@ export async function sendChannelWaitingNudge(
     dedupeKey: `channel-waiting:${args.channelId}:${args.recipientAccount}:${args.notifiedAt}`,
     content: renderChannelWaiting(
       {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
         blind: ctx.blind,
         side: sideOf(m, args.recipientAccount),
       },
@@ -227,7 +227,7 @@ export async function notifyYourMove(
     dedupeKey: `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
       {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category),
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
         blind: ctx.blind,
         step: 'names',
         side: sideOf(m, recipientAccount),
@@ -333,7 +333,7 @@ async function assembleDigestItems(
     );
     const nearMisses: number = nm.rows[0].n;
     if ((newOpposite ?? 0) > 0 || nearMisses > 0) {
-      items.push({ type: card.type, categoryLabel: categoryLeafLabel(card.category), newOpposite, nearMisses });
+      items.push({ type: card.type, categoryLabel: categoryLeafLabel(card.category, card.kind), newOpposite, nearMisses });
     }
   }
   return items;
@@ -409,7 +409,7 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
       if (!to) continue;
       const items: RenewalCardItem[] = cards.rows.map((c: any) => ({
         type: c.type,
-        categoryLabel: categoryLeafLabel(c.category),
+        categoryLabel: categoryLeafLabel(c.category, c.kind),
         expiresAt: new Date(c.expires_at),
         expiringSoon: !!c.expiring_soon,
       }));

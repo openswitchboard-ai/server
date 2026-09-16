@@ -537,9 +537,9 @@ export async function runMatchingForCard(
         // statement of interest, so an introduction is born with both sides
         // keen and the details open to both (see createMatch in matches.ts).
         `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
-                              limits_overlap, clears_ask_25,
+                              kind, limits_overlap, clears_ask_25,
                               stage, interest_want, interest_have)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,2,true,true)
+         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
         [
@@ -551,6 +551,9 @@ export async function runMatchingForCard(
           want.category,
           overlap,
           roomOverAsk,
+          // The word for the thing travels with the category it was filed
+          // under: the want's, so the two stay taken from one side.
+          (want as any).kind ?? null,
         ],
       );
       if (ins.rows[0]) {

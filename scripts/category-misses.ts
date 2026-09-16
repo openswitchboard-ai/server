@@ -1,7 +1,7 @@
 /**
  * What the taxonomy was asked for and did not have — the demand digest.
  *
- * Every CATEGORY_PROHIBITED refusal on the taxonomy gate parks a row (see
+ * Every posting filed under a leaf the taxonomy does not know parks a row (see
  * migrations/020_category_misses.sql and domain/categoryMisses.ts). Grouped and
  * ranked, those rows say what the next taxonomy release should contain, in the
  * words the agents actually used.
@@ -65,18 +65,20 @@ const rows = (r.records ?? []).map((row: any[]) =>
 );
 
 if (rows.length === 0) {
-  console.log(`${envName}: no category misses in the last ${days} days.`);
+  console.log(`${envName}: nothing posted without a leaf in the last ${days} days.`);
   process.exit(0);
 }
 
 // A plain fixed-width table: the point is that a person can read it.
-const header = ['requested', 'count', 'top suggestion', 'last seen'];
+// The column order is the digest statement's own (categoryMisses.ts).
+const header = ['requested', 'count', 'top suggestion', 'called it', 'last seen'];
 const body = rows
   .slice(0, limit)
-  .map(([requested, count, top, lastSeen]) => [
+  .map(([requested, count, top, kind, lastSeen]) => [
     String(requested),
     String(count),
     top === null ? '—' : String(top),
+    kind === null ? '—' : String(kind),
     String(lastSeen ?? '').slice(0, 19).replace('T', ' '),
   ]);
 const widths = header.map((h, i) =>
@@ -86,7 +88,7 @@ const line = (cells: string[]) =>
   cells.map((c, i) => (i === 1 ? c.padStart(widths[i]) : c.padEnd(widths[i]))).join('  ');
 
 const total = rows.reduce((n, [, count]) => n + Number(count), 0);
-console.log(`${envName}: ${rows.length} distinct categories missed, ${total} refusals, last ${days} days`);
+console.log(`${envName}: ${rows.length} distinct categories with no leaf, ${total} postings, last ${days} days`);
 console.log('');
 console.log(line(header));
 console.log(widths.map((w) => '-'.repeat(w)).join('  '));

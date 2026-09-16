@@ -63,6 +63,20 @@ const REASON_SENTENCES: Record<string, string> = {
     'Alcohol is held back until the rules around selling it are settled. This one cannot go back on the board for now.',
   'event-tickets':
     'Event tickets are held back until the rules around reselling them are settled. This one cannot go back on the board for now.',
+  // Prohibited by what the thing IS, whatever it was filed under. The
+  // catalogue is a deny list now, so a made-up category is no longer a way
+  // past this; these four have no path in the seed and never did, because
+  // they describe a thing rather than a place in the tree.
+  drugs:
+    'Drugs stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
+  'sexual-services':
+    'Sex sold or sought stays off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
+  'illegal-activity':
+    'This reads as something unlawful, and the switchboard carries none of that anywhere it runs. If that is a turn of phrase rather than the truth of it, say plainly what the thing is and it can go back on the board.',
+  people:
+    'A person is not a thing to be offered or asked for, so this cannot go on the board. Looking for somebody to do something WITH — a partner, a hand, company — is what the switchboard is for, so if that is what was meant, say it that way and it can go up.',
+  prohibited:
+    'This is not something the switchboard carries, whatever it was filed under. It cannot go back on the board as it stands.',
 };
 
 // True wherever it renders: the approval page shows the raw code beneath it,
@@ -95,9 +109,18 @@ export function rejectionInPlainWords(
   };
 }
 
-/** Every free-text value an author controls on the card. */
-export function collectFreeText(card: Pick<CardRow, 'attributes'>): string[] {
+/**
+ * Every free-text value an author controls on the card.
+ *
+ * `kind` leads, where the posting gave one. It is the agent's own plain words
+ * for the thing, it is the only thing on a card filed under an unknown leaf
+ * that says what the thing IS, and it is therefore both the first place a
+ * personal detail or a figure would land and the whole of what the
+ * prohibited-by-meaning check has to read.
+ */
+export function collectFreeText(card: Pick<CardRow, 'attributes'> & { kind?: string | null }): string[] {
   const out: string[] = [];
+  if (typeof card.kind === 'string' && card.kind.trim()) out.push(`kind: ${card.kind.trim()}`);
   for (const [k, v] of Object.entries(card.attributes ?? {})) {
     if (typeof v === 'string') out.push(`${k}: ${v}`);
   }
@@ -121,7 +144,10 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
     door: 'posting',
     sender_account: card.account_id,
     intent_id: card.id,
-    fields: { category: card.category },
+    fields: {
+      category: card.category,
+      ...(card.kind ? { kind: card.kind } : {}),
+    },
     text: collectFreeText(card).join('\n'),
   });
   const deciding = decidingCheck(verdict);
@@ -166,7 +192,7 @@ export async function applyVerdict(
   if (verdict.pass) {
     const { embedCard } = await import('./embeddings.js');
     const card = await getPool().query(
-      'SELECT id, category, attributes FROM cards WHERE id = $1',
+      'SELECT id, category, kind, attributes FROM cards WHERE id = $1',
       [cardId],
     );
     if (card.rows[0]) await embedCard(cfg, card.rows[0]);
