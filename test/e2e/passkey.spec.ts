@@ -44,7 +44,10 @@ test('passkey enrolment: virtual authenticator enrols during registration', asyn
   });
 
   try {
-    // Register: email -> code -> PIN -> the passkey offer.
+    // Register: email -> code -> the choice of credential -> the passkey offer.
+    // The harness has no authenticator when the choice screen renders, so the
+    // passkey half stays hidden and it takes the PIN; the offer to ADD a
+    // passkey comes straight after, and that is what this spec is about.
     await page.goto('/register');
     await page.getByLabel('Email').fill(email);
     await page.getByRole('button', { name: 'Email me a code' }).click();
@@ -57,10 +60,10 @@ test('passkey enrolment: virtual authenticator enrols during registration', asyn
     await page.getByLabel('Code').fill('606111');
     await page.getByRole('button', { name: 'Continue' }).click();
 
-    await expect(page.getByRole('heading', { name: 'Set your PIN.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'How will you approve things?' })).toBeVisible();
     await page.locator('#pin').fill(PIN);
     await page.locator('#pin2').fill(PIN);
-    await page.getByRole('button', { name: 'Set PIN' }).click();
+    await page.getByRole('button', { name: 'Set my PIN' }).click();
     await expect(page.getByRole('heading', { name: 'Add a passkey?' })).toBeVisible();
 
     // A platform authenticator that auto-approves user presence/verification.

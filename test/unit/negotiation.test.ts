@@ -811,6 +811,7 @@ describe('the pages say it in plain words', () => {
         refId: offerId(1),
         facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
         anomalies: [],
+        hasPin: true,
         hasPasskey: false,
         elevated: false,
         postPath: '/approve',
@@ -837,7 +838,7 @@ describe('the pages say it in plain words', () => {
     expect(html).not.toContain(`/matches/${MATCH}/offer`);
     expect(html).toContain('>Accept<');
     expect(html).toContain('>Not now<');
-    expect(html).toMatch(/Accept needs your PIN/);
+    expect(html).toMatch(/This takes your PIN\./);
   });
 
   it('the front page reaches a negotiation through the decision waiting on it', () => {

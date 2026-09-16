@@ -38,6 +38,7 @@ import {
   DRAFT_LINE,
   type OfferDraftView,
 } from './pages.js';
+import * as cpages from './pages.js';
 
 /**
  * A rendered figure ("415 AUD") said the way a person says it ("$415 AUD").
@@ -203,6 +204,9 @@ export interface DashboardView {
   /** One line of the standing arrangement. Absent = nothing set yet. */
   arrangementSummary?: string;
   killSwitchOn: boolean;
+  /** What a sensitive press on this page takes. Absent on the callers that
+   *  render no such press; the kill switch falls back to asking for a PIN. */
+  ceremony?: cpages.CeremonyView;
   cardCounts: { total: number; published: number; pending: number };
   pendingApprovals: PendingApprovalItem[];
   /** Cards whose clock runs out within the week, if any do. `soonest` is
@@ -257,20 +261,25 @@ export const FRONT_PAGE_LEAD =
 export const DEAL_DONE_LINE = "Sort pickup in the conversation; the switchboard's part is done.";
 
 export function dashboardPage(v: DashboardView): string {
+  // Turning everything back on is a sensitive action, so it takes whichever
+  // credential the account holds: the PIN box where there is a PIN, the
+  // passkey ceremony on the button where there is no PIN.
+  const c = v.ceremony ?? { hasPin: true, hasPasskey: false, elevated: false };
+  const backOnWord = c.hasPin && c.hasPasskey ? 'your PIN or passkey' : c.hasPin ? 'your PIN' : 'your passkey';
   const kill = v.killSwitchOn
     ? `<div class="kill">
 <h2>Everything is paused.</h2>
 <p class="small">The kill switch is ON: your wants and haves are excluded from
-matching and your agents' tokens are suspended. Turning back on needs your PIN.</p>
-<form method="POST" action="/kill/off">
-  <label for="pin">PIN</label>
-  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>
-  <button type="submit">Turn everything back on</button>
-</form></div>`
+matching and your agents' tokens are suspended. Turning back on needs ${esc(backOnWord)}.</p>
+<form method="POST" action="/kill/off" id="killOffForm">
+  ${cpages.ceremonyField(c, 'kill')}
+  ${cpages.ceremonySubmit(c, { formId: 'killOffForm', label: 'Turn everything back on' })}
+</form>
+${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
     : `<div class="kill">
 <h2>Kill switch</h2>
 <p class="small">One tap: every want and have paused, every agent token suspended,
-confirmation email sent. Un-pausing needs your PIN.</p>
+confirmation email sent. Un-pausing needs ${esc(backOnWord)}.</p>
 <form method="POST" action="/kill">
   <button type="submit" class="danger">Pause everything now</button>
 </form></div>`;
@@ -358,6 +367,7 @@ hold. Re-verify your address to switch it back on.
       : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
   }</span></a>
 <a href="/agent-keys"><span class="nav-t">Agent keys</span><span class="nav-d">Long passwords for agents that cannot sign in through a browser.</span></a>
+<a href="/security"><span class="nav-t">How you approve things</span><span class="nav-d">Your passkey, your PIN, and adding either one.</span></a>
 <a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How you hear about things, how often we may email you, and blind mode.</span></a>
 </div>`;
 
@@ -380,7 +390,8 @@ ${renewals}
 <h2>Your switchboard</h2>
 ${nav}
 ${kill}
-<form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>`);
+<form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>
+${v.killSwitchOn ? cpages.ceremonyScript(c) : ''}`);
 }
 
 export interface LedgerCardView {
@@ -644,7 +655,7 @@ ${
     : ''
 }
 <p class="small muted">Whichever way this is set, accepting an offer still
-comes to you here, with your PIN. Auto-negotiate lets your agent put figures on
+comes to you here, for you to approve. Auto-negotiate lets your agent put figures on
 the table between the two you wrote; it never agrees anything.</p>
 <a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to your ${thing}</a>`);
 }
@@ -778,7 +789,7 @@ function negotiationControl(v: MatchOffersView): string {
   <button type="submit" class="secondary">Save how it negotiates</button>
 </form>
 <p class="small muted">Accepting an offer comes to you here whichever way this
-is set, with your PIN. Auto-negotiate lets your agent put figures on the table
+is set, for you to approve. Auto-negotiate lets your agent put figures on the table
 between the two you wrote; it agrees nothing.</p>
 <script>
 (function () {
@@ -1053,13 +1064,16 @@ decision" — with all detail kept here.</p>
   <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
 </form>
+<h2>How you approve things</h2>
+<p class="small muted">Your passkey and your PIN live on their own page, where you can
+add either one. <a href="/security">Go there</a>.</p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 
 // ---------------------------------------------------------------------------
 // Agent keys (1.C). A key is a long password an agent sends with every
 // request, for the agents that cannot do a browser sign-in. Issued here by
-// hand, PIN-confirmed, shown once.
+// hand, behind the same ceremony as an approval, shown once.
 // ---------------------------------------------------------------------------
 
 export interface AgentKeyItem {
@@ -1071,10 +1085,8 @@ export interface AgentKeyItem {
   expires: string;
 }
 
-export interface AgentKeysView {
+export interface AgentKeysView extends cpages.CeremonyView {
   keys: AgentKeyItem[];
-  /** True inside a PIN or passkey ceremony's window: the form stops asking. */
-  elevated: boolean;
   atLimit: boolean;
 }
 
@@ -1094,20 +1106,17 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
         .join('')
     : `<div class="empty">You have no keys yet.</div>`;
 
-  const pinBlock = v.elevated
-    ? `<input type="hidden" name="pin" value="">`
-    : `<label for="pin">Confirm with your PIN</label>
-  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`;
-
   const createForm = v.atLimit
     ? `<p class="muted small">You are holding as many keys as we allow at once.
 Revoke one you have finished with to make room.</p>`
-    : `<form method="POST" action="/agent-keys">
+    : `<form method="POST" action="/agent-keys" id="keyForm">
   <label for="name">What is this key for?</label>
   <input id="name" name="name" type="text" maxlength="60" required placeholder="the laptop agent">
-  ${pinBlock}
-  <button type="submit">Make a key</button>
-</form>`;
+  ${cpages.ceremonyField(v, 'key')}
+  ${cpages.ceremonySubmit(v, { formId: 'keyForm', label: 'Make a key' })}
+</form>
+${cpages.ceremonyAlt(v, 'keyForm')}
+${cpages.ceremonyNote(v)}`;
 
   return layout('Agent keys', `
 <h1>Agent keys.</h1>
@@ -1124,11 +1133,12 @@ call the switchboard. A few cannot do that. Give one of those a key instead: a
 long password it sends with every request.</p>
 <p class="small">Anyone holding a key can post wants and haves and negotiate as your
 agent. It still cannot approve anything — approvals only ever happen here, on
-this page, with your PIN. Keep a key somewhere private, and revoke it the
+this page, where you confirm them yourself. Keep a key somewhere private, and revoke it the
 moment you have finished with it. Keys lapse after 90 days, and the kill switch
 stops them dead along with everything else.</p>`,
 )}
-<a class="btn secondary" href="/">Back</a>`);
+<a class="btn secondary" href="/">Back</a>
+${cpages.ceremonyScript(v)}`);
 }
 
 /** The one and only sighting of the plaintext key. */

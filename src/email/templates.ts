@@ -132,6 +132,7 @@ export const EXEMPT_TEMPLATES = new Set<string>([
   'kill-switch-off',
   'security-agent-authorized',
   'security-pin-changed',
+  'security-passkey-added',
   'security-agent-key-created',
 ]);
 
@@ -803,7 +804,11 @@ export function renderScreeningRejected(
 // ---------------------------------------------------------------------------
 // (g) Security notices.
 // ---------------------------------------------------------------------------
-export type SecurityNoticeEvent = 'agent-authorized' | 'pin-changed' | 'agent-key-created';
+export type SecurityNoticeEvent =
+  | 'agent-authorized'
+  | 'pin-changed'
+  | 'passkey-added'
+  | 'agent-key-created';
 
 export function renderSecurityNotice(
   v: { event: SecurityNoticeEvent; agentName?: string; counterUrl: string },
@@ -812,6 +817,7 @@ export function renderSecurityNotice(
   const subject = {
     'agent-authorized': 'OpenSwitchboard: a new agent was authorised',
     'pin-changed': 'OpenSwitchboard: your PIN was changed',
+    'passkey-added': 'OpenSwitchboard: a passkey was added',
     'agent-key-created': 'OpenSwitchboard: a new agent key was created',
   }[v.event];
   // Blind mode is the caller's job here: it strips agentName, and the copy
@@ -821,11 +827,13 @@ export function renderSecurityNotice(
   const line = {
     'agent-authorized': `A new agent${namedHtml} was just authorised to use your account.`,
     'pin-changed': 'The PIN on your account was just changed.',
+    'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new agent key${namedHtml} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
   }[v.event];
   const textLine = {
     'agent-authorized': `A new agent${namedText} was just authorised to use your account.`,
     'pin-changed': 'The PIN on your account was just changed.',
+    'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new agent key${namedText} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
   }[v.event];
   // A security notice is one of the three exemptions: it goes out whatever
