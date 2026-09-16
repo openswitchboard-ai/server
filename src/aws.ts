@@ -4,6 +4,7 @@ import { SQSClient } from '@aws-sdk/client-sqs';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { SESv2Client } from '@aws-sdk/client-sesv2';
+import { RekognitionClient } from '@aws-sdk/client-rekognition';
 import { fromTemporaryCredentials } from '@aws-sdk/credential-providers';
 
 const region = process.env.AWS_REGION ?? 'us-east-1';
@@ -13,6 +14,10 @@ export const s3 = new S3Client({ region });
 export const sqs = new SQSClient({ region });
 export const secretsManager = new SecretsManagerClient({ region });
 export const bedrock = new BedrockRuntimeClient({ region });
+// The one machine that looks at a photo before it is delivered
+// (intake/checks/photoModeration.ts). It reads the object out of the photo
+// bucket itself, by reference, so no image ever passes through this process.
+export const rekognition = new RekognitionClient({ region });
 // SES may not be in the app's region: prod sends from us-west-2, where this
 // account's production access was granted, with its own credentials. A role
 // ARN means the borrowed path (infra/host-ses), where the call has to be the

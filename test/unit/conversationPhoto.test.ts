@@ -49,13 +49,17 @@ vi.mock('@aws-sdk/s3-request-presigner', () => ({
 
 import * as db from '../../src/db.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
-import { s3 } from '../../src/aws.js';
+import { rekognition, s3 } from '../../src/aws.js';
 import * as photo from '../../src/domain/channelPhoto.js';
 import * as channel from '../../src/domain/channel.js';
 import { photoLink } from '../../src/domain/humanLinks.js';
 import { TOOLS } from '../../src/mcp/tools.js';
 import { photoPage } from '../../src/counter/pages.js';
 import { OsbError } from '../../src/protocol.js';
+import {
+  PHOTO_BEING_LOOKED_AT,
+  PHOTO_REFUSED,
+} from '../../src/intake/checks/photoModeration.js';
 import type { Config } from '../../src/config.js';
 
 /** Every URL the presigner was asked to sign, in order. */
@@ -184,7 +188,7 @@ function run(sql: string, params: any[] = []) {
     world.photos.push(row);
     return rows([{ id: row.id }]);
   }
-  if (/SELECT id, s3_key, channel_id FROM conversation_photos/.test(sql)) {
+  if (/SELECT id, s3_key, channel_id, content_type FROM conversation_photos/.test(sql)) {
     return rows(
       world.photos
         .filter(
@@ -194,7 +198,12 @@ function run(sql: string, params: any[] = []) {
             p.match_id === params[2] &&
             !p.sent_at,
         )
-        .map((p) => ({ id: p.id, s3_key: p.s3_key, channel_id: p.channel_id })),
+        .map((p) => ({
+          id: p.id,
+          s3_key: p.s3_key,
+          channel_id: p.channel_id,
+          content_type: p.content_type,
+        })),
     );
   }
   if (/UPDATE conversation_photos SET sent_at/.test(sql)) {
@@ -292,6 +301,11 @@ beforeEach(async () => {
     if (kind === 'HeadObjectCommand') {
       if (!world.objects.has(command.input.Key)) throw new Error('NotFound');
       return { ContentLength: 2_000_000 } as any;
+    }
+    if (kind === 'DeleteObjectCommand') {
+      world.objects.delete(command.input.Key);
+      world.deleted.push(command.input.Key);
+      return {} as any;
     }
     if (kind === 'DeleteObjectsCommand') {
       for (const o of command.input.Delete.Objects) {
@@ -728,5 +742,79 @@ describe('the page the human is handed', () => {
 
   it('cannot be pressed until a photo has actually landed', () => {
     expect(page()).toContain('id="sendBtn" disabled');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The picture is looked at before it is delivered (docs/trust-and-safety.md)
+// ---------------------------------------------------------------------------
+describe('the send press puts the photo through the pipe', () => {
+  /** The same deployment, with the look switched on as PHOTO_BUCKET switches it on. */
+  const looking = { ...(cfg as any), photoModeration: true } as unknown as Config;
+  let labels: any[];
+  let rekogThrows: Error | undefined;
+  let askedAbout: any[];
+
+  beforeEach(() => {
+    labels = [];
+    rekogThrows = undefined;
+    askedAbout = [];
+    vi.spyOn(rekognition, 'send').mockImplementation(async (command: any) => {
+      askedAbout.push(command.input);
+      if (rekogThrows) throw rekogThrows;
+      return { ModerationLabels: labels } as any;
+    });
+  });
+
+  /** Presign and land the bytes, without pressing send. */
+  async function uploaded() {
+    const p = await photo.presignPhotoUpload(looking, ANA, MATCH, jpeg());
+    world.objects.add(p.key);
+    return p;
+  }
+
+  it('asks about the object that landed, by bucket and key, and lets a clean photo go', async () => {
+    const p = await uploaded();
+    await photo.markPhotoSent(looking, ANA, MATCH, p.photo_id);
+    expect(askedAbout).toHaveLength(1);
+    expect(askedAbout[0].Image.S3Object).toEqual({
+      Bucket: cfg.photoBucket,
+      Name: p.key,
+    });
+    expect(world.photos[0].sent_at).not.toBeNull();
+  });
+
+  it('sends a sexual photo back, deletes the bytes, and never marks it sent', async () => {
+    const p = await uploaded();
+    labels = [{ Name: 'Explicit', ParentName: '', TaxonomyLevel: 1, Confidence: 97 }];
+    await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+      message: PHOTO_REFUSED,
+      validation: true,
+    });
+    expect(world.deleted).toContain(p.key);
+    expect(world.objects.has(p.key)).toBe(false);
+    expect(world.photos[0].sent_at).toBeNull();
+    // Nothing is waiting for the other side, because nothing went.
+    expect(await photo.collectPhotos(looking, BEPPE, MATCH, CHANNEL)).toEqual([]);
+  });
+
+  it('holds when the look could not be made: not delivered, not deleted', async () => {
+    const p = await uploaded();
+    rekogThrows = new Error('rekognition unreachable');
+    await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+      message: PHOTO_BEING_LOOKED_AT,
+      validation: true,
+    });
+    expect(world.deleted).not.toContain(p.key);
+    expect(world.objects.has(p.key)).toBe(true);
+    expect(world.photos[0].sent_at).toBeNull();
+    expect(await photo.collectPhotos(looking, BEPPE, MATCH, CHANNEL)).toEqual([]);
+  });
+
+  it('asks nothing of the service where photos are on but the look is off', async () => {
+    const p = await photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg());
+    world.objects.add(p.key);
+    await photo.markPhotoSent(cfg, ANA, MATCH, p.photo_id);
+    expect(askedAbout).toEqual([]);
   });
 });
