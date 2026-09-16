@@ -121,7 +121,12 @@ describe('only the checks that stand at this door run', () => {
       'modelScreen',
     ]);
     expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual(['moneyFigure']);
-    expect(checksForDoor('photo', CHECKS).map((c) => c.name)).toEqual(['photoMetadata']);
+    // The metadata gate answers at presign; the look at the picture answers at
+    // the send press. Both stand at the photo door, in that order.
+    expect(checksForDoor('photo', CHECKS).map((c) => c.name)).toEqual([
+      'photoMetadata',
+      'photoModeration',
+    ]);
   });
 });
 
