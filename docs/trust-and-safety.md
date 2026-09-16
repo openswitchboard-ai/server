@@ -168,15 +168,43 @@ the window.
 3. A **warrant or equivalent** triggers the two-keyholder ceremony. The export
    is a bundle: the entries, decrypted, with a manifest and a hash over the
    whole, signed by both keyholders.
-4. Anything the CSAM check matched is reported to the Australian Centre to
-   Counter Child Exploitation without waiting to be asked, as the law
-   requires, and the material is preserved for them.
+4. Anything the sexual-content check quarantined, or the CSAM check matched,
+   is assessed and, where it is child abuse material, reported to the
+   Australian Federal Police through the Australian Centre to Counter Child
+   Exploitation without waiting to be asked (Criminal Code s 474.25), and the
+   material is preserved for them; nothing is deleted before that decision.
 5. Every request is a line in the transparency report: date, kind, what was
    produced, nothing identifying.
 
-**What we say no to.** Anything without lawful process; anything asking for
-more than the window holds; anything asking us to build a way to read the
-ledger without two keyholders.
+**Two kinds of request, two standards.** Message and photo content is a stored
+communication under the Telecommunications (Interception and Access) Act: it is
+produced on a warrant or its equivalent, never on a request. Account details
+(email, area, when an account was opened) may be given to a law-enforcement
+body on a written request on its letterhead naming the law it acts under
+(APP 6.2(e)); we are permitted to answer such a request, never compelled, and
+every one is logged and counted.
+
+**On our own initiative.** Where we reasonably believe it necessary to prevent
+a serious threat to someone's life, health or safety, or to report a serious
+crime (APP 6.2), we may take what the classifier or a report has surfaced to
+the police or to the eSafety Commissioner without waiting to be asked, and we
+record that we did.
+
+**What we contest.** We produce what lawful process compels and nothing more.
+Under the Assistance and Access Act a technical assistance or capability
+notice is lawful process and cannot simply be refused; but the same Act
+forbids a demand for a systemic weakness, and a record no single key can open
+is the argument that any such demand is one. We contest it by every lawful
+means rather than promising to refuse it.
+
+**Clocks.** An eSafety removal notice runs 24 hours; a BOSE reporting notice
+sets its own deadline. `safety@openswitchboard.ai` is the address on file and
+is monitored daily; the operator is the responder and names a fallback before
+any absence longer than a day.
+
+**Transparency report.** Published each year, the first twelve months after
+launch, or sooner if a request arrives: date, kind, what was produced, nothing
+identifying.
 
 ## Plaintext, and being honest about it
 
@@ -261,4 +289,5 @@ first month of launch.
   overseas users change it.
 - Whether the two-keyholder ceremony satisfies a warrant's timing
   requirements, and who the second keyholder should be.
-- Whether refusing to hold IP addresses is defensible or a gap.
+- IP addresses do sit in the application logs for one month (Fastify request
+  logs); the public pages now say so.
