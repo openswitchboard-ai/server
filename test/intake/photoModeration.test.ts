@@ -8,7 +8,11 @@
  *  - EVERY LABEL ON THE LIST REFUSES, one test per label, with the same plain
  *    sentence and the same reason code each time — and a label that is only the
  *    PARENT of what came back refuses too.
- *  - A REFUSED OBJECT IS DELETED, in the same breath as the refusal.
+ *  - A REFUSED OBJECT IS DELETED, in the same breath as the refusal — unless
+ *    the label that refused it was a SEXUAL one, in which case it is COPIED to
+ *    the quarantine prefix first, the original deleted after, and a row
+ *    written: s 474.25 says what must be referred must still exist. A copy that
+ *    fails leaves the original alone and says so.
  *  - AN ERROR IS A HOLD. Never a pass, never a refusal: the photo stays, the
  *    sender is told, and nothing is thrown away on a call that did not come back.
  *  - THE DOORS IT DOES NOT STAND AT: no bucket in this deployment, and the
@@ -17,10 +21,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { rekognition, s3 } from '../../src/aws.js';
+import * as db from '../../src/db.js';
 import {
+  OTHER_REFUSED_LABELS,
   PHOTO_BEING_LOOKED_AT,
   PHOTO_REFUSED,
   REFUSED_MODERATION_LABELS,
+  SEXUAL_LABELS,
   MIN_CONFIDENCE,
   photoModeration,
 } from '../../src/intake/checks/photoModeration.js';
@@ -37,6 +44,12 @@ let answer: { labels?: any[]; throws?: Error };
 /** Every Rekognition call, and every key S3 was asked to delete. */
 let asked: any[];
 let deleted: string[];
+/** Every copy S3 was asked to make, and whether the next one is to fail. */
+let copied: Array<{ from: string; to: string }>;
+let copyThrows: Error | undefined;
+/** Every row the quarantine table was asked to take, and every operator line. */
+let rows: unknown[][];
+let logged: string[];
 
 const item = (over: Partial<IntakeItem> = {}): IntakeItem => ({
   door: 'photo',
@@ -51,6 +64,11 @@ beforeEach(() => {
   answer = { labels: [] };
   asked = [];
   deleted = [];
+  copied = [];
+  copyThrows = undefined;
+  rows = [];
+  logged = [];
+  vi.spyOn(console, 'log').mockImplementation((line: string) => void logged.push(String(line)));
   vi.spyOn(rekognition, 'send').mockImplementation(async (command: any) => {
     asked.push(command.input);
     if (answer.throws) throw answer.throws;
@@ -58,8 +76,18 @@ beforeEach(() => {
   });
   vi.spyOn(s3, 'send').mockImplementation(async (command: any) => {
     if (command.constructor.name === 'DeleteObjectCommand') deleted.push(command.input.Key);
+    if (command.constructor.name === 'CopyObjectCommand') {
+      if (copyThrows) throw copyThrows;
+      copied.push({ from: command.input.CopySource, to: command.input.Key });
+    }
     return {} as any;
   });
+  vi.spyOn(db, 'getPool').mockReturnValue({
+    query: async (_sql: string, params: unknown[] = []) => {
+      rows.push(params);
+      return { rows: [], rowCount: 1 };
+    },
+  } as any);
 });
 
 describe('a photo nothing was found in', () => {
@@ -108,13 +136,124 @@ describe('every label on the list sends the photo back', () => {
     expect((await photoModeration.run(item(), cfg)).outcome).toBe('refuse');
   });
 
-  it('deletes the object it refused, and keeps nothing but the reason code', async () => {
+  it('deletes the object it refused for a non-sexual label, as it always did', async () => {
+    answer = { labels: [{ Name: 'Hate Symbols', ParentName: '', TaxonomyLevel: 1 }] };
+    const r = await photoModeration.run(item(), cfg);
+    expect(copied).toEqual([]);
+    expect(deleted).toEqual([KEY]);
+    expect(rows).toEqual([]);
+    // Nothing about the picture travels back with the refusal: no label, no key.
+    expect(JSON.stringify(r)).not.toMatch(/Hate|abc\.jpg/);
+    expect(r.detail).toBeUndefined();
+  });
+
+  it('keeps nothing but the reason code on a sexual label either', async () => {
     answer = { labels: [{ Name: 'Explicit', ParentName: '', TaxonomyLevel: 1 }] };
     const r = await photoModeration.run(item(), cfg);
-    expect(deleted).toEqual([KEY]);
-    // Nothing about the picture travels back with the refusal: no label, no key.
-    expect(JSON.stringify(r)).not.toMatch(/Explicit|abc\.jpg/);
+    expect(r.plain_words).toBe(PHOTO_REFUSED);
+    expect(JSON.stringify(r)).not.toMatch(/Explicit|abc\.jpg|quarantine/i);
     expect(r.detail).toBeUndefined();
+  });
+
+  it('every non-sexual label deletes, and every sexual one does not', async () => {
+    for (const label of OTHER_REFUSED_LABELS) {
+      copied = [];
+      deleted = [];
+      answer = { labels: [{ Name: label, TaxonomyLevel: 1 }] };
+      await photoModeration.run(item(), cfg);
+      expect(copied, label).toEqual([]);
+      expect(deleted, label).toEqual([KEY]);
+    }
+    for (const label of SEXUAL_LABELS) {
+      copied = [];
+      deleted = [];
+      answer = { labels: [{ Name: label, TaxonomyLevel: 1 }] };
+      await photoModeration.run(item(), cfg);
+      expect(copied, label).toHaveLength(1);
+      // The original still goes — it goes AFTER the copy, not instead of it.
+      expect(deleted, label).toEqual([KEY]);
+    }
+  });
+
+  it('the two halves are the whole list, and nothing is in both', () => {
+    expect([...SEXUAL_LABELS, ...OTHER_REFUSED_LABELS]).toEqual([...REFUSED_MODERATION_LABELS]);
+    expect(SEXUAL_LABELS.filter((l) => OTHER_REFUSED_LABELS.includes(l))).toEqual([]);
+  });
+});
+
+/**
+ * THE POINT OF THE WHOLE CHANGE. Rekognition cannot tell an adult from a child,
+ * and s 474.25 says a host that becomes aware of child abuse material must refer
+ * it to the AFP. A delete on sight destroys what must be referred.
+ */
+describe('a photo refused for something sexual is held, not destroyed', () => {
+  beforeEach(() => {
+    answer = { labels: [{ Name: 'Explicit', ParentName: '', TaxonomyLevel: 1, Confidence: 99 }] };
+  });
+
+  it('copies to the quarantine prefix first, then deletes the original', async () => {
+    const r = await photoModeration.run(item(), cfg);
+    expect(r.outcome).toBe('refuse');
+    expect(copied).toEqual([
+      { from: `${BUCKET}/${KEY}`, to: 'conversation-photos/quarantine/m-1/abc.jpg' },
+    ]);
+    expect(deleted).toEqual([KEY]);
+  });
+
+  it('writes a row saying where the bytes went and which labels fired', async () => {
+    await photoModeration.run(item(), cfg);
+    expect(rows).toHaveLength(1);
+    const params = rows[0];
+    expect(params).toContain(BUCKET);
+    expect(params).toContain('conversation-photos/quarantine/m-1/abc.jpg');
+    expect(params).toContainEqual(['Explicit']);
+    expect(params).toContain('90');
+  });
+
+  it('gives the operator two ids and nothing about the picture', async () => {
+    await photoModeration.run(item(), cfg);
+    const line = logged.find((l) => l.includes('photo-quarantined'));
+    expect(line).toBeTruthy();
+    const parsed = JSON.parse(line!);
+    expect(parsed.event).toBe('photo-quarantined');
+    expect(parsed.match_id).toBe('m-1');
+    expect(typeof parsed.quarantine_id).toBe('string');
+    expect(Object.keys(parsed).sort()).toEqual(['event', 'match_id', 'quarantine_id']);
+    expect(logged.join('\n')).not.toMatch(/abc\.jpg|Explicit/);
+  });
+
+  it('refuses a finer sexual label through its parent, and holds that too', async () => {
+    answer = {
+      labels: [
+        { Name: 'Exposed Male Genitalia', ParentName: 'Explicit', TaxonomyLevel: 2, Confidence: 88 },
+      ],
+    };
+    await photoModeration.run(item(), cfg);
+    expect(copied).toHaveLength(1);
+    // The row carries the list's own name, not the finer one Rekognition used.
+    expect(rows[0]).toContainEqual(['Explicit']);
+  });
+
+  it('NEVER deletes what it could not copy', async () => {
+    copyThrows = new Error('AccessDenied');
+    const r = await photoModeration.run(item(), cfg);
+    expect(r.outcome).toBe('refuse');
+    expect(r.plain_words).toBe(PHOTO_REFUSED);
+    // The original is exactly where it was, and no row claims otherwise.
+    expect(deleted).toEqual([]);
+    expect(rows).toEqual([]);
+    const line = logged.find((l) => l.includes('photo-quarantine-failed'));
+    expect(JSON.parse(line!)).toEqual({ event: 'photo-quarantine-failed', match_id: 'm-1' });
+  });
+
+  it('a database that will not take the row still leaves the bytes held', async () => {
+    vi.spyOn(db, 'getPool').mockImplementation(() => {
+      throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
+    });
+    const r = await photoModeration.run(item(), cfg);
+    expect(r.outcome).toBe('refuse');
+    expect(copied).toHaveLength(1);
+    expect(logged.join('\n')).toContain('photo-quarantine-row-failed');
   });
 });
 
