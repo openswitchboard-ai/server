@@ -937,9 +937,10 @@ ${v.maxMb} MB.</p>
 <p class="small muted">This page takes the hidden details out of the file before it leaves your
 device: where the photo was taken, when it was taken, the phone that took it, and the small
 preview tucked inside it. The picture itself is kept, the right way up.</p>
-<p class="small muted">Nothing here opens the picture. The cleaning happens on your own device
-and the file goes straight from there to the store, so no machine at the switchboard reads what
-is in the frame and no person at the switchboard sees it. What is in shot crosses as it is, so a
+<p class="small muted">The cleaning happens on your own device and the file goes straight from
+there to the store. Before it is sent on, a machine at the switchboard checks the picture once for
+anything sexual, violent or otherwise not allowed here, and a photo that fails that check is deleted
+and never shown. No person at the switchboard looks at it. What is in shot crosses as it is, so a
 face, a number plate or a house in the background is a thing you are choosing to show this one
 person. A browser that cannot do the cleaning is refused, and nothing is uploaded.</p>
 <noscript><p class="small muted">This page needs scripts switched on. The cleaning happens here
