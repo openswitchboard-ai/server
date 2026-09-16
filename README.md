@@ -167,11 +167,12 @@ stops short of the decisions and the money, and the stopping is structural.
 
 The one human-facing surface, served from its own hostname
 (`my.openswitchboard.ai`; same service, host separation enforced in-app):
-registration (email code → PIN → optional passkey → 18+ and consent, WORM-logged),
+registration (email code → a passkey or a PIN, the person's pick → 18+ and consent,
+WORM-logged),
 login (email code or passkey), approval pages for stage-3 disclosure and offer
 acceptance, the ledger (edit re-screens, withdraw is immediate), the kill switch
 (one tap pauses every want and have and suspends every agent token; un-pausing needs login
-plus PIN), and the blind-mode toggle.
+plus the account's own ceremony), and the blind-mode toggle.
 
 Isolation between the agent path and the human path is structural and tested in
 both directions. Every human-page route sits behind a guard that hard-403s any
@@ -179,7 +180,9 @@ request carrying an `Authorization` header, so an MCP bearer token is useless
 there. Human auth is a host-only `osb_counter` session cookie (HttpOnly, Secure,
 SameSite=Lax) that `/mcp` never reads. The PIN (argon2id at rest, five tries then
 lockout with backoff) and passkeys (WebAuthn, RP ID = the human host) never
-transit the agent path.
+transit the agent path. Either one holds an account on its own: an account can
+carry a passkey and no PIN, and every page that asks for a sensitive-action
+ceremony asks for whichever one the account holds (`src/counter/credentials.ts`).
 
 Approval links are single-use, 15-minute-TTL, HMAC-signed and bound to
 `{account, action, amount, counterparty}`. The database stores only the token hash.

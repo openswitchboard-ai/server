@@ -245,6 +245,11 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       content: renderSecurityNotice({ event: 'pin-changed', counterUrl: `${COUNTER}/` }, links),
     },
     {
+      name: 'security-passkey-added',
+      blind: false,
+      content: renderSecurityNotice({ event: 'passkey-added', counterUrl: `${COUNTER}/` }, links),
+    },
+    {
       name: 'security-agent-key-created',
       blind: false,
       content: renderSecurityNotice(

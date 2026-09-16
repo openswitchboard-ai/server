@@ -105,6 +105,7 @@ import * as links from './links.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
+import * as creds from './credentials.js';
 import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
 import type { Config } from '../config.js';
 
@@ -227,18 +228,34 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return s as Session;
     };
 
+    /**
+     * What this account holds, read off the database. The RULES that follow
+     * from it — what a ceremony may ask for, whether one is needed, where a
+     * signed-in person belongs next — live in credentials.ts, which knows
+     * nothing about sessions or SQL and is where they are tested.
+     */
+    const credentialsOf = async (accountId: string, a?: any): Promise<creds.CredentialState> => {
+      const acct = a ?? (await getAccount(accountId));
+      return { hasPin: !!acct?.pin_hash, hasPasskey: await wa.accountHasPasskey(accountId) };
+    };
+
+    /** What every page that asks for a sensitive-action ceremony has to render. */
+    const ceremonyFor = async (
+      accountId: string,
+      elevated: boolean,
+      a?: any,
+    ): Promise<pages.CeremonyView> => ({ ...(await credentialsOf(accountId, a)), elevated });
+
+    /** True once this account can approve something: either credential does. */
+    const holdsCredential = async (accountId: string, a?: any): Promise<boolean> =>
+      creds.holdsCredential(await credentialsOf(accountId, a));
+
     const nextStep = async (accountId: string, s: Session): Promise<string> => {
       const a: any = await getAccount(accountId);
       if (!a) return '/login';
-      if (!a.pin_hash) return '/pin';
-      if (a.status === 'pending') return '/consent';
-      // One page, once, after the PIN and before any agent is authorised: how
-      // this person will hear about things, and what they would share. Every
-      // account that existed before the step did carries a stamp already (see
-      // migrations/027), so nobody is sent back through it.
-      if (!a.onboarded_at) return '/hello';
-      if (s.oauthCtx) return '/authorize';
-      return '/';
+      return creds.nextStepFor(a, await credentialsOf(accountId, a), {
+        hasOauthCtx: !!s.oauthCtx,
+      });
     };
 
     // ------------------------------------------------------------------
@@ -272,7 +289,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a) return html(reply, pages.landingPage());
       // The onboarding question sits between the PIN and everything else, so
       // the front page sends a first-time person there before it renders.
-      if (!a.pin_hash || a.status === 'pending' || !a.onboarded_at) {
+      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending' || !a.onboarded_at) {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       // What this page asks for is what it is going to show: the gates. The
@@ -376,6 +393,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             return `${head.k.toLowerCase()} — ${head.v}${rest ? ` (and ${rest} more)` : ''}`;
           })(),
           killSwitchOn: !!a.kill_switch_at,
+          // Turning the kill switch back off is the one sensitive press on
+          // this page, so it asks for whichever credential this account holds.
+          ceremony: await ceremonyFor(s.accountId, sess.isElevated(s), a),
           cardCounts: counts.rows[0],
           ...(lapsingSoon
             ? {
@@ -406,7 +426,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // ------------------------------------------------------------------
-    // Registration: email -> code -> PIN -> optional passkey -> consent.
+    // Registration: email -> code -> a passkey OR a PIN -> consent.
+    //
+    // The choice screen (/secure) replaced the step that demanded a PIN on
+    // 2026-09-16. Taking the passkey finishes registration with no PIN on the
+    // account; taking the PIN is what always happened, and the passkey offer
+    // still follows it.
     // ------------------------------------------------------------------
     counter.get('/register', async (_req, reply) => {
       if (cfg.registrationMode === 'closed') {
@@ -506,6 +531,18 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       } else {
         s = (await sess.createSession(reply, account.id)) as Session;
       }
+      // An account with NO PIN holds a passkey, and a person can be standing
+      // at a device that has never seen it. The emailed code is that account's
+      // whole recovery already, so here it is also the sensitive-action
+      // ceremony: without this the person signs in and then dead-ends at a
+      // page asking for a passkey the device cannot produce. An account WITH a
+      // PIN keeps the old rule — a code signs you in and the PIN approves —
+      // because that account has a second credential to be asked for.
+      const acct: any = await getAccount(account.id);
+      if (!acct?.pin_hash) {
+        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+        s = { ...s, pinOkUntil: new Date(Date.now() + PIN_ELEVATION_MINUTES * 60_000) } as Session;
+      }
       return reply.redirect(await nextStep(account.id, s), 303);
     };
 
@@ -523,12 +560,114 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // ------------------------------------------------------------------
-    // PIN.
+    // How you approve things: the choice at registration, and the two doors
+    // for adding or changing either credential afterwards.
+    //
+    // Once an account holds ANY credential, fitting it another one takes a
+    // fresh ceremony of what it holds now — so a borrowed session cannot
+    // quietly enrol its own passkey or set its own PIN. Setting a PIN and
+    // enrolling a passkey both elevate the session themselves, which is what
+    // lets a person walk straight from one to the other.
     // ------------------------------------------------------------------
+    counter.get('/secure', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (await holdsCredential(s.accountId!)) {
+        return reply.redirect(await nextStep(s.accountId!, s), 303);
+      }
+      return html(reply, pages.credentialChoicePage());
+    });
+
+    /** The gate in front of changing how you approve things. */
+    const freshCeremonyOr = async (
+      reply: FastifyReply,
+      s: Session,
+      next: string,
+    ): Promise<boolean> => {
+      const c = await ceremonyFor(s.accountId!, sess.isElevated(s));
+      if (!creds.needsFreshCeremony(c, c.elevated)) return true;
+      void html(reply, pages.confirmItsYouPage(c, next));
+      return false;
+    };
+
+    counter.get('/security', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const a: any = await getAccount(s.accountId!);
+      return html(
+        reply,
+        pages.securityPage({
+          hasPin: !!a?.pin_hash,
+          passkeyCount: (await wa.listCredentials(s.accountId!)).length,
+        }),
+      );
+    });
+
+    /** The ceremony in front of /pin and /passkey, and nothing else. */
+    const CONFIRM_TARGETS = new Set(['/pin', '/passkey']);
+
+    counter.post('/confirm', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const b: any = req.body ?? {};
+      const next = CONFIRM_TARGETS.has(String(b.next ?? '')) ? String(b.next) : '/security';
+      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
+      if (!okNow) return;
+      return reply.redirect(next, 303);
+    });
+
+    /**
+     * The way through on a device that holds neither the passkey nor a PIN:
+     * the same emailed code that signs a person in. It is the account's own
+     * recovery either way, so on an account with no PIN it also stands as the
+     * sensitive-action ceremony — see finishVerification.
+     */
+    counter.post('/confirm/code', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const email = await ops.accountEmail(s.accountId!, 'sign-in-code');
+      if (!email) {
+        return html(
+          reply,
+          pages.messagePage('No address on file', '<p>There is no email address on this account.</p>'),
+          409,
+        );
+      }
+      if (await verificationRateLimited(email)) {
+        return html(
+          reply,
+          pages.messagePage('Too many codes', '<p>Too many codes have gone out for this account. Wait a few minutes.</p>'),
+          429,
+        );
+      }
+      const v = await createVerification(cfg, email, 'login');
+      const note = await sendCodeOrNote(req, email, v, 'login');
+      return html(
+        reply,
+        pages.codeEntryPage({ verificationId: v.id, action: '/verify', heading: 'Check your email.', error: note }),
+      );
+    });
+
+    counter.get('/confirm/code', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      return html(
+        reply,
+        pages.messagePage(
+          'Have a code emailed to you',
+          `<p>We will email a six-digit code to the address on this account. Entering it signs you
+in on this device and lets you approve what is waiting.</p>
+<form method="POST" action="/confirm/code"><button type="submit">Email me a code</button></form>`,
+        ),
+      );
+    });
+
     counter.get('/pin', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      return html(reply, pages.pinSetPage());
+      if (!(await freshCeremonyOr(reply, s, '/pin'))) return;
+      const a: any = await getAccount(s.accountId!);
+      return html(reply, pages.pinSetPage(undefined, { hasPin: !!a?.pin_hash }));
     });
 
     counter.post('/pin/set', async (req, reply) => {
@@ -536,32 +675,34 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       const b: any = req.body ?? {};
       const pin = String(b.pin ?? '');
-      if (!pinFormatOk(pin)) {
-        return html(reply, pages.pinSetPage('The PIN must be 6 to 12 digits.'), 400);
-      }
-      if (pin !== String(b.pin2 ?? '')) {
-        return html(reply, pages.pinSetPage('The two entries did not match.'), 400);
-      }
       const a: any = await getAccount(s.accountId!);
-      if (a?.pin_hash && !sess.isElevated(s)) {
-        // Changing an existing PIN needs a fresh PIN/passkey ceremony first.
-        return html(
+      const setUp = await holdsCredential(s.accountId!, a);
+      // The choice screen carries this same form, so a refusal has to come
+      // back on the page the person is actually looking at.
+      const refuse = (msg: string) =>
+        html(
           reply,
-          pages.messagePage(
-            'Confirm it is you',
-            '<p>To change your PIN, approve with your current PIN or passkey first.</p>',
-          ),
-          403,
+          setUp ? pages.pinSetPage(msg, { hasPin: !!a?.pin_hash }) : pages.credentialChoicePage(msg),
+          400,
         );
+      if (!pinFormatOk(pin)) return refuse('The PIN must be 6 to 12 digits.');
+      if (pin !== String(b.pin2 ?? '')) return refuse('The two entries did not match.');
+      if (creds.needsFreshCeremony({ hasPin: !!a?.pin_hash, hasPasskey: await wa.accountHasPasskey(s.accountId!) }, sess.isElevated(s))) {
+        // Adding or changing a PIN on an account that already holds something
+        // needs a fresh ceremony of whatever it holds now.
+        return html(reply, pages.confirmItsYouPage(await ceremonyFor(s.accountId!, sess.isElevated(s), a), '/pin'), 403);
       }
       await ops.setAccountPin(s.accountId!, await hashPin(pin));
+      // Setting a PIN is itself a ceremony: the person just proved it twice.
+      // That is what lets them go straight on to add a passkey.
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
       if (a?.pin_hash) {
         // 0.E security notice: an EXISTING PIN was just changed.
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
         if (email) await notifyBestEffort(req, 'pin-changed', () => sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed'));
       }
       if (a?.status === 'pending') return reply.redirect('/passkey', 303);
-      return reply.redirect('/', 303);
+      return reply.redirect('/security', 303);
     });
 
     // ------------------------------------------------------------------
@@ -570,12 +711,25 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     counter.get('/passkey', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      return html(reply, pages.passkeyOfferPage());
+      if (!(await freshCeremonyOr(reply, s, '/passkey'))) return;
+      const a: any = await getAccount(s.accountId!);
+      return html(
+        reply,
+        pages.passkeyOfferPage({
+          hasPasskey: await wa.accountHasPasskey(s.accountId!),
+          skipLabel: a?.status === 'pending' ? 'Skip for now' : 'Back',
+        }),
+      );
     });
 
     counter.post('/passkey/options', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
+      // Fitting a second key to an account that already holds one is a
+      // sensitive action, so it takes the ceremony the account can do now.
+      if (creds.needsFreshCeremony(await credentialsOf(s.accountId!), sess.isElevated(s))) {
+        return reply.code(403).send({ error: 'ceremony_required' });
+      }
       const options = await wa.registrationOptions(cfg, s.accountId!, 'OpenSwitchboard account');
       await sess.setWebauthnChallenge(s.id, options.challenge);
       return reply.send(options);
@@ -586,14 +740,28 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       const challenge = await sess.takeWebauthnChallenge(s.id);
       if (!challenge) return reply.code(400).send({ error: 'no_pending_challenge' });
+      const had = await holdsCredential(s.accountId!);
       await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
-      return reply.send({ ok: true });
+      // A successful passkey ceremony is a sensitive-action ceremony, and
+      // enrolling one is a ceremony too: the device just checked the person.
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+      if (had) {
+        const email = await ops.accountEmail(s.accountId!, 'security-notice');
+        if (email) {
+          await notifyBestEffort(req, 'passkey-added', () =>
+            sendSecurityNoticeEmail(cfg, email, s.accountId!, 'passkey-added'),
+          );
+        }
+      }
+      // The passkey a person picked at the choice screen is the whole of their
+      // credential, so registration carries straight on from here.
+      return reply.send({ ok: true, next: await nextStep(s.accountId!, s) });
     });
 
     counter.post('/passkey/skip', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      return reply.redirect('/consent', 303);
+      return reply.redirect(await nextStep(s.accountId!, s), 303);
     });
 
     // ------------------------------------------------------------------
@@ -615,7 +783,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(reply, pages.consentPage('Both statements are required to open the account.'), 400);
       }
       const a: any = await getAccount(s.accountId!);
-      if (!a?.pin_hash) return reply.redirect('/pin', 303);
+      if (!(await holdsCredential(s.accountId!, a))) return reply.redirect('/secure', 303);
       if (a.status === 'pending') {
         await ops.activateAccountWithConsent(s.accountId!, pages.CONSENT_STATEMENT);
       }
@@ -647,7 +815,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const a: any = await getAccount(s.accountId!);
-      if (!a?.pin_hash || a.status === 'pending' || a.onboarded_at) {
+      if (!(await holdsCredential(s.accountId!, a)) || a.status === 'pending' || a.onboarded_at) {
         return reply.redirect(await nextStep(s.accountId!, s), 303);
       }
       return html(reply, home.helloPage(await helloView(s.accountId!)));
@@ -657,7 +825,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const a: any = await getAccount(s.accountId!);
-      if (!a?.pin_hash || a.status === 'pending') {
+      if (!(await holdsCredential(s.accountId!, a)) || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId!, s), 303);
       }
       const b: any = req.body ?? {};
@@ -760,14 +928,30 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     });
 
     // ------------------------------------------------------------------
-    // PIN ceremony endpoint (elevation for sensitive actions).
+    // The sensitive-action ceremony (elevation).
+    //
+    // An elevated session passes whatever elevated it — a PIN, a passkey, or
+    // an emailed code on an account that has no PIN. Otherwise the PIN is
+    // checked. An account with no PIN has nothing to check here: its page put
+    // the passkey ceremony on the button itself, so reaching this without
+    // elevation means the ceremony has yet to happen, and the answer says so
+    // rather than calling an empty box a wrong PIN.
     // ------------------------------------------------------------------
-    const pinCeremony = async (
+    const ceremony = async (
       s: Session,
       reply: FastifyReply,
       pin: string,
     ): Promise<boolean> => {
       if (sess.isElevated(s)) return true;
+      const a: any = await getAccount(s.accountId!);
+      if (!a?.pin_hash) {
+        void reply.code(401).send({
+          error: 'ceremony_required',
+          error_description:
+            'Confirm with your passkey. On a device that does not have it, have a code emailed to you at /confirm/code.',
+        });
+        return false;
+      }
       const check = await verifyPinAttempt(s.accountId!, pin);
       if (check.ok) {
         await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
@@ -788,7 +972,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     counter.post('/pin/verify', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (okNow) return reply.send({ ok: true });
     });
 
@@ -904,8 +1088,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         facts,
         anomalies,
         collectProfile,
-        hasPasskey: await wa.accountHasPasskey(accountId),
-        elevated: false,
+        ...(await ceremonyFor(accountId, false)),
         postPath: '/approve',
       };
     };
@@ -925,8 +1108,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const base = {
         token,
         noLabel: 'Not now',
-        hasPasskey: await wa.accountHasPasskey(accountId),
-        elevated: false,
+        // Elevation is stamped on by the caller, which has the session.
+        ...(await ceremonyFor(accountId, false)),
       };
       if (row.action === 'offer-send') {
         const m = await getMatch(row.ref_id);
@@ -1335,7 +1518,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
       // someone the link their assistant gave them.
       if (q.needsPin) {
-        const okNow = await pinCeremony(s as Session, reply, String(b.pin ?? ''));
+        const okNow = await ceremony(s as Session, reply, String(b.pin ?? ''));
         if (!okNow) return;
       }
       // Single-use, enforced here: whoever wins the UPDATE acts, and a second
@@ -1529,7 +1712,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
       }
       // Sensitive action: PIN (or a passkey ceremony that elevated the session).
-      const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
+      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       try {
         if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
@@ -1662,8 +1845,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         canRetryRelease: role === 'buyer' && row.state === 'confirmed',
         canDispute: ['funded', 'evidence-locked'].includes(row.state),
         evidence: showEvidence ? await evidenceViewLinks(cfg, row.id) : [],
-        hasPasskey: await wa.accountHasPasskey(accountId),
-        elevated,
+        ...(await ceremonyFor(accountId, elevated)),
         autoReleaseDays: cfg.settlementAutoReleaseDays,
         autoReleased: row.auto_released === true,
         handover,
@@ -1863,7 +2045,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       let row: settlements.SettlementRow;
       try {
@@ -2027,7 +2209,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       return settlementStep(reply, async () => {
         const row = await settlements.confirmReturnReceived(
@@ -2099,7 +2281,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       const b: any = req.body ?? {};
       return settlementStep(reply, async () => {
@@ -2575,7 +2757,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.post('/kill/off', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const okNow = await pinCeremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       await ops.killSwitchOff(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
@@ -2601,7 +2783,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           lastUsed: when(k.lastUsedAt),
           expires: when(k.expiresAt)!,
         })),
-        elevated: sess.isElevated(s),
+        ...(await ceremonyFor(accountId, sess.isElevated(s))),
         atLimit: keys.length >= agentKeys.AGENT_KEY_MAX_LIVE,
       };
     };
@@ -2625,7 +2807,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       // Sensitive action: PIN (or a passkey ceremony that elevated the session).
-      const okNow = await pinCeremony(s, reply, String(b.pin ?? ''));
+      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       let made: Awaited<ReturnType<typeof agentKeys.createAgentKey>>;
       try {
@@ -3100,7 +3282,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       await sess.setOauthCtx(s.id, ctx);
       if (!s.accountId) return reply.redirect('/login', 303);
       const a: any = await getAccount(s.accountId);
-      if (!a?.pin_hash || a.status === 'pending') {
+      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       return html(
