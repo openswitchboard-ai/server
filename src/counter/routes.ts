@@ -57,6 +57,9 @@ import {
   validateSharedProfile,
 } from '../domain/profile.js';
 import { rejectionInPlainWords } from '../domain/screening.js';
+import { REASON_MAX_CHARS, fileReport } from '../safety/reports.js';
+import { emailIsSuspended } from '../safety/suspend.js';
+import { reportLink } from '../domain/humanLinks.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import * as agentKeys from '../domain/agentKeys.js';
@@ -498,6 +501,22 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           reply,
           pages.messagePage('That code did not work', `<p>${pages.esc(msg!)}</p>`, '/register', 'Start again'),
           401,
+        );
+      }
+      // An address a suspended account was opened under does not open another
+      // one. One plain sentence and no detail: which account, when, or why is
+      // nobody's business at this door, and an answer that said any of it
+      // would be a way of asking the switchboard about a stranger.
+      if (await emailIsSuspended(result.email!)) {
+        return html(
+          reply,
+          pages.messagePage(
+            'We cannot open an account for that address',
+            '<p>That address cannot be used on the switchboard. If you think that is wrong, write to us and we will look.</p>',
+            '/',
+            'Back',
+          ),
+          403,
         );
       }
       let account: any = await findAccountByEmail(result.email!);
@@ -1226,6 +1245,39 @@ in on this device and lets you approve what is waiting.</p>
             : { collectProfile: { firstName: own.firstName, locality: own.locality } }),
         };
       }
+      if (row.action === 'report') {
+        // THE ONE PAGE THAT ENDS SOMETHING. It takes no PIN: making a
+        // frightened person find a credential before they can report a
+        // stranger is a way of getting fewer reports rather than fewer bad
+        // ones, and the press itself changes nothing about their account, their
+        // money or what anyone else can see.
+        const m = await getMatch(row.ref_id);
+        if (!m) return { error: 'There is no such introduction of yours.' };
+        try {
+          sideOf(m, accountId);
+        } catch {
+          return { error: 'This introduction is not yours.' };
+        }
+        if (m.state !== 'open') {
+          return { error: 'This one is already closed, so there is nothing left to close.' };
+        }
+        return {
+          ...base,
+          question: 'Report this person?',
+          detail: [
+            'Reporting closes this one straight away. Nothing more goes either way, the two of you are never put together again, and somebody here looks at what was said.',
+            'They are told only that the switchboard has closed the conversation. They are never told that you reported them, who you are, or what you wrote here.',
+          ],
+          collectReason: {
+            label: 'What happened?',
+            hint: 'A line in your own words is plenty. You can leave it blank if you would rather.',
+            value: '',
+            maxLength: REASON_MAX_CHARS,
+          },
+          yesLabel: 'Report and close this',
+          needsPin: false,
+        };
+      }
       if (row.action === 'collection-close') {
         // A link minted before migration 030, opened after it. The window it
         // was for no longer exists, so the page says so rather than failing.
@@ -1515,6 +1567,21 @@ in on this device and lets you approve what is waiting.</p>
         }
         profileToSave = checked.value;
       }
+      // The words on a report, checked BEFORE the link is burnt, the same way
+      // the caption and the profile boxes are: a line that ran long costs a
+      // trim rather than the link their assistant gave them.
+      if (q.collectReason && String(b.reason ?? '').trim().length > REASON_MAX_CHARS) {
+        q.elevated = sess.isElevated(s);
+        q.collectReason = { ...q.collectReason, value: String(b.reason ?? '') };
+        return html(
+          reply,
+          pages.oneQuestionPage(
+            q,
+            `Keep it to ${REASON_MAX_CHARS} characters. A line is plenty, and somebody will read it.`,
+          ),
+          400,
+        );
+      }
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
       // someone the link their assistant gave them.
       if (q.needsPin) {
@@ -1526,6 +1593,26 @@ in on this device and lets you approve what is waiting.</p>
       if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
       const figures = links.readPayload(row) ?? {};
       try {
+        if (row.action === 'report') {
+          const r = await fileReport(
+            cfg,
+            { reporterAccount: s.accountId!, matchId: row.ref_id, reason: b.reason },
+            { warn: (line) => req.log.warn(line) },
+          );
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.donePage(
+              'Reported',
+              `<p>Thank you for telling us. That one is closed: nothing more goes either way, and the two of you will not be put together again.</p>
+<p>Somebody here will look at what you wrote. The other person has been told the switchboard closed the conversation, and nothing else at all.</p>${
+                r.words_kept
+                  ? ''
+                  : '<p>What you typed is held for a person to read rather than filed with the report, which changes nothing about the report itself.</p>'
+              }`,
+            ),
+          );
+        }
         if (row.action === 'offer-accept') {
           await acceptOfferByHuman(row.ref_id, s.accountId!, 'counter', cfg);
           await links.recordLinkDecision(row.id, 'approved');
@@ -2642,6 +2729,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         mode: neg.mode,
         canOffer: !blocked,
         canOfferBlockedBecause: blocked,
+        // There is something to close while it is open, and nothing to close
+        // once it is not.
+        canReport: m.state === 'open',
         ...(neg.mandate ? { mandate: neg.mandate } : {}),
         ...(live ? { myOfferOnTable: `${Number(live.amount)} ${live.ccy}` } : {}),
         ...(agreed ? { agreedAmount: `${Number(agreed.amount)} ${agreed.ccy}` } : {}),
@@ -2664,6 +2754,39 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const v = await offersView(s.accountId!, String((req.params as any).id));
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       return html(reply, home.matchOffersPage(v));
+    });
+
+    /**
+     * REPORTING WITHOUT AN ASSISTANT IN THE WAY. The agent road is
+     * respond(request_report), which mints this same link and hands it over;
+     * this is the other road to the same one question, for the person sitting
+     * on their own page beside the introduction.
+     *
+     * It mints and redirects rather than rendering a page of its own, so there
+     * is exactly one report page in the codebase and it is the one an
+     * assistant's link opens. Nothing is reported here: the press is.
+     */
+    counter.get('/matches/:id/report', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      try {
+        const minted = await reportLink(cfg, s.accountId!, String((req.params as any).id));
+        return reply.redirect(new URL(minted.link).pathname + new URL(minted.link).search, 303);
+      } catch (e: any) {
+        if (e instanceof OsbError) {
+          return html(
+            reply,
+            pages.donePage(
+              'Nothing to close',
+              `<p>${pages.esc(e.payload.human_action ?? 'This one is already closed.')}</p>`,
+            ),
+          );
+        }
+        if (e?.notFound) {
+          return html(reply, pages.messagePage('Not found', '<p>No such introduction of yours.</p>'), 404);
+        }
+        throw e;
+      }
     });
 
     counter.post('/matches/:id/offer', async (req, reply) => {

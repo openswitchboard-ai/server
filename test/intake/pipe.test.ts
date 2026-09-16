@@ -107,9 +107,9 @@ describe('only the checks that stand at this door run', () => {
     expect(v.checks.map((c) => c.name)).toEqual(['photoOnly']);
   });
 
-  it('passes a door nothing stands at yet', async () => {
+  it('passes a door with nothing but the suspension check at it', async () => {
     for (const door of ['offer_words', 'shared_identity'] as const) {
-      const v = await runIntake(undefined, item({ door }));
+      const v = await runIntake(undefined, item({ door }), { checks: [] });
       expect(v.outcome).toBe('pass');
       expect(v.checks).toEqual([]);
     }
@@ -119,18 +119,40 @@ describe('only the checks that stand at this door run', () => {
     // The money check joined the posting door when `kind` arrived: the agent's
     // own plain words for the thing are free text somebody typed, and that is
     // exactly where a figure lands by accident.
+    //
+    // `suspended` stands at EVERY door and it stands FIRST: an account the
+    // operator has stopped must not cost the switchboard a category lookup,
+    // let alone a model call (docs/trust-and-safety.md, step 6).
     expect(checksForDoor('posting', CHECKS).map((c) => c.name)).toEqual([
+      'suspended',
       'denyListPath',
       'modelScreen',
       'moneyFigure',
     ]);
-    expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual(['moneyFigure']);
+    expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual([
+      'suspended',
+      'moneyFigure',
+    ]);
     // The metadata gate answers at presign; the look at the picture answers at
     // the send press. Both stand at the photo door, in that order.
     expect(checksForDoor('photo', CHECKS).map((c) => c.name)).toEqual([
+      'suspended',
       'photoMetadata',
       'photoModeration',
     ]);
+    // Every door, with no exception: that is the whole of what "at every door"
+    // is worth, and a door added later without it is a door around it.
+    for (const door of [
+      'posting',
+      'amendment',
+      'message',
+      'photo',
+      'offer_words',
+      'shared_identity',
+      'report',
+    ] as const) {
+      expect(checksForDoor(door, CHECKS)[0]?.name, door).toBe('suspended');
+    }
   });
 });
 
@@ -189,14 +211,20 @@ describe('the moved checks decide what they always decided', () => {
     const v = await runIntake(undefined, item({ door: 'posting', fields: { category: 'goods.weapons.knives' } }));
     expect(v.outcome).toBe('refuse');
     expect(v.reason_code).toBe('weapons');
-    // The model never ran: the deny list ended it.
-    expect(v.checks.map((c) => c.name)).toEqual(['denyListPath']);
+    // The model never ran: the deny list ended it. The suspension check ran
+    // first, as it does at every door, and found nothing to say.
+    expect(v.checks.map((c) => c.name)).toEqual(['suspended', 'denyListPath']);
   });
 
   it('passes a posting handed over with no words in it, without a model call', async () => {
     const v = await runIntake(undefined, item({ door: 'posting', fields: { category: 'goods.bicycle.mountain' } }));
     expect(v.outcome).toBe('pass');
-    expect(v.checks.map((c) => c.name)).toEqual(['denyListPath', 'modelScreen', 'moneyFigure']);
+    expect(v.checks.map((c) => c.name)).toEqual([
+      'suspended',
+      'denyListPath',
+      'modelScreen',
+      'moneyFigure',
+    ]);
   });
 
   it('reads the money check over `kind`, and over nothing else on a posting', async () => {

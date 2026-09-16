@@ -850,6 +850,10 @@ export interface OneQuestionView {
    *  file yet: the page asks for them right here, in the same form, and the
    *  press stores them. Nothing was ever asked for at sign-up. */
   collectProfile?: { firstName: string; locality: string };
+  /** Set on the report question: one short line in the person's own words
+   *  about what happened. Optional to fill in — a report with nothing typed in
+   *  it still stands, because the thing that matters is that somebody said so. */
+  collectReason?: { label: string; hint: string; value: string; maxLength: number };
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
@@ -864,6 +868,11 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
        You can change both any time on <a href="/profile">what you share on a match</a>.</p>
        ${sharedFieldsFieldset(v.collectProfile)}`
     : '';
+  const reason = v.collectReason
+    ? `<label for="reason">${esc(v.collectReason.label)}</label>
+       <textarea id="reason" name="reason" rows="3" maxlength="${v.collectReason.maxLength}">${esc(v.collectReason.value)}</textarea>
+       <p class="small muted">${esc(v.collectReason.hint)}</p>`
+    : '';
   const detail = (v.detail ?? []).map((d) => `<p class="small muted">${esc(d)}</p>`).join('');
   return layout(v.question, `
 <h1>${esc(v.question)}</h1>
@@ -871,6 +880,7 @@ ${errBox(error)}
 ${detail}
 <form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
   ${collect}
+  ${reason}
   ${v.needsPin ? ceremonyField(c, 'q') : ''}
   <div class="actions">
   ${ceremonySubmit(c, { formId: 'oneQuestion', label: v.yesLabel, className: 'approve', name: 'decision', value: 'yes' })}

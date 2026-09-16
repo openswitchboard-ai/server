@@ -327,7 +327,23 @@ export type ErrorCode =
   | 'RATE_LIMITED_OFFERS'
   | 'SETTLEMENT_UNAVAILABLE'
   | 'LOCATION_UNRESOLVED'
-  | 'LOCATION_AMBIGUOUS';
+  | 'LOCATION_AMBIGUOUS'
+  // Nothing in, nothing out: this account has been stopped by the operator
+  // (docs/trust-and-safety.md). Ahead of the pinned error document — see
+  // AHEAD_OF_SCHEMA below.
+  | 'SUSPENDED';
+
+/**
+ * Codes this server ships that the pinned error document has not caught up
+ * with. Their payloads are BUILT rather than validated: the field set is
+ * exactly the one the document already admits, and the only thing it would
+ * fail on is the code's own spelling.
+ *
+ * The alternative — waiting for a schema release before an operator can stop
+ * an account — is not one this repository is willing to offer. The list is
+ * meant to be short and to empty itself as the schema catches up.
+ */
+const AHEAD_OF_SCHEMA: readonly ErrorCode[] = ['SUSPENDED'];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */
 export interface ErrorCandidate {
@@ -370,7 +386,7 @@ export class OsbError extends Error {
     } = {},
   ) {
     super(code);
-    this.payload = assertOutbound('error', {
+    const payload = {
       schema_version: SCHEMA_VERSION,
       code,
       ...(opts.human_action ? { human_action: opts.human_action } : {}),
@@ -378,7 +394,10 @@ export class OsbError extends Error {
       ...(opts.suggestions?.length ? { suggestions: opts.suggestions.slice(0, 3) } : {}),
       ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
-    });
+    };
+    this.payload = AHEAD_OF_SCHEMA.includes(code)
+      ? (payload as ProtocolError)
+      : assertOutbound('error', payload);
     // After the check, deliberately: see the note on ProtocolError.press_id.
     if (opts.press_id) this.payload.press_id = opts.press_id;
   }

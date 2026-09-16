@@ -20,7 +20,10 @@ const subject = (item: { door: string; text?: string; fields?: Record<string, st
 
 export const moneyFigure: Check = {
   name: 'moneyFigure',
-  doors: ['message', 'posting', 'amendment'],
+  // The report door too: somebody writing down what a stranger did to them is
+  // exactly where a price lands by accident, and the pipe holds those words
+  // rather than refusing the report (intake/pipe.ts, REFUSAL_FREE_DOORS).
+  doors: ['message', 'posting', 'amendment', 'report'],
   async run(item) {
     const words = subject(item);
     const rule = typeof words === 'string' ? moneyFigureRule(words) : undefined;

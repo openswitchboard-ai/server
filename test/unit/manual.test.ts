@@ -633,7 +633,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   41: '90334c69390a256145abd9ef55678aca5562a2b47786f994840dca569a104021',
   42: '018e63c59ca4d7d8370fc4dbebb53ab6d84b40c732326e4949e3f2de8270403b',
   43: '1bfa7c69974b24e1639c564a3fadef3d5eb6f679a4cd63d177b1163e447bab1f',
-  44: 'PENDING',
+  44: '8371c2ea9332fecca15d40e7a32f2cdf499961b43703b39e09e44e6a301dbdfb',
+  45: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -815,11 +816,41 @@ describe('version 37: a refusal that is the switchboard working', () => {
     expect(entry().note.length).toBeGreaterThan(400);
   });
 
+  /**
+   * The words that existed the day version 37 shipped. A shipped entry is
+   * never reworded, so a plain word added to EXPECTED_REFUSALS afterwards
+   * cannot appear here and must not be asserted against this note — it is
+   * taught in its own entry instead (see "every plain word is taught
+   * somewhere" below, which is the rule with no expiry on it).
+   */
+  const WORDS_AT_37 = [
+    'your_human_presses',
+    'not_open_yet',
+    'limit_reached',
+    'it_ran_out',
+    'not_carried_here',
+    'place_unclear',
+    'not_switched_on',
+  ];
+
   it('teaches exactly the plain words the switchboard ships', async () => {
     const { EXPECTED_REFUSALS } = await import('../../src/mcp/tools.js');
     const note = entry().note;
-    for (const word of new Set(Object.values(EXPECTED_REFUSALS))) {
+    const shipping = new Set(Object.values(EXPECTED_REFUSALS));
+    for (const word of WORDS_AT_37) {
+      // Still shipped, and still taught in the entry that introduced it.
+      expect(shipping.has(word), `${word} left EXPECTED_REFUSALS`).toBe(true);
       expect(note, word).toContain(word);
+    }
+  });
+
+  it('and every plain word the switchboard ships is taught in SOME entry', async () => {
+    const { EXPECTED_REFUSALS } = await import('../../src/mcp/tools.js');
+    for (const word of new Set(Object.values(EXPECTED_REFUSALS))) {
+      expect(
+        MANUAL_CHANGELOG.some((c) => c.note.includes(word)),
+        `${word} is a plain word no changelog entry teaches`,
+      ).toBe(true);
     }
   });
 
@@ -1514,5 +1545,101 @@ describe('publish_intent carries the rule where the posting is made', () => {
 
   it('keeps the house register', async () => {
     expect(lintHumanCopy(await desc())).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version 45: reporting somebody, and an account that has been stopped
+// ---------------------------------------------------------------------------
+/**
+ * What shipped on 2026-09-17 (docs/trust-and-safety.md, steps 5 and 6). Two
+ * things in ONE entry, because a running session is told the notes once and
+ * they are the same subject from two ends: somebody behaving badly, and what
+ * the switchboard does about it.
+ *
+ * The body carries both as well, each in the section that covers it — the
+ * report beside the rest of the conversation, the suspension beside the rest
+ * of what the switchboard refuses — because the changelog is what a running
+ * session hears and the body is what a fresh session reads.
+ */
+describe('version 45: reporting, and an account that has been stopped', () => {
+  const entry = () => MANUAL_CHANGELOG.find((c) => c.version === 45)!;
+
+  it('exists at the new version, as one entry rather than two', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(45);
+    expect(MANUAL_CHANGELOG.filter((c) => c.version === 45)).toHaveLength(1);
+    expect(entry().note.length).toBeGreaterThan(400);
+  });
+
+  it('teaches the report: the action, the order, and what the press does', () => {
+    const note = entry().note;
+    expect(note).toContain('respond(request_report)');
+    expect(note).toContain('wait_for_press');
+    expect(note).toMatch(/a box for a line in their own words and one press/i);
+    expect(note).toMatch(/never put together again/i);
+    expect(note).toMatch(/kept for somebody here to look at/i);
+    // The words to listen for, and the things the agent must not do.
+    expect(note).toContain('"report this person"');
+    expect(note).toMatch(/never talk your human out of it/i);
+    expect(note).toMatch(/never report anybody off your own bat/i);
+  });
+
+  it('teaches what the other side is told, and what it is never told', () => {
+    const note = entry().note;
+    expect(note).toMatch(/told only that the switchboard has closed the conversation/i);
+    expect(note).toMatch(/never that they were reported, never by whom, never what was said/i);
+  });
+
+  it('teaches the suspension: the word, the connect block, and remembering it', () => {
+    const note = entry().note;
+    expect(note).toContain('account_suspended');
+    expect(note).toMatch(/the very first thing you are handed at connect/i);
+    expect(note).toMatch(/there is no retry and no other call that works/i);
+    expect(note).toMatch(/keep the fact in your own memory/i);
+  });
+
+  it('keeps the house register', () => {
+    expect(lintHumanCopy(entry().note)).toEqual([]);
+    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+  });
+});
+
+describe('and the body carries both, where a fresh session reads them', () => {
+  const from = (heading: string) =>
+    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
+
+  it('puts the report in the section about the conversation', () => {
+    const patched = from('PATCHED THROUGH');
+    expect(patched).toContain('respond(request_report)');
+    expect(patched).toMatch(/sometimes the person on the other side is the problem/i);
+    expect(patched).toMatch(/the words to reach for are "report this person"/i);
+    expect(patched).toMatch(/never report anybody off your own bat/i);
+    // And the promise made to the person on the other end.
+    expect(patched).toMatch(
+      /never that they were reported, never by whom, and never what was said/i,
+    );
+  });
+
+  it('puts the suspension beside what the switchboard refuses', () => {
+    const limits = SERVER_INSTRUCTIONS.slice(
+      SERVER_INSTRUCTIONS.indexOf('5a. An account can be stopped'),
+      SERVER_INSTRUCTIONS.indexOf('TALKING WITH YOUR HUMAN'),
+    );
+    expect(limits).toContain('account_suspended');
+    expect(limits).toMatch(/nothing goes in or out of that account at all/i);
+    expect(limits).toMatch(/keep the fact in your own memory/i);
+    expect(limits).toMatch(/there is no retry/i);
+    // And the half about the other side, which is the half an agent would
+    // otherwise invent an explanation for.
+    expect(limits).toMatch(/you are told nothing about it/i);
+    expect(limits).toMatch(/closed by the switchboard/i);
+  });
+
+  it('says on the tool itself what the manual says in prose', async () => {
+    const { TOOLS } = await import('../../src/mcp/tools.js');
+    const respond = TOOLS.find((t) => t.name === 'respond')!;
+    expect(respond.description).toContain('request_report');
+    expect(respond.description).toMatch(/never talk your human out of it/i);
+    expect((respond.inputSchema as any).properties.action.enum).toContain('request_report');
   });
 });

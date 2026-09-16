@@ -297,6 +297,46 @@ export async function photoLink(
 }
 
 // ---------------------------------------------------------------------------
+// (g) Report this person. The one link on this surface that ENDS something.
+//
+// An agent may hand it over and nothing more: the words are the human's, the
+// press is the human's, and what happens next is the switchboard's. Everything
+// else here follows the pattern exactly — bound to the introduction at mint
+// time, single-use, fifteen minutes, wait_for_press works on it.
+//
+// Refused at mint time only where there is no open introduction to report on,
+// so an agent learns why while it is still talking to its human.
+// ---------------------------------------------------------------------------
+export async function reportLink(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+): Promise<HumanLink> {
+  const m = await getMatch(matchId);
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
+  sideOf(m, accountId);
+  if (m.state !== 'open') {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'This one is already closed, so there is nothing left to close.',
+    });
+  }
+  const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'report',
+    refId: matchId,
+    counterpartyAccount: counterparty,
+  });
+  return {
+    link: url(cfg, token),
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does:
+      'Opens one page asking your human whether to report this person, with a box for a line in their own words about what happened. One press does the whole of it: the switchboard closes this one, nothing more goes either way, the two of them are never put together again, and somebody here looks at what was said. The other person is told only that the switchboard closed it — never that they were reported, never by whom, and never what was said.',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // (d) There used to be a link here for closing the short window on a want or
 // have of the holder's own. The window is gone (migration 030): nothing blocks
 // a holder now, so there is nothing for them to close. See domain/sequencer.ts.

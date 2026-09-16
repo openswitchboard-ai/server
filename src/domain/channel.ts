@@ -102,16 +102,23 @@ export async function loadOpenChannel(
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   const side = sideOf(m, accountId); // throws notFound when the caller is not a party
+  const counterparty = side === 'want' ? m.account_have : m.account_want;
+  // DELIVERY, BOTH WAYS. Everything that carries a thing between two people on
+  // an open conversation comes through here — sending, collecting, the photo
+  // page's own link — so this is where suspension bites on the delivery side.
+  // A suspended account is handed nothing and nothing is carried from it, and
+  // it is the same check in both directions: a person who has been stopped does
+  // not keep receiving what a stranger is still writing to them.
+  const { SUSPENDED_WORDS, isSuspended } = await import('../safety/suspend.js');
+  if ((await isSuspended(accountId)) || (await isSuspended(counterparty))) {
+    throw new OsbError('SUSPENDED', { human_action: SUSPENDED_WORDS });
+  }
   if (m.state !== 'open' || m.stage < 4 || !m.channel_id) {
     throw channelLocked(
       'This introduction has no open conversation yet. Both humans give the go-ahead first, and then open_conversation opens it.',
     );
   }
-  return {
-    match: m,
-    channelId: m.channel_id,
-    counterpartyAccount: side === 'want' ? m.account_have : m.account_want,
-  };
+  return { match: m, channelId: m.channel_id, counterpartyAccount: counterparty };
 }
 
 /**
@@ -183,6 +190,13 @@ export async function sendMessage(
     text,
   });
   if (intake.outcome === 'refuse') {
+    // A refusal at this door is normally the money-figure rule, and it is the
+    // human's to act on: CONSENT_REQUIRED, with the sentence to say. A
+    // suspended account is a different answer entirely — there is nothing for
+    // anybody to do about it — so it keeps its own code.
+    if (intake.reason_code === 'SUSPENDED') {
+      throw new OsbError('SUSPENDED', { human_action: intake.plain_words });
+    }
     throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
   }
   const ch = await loadOpenChannel(matchId, accountId);
