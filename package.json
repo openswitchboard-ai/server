@@ -45,7 +45,7 @@
     "@aws-sdk/credential-providers": "^3.1127.0",
     "@aws-sdk/s3-request-presigner": "^3.1121.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@openswitchboard/schema": "github:openswitchboard-ai/schema#d3a83e4a151ff98b7919dd5a747c19258823851d",
+    "@openswitchboard/schema": "github:openswitchboard-ai/schema#5c5245a08fae812137a617fe5b28051e14147b23",
     "@simplewebauthn/server": "^13.3.3",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
