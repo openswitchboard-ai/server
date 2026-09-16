@@ -10,12 +10,14 @@
  * are the same answers, word for word. The suite is the proof.
  */
 import { denyListPath } from './checks/denyListPath.js';
+import { messageSafety } from './checks/messageSafety.js';
 import { modelScreen } from './checks/modelScreen.js';
 import { moneyFigure } from './checks/moneyFigure.js';
 import { photoMetadata } from './checks/photoMetadata.js';
 import { photoModeration } from './checks/photoModeration.js';
 import { SUSPENDED_REASON_CODE, suspended } from './checks/suspended.js';
 import { ledgerFromConfig } from '../safety/ledger.js';
+import { isSafetyReviewVerdict, openSafetyReview } from '../safety/reviews.js';
 import { type Check, type CheckResult, type IntakeItem, type Ledger, type Verdict } from './types.js';
 import type { Config } from '../config.js';
 
@@ -34,6 +36,10 @@ export const CHECKS: Check[] = [
   moneyFigure,
   photoMetadata,
   photoModeration,
+  // Last of all, and on purpose: it is the one check that cannot refuse, so
+  // nothing is ever bought by running it ahead of a check that can. A message
+  // already going back for carrying a figure never costs this call.
+  messageSafety,
 ];
 
 /** The checks that stand at one door. */
@@ -63,6 +69,10 @@ export interface IntakeOptions {
   ledger?: Ledger;
   /** For the suite: run against a different set of checks. */
   checks?: Check[];
+  /** Where the operator's one-line safety-review notice goes. Defaults to
+   *  console.warn, which is where every other operator line in this system
+   *  goes; the suite passes its own so it can read what was said. */
+  warn?: (line: string) => void;
 }
 
 /**
@@ -124,10 +134,26 @@ export async function runIntake(
   // The ledger can never change the verdict, so it is awaited and its own
   // failure swallowed: losing evidence is bad, and refusing to carry something
   // because the evidence store hiccuped is worse.
+  let entryId: string | undefined;
   try {
-    await ledger.recordVerdict(item, verdict);
+    entryId = (await ledger.recordVerdict(item, verdict)) || undefined;
   } catch {
     /* the verdict stands */
+  }
+  // A message the safety classifier flagged opens a review for a person, holds
+  // the entries behind that introduction ninety days, and puts one line in
+  // front of the operator (src/safety/reviews.ts). It happens HERE rather than
+  // in the check because the ledger entry id — the only handle anybody has on
+  // the words — is not known until the line above.
+  //
+  // It changes nothing about the verdict, and the message goes out either way:
+  // a hold at the message door is a flag, never a stall.
+  if (isSafetyReviewVerdict(verdict)) {
+    try {
+      await openSafetyReview(item, verdict, entryId, { warn: opts.warn });
+    } catch {
+      /* the message is already through; a flag that would not insert is not a reason to stop it */
+    }
   }
   return verdict;
 }

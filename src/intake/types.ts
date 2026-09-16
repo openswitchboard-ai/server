@@ -83,18 +83,24 @@ export interface Check {
 }
 
 /**
- * Where a verdict is written down. A no-op for now, and deliberately so: step
- * two of the build sequence puts the encrypted thirty-day ledger behind this
- * one method, and nothing in the callers changes when it does.
+ * Where a verdict is written down: the encrypted thirty-day ledger
+ * (src/safety/ledger.ts), behind this one method, so that nothing in the
+ * callers knows anything about it.
+ *
+ * It answers with the id of the entry it wrote, where it wrote one. That id is
+ * the only handle anything else has on the words: a safety review points at it
+ * (src/safety/reviews.ts) so that a person who comes to look knows which
+ * sealed row to ask two keyholders about. A ledger that kept nothing, or one
+ * whose write failed, answers with nothing, and the caller carries on.
  */
 export interface Ledger {
-  recordVerdict(item: IntakeItem, verdict: Verdict): Promise<void> | void;
+  recordVerdict(item: IntakeItem, verdict: Verdict): Promise<string | void> | string | void;
 }
 
 /** The ledger until there is a ledger. It keeps nothing. */
 export const noLedger: Ledger = {
   recordVerdict() {
-    /* step two */
+    /* a deployment with no safety key keeps nothing */
   },
 };
 
