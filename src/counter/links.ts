@@ -30,7 +30,11 @@ export type ApprovalAction =
   | 'negotiation-auto'
   /** Put a photo into one open conversation. Bound to that conversation when
    *  it is minted, so the page never asks a person to choose one. */
-  | 'conversation-photo';
+  | 'conversation-photo'
+  /** Report the person on the other side of one introduction, and close it
+   *  (docs/trust-and-safety.md). Bound to that introduction at mint time, so
+   *  there is nobody on the page to pick by mistake. */
+  | 'report';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
@@ -55,6 +59,11 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   'stage3-disclosure',
   'collection-close',
   'negotiation-auto',
+  // Reporting joined them on 2026-09-17. It is the same page with one box on
+  // it — a short line of the person's own words — and it takes no PIN: making
+  // somebody find a credential before they can report a stranger is a way of
+  // getting fewer reports rather than fewer bad ones.
+  'report',
 ];
 
 export function isOneQuestionAction(a: string): a is ApprovalAction {

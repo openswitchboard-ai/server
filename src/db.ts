@@ -61,6 +61,20 @@ export function getPool(): pg.Pool {
   return pool;
 }
 
+/**
+ * Is there a database at all in this process?
+ *
+ * One caller, and it is a narrow one: the suspension check stands in front of
+ * every door, and there are processes that legitimately run without a database
+ * — the pure harnesses that exercise the pipe's own logic. Asking whether a
+ * process HAS a database is a different question from asking a database that is
+ * having a bad day, and this answers only the first: a query that fails against
+ * a real pool still fails, and a failed check is a hold rather than a pass.
+ */
+export function dbConfigured(): boolean {
+  return !!pool;
+}
+
 /** Run SQL migrations under an advisory lock (safe with multiple tasks). */
 export async function migrate(): Promise<void> {
   const p = getPool();

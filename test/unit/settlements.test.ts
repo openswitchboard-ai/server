@@ -20,7 +20,8 @@
  *  - WEBHOOK SIGNATURES: Stripe's own constructEvent rejects a wrong secret
  *    and a tampered payload (real verification code, no mocks).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as db from '../../src/db.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import Stripe from 'stripe';
@@ -358,20 +359,30 @@ describe('settle tool', () => {
   });
 
   it('answers SETTLEMENT_UNAVAILABLE when the deployment has no Stripe secret', async () => {
-    const r = await dispatchTool(baseCfg, '00000000-0000-0000-0000-000000000000', 'settle', {
-      match_id: '00000000-0000-0000-0000-000000000000',
-      amount: 100,
-      ccy: 'AUD',
-    });
-    // Switched off here is not broken here, so it comes back as an answer.
-    expect(r.isError).toBe(false);
-    expect((r.structuredContent as any).what_happened).toBe('not_switched_on');
-    expect((r.structuredContent as any).code).toBe('SETTLEMENT_UNAVAILABLE');
-    // The payload inside the answer still validates against the protocol error
-    // document, once the two the envelope adds are set aside: the published
-    // document takes nothing it does not name.
-    const { what_happened, link, ...payload } = r.structuredContent as any;
-    expect(validateOutbound('error', payload).valid).toBe(true);
+    // Every tool call now begins with ONE read: has this account been stopped
+    // (docs/trust-and-safety.md, step 6). This file otherwise runs with no
+    // database at all, so that one column is the whole of what is stood up.
+    const spy = vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async () => ({ rows: [{ suspended_at: null }], rowCount: 1 }),
+    } as any);
+    try {
+      const r = await dispatchTool(baseCfg, '00000000-0000-0000-0000-000000000000', 'settle', {
+        match_id: '00000000-0000-0000-0000-000000000000',
+        amount: 100,
+        ccy: 'AUD',
+      });
+      // Switched off here is not broken here, so it comes back as an answer.
+      expect(r.isError).toBe(false);
+      expect((r.structuredContent as any).what_happened).toBe('not_switched_on');
+      expect((r.structuredContent as any).code).toBe('SETTLEMENT_UNAVAILABLE');
+      // The payload inside the answer still validates against the protocol
+      // error document, once the two the envelope adds are set aside: the
+      // published document takes nothing it does not name.
+      const { what_happened, link, ...payload } = r.structuredContent as any;
+      expect(validateOutbound('error', payload).valid).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
