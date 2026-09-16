@@ -24,6 +24,27 @@ export interface NagathaCard {
   geo: any;
   attributes: Record<string, unknown>;
   type: string;
+  /** What she said the thing is, in her own words, where she said it. Required
+   *  on a posting whose leaf the catalogue has never heard of. */
+  kind: string | null;
+}
+
+/**
+ * The catalogue leaf as a few plain words: 'goods.musical-instruments.guitar'
+ * becomes "guitar". Digits and punctuation are stripped, because `kind` takes
+ * words and no figures (src/domain/cards.ts kindComplaint), and the result is
+ * capped at the six words that rule allows.
+ */
+export function kindFromCategory(category: string): string {
+  const leaf = (category ?? '').split('.').filter(Boolean).pop() ?? 'thing';
+  const words = leaf
+    .replace(/[-_]+/g, ' ')
+    .replace(/[^a-z ]/gi, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+  return words.length ? words.join(' ') : 'thing';
 }
 
 export class Counterpart {
@@ -72,7 +93,7 @@ export class Counterpart {
     opts: { accountId?: string; excludeIds?: readonly string[] } = {},
   ): Promise<NagathaCard | undefined> {
     const rows = await dbExec(
-      `SELECT id::text, account_id::text, category, geo::text, type, attributes::text
+      `SELECT id::text, account_id::text, category, geo::text, type, attributes::text, coalesce(kind, '')
          FROM cards
         WHERE category LIKE :cat AND lifecycle_state = 'PUBLISHED'
           AND created_at > :since::timestamptz
@@ -95,6 +116,7 @@ export class Counterpart {
       geo: JSON.parse((r[3] as string) ?? '{}'),
       type: r[4] as string,
       attributes: JSON.parse((r[5] as string) ?? '{}'),
+      kind: ((r[6] as string) ?? '').trim() || null,
     };
   }
 
@@ -145,6 +167,15 @@ export class Counterpart {
       geo: { place, radius_km: 25, ...(opts.reach ? { reach: opts.reach } : {}) },
       ttl_days: 1,
       attributes: attrs,
+      // WHAT THE THING IS, in words. The catalogue is a deny list, so a leaf it
+      // has never heard of goes up — but only with `kind` beside it, because
+      // the switchboard writes the sentences a human reads and the catalogue
+      // has no word to lend it there (src/domain/cards.ts assertCategoryOpen,
+      // 2026-09-17). She may have filed her errand under a leaf nobody has
+      // written down, and this card mirrors her category, so without this the
+      // counterparty's own posting is refused and the whole run falls back.
+      // Hers where she gave one, otherwise the leaf itself in plain words.
+      kind: nag.kind ?? kindFromCategory(nag.category),
     };
     let r = await this.h.publish(this.actor, card, { expectError: true });
     if (!r.result?.intent_id) {
