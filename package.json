@@ -17,7 +17,7 @@
     "lint": "tsc --noEmit",
     "start": "node dist/src/index.js",
     "dev": "tsx src/index.ts",
-    "test": "vitest run test/unit test/conformance.local.test.ts",
+    "test": "vitest run test/unit test/intake test/conformance.local.test.ts",
     "test:integration": "RUN_INTEGRATION=1 vitest run --no-file-parallelism test/integration",
     "build:gazetteer": "tsx scripts/build-gazetteer.ts",
     "bootstrap-account": "tsx scripts/bootstrap-account.ts",

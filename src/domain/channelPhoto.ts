@@ -73,6 +73,7 @@ import { decryptForChannel, encryptForChannel } from '../crypto.js';
 import { OsbError } from '../protocol.js';
 import { FIGURE_IN_WORDS_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { MESSAGE_TTL_DAYS, ensureChannelKey, loadOpenChannel } from './channel.js';
+import { runIntake } from '../intake/pipe.js';
 import type { Config } from '../config.js';
 
 // ---------------------------------------------------------------------------
@@ -232,16 +233,20 @@ export async function presignPhotoUpload(
   const bucket = mustBucket(cfg);
   // NO URL FOR A PAGE THAT CANNOT CLEAN THE FILE. The stripping happens in the
   // sender's browser (counter/photoScrub.ts) because that is the only place the
-  // bytes exist that is not this service, and the shipped page can only say
-  // this after its own second pass came back with nothing left to remove. This
-  // is a claim the browser makes and the server cannot check it without holding
-  // the image, which is the one thing it must never do — stated plainly rather
-  // than dressed up. What it does buy: a page too old or too plain to strip is
-  // refused here instead of quietly uploading a photo with GPS in it.
-  if (input.metadata_removed !== true) {
-    throw validation(
-      'this page could not take the hidden details out of the picture, so nothing was uploaded. Open the link again in a browser that runs scripts.',
-    );
+  // bytes exist that is not this service, and the shipped page can only say this
+  // after its own second pass came back with nothing left to remove. The check
+  // itself, and the long account of why the server cannot make the claim for
+  // the browser, are in intake/checks/photoMetadata.ts — everything a person
+  // hands over is asked of the one pipe (docs/trust-and-safety.md). The claim
+  // arrives as a string at the door because a claim is all it is.
+  const intake = await runIntake(cfg, {
+    door: 'photo',
+    sender_account: accountId,
+    match_id: matchId,
+    fields: { metadata_removed: String(input.metadata_removed === true) },
+  });
+  if (intake.outcome === 'refuse') {
+    throw validation(intake.plain_words!);
   }
   const ext = ALLOWED_PHOTO_TYPES[String(input.content_type)];
   if (!ext) {
