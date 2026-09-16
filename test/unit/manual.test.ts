@@ -1612,11 +1612,11 @@ describe('and the body carries both, where a fresh session reads them', () => {
     const patched = from('PATCHED THROUGH');
     expect(patched).toContain('respond(request_report)');
     expect(patched).toMatch(/sometimes the person on the other side is the problem/i);
-    expect(patched).toMatch(/the words to reach for are "report this person"/i);
-    expect(patched).toMatch(/never report anybody off your own bat/i);
+    expect(patched).toMatch(/the words are "report this person"/i);
+    expect(patched).toMatch(/never report anybody yourself/i);
     // And the promise made to the person on the other end.
     expect(patched).toMatch(
-      /never that they were reported, never by whom, and never what was said/i,
+      /never that they were reported, by whom, or what was said/i,
     );
   });
 
@@ -1626,12 +1626,12 @@ describe('and the body carries both, where a fresh session reads them', () => {
       SERVER_INSTRUCTIONS.indexOf('TALKING WITH YOUR HUMAN'),
     );
     expect(limits).toContain('account_suspended');
-    expect(limits).toMatch(/nothing goes in or out of that account at all/i);
+    expect(limits).toMatch(/posts, sends, collects and offers nothing/i);
     expect(limits).toMatch(/keep the fact in your own memory/i);
     expect(limits).toMatch(/there is no retry/i);
     // And the half about the other side, which is the half an agent would
     // otherwise invent an explanation for.
-    expect(limits).toMatch(/you are told nothing about it/i);
+    expect(limits).toMatch(/you are told nothing/i);
     expect(limits).toMatch(/closed by the switchboard/i);
   });
 
