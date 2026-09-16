@@ -129,9 +129,13 @@ describe('only the checks that stand at this door run', () => {
       'modelScreen',
       'moneyFigure',
     ]);
+    // The grooming classifier stands LAST at the message door: it is the one
+    // check that can only hold, so a message already going back for carrying a
+    // figure never costs the model call (docs/trust-and-safety.md, step 7).
     expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual([
       'suspended',
       'moneyFigure',
+      'messageSafety',
     ]);
     // The metadata gate answers at presign; the look at the picture answers at
     // the send press. Both stand at the photo door, in that order.

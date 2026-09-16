@@ -112,9 +112,14 @@ export function entryParams(
 /** The real ledger, over one public key and the pool. */
 export function ledgerFor(publicKey: KeyObject): Ledger {
   return {
-    async recordVerdict(item: IntakeItem, verdict: Verdict): Promise<void> {
+    async recordVerdict(item: IntakeItem, verdict: Verdict): Promise<string | void> {
       try {
-        await getPool().query(INSERT_SQL, entryParams(publicKey, item, verdict));
+        const params = entryParams(publicKey, item, verdict);
+        await getPool().query(INSERT_SQL, params);
+        // The id it was written under, which is the first parameter and the
+        // only thing about the row that is safe to hand back: a safety review
+        // points at it so a person knows which sealed row to ask about.
+        return params[0] as string;
       } catch (e: any) {
         // A code and a count. Never the item, never the error's own message if
         // it might carry a value from the row — pg puts parameters in some of
