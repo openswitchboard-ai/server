@@ -150,10 +150,18 @@ export async function counterLogin(jar: Jar, email: string): Promise<void> {
   if (v.status !== 303) throw new Error(`verify failed: ${v.status} ${await v.text()}`);
 }
 
-/** Ensure the signed-in account has a PIN (sets one if the flow asks for it). */
+/**
+ * Ensure the signed-in account has a PIN (sets one if the flow asks for it).
+ *
+ * Since 2026-09-16 the step that used to demand a PIN is /secure, the choice
+ * between a passkey and a PIN. A harness has no authenticator, so it takes the
+ * PIN half — the same form, on the same route. The old '/pin' target is still
+ * matched, for an account sent there to add one later.
+ */
 export async function ensurePin(jar: Jar, pin = TEST_PIN): Promise<string> {
   const res = await counterFetch(jar, '/');
-  if (res.status === 303 && res.headers.get('location')?.includes('/pin')) {
+  const to = res.headers.get('location') ?? '';
+  if (res.status === 303 && (to.includes('/secure') || to.includes('/pin'))) {
     const set = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
     if (set.status !== 303) throw new Error(`pin set failed: ${set.status}`);
   }
@@ -185,7 +193,7 @@ export async function completeOnboarding(jar: Jar): Promise<void> {
   // earlier step means nothing was stamped and every page read after this
   // would be a read of a redirect. Say so here rather than there.
   const next = res.headers.get('location') ?? '';
-  if (['/hello', '/pin', '/consent', '/login'].includes(next)) {
+  if (['/hello', '/secure', '/pin', '/consent', '/login'].includes(next)) {
     throw new Error(`onboarding did not stick: the account still owes ${next}`);
   }
 }

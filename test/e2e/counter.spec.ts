@@ -131,11 +131,14 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   await shot(page, '03-code-entry');
   await page.getByRole('button', { name: 'Continue' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Set your PIN.' })).toBeVisible();
+  // The choice screen: a passkey where the device can make one, a PIN
+  // otherwise. This browser has no authenticator, so the passkey half stays
+  // hidden and Alice takes the PIN.
+  await expect(page.getByRole('heading', { name: 'How will you approve things?' })).toBeVisible();
   await page.locator('#pin').fill(ALICE_PIN);
   await page.locator('#pin2').fill(ALICE_PIN);
   await shot(page, '04-set-pin');
-  await page.getByRole('button', { name: 'Set PIN' }).click();
+  await page.getByRole('button', { name: 'Set my PIN' }).click();
 
   await expect(page.getByRole('heading', { name: 'Add a passkey?' })).toBeVisible();
   await shot(page, '05-passkey-offer');
