@@ -42,7 +42,7 @@ export function vectorLiteral(v: number[]): string {
 /** Embed one card's projection and store it. Returns the projection text. */
 export async function embedCard(
   cfg: Config,
-  card: Pick<CardRow, 'id' | 'category' | 'attributes'>,
+  card: Pick<CardRow, 'id' | 'category' | 'attributes'> & { kind?: string | null },
 ): Promise<string> {
   const text = projectionText(card);
   const vec = await embedText(cfg, text);
@@ -63,7 +63,7 @@ export async function backfillEmbeddings(
   enqueueMatch: (cardId: string) => Promise<void>,
 ): Promise<number> {
   const r = await getPool().query(
-    `SELECT id, category, attributes FROM cards
+    `SELECT id, category, kind, attributes FROM cards
      WHERE embedding IS NULL AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
      ORDER BY created_at ASC LIMIT 500`,
   );

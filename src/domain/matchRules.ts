@@ -91,6 +91,31 @@
  *   pair that averaged worse, which is the right way round — the pair is now
  *   judged on what it actually said.
  *
+ *   THE SAME RULE, NOW FOR THE CATEGORY (unknown leaves). The catalogue is a
+ *   deny list since 17 September 2026 (docs/taxonomy-question.md): a leaf
+ *   nobody has written down goes up, filed where the agent filed it. Nothing
+ *   about "goods.vintage-synth-parts" is in the tree, so the tree cannot say
+ *   how close it sits to anything — and closeness is measured from the nearest
+ *   node on each side that the taxonomy DOES know, which for an unknown leaf
+ *   is its nearest known ancestor.
+ *
+ *   Where that nearest known ancestor is only the TOP LEVEL for either side,
+ *   the filing has said nothing at all. "It is a good" is true of every good
+ *   on the board. So the category term is REMOVED and the remaining weights
+ *   are divided by their own sum, exactly as the price term is when neither
+ *   side declared a band — same principle, same arithmetic, same reason: a
+ *   dimension that measured nothing does not get a vote. Where both terms go,
+ *   both are removed and what is left is renormalised once:
+ *
+ *     rich, no category:            semantic 0.6875, geo 0.1875, price 0.125
+ *     thin, no category:            semantic 0.4615, geo 0.3846, price 0.1538
+ *     rich, no category, no price:  semantic 0.78571, geo 0.21429
+ *     thin, no category, no price:  semantic 0.54545, geo 0.45455
+ *
+ *   What that leaves is the two things a card with a made-up category can
+ *   still be trusted on: what it says about itself, which `kind` now carries
+ *   into the projection text beside the attributes, and where it is.
+ *
  *   ONE DECLARED SIDE KEEPS THE TERM. A card that named a band asserted
  *   something, and the neutral 0.6 that evaluatePrice returns when the other
  *   side left the relevant bound unset is the honest reading of "one of them
@@ -225,21 +250,35 @@ export const THIN_WEIGHTS = { semantic: 0.3, category: 0.35, geo: 0.25, price: 0
  * divided by their own sum, for a pair where NEITHER side said anything about
  * price. See the SCORE MODEL header, AN UNASSERTED DIMENSION CANNOT VOTE.
  */
-function withoutPrice(w: BlendWeights): BlendWeights {
-  const rest = w.semantic + w.category + w.geo;
+function withoutTerms(w: BlendWeights, drop: ('price' | 'category')[]): BlendWeights {
+  const kept: BlendWeights = { ...w };
+  for (const term of drop) kept[term] = 0;
+  const rest = kept.semantic + kept.category + kept.geo + kept.price;
   return Object.freeze({
-    semantic: w.semantic / rest,
-    category: w.category / rest,
-    geo: w.geo / rest,
-    price: 0,
+    semantic: kept.semantic / rest,
+    category: kept.category / rest,
+    geo: kept.geo / rest,
+    price: kept.price / rest,
   });
 }
 
 /** WEIGHTS with no price term: semantic 0.61111, category 0.22222, geo 0.16667. */
-export const WEIGHTS_NO_PRICE = withoutPrice(WEIGHTS);
+export const WEIGHTS_NO_PRICE = withoutTerms(WEIGHTS, ['price']);
 
 /** THIN_WEIGHTS with no price term: semantic 0.33333, category 0.38889, geo 0.27778. */
-export const THIN_WEIGHTS_NO_PRICE = withoutPrice(THIN_WEIGHTS);
+export const THIN_WEIGHTS_NO_PRICE = withoutTerms(THIN_WEIGHTS, ['price']);
+
+/** WEIGHTS with no category term: semantic 0.6875, geo 0.1875, price 0.125. */
+export const WEIGHTS_NO_CATEGORY = withoutTerms(WEIGHTS, ['category']);
+
+/** THIN_WEIGHTS with no category term: semantic 0.46154, geo 0.38462, price 0.15385. */
+export const THIN_WEIGHTS_NO_CATEGORY = withoutTerms(THIN_WEIGHTS, ['category']);
+
+/** Neither term: semantic 0.78571, geo 0.21429. */
+export const WEIGHTS_NO_CATEGORY_NO_PRICE = withoutTerms(WEIGHTS, ['category', 'price']);
+
+/** Neither term, thin: semantic 0.54545, geo 0.45455. */
+export const THIN_WEIGHTS_NO_CATEGORY_NO_PRICE = withoutTerms(THIN_WEIGHTS, ['category', 'price']);
 
 /** At or below this many attributes on the sparser side, the pair is thin. */
 export const THIN_ATTR_MAX = 2;
@@ -262,18 +301,28 @@ export function attrCount(attributes: unknown): number {
  * wrong is the asymmetry, and the sparser side is the one that measures it.
  *
  * `priceAsserted` is whether EITHER side said anything about price. When
- * neither did, the price term is dropped and the other three weights are
+ * neither did, the price term is dropped and the other weights are
  * renormalised. It defaults to true, so a caller that only knows how much the
  * two cards asserted gets the blend it always got.
+ *
+ * `categoryAsserted` is the same question about the filing: false when the
+ * nearest node the taxonomy knows is only the top level for one side or the
+ * other, which is to say the pair's categories have told the blend nothing.
+ * It defaults to true for the same reason.
  */
 export function weightsFor(
   attrCountA: number,
   attrCountB: number,
   priceAsserted = true,
+  categoryAsserted = true,
 ): BlendWeights {
   const thin = Math.min(attrCountA, attrCountB) <= THIN_ATTR_MAX;
-  if (priceAsserted) return thin ? THIN_WEIGHTS : WEIGHTS;
-  return thin ? THIN_WEIGHTS_NO_PRICE : WEIGHTS_NO_PRICE;
+  if (categoryAsserted) {
+    if (priceAsserted) return thin ? THIN_WEIGHTS : WEIGHTS;
+    return thin ? THIN_WEIGHTS_NO_PRICE : WEIGHTS_NO_PRICE;
+  }
+  if (priceAsserted) return thin ? THIN_WEIGHTS_NO_CATEGORY : WEIGHTS_NO_CATEGORY;
+  return thin ? THIN_WEIGHTS_NO_CATEGORY_NO_PRICE : WEIGHTS_NO_CATEGORY_NO_PRICE;
 }
 
 export const CREATE_THRESHOLD = 0.75;
@@ -304,13 +353,48 @@ function taxonomy(): any {
   return taxonomyCache;
 }
 
-/** Human label for the category's leaf node ("Mountain bikes"). Unknown
- *  nodes fall back to the raw leaf segment — same honest fallback as
- *  categoryLabelPath. Emails show ONLY this, never the raw slug. */
-export function categoryLeafLabel(category: string): string {
+/** Human label for the category's leaf node ("Mountain bikes").
+ *
+ *  Where the taxonomy has never heard of the node, the poster's own words for
+ *  the thing come first: `kind` is what an agent wrote when the catalogue had
+ *  no leaf to lend, and "vintage synth repair" is what a person would have
+ *  said anyway. The raw leaf segment is the fallback behind that, as it always
+ *  was. Emails show ONLY this, never the raw slug. */
+export function categoryLeafLabel(category: string, kind?: string | null): string {
+  const nodes = taxonomy().nodes ?? {};
+  const known = nodes[category]?.label;
+  if (known) return known;
+  const own = typeof kind === 'string' ? kind.trim() : '';
+  if (own) return own;
+  const parts = category.split('.');
+  return parts[parts.length - 1];
+}
+
+/**
+ * The deepest node ON this path that the taxonomy actually knows.
+ *
+ * Since the catalogue became a deny list, a category may name a leaf nobody
+ * has written down — and the tree has no opinion about where such a leaf sits,
+ * because it is not in the tree. What the tree DOES know is the ancestor the
+ * agent filed it under, so that is what any tree measurement is taken from.
+ * Falls back to the top level, which is the one segment that always resolves
+ * (the gate refuses a top level the taxonomy has no name for).
+ */
+export function nearestKnownAncestor(category: string): string {
   const nodes = taxonomy().nodes ?? {};
   const parts = category.split('.');
-  return nodes[category]?.label ?? parts[parts.length - 1];
+  for (let i = parts.length; i >= 1; i--) {
+    const path = parts.slice(0, i).join('.');
+    if (nodes[path]) return path;
+  }
+  return parts[0];
+}
+
+/** Whether the filing said anything the tree can read: true unless the nearest
+ *  known node is the bare top level on one side or the other, in which case
+ *  "it is a good" is the whole of what the two cards agreed on. */
+export function categorySaysSomething(a: string, b: string): boolean {
+  return nearestKnownAncestor(a).includes('.') && nearestKnownAncestor(b).includes('.');
 }
 
 export function categoryLabelPath(category: string): string {
@@ -325,13 +409,24 @@ export function categoryLabelPath(category: string): string {
   return labels.join(' > ');
 }
 
-export function projectionText(card: { category: string; attributes?: any }): string {
+export function projectionText(card: {
+  category: string;
+  kind?: string | null;
+  attributes?: any;
+}): string {
   const attrs = Object.entries(card.attributes ?? {})
     .filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v))
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([k, v]) => `${k}: ${String(v).toLowerCase().slice(0, 60)}`);
   const head = `category: ${card.category} (${categoryLabelPath(card.category)})`;
-  return attrs.length ? `${head}; ${attrs.join('; ')}` : head;
+  // The poster's own words for the thing, where they gave any. On a card filed
+  // under a leaf the taxonomy does not know, this is the only part of the
+  // projection that says what the thing IS — the label path degrades to the
+  // raw slug there — so it goes into the embedding, right after the head and
+  // before the attributes, where the sort order cannot move it.
+  const own = typeof card.kind === 'string' ? card.kind.trim().toLowerCase().slice(0, 60) : '';
+  const parts = [head, ...(own ? [`kind: ${own}`] : []), ...attrs];
+  return parts.join('; ');
 }
 
 // ---------------------------------------------------------------------------
@@ -373,11 +468,21 @@ export function categoryCompatible(a: string, b: string): boolean {
  * steps, so a parent/child pair is 0.85 and a grandparent/grandchild 0.7,
  * exactly as before. Siblings are one step each: 1 - 0.15 x 2 = 0.7.
  * Incompatible pairs score 0.
+ *
+ * MEASURED FROM WHAT THE TREE KNOWS. Each side is first resolved to its
+ * nearest known ancestor, so an unknown leaf is counted at the node it was
+ * filed under rather than at a depth the tree cannot see. Compatibility is
+ * still decided on the paths as written — a made-up leaf is a real sibling of
+ * the one beside it under the same parent — but the DISCOUNT is taken on nodes
+ * that exist, so an invented extra segment does not cost a pair 0.15 of blend
+ * for a distance nobody can check. Where the nearest known node is only the
+ * top level for either side the term leaves the blend altogether; see
+ * weightsFor and the SCORE MODEL header.
  */
 export function categoryCloseness(a: string, b: string): number {
   if (!categoryCompatible(a, b)) return 0;
-  const pa = a.split('.');
-  const pb = b.split('.');
+  const pa = nearestKnownAncestor(a).split('.');
+  const pb = nearestKnownAncestor(b).split('.');
   let shared = 0;
   while (shared < pa.length && shared < pb.length && pa[shared] === pb[shared]) shared++;
   const steps = pa.length - shared + (pb.length - shared);
@@ -680,7 +785,11 @@ export function evaluatePair(p: PairInputs): PairEval {
   // One side naming a band is enough to keep the price term. With neither,
   // w.price is 0 and the other three weights already carry the whole blend.
   const priceAsserted = assertsPrice(p.wantBand) || assertsPrice(p.haveBand);
-  const w = weightsFor(nA, nB, priceAsserted);
+  // The same question of the filing: an unknown leaf whose nearest known node
+  // is only the top level has told the blend nothing, so the category term
+  // goes the way the price term goes.
+  const categoryAsserted = categorySaysSomething(p.categoryA, p.categoryB);
+  const w = weightsFor(nA, nB, priceAsserted, categoryAsserted);
   const score =
     w.semantic * semantic +
     w.category * categoryCloseness(p.categoryA, p.categoryB) +
@@ -824,14 +933,88 @@ function fallbackPhrase(labelOrId?: string): string {
  * the mechanical rule, and an empty or missing one comes back as an empty
  * string so a caller can use the sentence that names nothing.
  */
-export function categoryPhrase(labelOrId?: string): string {
-  return phraseNode(labelOrId)?.phrase ?? fallbackPhrase(labelOrId);
+export function categoryPhrase(labelOrId?: string, kind?: string | null): string {
+  return phraseNode(labelOrId)?.phrase ?? ownWords(labelOrId, kind) ?? fallbackPhrase(labelOrId);
+}
+
+/**
+ * WHERE THE CATALOGUE HAS NO WORD, THE POSTER'S OWN WORD STANDS.
+ *
+ * Since the catalogue became a deny list a leaf may be one nobody ever wrote
+ * down, and for those the mechanical rule has only a slug to work on: it turns
+ * "services.repairs.vintage-synthesiser" into "vintage synthesiser" and
+ * "goods.bouldering-mat" into "bouldering mat", which is passable, and
+ * something like "social.climbing-buddy-wanted" into "climbing buddy wanted",
+ * which is not a noun. `kind` is the agent's own plain noun phrase for the
+ * thing and it is REQUIRED on exactly those postings, so it is there whenever
+ * this is reached.
+ *
+ * Only for a node the taxonomy has never heard of. A known branch with no
+ * phrase of its own still has a written label, and the mechanical rule reads
+ * better on a heading than on anybody's free text.
+ */
+function ownWords(labelOrId?: string, kind?: string | null): string | undefined {
+  const own = typeof kind === 'string' ? kind.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+  if (!own) return undefined;
+  const key = String(labelOrId ?? '').trim();
+  if (key && (taxonomy().nodes ?? {})[key]) return undefined;
+  return own;
+}
+
+/** Tails that take no article because there is no counting them: "a climbing
+ *  gear" and "an Italian practice" are both wrong. Short on purpose — the
+ *  plural test below carries most of the load. */
+const MASS_NOUN_TAILS = new Set([
+  'advice',
+  'care',
+  'clothing',
+  'coaching',
+  'company',
+  'equipment',
+  'furniture',
+  'gear',
+  'help',
+  'maintenance',
+  'practice',
+  'repair',
+  'storage',
+  'support',
+  'training',
+  'transport',
+  'tuition',
+  'work',
+]);
+
+/**
+ * Does a phrase somebody typed take "a"/"an" in front of it?
+ *
+ * The taxonomy answers this per leaf, by hand (`countable`). For words that
+ * arrived on a posting there is nobody to ask, so it is a rule: a plural takes
+ * none ("bouldering mats"), a mass noun takes none ("vintage synth repair"),
+ * and everything else takes one ("a bouldering partner"). Wrong occasionally
+ * and in only one direction — a missing article reads as a slightly clipped
+ * sentence rather than as a mistake.
+ */
+export function kindTakesArticle(phrase: string): boolean {
+  const words = phrase.trim().split(/[\s-]+/);
+  // Already carries one. Agents write "a lift to Sydney" as readily as "lift",
+  // and "a a lift to Sydney" is the one failure that would be unmistakable.
+  if (/^(a|an|the|some|my|your)$/i.test(words[0] ?? '')) return false;
+  const last = (words.pop() ?? '').toLowerCase();
+  if (!last) return false;
+  if (MASS_NOUN_TAILS.has(last)) return false;
+  if (ALREADY_SINGULAR.has(last)) return false;
+  if (/s$/.test(last) && !/(ss|us|is)$/.test(last)) return false;
+  return true;
 }
 
 /** Whether the phrase takes an article at all. Mass nouns ("climbing gear")
  *  and the phrases people keep plural ("guitar lessons") do not. */
-export function categoryPhraseIsCountable(labelOrId?: string): boolean {
-  return phraseNode(labelOrId)?.countable !== false;
+export function categoryPhraseIsCountable(labelOrId?: string, kind?: string | null): boolean {
+  const node = phraseNode(labelOrId);
+  if (node) return node.countable !== false;
+  const own = ownWords(labelOrId, kind);
+  return own ? kindTakesArticle(own) : true;
 }
 
 /** Letters whose NAME starts with a vowel sound, for a phrase that opens with
@@ -857,10 +1040,13 @@ export function articleForPhrase(phrase: string): 'a' | 'an' {
  * For the sentences that introduce the thing rather than possess it — "keen on
  * a mountain bike", "someone nearby has climbing gear going".
  */
-export function categoryPhraseWithArticle(labelOrId?: string): string {
+export function categoryPhraseWithArticle(labelOrId?: string, kind?: string | null): string {
   const node = phraseNode(labelOrId);
-  const phrase = node?.phrase ?? fallbackPhrase(labelOrId);
+  const own = node?.phrase ? undefined : ownWords(labelOrId, kind);
+  const phrase = node?.phrase ?? own ?? fallbackPhrase(labelOrId);
   if (!phrase) return '';
   if (node?.countable === false) return phrase;
+  // Words the poster typed get the rule rather than a hand-written answer.
+  if (own && !kindTakesArticle(own)) return own;
   return `${node?.article ?? articleForPhrase(phrase)} ${phrase}`;
 }

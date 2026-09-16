@@ -292,8 +292,12 @@ export function realOpsDataSource(): OpsDataSource {
                 (SELECT count(*)::int FROM category_misses
                   WHERE created_at > now() - interval '7 days') AS category_misses_7d`,
       );
-      // Free-typed category paths an agent asked for. Category-ish by
-      // construction, truncated hard, and escaped on the way out.
+      // Free-typed category paths that went UP without a leaf behind them.
+      // The catalogue is a deny list, so these are postings that are live on
+      // the board right now under a name nobody has written down, and this is
+      // the growth list for the next taxonomy release rather than a tally of
+      // refusals. Category-ish by construction, truncated hard, and escaped on
+      // the way out.
       const topMissed = await pool.query(
         `SELECT left(requested, 60) AS label, count(*)::int AS n
          FROM category_misses WHERE created_at > now() - interval '7 days'
@@ -628,13 +632,13 @@ export function renderOpsMetricsHtml(d: OpsMetrics): string {
       { label: 'Declined', value: d.matching.declined },
       { label: 'Median seconds to match (week)', value: d.matching.median_seconds_to_match_7d },
       { label: 'Near misses this week', value: d.matching.near_misses_7d },
-      { label: 'Category misses this week', value: d.matching.category_misses_7d },
+      { label: 'Posted without a leaf this week', value: d.matching.category_misses_7d },
     ]),
   );
   parts.push(countTable('Introductions by state', 'State', d.matching.by_state));
   parts.push(countTable('Introductions by stage', 'Stage', d.matching.by_stage));
   parts.push(
-    countTable('Categories asked for and missing', 'Asked for', d.matching.top_missed_categories_7d),
+    countTable('Posted without a leaf', 'Filed under', d.matching.top_missed_categories_7d),
   );
 
   parts.push(

@@ -244,6 +244,16 @@ describe('screening reasons in plain words', () => {
       'wildlife-products',
       'alcohol',
       'event-tickets',
+      // Prohibited by what the thing IS. Four of these have no glob in the
+      // seed and never could have: they describe a thing rather than a place
+      // in the tree, and since the catalogue became a deny list they are the
+      // only thing standing between a made-up path and the board.
+      'drugs',
+      'sexual-services',
+      'illegal-activity',
+      'people',
+      // And the verdict with no code this network recognises behind it.
+      'prohibited',
     ];
     const seen = new Set<string>();
     for (const c of codes) {
@@ -253,6 +263,17 @@ describe('screening reasons in plain words', () => {
       seen.add(s);
     }
     expect(seen.size).toBe(codes.length);
+  });
+
+  it('says no to a person as a thing without saying no to company', () => {
+    // The one that has to be read carefully, because the network's whole point
+    // is people finding people. A person offered or sought AS the thing is
+    // refused; somebody to do something with is what the switchboard is for,
+    // and the sentence says so rather than leaving a human to guess.
+    const s = screeningReasonInPlainWords('people');
+    expect(s).toMatch(/not a thing to be offered or asked for/i);
+    expect(s).toMatch(/do something WITH/);
+    expect(s).toMatch(/it can go up/i);
   });
 
   it('an unknown code still gets an honest sentence rather than a blank', () => {

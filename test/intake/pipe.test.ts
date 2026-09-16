@@ -116,9 +116,13 @@ describe('only the checks that stand at this door run', () => {
   });
 
   it('puts the real checks at the doors the design says', () => {
+    // The money check joined the posting door when `kind` arrived: the agent's
+    // own plain words for the thing are free text somebody typed, and that is
+    // exactly where a figure lands by accident.
     expect(checksForDoor('posting', CHECKS).map((c) => c.name)).toEqual([
       'denyListPath',
       'modelScreen',
+      'moneyFigure',
     ]);
     expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual(['moneyFigure']);
     // The metadata gate answers at presign; the look at the picture answers at
@@ -192,6 +196,29 @@ describe('the moved checks decide what they always decided', () => {
   it('passes a posting handed over with no words in it, without a model call', async () => {
     const v = await runIntake(undefined, item({ door: 'posting', fields: { category: 'goods.bicycle.mountain' } }));
     expect(v.outcome).toBe('pass');
-    expect(v.checks.map((c) => c.name)).toEqual(['denyListPath', 'modelScreen']);
+    expect(v.checks.map((c) => c.name)).toEqual(['denyListPath', 'modelScreen', 'moneyFigure']);
+  });
+
+  it('reads the money check over `kind`, and over nothing else on a posting', async () => {
+    const plain = await runIntake(
+      undefined,
+      item({
+        door: 'posting',
+        fields: { category: 'goods.bicycle.mountain', kind: 'old push bike' },
+      }),
+    );
+    expect(plain.outcome).toBe('pass');
+
+    // Spelled out is the case the synchronous lint cannot catch: no digits in
+    // it at all, and still a price.
+    const spelled = await runIntake(
+      undefined,
+      item({
+        door: 'posting',
+        fields: { category: 'goods.bicycle.mountain', kind: 'bike, four hundred dollars' },
+      }),
+    );
+    expect(spelled.outcome).toBe('refuse');
+    expect(spelled.reason_code).toBe('money-figure-in-words');
   });
 });
