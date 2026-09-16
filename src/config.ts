@@ -84,6 +84,12 @@ export interface Config {
    *  exactly where photos are on, because a deployment that carries photos
    *  without the look is not a deployment this code offers. */
   photoModeration: boolean;
+  /** Whether the words of a message are read for grooming, exploitation and
+   *  threats before they go on (intake/checks/messageSafety.ts). ON unless
+   *  `MESSAGE_SAFETY=off`, which is the one way to stop paying for a Haiku
+   *  call per message. It never blocks a conversation either way: the check
+   *  only ever holds for review, and a hold at that door still delivers. */
+  messageSafety: boolean;
   /** Platform fee, percent of the settlement amount. Kept as a parameter and
    *  SET TO 0: the introductory fee is the flat one below. */
   settlementFeePercent: number;
@@ -171,6 +177,7 @@ export function loadConfig(): Config {
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
     photoBucket: process.env.PHOTO_BUCKET || undefined,
     photoModeration: !!(process.env.PHOTO_BUCKET || ''),
+    messageSafety: (process.env.MESSAGE_SAFETY ?? 'on').trim().toLowerCase() !== 'off',
     settlementFeePercent: Number(process.env.SETTLEMENT_FEE_PERCENT ?? 0),
     settlementFeeFlatMinor: Number(process.env.SETTLEMENT_FEE_FLAT_MINOR ?? 100),
     settlementProcessingPercent: Number(process.env.SETTLEMENT_PROCESSING_PERCENT ?? 1.7),
