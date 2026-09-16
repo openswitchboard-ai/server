@@ -98,8 +98,16 @@ reporting path below and nowhere else.
 - **Thirty days**, then deleted. Nothing about a person survives beyond that
   window except the postings they chose to keep up and the counts in the
   transparency report.
-- Same storage pattern as the settlement evidence bucket (S3, Object Lock, no
-  overwrites), so nothing in the window can be quietly altered.
+- Built as a Postgres table (`ledger_entries`, migration 033), encrypted per
+  row: X25519 + HKDF wraps a fresh AES-256-GCM key for each entry, the private
+  half split 2-of-3 with Shamir and never on a server. A held item keeps its
+  body (a review with the words removed is no review); a refused one keeps the
+  reason code only.
+- OPEN: unlike the settlement evidence bucket, a database row can be deleted
+  or overwritten by an administrator (it still cannot be read). If tamper
+  evidence matters, add an append-only hash chain over rows or move bodies to
+  an Object Lock bucket. The public pages make no claim about this until it
+  is built.
 
 ## Reporting
 
