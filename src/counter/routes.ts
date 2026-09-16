@@ -1139,6 +1139,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           content_type: String(b.content_type ?? ''),
           size: Number(b.size),
           sha256_b64: String(b.sha256_b64 ?? ''),
+          // The page states that it stripped the file on the device. Anything
+          // that cannot state it gets no URL (domain/channelPhoto.ts).
+          metadata_removed: b.metadata_removed,
         });
         return reply.send({ url: presigned.url, photo_id: presigned.photo_id });
       } catch (e: any) {
