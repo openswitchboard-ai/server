@@ -1,21 +1,25 @@
 /**
- * What the taxonomy was asked for and did not have.
+ * What the taxonomy was asked for and did not have — a GROWTH LIST now.
  *
- * The gap this closes: the category gate refuses a card naming a node the
- * taxonomy does not open, and until now that refusal was the whole of it. The
- * string the agent actually wanted — the one piece of evidence about what the
- * taxonomy is missing — went back over the wire and was never written down, so
- * the only way to grow the taxonomy was to guess what was absent from it.
+ * The catalogue is a deny list since 17 September 2026, so an unknown leaf is
+ * no longer refused: the posting goes up and the string is written down after
+ * it does. These rows are what is live on the board under a name nobody has
+ * written yet, which is as clean a statement of what the next taxonomy release
+ * should contain as this network is going to get.
  *
  * What is asserted here:
- *  - a refusal parks the requested string, the nodes offered against it, and
- *    the account that asked;
- *  - a LOGGING FAILURE CHANGES NOTHING. The agent gets byte-identical
- *    CATEGORY_PROHIBITED whether the row was written or the table is on fire;
- *  - an open category is not a miss, and writes nothing;
+ *  - the gate LETS AN UNKNOWN LEAF THROUGH and says the taxonomy did not know
+ *    it, so the caller can write it down after the posting is up;
+ *  - an unknown leaf has to say in plain words what the thing is, and the gate
+ *    refuses one that does not;
+ *  - a reserved family is still refused, and is NOT written down: that is a
+ *    policy decision already taken rather than a gap in the catalogue;
+ *  - a LOGGING FAILURE CHANGES NOTHING. recordCategoryMiss resolves whatever
+ *    happens, because the posting is already up;
  *  - the digest groups by the requested string, counts, names the suggestion
- *    most often offered against it, and keeps a string nothing was ever
- *    suggested for rather than dropping it;
+ *    most often offered against it and the words agents most often used for
+ *    it, and keeps a string nothing was ever suggested for rather than
+ *    dropping it;
  *  - the window is a whole number of days, floored at one, and the same
  *    statement serves the server and the ops CLI.
  */
@@ -51,6 +55,7 @@ interface MissRow {
   requested: string;
   suggestions: string[] | null;
   account_id: string;
+  kind?: string | null;
   created_at: Date;
 }
 
@@ -68,6 +73,7 @@ function fakePool() {
           requested: params[0],
           suggestions: params[1],
           account_id: params[2],
+          kind: params[3] ?? null,
           created_at: new Date(),
         });
         return { rows: [], rowCount: 0 };
@@ -91,10 +97,18 @@ function fakePool() {
           const top = [...tally.entries()].sort(
             (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
           )[0];
+          const named = new Map<string, number>();
+          for (const m of group) {
+            if (m.kind) named.set(m.kind, (named.get(m.kind) ?? 0) + 1);
+          }
+          const topKind = [...named.entries()].sort(
+            (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+          )[0];
           return {
             requested,
             count: group.length,
             top_suggestion: top ? top[0] : null,
+            top_kind: topKind ? topKind[0] : null,
             last_seen: new Date(Math.max(...group.map((m) => +m.created_at))),
           };
         });
@@ -115,67 +129,114 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-describe('a refused category is written down', () => {
-  it('parks what was asked for, what was offered, and who asked', async () => {
-    await expect(assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT)).rejects.toBeInstanceOf(
-      OsbError,
+describe('the gate lets an unknown leaf through and says so', () => {
+  it('an unknown leaf with plain words for the thing goes up', async () => {
+    // The whole change: 'goods.pushbike' is not in the taxonomy, the top level
+    // is open, nothing on the path is reserved, so it goes up. The gate says
+    // the taxonomy did not know it, which is what the caller writes down after
+    // the posting lands — and nothing is written here.
+    await expect(assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT, 'old push bike')).resolves.toEqual(
+      { known: false },
     );
-    expect(misses).toHaveLength(1);
-    expect(misses[0]).toMatchObject({ requested: 'goods.pushbike', account_id: ACCOUNT });
-    // The suggestions stored are the ones the agent was actually offered.
-    expect(misses[0].suggestions?.length).toBeGreaterThan(0);
-    expect(misses[0].suggestions!.every((s) => s.startsWith('goods.bicycle'))).toBe(true);
-  });
-
-  it('an open category is not a miss, and writes nothing', async () => {
-    await expect(assertCategoryOpen(cfg, 'goods.bicycle.mountain', ACCOUNT)).resolves.toBeUndefined();
     expect(misses).toHaveLength(0);
   });
 
-  it('a reserved top level is a miss too — it is still demand', async () => {
-    // 'work' is in the taxonomy but held back, so the agent is refused and the
-    // string is exactly the kind of thing the digest exists to surface.
+  it('an unknown leaf with no plain words for the thing is refused', async () => {
+    // Not CATEGORY_PROHIBITED: the category was fine and the posting is short
+    // of a field, so it comes back the way any validation refusal does.
+    await expect(assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT)).rejects.toMatchObject({
+      validation: ['kind'],
+    });
+    await expect(
+      assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT, 'push bike for $200'),
+    ).rejects.toMatchObject({ validation: ['kind'] });
+    await expect(
+      assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT, 'a really rather nice old second-hand push bike'),
+    ).rejects.toMatchObject({ validation: ['kind'] });
+    expect(misses).toHaveLength(0);
+  });
+
+  it('a known open category needs no plain words and writes nothing', async () => {
+    await expect(assertCategoryOpen(cfg, 'goods.bicycle.mountain', ACCOUNT)).resolves.toEqual({
+      known: true,
+    });
+    expect(misses).toHaveLength(0);
+  });
+
+  it('a reserved top level is still refused, and is NOT demand', async () => {
+    // 'work' is in the taxonomy and held back on purpose. That is a policy
+    // decision already taken, and counting it as demand would put "open the
+    // jobs vertical" at the top of a list whose job is to say what to build.
     await expect(assertCategoryOpen(cfg, 'work.freelance', ACCOUNT)).rejects.toBeInstanceOf(
       OsbError,
     );
-    expect(misses.map((m) => m.requested)).toEqual(['work.freelance']);
+    expect(misses).toHaveLength(0);
+  });
+
+  it('an unknown child of a reserved family is reserved, not unknown', async () => {
+    // The ordering the old gate got wrong: social.dating is reserved, so
+    // everything under it is, whether or not the leaf itself was written down.
+    await expect(
+      assertCategoryOpen(cfg, 'social.dating.speed-dating-nights', ACCOUNT, 'speed dating'),
+    ).rejects.toBeInstanceOf(OsbError);
+    expect(misses).toHaveLength(0);
+  });
+
+  it('a top level the taxonomy has no name for is refused', async () => {
+    await expect(assertCategoryOpen(cfg, 'nonsense.thing', ACCOUNT, 'a thing')).rejects.toBeInstanceOf(
+      OsbError,
+    );
+    expect(misses).toHaveLength(0);
   });
 
   it('recordCategoryMiss stores an empty offer list rather than refusing', async () => {
     await recordCategoryMiss(ACCOUNT, 'goods.nothing-like-this');
     expect(misses).toHaveLength(1);
     expect(misses[0].suggestions).toEqual([]);
+    expect(misses[0].kind).toBeNull();
+  });
+
+  it('recordCategoryMiss keeps the words the agent used for the thing', async () => {
+    await recordCategoryMiss(ACCOUNT, 'goods.pushbike', ['goods.bicycle'], 'old push bike');
+    expect(misses[0]).toMatchObject({
+      requested: 'goods.pushbike',
+      account_id: ACCOUNT,
+      kind: 'old push bike',
+    });
   });
 });
 
 // ---------------------------------------------------------------------------
 describe('a logging failure changes nothing the agent sees', () => {
-  const refusalPayload = async () => {
-    try {
-      await assertCategoryOpen(cfg, 'goods.pushbike', ACCOUNT);
-      throw new Error('the category gate did not refuse');
-    } catch (e) {
-      if (!(e instanceof OsbError)) throw e;
-      return e.payload;
-    }
-  };
-
-  it('the refusal is byte-identical whether or not the row was written', async () => {
-    const withLog = await refusalPayload();
+  it('the posting stands whether or not the row was written', async () => {
+    await recordCategoryMiss(ACCOUNT, 'goods.pushbike', ['goods.bicycle'], 'old push bike');
     expect(misses).toHaveLength(1);
 
     insertFails = true;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const withoutLog = await refusalPayload();
+    await expect(
+      recordCategoryMiss(ACCOUNT, 'goods.pushbike', ['goods.bicycle'], 'old push bike'),
+    ).resolves.toBeUndefined();
 
-    expect(withoutLog).toEqual(withLog);
-    expect(withoutLog.code).toBe('CATEGORY_PROHIBITED');
-    expect(withoutLog.suggestions?.length).toBeGreaterThan(0);
     // Nothing new was stored, and the failure was said out loud exactly once.
     expect(misses).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0][0])).toContain('the refusal stands');
+    expect(String(warn.mock.calls[0][0])).toContain('the posting stands');
     warn.mockRestore();
+  });
+
+  it('a refused category still refuses with the closest open ones beside it', async () => {
+    const payload = await assertCategoryOpen(cfg, 'work.freelance', ACCOUNT).then(
+      () => {
+        throw new Error('the category gate did not refuse');
+      },
+      (e) => {
+        if (!(e instanceof OsbError)) throw e;
+        return e.payload;
+      },
+    );
+    expect(payload.code).toBe('CATEGORY_PROHIBITED');
+    expect(payload.suggestions?.length).toBeGreaterThan(0);
   });
 
   it('recordCategoryMiss itself never rejects', async () => {
@@ -189,13 +250,31 @@ describe('a logging failure changes nothing the agent sees', () => {
 
 // ---------------------------------------------------------------------------
 describe('the digest', () => {
-  const miss = (requested: string, suggestions: string[], agoDays = 0) =>
+  const miss = (requested: string, suggestions: string[], agoDays = 0, kind: string | null = null) =>
     misses.push({
       requested,
       suggestions,
       account_id: ACCOUNT,
+      kind,
       created_at: new Date(Date.now() - agoDays * 86_400_000),
     });
+
+  it('names the words agents most often used for the thing', () => {
+    miss('goods.pushbike', ['goods.bicycle'], 0, 'old push bike');
+    miss('goods.pushbike', ['goods.bicycle'], 0, 'old push bike');
+    miss('goods.pushbike', ['goods.bicycle'], 0, 'pushie');
+    return categoryMissDigest(14).then((rows) => {
+      expect(rows[0].top_kind).toBe('old push bike');
+    });
+  });
+
+  it('keeps a row whose postings never said what the thing was', () =>
+    categoryMissDigest(14).then(() => {
+      miss('goods.mystery', []);
+      return categoryMissDigest(14).then((rows) => {
+        expect(rows[0].top_kind).toBeNull();
+      });
+    }));
 
   it('groups by what was asked for, commonest first', async () => {
     miss('goods.pushbike', ['goods.bicycle.parts']);

@@ -34,7 +34,7 @@ export async function notifyScreeningRejection(
     const outcome = await sendScreeningRejectedEmail(cfg, to, card.account_id, {
       cardId: card.id,
       rejectedAt: screening.at,
-      categoryLabel: categoryLeafLabel(card.category),
+      categoryLabel: categoryLeafLabel(card.category, card.kind),
       reason: screeningReasonInPlainWords(screening.reason_code),
     });
     log('screening: rejection notice', { card_id: card.id, status: outcome.status });

@@ -16,13 +16,19 @@ import {
   THIN_ATTR_MAX,
   THIN_WEIGHTS,
   THIN_WEIGHTS_NO_PRICE,
+  THIN_WEIGHTS_NO_CATEGORY,
+  THIN_WEIGHTS_NO_CATEGORY_NO_PRICE,
   WEIGHTS,
   WEIGHTS_NO_PRICE,
+  WEIGHTS_NO_CATEGORY,
+  WEIGHTS_NO_CATEGORY_NO_PRICE,
   DEFAULT_GEO_RADIUS_KM,
   assertsPrice,
   attrCount,
   categoryCloseness,
   categoryCompatible,
+  categorySaysSomething,
+  nearestKnownAncestor,
   decide,
   decodeGeohash,
   evaluateGeo,
@@ -116,19 +122,45 @@ describe('category tree', () => {
   });
 
   it('closeness decays 0.15 per tree step below the common ancestor', () => {
-    expect(categoryCloseness('a.b.c', 'a.b.c')).toBe(1);
-    expect(categoryCloseness('a.b', 'a.b.c')).toBeCloseTo(0.85);
-    expect(categoryCloseness('a', 'a.b.c')).toBeCloseTo(0.7);
+    // Measured on nodes the taxonomy actually has: since the catalogue became
+    // a deny list, each side is first resolved to its nearest KNOWN ancestor,
+    // so a made-up path is not a tree distance anybody can count.
+    expect(categoryCloseness('goods.bicycle.mountain', 'goods.bicycle.mountain')).toBe(1);
+    expect(categoryCloseness('goods.bicycle', 'goods.bicycle.mountain')).toBeCloseTo(0.85);
+    expect(categoryCloseness('goods', 'goods.bicycle.mountain')).toBeCloseTo(0.7);
     // Siblings: one step each side of the shared parent.
     expect(categoryCloseness('goods.bicycle.mountain', 'goods.bicycle.road')).toBeCloseTo(0.7);
-    expect(
-      categoryCloseness('goods.bicycle.mountain.hardtail', 'goods.bicycle.mountain.full-suspension'),
-    ).toBeCloseTo(0.7);
     // Incompatible pairs score nothing at all, whatever the tree distance.
     expect(categoryCloseness('goods.bicycle.mountain', 'goods.skateboard')).toBe(0);
     expect(categoryCloseness('goods.bicycle', 'goods.electronics')).toBe(0);
-    // Floor holds on a long ancestor line.
-    expect(categoryCloseness('a', 'a.b.c.d.e.f')).toBe(0.4);
+  });
+
+  it('an unknown leaf is measured at the node it was filed under', () => {
+    // Nothing in the tree is called 'vintage-synthesiser', so the deepest node
+    // either side has that the taxonomy knows is services.repairs. Two such
+    // leaves under one known parent are that parent twice over: identical, and
+    // not two steps apart for a distance nobody can check.
+    expect(nearestKnownAncestor('services.repairs.vintage-synthesiser')).toBe('services.repairs');
+    expect(nearestKnownAncestor('goods.bicycle.mountain')).toBe('goods.bicycle.mountain');
+    expect(nearestKnownAncestor('goods.made-up-thing')).toBe('goods');
+    expect(
+      categoryCloseness('services.repairs.vintage-synthesiser', 'services.repairs.moog-servicing'),
+    ).toBe(1);
+    // A known sibling beside an unknown one still steps once each way, because
+    // the unknown one resolves to the shared parent and the known one does not.
+    expect(
+      categoryCloseness('services.repairs.vintage-synthesiser', 'services.repairs.bicycle'),
+    ).toBeCloseTo(0.85);
+  });
+
+  it('a category that resolves to a bare top level has told the blend nothing', () => {
+    expect(categorySaysSomething('goods.bicycle.mountain', 'goods.bicycle.road')).toBe(true);
+    expect(categorySaysSomething('services.repairs.vintage-synthesiser', 'services.repairs.bicycle')).toBe(
+      true,
+    );
+    // 'it is a good' is true of every good on the board.
+    expect(categorySaysSomething('goods.made-up-thing', 'goods.bicycle.mountain')).toBe(false);
+    expect(categorySaysSomething('goods', 'goods.bicycle.mountain')).toBe(false);
   });
 
   it('a sibling pair reaches the blend, and semantics decide it', () => {
@@ -258,8 +290,17 @@ const CANBERRA_25 = { bucket: 'r3dp', lat: -35.2835, lon: 149.1281, radius_km: 2
 const CANBERRA_WANT_20 = { bucket: 'r3dp', lat: -35.25336688, lon: 149.1281, radius_km: 20 };
 
 describe('assertion-scaled weights', () => {
-  it('all four weight sets sum to 1', () => {
-    for (const w of [WEIGHTS, THIN_WEIGHTS, WEIGHTS_NO_PRICE, THIN_WEIGHTS_NO_PRICE]) {
+  it('all eight weight sets sum to 1', () => {
+    for (const w of [
+      WEIGHTS,
+      THIN_WEIGHTS,
+      WEIGHTS_NO_PRICE,
+      THIN_WEIGHTS_NO_PRICE,
+      WEIGHTS_NO_CATEGORY,
+      THIN_WEIGHTS_NO_CATEGORY,
+      WEIGHTS_NO_CATEGORY_NO_PRICE,
+      THIN_WEIGHTS_NO_CATEGORY_NO_PRICE,
+    ]) {
       expect(w.semantic + w.category + w.geo + w.price).toBeCloseTo(1, 10);
     }
     // The no-price sets are the priced ones with the price term removed and
@@ -323,6 +364,48 @@ describe('assertion-scaled weights', () => {
     expect(weightsFor(4, 5, true)).toBe(WEIGHTS);
     expect(weightsFor(1, 5, false)).toBe(THIN_WEIGHTS_NO_PRICE);
     expect(weightsFor(4, 5, false)).toBe(WEIGHTS_NO_PRICE);
+  });
+
+  it('a pair whose filing said nothing is scored without the category term', () => {
+    // The fourth argument is "did the two categories tell the blend anything",
+    // which is false when the nearest node the taxonomy knows is only the top
+    // level on one side or the other. Default true, same as price.
+    expect(weightsFor(4, 5, true, true)).toBe(WEIGHTS);
+    expect(weightsFor(1, 5, true, true)).toBe(THIN_WEIGHTS);
+    expect(weightsFor(4, 5, true, false)).toBe(WEIGHTS_NO_CATEGORY);
+    expect(weightsFor(1, 5, true, false)).toBe(THIN_WEIGHTS_NO_CATEGORY);
+    expect(weightsFor(4, 5, false, false)).toBe(WEIGHTS_NO_CATEGORY_NO_PRICE);
+    expect(weightsFor(1, 5, false, false)).toBe(THIN_WEIGHTS_NO_CATEGORY_NO_PRICE);
+    // The arithmetic, spelled out: the term goes and the rest is divided by
+    // its own sum, exactly as the price term is.
+    expect(WEIGHTS_NO_CATEGORY.category).toBe(0);
+    expect(WEIGHTS_NO_CATEGORY.semantic).toBeCloseTo(0.55 / 0.8, 12);
+    expect(WEIGHTS_NO_CATEGORY.geo).toBeCloseTo(0.15 / 0.8, 12);
+    expect(WEIGHTS_NO_CATEGORY.price).toBeCloseTo(0.1 / 0.8, 12);
+    expect(THIN_WEIGHTS_NO_CATEGORY.semantic).toBeCloseTo(0.3 / 0.65, 12);
+    // Both terms gone: what is left is what the two cards said and where.
+    expect(WEIGHTS_NO_CATEGORY_NO_PRICE.semantic).toBeCloseTo(0.55 / 0.7, 12);
+    expect(WEIGHTS_NO_CATEGORY_NO_PRICE.geo).toBeCloseTo(0.15 / 0.7, 12);
+    expect(THIN_WEIGHTS_NO_CATEGORY_NO_PRICE.semantic).toBeCloseTo(0.3 / 0.55, 12);
+    expect(THIN_WEIGHTS_NO_CATEGORY_NO_PRICE.geo).toBeCloseTo(0.25 / 0.55, 12);
+  });
+
+  it('the blend really drops the category for a pair filed only at the top level', () => {
+    const scored = evaluatePair({
+      semantic: 0.5,
+      categoryA: 'goods',
+      categoryB: 'goods.bicycle.mountain',
+      geoA: { bucket: 'r3dp' },
+      geoB: { bucket: 'r3dp' },
+      attributesA: { a: '1', b: '2', c: '3', d: '4' },
+      attributesB: { a: '1', b: '2', c: '3', d: '4' },
+    });
+    expect(scored.hardRulesPass).toBe(true);
+    expect(scored.weights).toBe(WEIGHTS_NO_CATEGORY_NO_PRICE);
+    expect(scored.score).toBeCloseTo(
+      WEIGHTS_NO_CATEGORY_NO_PRICE.semantic * 0.5 + WEIGHTS_NO_CATEGORY_NO_PRICE.geo * 1,
+      10,
+    );
   });
 
   it('the backed-out semantic reproduces the first run under the original weights', () => {

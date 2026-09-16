@@ -167,7 +167,7 @@ async function notifyCounterpartyOfHumanOffer(cfg: Config, o: OfferRow): Promise
       matchId: o.match_id,
       amount: Number(o.amount),
       ccy: o.ccy,
-      categoryLabel: categoryLeafLabel(m.category),
+      categoryLabel: categoryLeafLabel(m.category, m.kind),
       side: counterparty === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
@@ -699,7 +699,7 @@ async function notifyProposerOfAcceptance(cfg: Config, o: OfferRow): Promise<voi
       matchId: o.match_id,
       amount: Number(o.amount),
       ccy: o.ccy,
-      categoryLabel: categoryLeafLabel(m.category),
+      categoryLabel: categoryLeafLabel(m.category, m.kind),
       side: o.proposer_account === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
