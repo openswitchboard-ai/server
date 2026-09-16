@@ -69,7 +69,7 @@ d('an unknown leaf goes up', () => {
     const rows = await dbExec('SELECT kind FROM cards WHERE id = :id::uuid', [
       { name: 'id', value: intentId },
     ]);
-    expect(rows[0]?.kind).toBe('vintage synth repair');
+    expect(rows[0]?.[0]).toBe('vintage synth repair');
     const list = await mcpCall(mo.accessToken, 'list_intents', {});
     const mine = list.result.intents.find((i: any) => i.intent_id === intentId);
     expect(mine.listing.kind).toBe('vintage synth repair');
