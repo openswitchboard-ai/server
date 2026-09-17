@@ -210,14 +210,18 @@ export function flagsFromDetail(detail: string | undefined): ReviewFlagName[] {
 
 export const messageSafety: Check = {
   name: 'messageSafety',
-  // THE MESSAGE DOOR, AND ONLY THAT ONE. The report door was the obvious
-  // second, and it is deliberately left off: a report is already on its way to
+  // THE TWO DOORS WHERE ONE PERSON WRITES FREE WORDS TO ANOTHER. The report
+  // door was the obvious third, and it is deliberately left off: a report is already on its way to
   // a person, its words are the reporter's own account of exactly this kind of
   // harm (so it would flag almost every time), and a hold at that door is the
   // thing that keeps the reporter's plain words OUT of the reports table
   // (src/safety/reports.ts, `words_kept`). Screening a report for grooming
   // would cost a call to lose the sentence the operator most needs to read.
-  doors: ['message'],
+  // AND THE OFFER-WORDS DOOR. A note beside a figure is the same free text a
+  // message is, written by the same person, read by the same stranger; the only
+  // difference is which tool carried it. It was the obvious way round this
+  // check while it stood at one door only.
+  doors: ['message', 'offer_words'],
   async run(item, cfg): Promise<CheckResult> {
     if (!item.text || !item.text.trim()) return passed('messageSafety');
     // Off for this deployment, or a deployment with no model configured at all.

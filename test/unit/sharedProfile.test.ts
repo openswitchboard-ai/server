@@ -46,6 +46,7 @@ import { sqs } from '../../src/aws.js';
 import * as db from '../../src/db.js';
 import * as matches from '../../src/domain/matches.js';
 import * as profile from '../../src/domain/profile.js';
+import * as suspend from '../../src/safety/suspend.js';
 import * as cpages from '../../src/counter/pages.js';
 import * as chome from '../../src/counter/pagesHome.js';
 import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
@@ -555,6 +556,29 @@ describe('saveSharedProfile', () => {
     const read = await profile.readSharedProfile(BEPPE, { purpose: 'test', actor: BEPPE });
     expect(read).toEqual({ firstName: '', locality: '' });
     expect(profile.profileIsFilled(read)).toBe(false);
+  });
+
+  /**
+   * THE SHARED_IDENTITY DOOR (2026-09-17 audit). `shared_identity` had been a
+   * door in intake/types.ts since the pipe was built and had never had a
+   * caller — so the one thing this switchboard holds that most needs
+   * accounting for, who told a stranger their real first name and where they
+   * live, was the only thing a person handed over that the pipe never saw.
+   */
+  it('goes through the pipe, so a suspended account cannot hand a name over', async () => {
+    vi.spyOn(suspend, 'isSuspended').mockResolvedValue(true);
+    await expect(
+      profile.saveSharedProfile(ANA, { firstName: 'Ana', locality: 'Fremantle' }, 'counter'),
+    ).rejects.toThrow(/suspended/i);
+    // Nothing was written, and no consent event claims the human did this.
+    expect(vi.mocked(writeConsentEvent)).not.toHaveBeenCalled();
+    expect(vi.mocked(encryptField)).not.toHaveBeenCalled();
+  });
+
+  it('and an account in good standing is unaffected by the door', async () => {
+    vi.spyOn(suspend, 'isSuspended').mockResolvedValue(false);
+    await profile.saveSharedProfile(ANA, { firstName: 'Ana', locality: 'Fremantle' }, 'counter');
+    expect(vi.mocked(writeConsentEvent)).toHaveBeenCalled();
   });
 });
 

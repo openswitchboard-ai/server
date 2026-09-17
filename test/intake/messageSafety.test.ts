@@ -331,8 +331,10 @@ describe('what it costs, and the switch that stops it costing anything', () => {
     expect(asked[0].anthropic_version).toBe('bedrock-2023-05-31');
   });
 
-  it('stands at the message door and nowhere else', () => {
-    expect(messageSafety.doors).toEqual(['message']);
+  // The two doors where one person writes free words to another. The report
+  // door is deliberately not one of them — see the comment on the check.
+  it('stands at the message door and the offer-words door, and nowhere else', () => {
+    expect(messageSafety.doors).toEqual(['message', 'offer_words']);
   });
 });
 

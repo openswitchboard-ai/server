@@ -278,9 +278,36 @@ export async function saveSharedProfile(
   accountId: string,
   value: SharedProfile,
   recordedVia: string,
+  cfg?: Config,
 ): Promise<void> {
   const account = await getAccount(accountId);
   if (!account) throw Object.assign(new Error('account not found'), { notFound: true });
+  // THE SHARED_IDENTITY DOOR (docs/trust-and-safety.md: "the shared first name
+  // and suburb" is named in the list of things the one pipe was drawn around).
+  // The door has existed in intake/types.ts since step one and had no caller.
+  //
+  // What stands at it today is the suspension check and the ledger, and that is
+  // the point of wiring it: a suspended account may not put a name and a suburb
+  // in front of anyone, and the one thing this switchboard holds that most
+  // needs accounting for — who told whom their real first name and where they
+  // live — was, until now, the only thing a person handed over that the pipe
+  // never saw. No model reads this: a first name and a suburb ARE personal
+  // details, so the screen that refuses personal details has no business here.
+  //
+  // A refusal here refuses the save. A hold does not: the human pressed the
+  // button on their own page, and the words are in the ledger for a person.
+  const { runIntake } = await import('../intake/pipe.js');
+  const verdict = await runIntake(cfg, {
+    door: 'shared_identity',
+    sender_account: accountId,
+    text: `${value.firstName}, ${value.locality}`,
+  });
+  if (verdict.outcome === 'refuse') {
+    throw Object.assign(new Error(verdict.plain_words ?? 'this cannot be shared'), {
+      refused: true,
+      reason_code: verdict.reason_code,
+    });
+  }
   await writeConsentEvent({
     event: 'shared-profile-set',
     account_id: accountId,

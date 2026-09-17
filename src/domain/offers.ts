@@ -10,7 +10,9 @@ import {
   readNegotiation,
   readNegotiationMode,
   relayRefusal,
+  validateOfferNote,
 } from './negotiation.js';
+import { runIntake } from '../intake/pipe.js';
 import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
@@ -98,6 +100,14 @@ export async function proposeOffer(
   // Best offer, if this is one: the floor, the one-number rule and the closed
   // window, all refused to the side that tried rather than silently dropped.
   await assertBestOfferRules(m, accountId, input);
+  // THE NOTE, HELD TO ONE RULE WHATEVER WROTE IT. Two hundred characters, no
+  // way of reaching anybody, no angle brackets — the rule the approval page has
+  // always applied to a note a human typed (domain/negotiation.ts,
+  // validateOfferNote, reached through humanLinks.sendNumberLink). An agent
+  // calling this directly was walking past it and putting up to 2,000
+  // unchecked characters in front of a stranger.
+  const note = validateOfferNote(input.message);
+  if (!note.ok) throw Object.assign(new Error(note.error), { validation: ['message'] });
   if (author === 'agent') {
     // The offer's own amount has been checked against what the human wrote.
     // A SECOND figure in the note beside it has been checked by nothing, and
@@ -113,8 +123,37 @@ export async function proposeOffer(
   await checkOfferRate(accountId, cfg.quotas);
   // Anti-probing: max 3 offers per side per match per rolling 24h.
   await checkPerMatchOfferRate(accountId, input.match_id);
-  const message = input.message
-    ? { text: input.message.slice(0, 2000), provenance: 'counterparty-untrusted' }
+  // THE OFFER_WORDS DOOR (docs/trust-and-safety.md: "offer wording" is one of
+  // the things the one pipe was drawn around). The door has existed in
+  // intake/types.ts since step one and had no caller: a note beside a figure
+  // crossed to a stranger without the suspension check, without the ledger, and
+  // without the classifier that reads an ordinary message for grooming or a
+  // threat. It is the same free text a message is, sent between the same two
+  // people, so it is read on the same terms.
+  //
+  // AFTER the authorisation, the mandate gate and both rate limits, so an
+  // offer that was never going to be made cannot spend a model call.
+  //
+  // A HOLD STILL STORES, exactly as a held message is still delivered: the
+  // pipe opens the safety_reviews row, the ledger keeps the words, and the
+  // figure goes on the table. A flag is for a person to read, not a stall.
+  if (note.value) {
+    const intake = await runIntake(cfg, {
+      door: 'offer_words',
+      sender_account: accountId,
+      recipient_account: m.account_want === accountId ? m.account_have : m.account_want,
+      match_id: m.id,
+      text: note.value,
+    });
+    if (intake.outcome === 'refuse') {
+      if (intake.reason_code === 'SUSPENDED') {
+        throw new OsbError('SUSPENDED', { human_action: intake.plain_words });
+      }
+      throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
+    }
+  }
+  const message = note.value
+    ? { text: note.value, provenance: 'counterparty-untrusted' }
     : null;
   const r = await getPool().query(
     `INSERT INTO offers (match_id, proposer_account, amount, ccy, expiry, message, authored_by)
