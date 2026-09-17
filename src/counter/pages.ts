@@ -378,7 +378,8 @@ ${PIN_FIELDS}
   <button type="submit">${v?.hasPin ? 'Change my PIN' : 'Set my PIN'}</button>
 </form>
 <p class="small muted">Disclosures, settlements and turning things back on all ask
-for it. It never touches your agent.</p>`);
+for it. It never touches your agent.</p>
+<p class="small muted">Keep this PIN to yourself. Do not give it to your assistant; the PIN is how we know it is you.</p>`);
 }
 
 const WEBAUTHN_HELPERS = `<script>
