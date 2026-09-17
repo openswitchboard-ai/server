@@ -77,6 +77,49 @@ describe('trusted proxy hops', () => {
   });
 });
 
+describe('the legacy /counter redirect stays on this site', () => {
+  it('an ordinary legacy path redirects to the same page here', async () => {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/counter/login',
+      headers: { host: 'my.test' },
+    });
+    expect(r.statusCode).toBe(308);
+    expect(r.headers.location).toBe('/login');
+  });
+
+  it('a doubled slash cannot turn the redirect into another site', async () => {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/counter//evil.example/x',
+      headers: { host: 'my.test' },
+    });
+    expect(r.statusCode).toBe(308);
+    expect(r.headers.location).toBe('/evil.example/x');
+    expect(r.headers.location).not.toBe('//evil.example/x');
+  });
+
+  it('a backslash cannot either', async () => {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/counter/\\/evil.example/x',
+      headers: { host: 'my.test' },
+    });
+    expect(r.statusCode).toBe(308);
+    expect(String(r.headers.location)).toBe('/evil.example/x');
+  });
+
+  it('the legacy hostname still lands on the new one', async () => {
+    const r = await app.inject({
+      method: 'GET',
+      url: '/a/sometoken',
+      headers: { host: 'counter.test' },
+    });
+    expect(r.statusCode).toBe(308);
+    expect(r.headers.location).toBe('https://my.test/a/sometoken');
+  });
+});
+
 describe('security headers', () => {
   const common = (h: Record<string, any>) => {
     expect(h['strict-transport-security']).toBe('max-age=31536000; includeSubDomains');
