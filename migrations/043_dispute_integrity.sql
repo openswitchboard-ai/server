@@ -66,3 +66,25 @@ ALTER TABLE offers
 CREATE UNIQUE INDEX IF NOT EXISTS offers_one_best_offer
   ON offers (match_id, proposer_account)
   WHERE best_offer;
+
+-- --------------------------------------------------------------------------
+-- 3. Email abuse.
+--
+-- Every suppression the switchboard had lived on an accounts row, so a hard
+-- bounce or a complaint from an address with no account behind it was logged
+-- and then forgotten: the registration door would mail that address again on
+-- the next attempt, and again. The bounce rate that decides whether the
+-- switchboard can send mail at all is counted per sending domain rather than
+-- per account, so an address nobody typed twice is still an address that costs
+-- everybody.
+--
+-- The list is keyed on the same hash of the address the rest of the schema
+-- uses, so it holds no addresses; the reason is the event type that put it
+-- there, and a row is never overwritten — the first thing that went wrong is
+-- the one on record. Re-verification is the one send that still goes out to a
+-- suppressed address, because it is the only way back off the list.
+CREATE TABLE IF NOT EXISTS email_suppressions (
+  email_hash text PRIMARY KEY,
+  reason     text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
