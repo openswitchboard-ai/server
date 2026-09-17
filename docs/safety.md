@@ -49,8 +49,8 @@ of these, and the classifier is told so.
 - **A reported introduction**: its ledger entries are preserved for
   **ninety days**.
 - **A photo stopped for sexual content**: held in quarantine, unseen, for up
-  to **ninety days**, so that anything that must be referred to police can be,
-  then deleted.
+  to **ninety days** so that a referral can be made; deleted once a person has
+  reviewed and cleared it; anything referred is kept as the law requires.
 - **Message bodies never go into logs.** Operator log lines carry ids and
   reason codes only.
 - IP addresses appear in the application's request logs, kept for one month.

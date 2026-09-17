@@ -137,6 +137,9 @@ answers the reporter with the sentence to say to their human.
   does; reuse it).
 - **Suspend**: the account flag. Nothing in, nothing out, at every door. Their
   postings come down. Onboarding a new account from the same email is refused.
+  Suspending also ends the credentials already out in the world: the account's
+  browser sessions on the approval pages are deleted, and its agents' OAuth
+  refresh tokens are suspended, so neither goes on working after the flag.
 
 **Telling their assistant.** We cannot make an assistant remember, so the
 switchboard tells it every time instead: the connect block puts the suspension
