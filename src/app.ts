@@ -17,7 +17,17 @@ function pathOf(url: string): string {
 export function buildApp(cfg: Config): FastifyInstance {
   const app = Fastify({
     logger: true,
-    trustProxy: true, // behind the ALB
+    // One hop, and one only: the ALB in front of us. `true` would trust the
+    // whole X-Forwarded-For chain, so anyone could prepend an address of their
+    // choosing and become that address as far as the rate limiters and the
+    // logs are concerned. This says: trust whoever is on the other end of the
+    // socket (nothing but the ALB can reach this port) and stop there, so the
+    // caller's address is the LAST X-Forwarded-For entry — the one the ALB
+    // wrote itself — and every earlier entry is treated as the caller's own
+    // invention. Written as a hop function rather than `trustProxy: 1` because
+    // Fastify fails a bare hop count closed and trusts nothing at all, which
+    // would collapse every request onto the ALB's own address.
+    trustProxy: (_addr: string, hop: number) => hop === 0,
     bodyLimit: 256 * 1024,
   });
 
