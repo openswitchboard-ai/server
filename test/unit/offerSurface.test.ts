@@ -194,8 +194,30 @@ describe('the words that rode with a figure', () => {
       }),
     ];
     const entry = await sweep();
-    expect(entry.offer.message).toBe('can collect Saturday');
-    expect(entry.offer_note.text).toContain('can collect Saturday');
+    // The 2026-09-09 defect was the WRAPPER reaching a human as
+    // "[object Object]". The answer to that is for the sentence to read
+    // `.text`, never for the label to be thrown away on the way out
+    // (2026-09-17 audit): a stranger's words reach an agent labelled.
+    expect(entry.offer.message).toEqual({
+      text: 'can collect Saturday',
+      provenance: 'counterparty-untrusted',
+    });
+    expect(entry.offers[0].message).toEqual({
+      text: 'can collect Saturday',
+      provenance: 'counterparty-untrusted',
+    });
+    // The switchboard's own sentence says a note came with the figure; it does
+    // NOT quote the note, because a `switchboard-system` label is a promise
+    // that everything inside the sentence is the switchboard's own.
+    expect(entry.offer_note.provenance).toBe('switchboard-system');
+    expect(entry.offer_note.text).toContain('with a note attached');
+    expect(entry.offer_note.text).not.toContain('can collect Saturday');
+    // And the words travel beside it, under their own label.
+    expect(entry.offer_message).toEqual({
+      text: 'can collect Saturday',
+      provenance: 'counterparty-untrusted',
+    });
+    expect(entry.offer_message_note.provenance).toBe('switchboard-system');
     expect(JSON.stringify(entry)).not.toContain('[object Object]');
   });
 
