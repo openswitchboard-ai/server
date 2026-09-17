@@ -54,7 +54,13 @@ export async function registrationOptions(cfg: Config, accountId: string, label:
     })),
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: 'preferred',
+      // REQUIRED, not preferred. A passkey on this account is a credential for
+      // approving disclosures and moving money, and 'preferred' lets an
+      // authenticator hand back an assertion that proves possession of the
+      // device and nothing about who is holding it — so a phone somebody
+      // picked up off a table would do. The face, the fingerprint or the
+      // device PIN is the whole point of asking for the passkey.
+      userVerification: 'required',
     },
   });
 }
@@ -70,7 +76,10 @@ export async function verifyRegistration(
     expectedChallenge,
     expectedOrigin: cfg.counterOrigin,
     expectedRPID: rpId(cfg),
-    requireUserVerification: false,
+    // The asking is worth nothing without the checking: an authenticator that
+    // ignored the request and sent back an unverified assertion must not be
+    // enrolled as though it had complied.
+    requireUserVerification: true,
   });
   if (!v.verified || !v.registrationInfo) throw new Error('passkey registration not verified');
   const cred = v.registrationInfo.credential;
@@ -91,9 +100,14 @@ export async function verifyRegistration(
 export async function authenticationOptions(cfg: Config) {
   // Discoverable-credential flow: no allow-list, the browser offers the
   // passkeys it holds for this RP.
+  //
+  // REQUIRED, because every assertion this switchboard asks for either signs
+  // somebody in or elevates a session to approve something — there is no
+  // reading-only use of a passkey here. Mere possession of an unlocked device
+  // is not the credential; the person is.
   return generateAuthenticationOptions({
     rpID: rpId(cfg),
-    userVerification: 'preferred',
+    userVerification: 'required',
   });
 }
 
@@ -113,7 +127,7 @@ export async function verifyAuthentication(
     expectedChallenge,
     expectedOrigin: cfg.counterOrigin,
     expectedRPID: rpId(cfg),
-    requireUserVerification: false,
+    requireUserVerification: true,
     credential: {
       id: stored.credential_id,
       publicKey: new Uint8Array(stored.public_key),
