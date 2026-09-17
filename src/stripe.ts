@@ -40,6 +40,9 @@ export const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] =
   'checkout.session.async_payment_failed',
   'transfer.created',
   'charge.refunded',
+  // The buyer went to their card issuer instead of to the settlement page.
+  // Recorded and nothing else: the switchboard moves no money on a chargeback.
+  'charge.dispute.created',
 ];
 
 interface StripeState {

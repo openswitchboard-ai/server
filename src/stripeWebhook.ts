@@ -25,6 +25,7 @@ import { getPool } from './db.js';
 import {
   getSettlement,
   getSettlementByPaymentIntent,
+  markChargeback,
   markFunded,
   markRefunded,
   markReleased,
@@ -226,6 +227,42 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
       const row = await markReleased(ctx, sid);
       log('settlement released', { settlement_id: sid, transfer: transfer.id });
       await notifyBothParties(cfg, row, 'released');
+      return;
+    }
+    case 'charge.dispute.created': {
+      // THE BUYER WENT TO THEIR BANK. Recorded on the settlement, said loudly
+      // in the log, and NO MONEY MOVES. Whether the issuer's dispute succeeds
+      // is decided by the issuer on a clock nobody here controls, and the
+      // switchboard refunding, releasing or freezing on the strength of a
+      // dispute being RAISED would be deciding it for them — twice over, if
+      // the dispute then fails. What the settlement page and the operator's
+      // view gain is that this settlement now says a chargeback exists.
+      const dispute = event.data.object;
+      const charge = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
+      const pi =
+        typeof dispute.payment_intent === 'string'
+          ? dispute.payment_intent
+          : dispute.payment_intent?.id;
+      const s = pi ? await getSettlementByPaymentIntent(pi) : undefined;
+      if (!s) {
+        log('stripe webhook: chargeback on a payment with no settlement behind it', {
+          charge,
+          payment_intent: pi ?? null,
+        });
+        return;
+      }
+      await markChargeback(ctx, s.id);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `settlement chargeback raised: settlement=${s.id} charge=${charge ?? '?'} ` +
+          `state=${s.state} — nothing moved, and nothing will move on this event`,
+      );
+      log('settlement chargeback raised; no money moved', {
+        settlement_id: s.id,
+        charge,
+        state: s.state,
+        reason: dispute.reason,
+      });
       return;
     }
     case 'charge.refunded': {

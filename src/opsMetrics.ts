@@ -25,6 +25,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { getPool } from './db.js';
 import { MANUAL } from './mcp/instructions.js';
 import { SCHEMA_VERSION } from './protocol.js';
+import { TRANSFER_ATTEMPT_CEILING } from './domain/settlements.js';
 import { settlementsConfigured, type Config } from './config.js';
 
 /** How long the whole collected result is reused before the SQL runs again. */
@@ -116,6 +117,20 @@ export interface OpsMoney {
   created_30d: number;
   by_state: CountRow[];
   released_totals: MoneyRow[];
+  /**
+   * Settlements whose transfer to the seller has run out of attempts, and
+   * settlements with a chargeback raised against them (2026-09-17 audit).
+   *
+   * Both are counts of settlements that need a PERSON, and neither is a thing
+   * the software will resolve on its own: a seller whose account cannot take
+   * the money is not a transient failure, and a chargeback is decided by an
+   * issuer on a clock nobody here controls. The money is still held in both
+   * cases. What this line buys is that the operator sees them at all rather
+   * than finding them in a log that reads the same on pass one and pass four
+   * hundred.
+   */
+  transfers_stuck: number;
+  chargebacks: number;
 }
 
 export interface OpsEmail {
@@ -349,6 +364,13 @@ export function realOpsDataSource(): OpsDataSource {
         `SELECT state AS label, count(*)::int AS n
          FROM settlements GROUP BY 1 ORDER BY 2 DESC, 1`,
       );
+      const needAPerson = await pool.query(
+        `SELECT count(*) FILTER (WHERE transfer_attempts >= $1
+                                   AND stripe_transfer_id IS NULL)::int AS transfers_stuck,
+                count(*) FILTER (WHERE chargeback_at IS NOT NULL)::int AS chargebacks
+         FROM settlements`,
+        [TRANSFER_ATTEMPT_CEILING],
+      );
       // `amount` is the agreed amount in the currency's major unit (the minor
       // -unit columns beside it are the buyer's fee breakdown, not this).
       const releasedTotals = await pool.query(
@@ -491,6 +513,8 @@ export function realOpsDataSource(): OpsDataSource {
             amount: String(r.amount),
             n: Number(r.n),
           })),
+          transfers_stuck: num(needAPerson.rows[0]?.transfers_stuck),
+          chargebacks: num(needAPerson.rows[0]?.chargebacks),
         },
         email: {
           sends_24h: num(em.sends_24h),
@@ -677,6 +701,10 @@ export function renderOpsMetricsHtml(d: OpsMetrics): string {
     pairTable('Money', [
       { label: 'Settlements', value: d.money.settlements_total },
       { label: 'Started this month', value: d.money.created_30d },
+      // Two lines that mean somebody has to do something. Both are normally
+      // zero, and neither resolves itself.
+      { label: 'Transfers the sweep has given up on', value: d.money.transfers_stuck },
+      { label: 'Chargebacks raised', value: d.money.chargebacks },
     ]),
   );
   parts.push(countTable('Settlements by state', 'State', d.money.by_state));

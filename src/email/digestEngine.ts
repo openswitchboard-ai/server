@@ -238,13 +238,57 @@ export async function notifyYourMove(
 }
 
 // ---------------------------------------------------------------------------
-// Batched summons for accounts on daily/weekly match frequency.
+// THE TICKS ARE PAGED (2026-09-17 audit).
+//
+// Every tick below used to select every account that qualified and walk the lot
+// in one SQS message. That is fine at a hundred accounts and is an outage at a
+// hundred thousand: the whole result set in memory, an unbounded walk inside a
+// message with a visibility timeout, and — since each account is several
+// queries and a send — a tick that cannot finish before the message is
+// redelivered and started again from the top. The failures were not
+// independent either: one account's bad row took the whole tick down with it,
+// and the redelivery began again at the first account.
+//
+// So: twenty-five accounts a message, ordered by id, and a continuation message
+// carrying the last id when the page was full. Same shape as backfill-geo
+// (workers/opsWorker.ts), and the same reasoning — a long job is a sequence of
+// short ones, each of which either finishes or is redelivered on its own.
+// Per-account failures were already logged and skipped rather than rethrown;
+// what changes is that a failure now costs one page's redelivery at most.
 // ---------------------------------------------------------------------------
-export async function runSummonsBatch(cfg: Config, cadence: Cadence): Promise<number> {
+export const TICK_PAGE = 25;
+
+/** What every tick hands back: what it sent, and where to pick up. */
+export interface TickPass {
+  sent: number;
+  /** The last account on a full page; undefined when the tick is finished. */
+  next?: string;
+}
+
+/** The cursor as SQL: nothing on the first page, "past this id" after that. */
+const afterClause = (after: string | undefined, param: string) =>
+  after ? `AND id > ${param}` : '';
+
+/**
+ * Where the next page starts, or nothing when this one was the last. A short
+ * page means the tick is finished; a full one means there may be more, and one
+ * extra message that finds nothing is cheaper than a page silently dropped.
+ */
+function pageEnd<T>(rows: T[], id: (row: T) => string): string | undefined {
+  return rows.length === TICK_PAGE ? id(rows[rows.length - 1]) : undefined;
+}
+
+export async function runSummonsBatch(
+  cfg: Config,
+  cadence: Cadence,
+  after?: string,
+): Promise<TickPass> {
   const pool = getPool();
   const accounts = await pool.query(
-    `SELECT id FROM accounts WHERE status = 'active' AND email_freq_matches = $1`,
-    [cadence],
+    `SELECT id FROM accounts WHERE status = 'active' AND email_freq_matches = $1
+       ${afterClause(after, '$2')}
+     ORDER BY id LIMIT ${TICK_PAGE}`,
+    after ? [cadence, after] : [cadence],
   );
   let sent = 0;
   let failures = 0;
@@ -286,7 +330,7 @@ export async function runSummonsBatch(cfg: Config, cadence: Cadence): Promise<nu
     }
   }
   tickFailure(`summons-batch:${cadence}`, failures);
-  return sent;
+  return { sent, next: pageEnd(accounts.rows, (r) => r.id) };
 }
 
 // ---------------------------------------------------------------------------
@@ -339,12 +383,18 @@ async function assembleDigestItems(
   return items;
 }
 
-export async function runDigestTick(cfg: Config, cadence: Cadence): Promise<number> {
+export async function runDigestTick(
+  cfg: Config,
+  cadence: Cadence,
+  after?: string,
+): Promise<TickPass> {
   const pool = getPool();
   const accounts = await pool.query(
     `SELECT id, COALESCE(email_last_digest_at, created_at) AS since
-     FROM accounts WHERE status = 'active' AND email_freq_digests = $1`,
-    [cadence],
+     FROM accounts WHERE status = 'active' AND email_freq_digests = $1
+       ${afterClause(after, '$2')}
+     ORDER BY id LIMIT ${TICK_PAGE}`,
+    after ? [cadence, after] : [cadence],
   );
   let sent = 0;
   let failures = 0;
@@ -373,20 +423,23 @@ export async function runDigestTick(cfg: Config, cadence: Cadence): Promise<numb
     }
   }
   tickFailure(`digest:${cadence}`, failures);
-  return sent;
+  return { sent, next: pageEnd(accounts.rows, (r) => r.id) };
 }
 
 // ---------------------------------------------------------------------------
 // "Still true?" renewal — 7 days before the account's next expiry batch.
 // ---------------------------------------------------------------------------
-export async function runRenewalTick(cfg: Config): Promise<number> {
+export async function runRenewalTick(cfg: Config, after?: string): Promise<TickPass> {
   const pool = getPool();
   const due = await pool.query(
     `SELECT DISTINCT account_id FROM cards
      WHERE lifecycle_state = 'PUBLISHED'
        AND expires_at > now()
        AND expires_at <= now() + make_interval(days => ${RENEWAL_LEAD_DAYS})
-       AND renewal_notified_at IS NULL`,
+       AND renewal_notified_at IS NULL
+       ${after ? 'AND account_id > $1' : ''}
+     ORDER BY account_id LIMIT ${TICK_PAGE}`,
+    after ? [after] : [],
   );
   let sent = 0;
   let failures = 0;
@@ -438,5 +491,5 @@ export async function runRenewalTick(cfg: Config): Promise<number> {
     }
   }
   tickFailure('renewal', failures);
-  return sent;
+  return { sent, next: pageEnd(due.rows, (r) => r.account_id) };
 }

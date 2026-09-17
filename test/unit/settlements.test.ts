@@ -554,6 +554,9 @@ describe('the settlement money shape', () => {
 
   it('the webhook set is the one this shape produces', () => {
     expect([...WEBHOOK_EVENTS].sort()).toEqual([
+      // The chargeback is the odd one out: it is subscribed to so that a
+      // settlement can SAY a chargeback exists, and it moves no money at all.
+      'charge.dispute.created',
       'charge.refunded',
       'checkout.session.async_payment_failed',
       'checkout.session.async_payment_succeeded',

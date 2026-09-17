@@ -22,6 +22,7 @@ import {
   runDigestTick,
   runRenewalTick,
   runSummonsBatch,
+  type TickPass,
   sendChannelWaitingNudge,
 } from '../email/digestEngine.js';
 import type { Config } from '../config.js';
@@ -303,28 +304,67 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 // Both halves run even if the other reports failures; a
                 // failure still rethrows afterwards so the job redelivers and
                 // the failed sends retry (dedupe keys protect the rest).
+                //
+                // PAGED, the same way backfill-geo is: twenty-five accounts a
+                // message, and a continuation carrying the last id when the
+                // page was full. The two halves page independently — an
+                // account may be on a daily digest and a weekly summons — so
+                // each carries its own cursor and each stops when its own
+                // pages run out.
                 const cadence = body.cadence === 'weekly' ? 'weekly' : 'daily';
-                let summons: number | undefined, digests: number | undefined;
+                let summons: TickPass | undefined, digests: TickPass | undefined;
                 let failed: unknown;
+                const doSummons = !body.after || body.after.summons !== null;
+                const doDigests = !body.after || body.after.digests !== null;
                 try {
-                  summons = await runSummonsBatch(cfg, cadence);
+                  if (doSummons) summons = await runSummonsBatch(cfg, cadence, body.after?.summons);
                 } catch (e) {
                   failed = e;
                 }
                 try {
-                  digests = await runDigestTick(cfg, cadence);
+                  if (doDigests) digests = await runDigestTick(cfg, cadence, body.after?.digests);
                 } catch (e) {
                   failed ??= e;
                 }
-                log('email-digest-tick: done', { cadence, summons, digests });
+                log('email-digest-tick: pass done', {
+                  cadence,
+                  summons: summons?.sent,
+                  digests: digests?.sent,
+                  more: !!(summons?.next || digests?.next),
+                });
                 if (failed) throw failed;
+                if (summons?.next || digests?.next) {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.opsQueueUrl,
+                      MessageBody: JSON.stringify({
+                        ...body,
+                        after: {
+                          // null rather than absent: a half that has finished
+                          // must not start again from the top on the next page.
+                          summons: summons?.next ?? null,
+                          digests: digests?.next ?? null,
+                        },
+                      }),
+                    }),
+                  );
+                }
                 break;
               }
               case 'email-renewal-tick': {
                 // Daily sweep; a renewal email lands once, 7 days before a
                 // card batch expires (see digestEngine.runRenewalTick).
-                const n = await runRenewalTick(cfg);
-                if (n > 0) log('email-renewal-tick: renewal emails sent', { count: n });
+                // Paged like the digest tick above, for the same reasons.
+                const r = await runRenewalTick(cfg, body.after);
+                if (r.sent > 0) log('email-renewal-tick: renewal emails sent', { count: r.sent });
+                if (r.next) {
+                  await sqs.send(
+                    new SendMessageCommand({
+                      QueueUrl: cfg.opsQueueUrl,
+                      MessageBody: JSON.stringify({ ...body, after: r.next }),
+                    }),
+                  );
+                }
                 break;
               }
               case 'settlement-auto-release': {
