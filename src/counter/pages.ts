@@ -457,23 +457,46 @@ export function ceremonyField(v: CeremonyView, which: string): string {
  */
 export function ceremonySubmit(
   v: CeremonyView,
-  opts: { formId: string; label: string; className?: string; name?: string; value?: string },
+  opts: {
+    formId: string;
+    label: string;
+    className?: string;
+    name?: string;
+    value?: string;
+    /** Where the submission should land, for a form that opens a new tab. */
+    formTarget?: string;
+  },
 ): string {
-  const cls = opts.className ? ` class="${opts.className}"` : '';
+  const cls = opts.className ? ` class="${esc(opts.className)}"` : '';
   const nv = opts.name ? ` name="${esc(opts.name)}" value="${esc(opts.value ?? '')}"` : '';
+  const tgt = opts.formTarget ? ` formtarget="${esc(opts.formTarget)}"` : '';
   if (!passkeyOnlyCeremony(v)) {
-    return `<button type="submit"${nv}${cls}>${esc(opts.label)}</button>`;
+    return `<button type="submit"${nv}${tgt}${cls}>${esc(opts.label)}</button>`;
   }
   const data = opts.name
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
-  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
+  const pkTgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
+  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${pkTgt}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
 }
 
-/** The passkey button beside a PIN box, for an account that holds both. */
-export function ceremonyAlt(v: CeremonyView, formId: string): string {
+/**
+ * The passkey button beside a PIN box, for an account that holds both. It
+ * submits the same form the PIN box belongs to, so where that form has more
+ * than one thing it could be saying — approve or deny — it has to carry the
+ * same name and value the button it stands in for would have sent.
+ */
+export function ceremonyAlt(
+  v: CeremonyView,
+  formId: string,
+  opts: { name?: string; value?: string; formTarget?: string } = {},
+): string {
   if (v.elevated || !v.hasPasskey || !v.hasPin) return '';
-  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}">Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
+  const data = opts.name
+    ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
+    : '';
+  const tgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
+  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}"${data}${tgt}>Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
 }
 
 /**
@@ -531,6 +554,9 @@ document.addEventListener('click', async function(ev){
       h.name = btn.getAttribute('data-pk-name'); h.value = btn.getAttribute('data-pk-value')||'';
       form.appendChild(h);
     }
+    // form.submit() ignores a button's formtarget, so a form that was going
+    // to open a new tab has to be told on the form itself.
+    if (btn.getAttribute('data-pk-target')) form.target = btn.getAttribute('data-pk-target');
     form.submit();
   } catch (e) {
     btn.disabled = false;
@@ -1236,20 +1262,38 @@ ${restHtml}
 ${ceremonyScript(v)}`);
 }
 
-export function authorizePage(clientName: string, postPath: string, hidden: Record<string, string>, clientId = ''): string {
+export function authorizePage(
+  clientName: string,
+  postPath: string,
+  hidden: Record<string, string>,
+  clientId = '',
+  c: CeremonyView = { hasPin: false, hasPasskey: false, elevated: true },
+): string {
   const hiddenInputs = Object.entries(hidden)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join('\n');
+  // Handing an agent a key is a sensitive action, so approving takes the same
+  // ceremony an approval takes. Cancelling takes nothing: it skips the PIN
+  // box's own validation and sends the refusal straight through.
   return layout('Authorize your agent', `
 <h1>Let this agent work the switchboard for you?</h1>
 <div class="headline"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
 <form method="POST" action="${esc(postPath)}" id="authorize-form" data-client="${esc(clientId)}">
 ${hiddenInputs}
+  ${ceremonyField(c, 'authorize')}
   <div class="actions">
-  <button type="submit" name="decision" value="approve" formtarget="_blank">Authorize</button>
-  <button type="submit" name="decision" value="deny" class="secondary">Cancel</button>
+  ${ceremonySubmit(c, {
+    formId: 'authorize-form',
+    label: 'Authorize',
+    name: 'decision',
+    value: 'approve',
+    formTarget: '_blank',
+  })}
+  <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Cancel</button>
   </div>
 </form>
+${ceremonyAlt(c, 'authorize-form', { name: 'decision', value: 'approve', formTarget: '_blank' })}
+${ceremonyNote(c)}
 <p class="small muted">It can post wants &amp; haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
 waits for you, here on your approval page.</p>
@@ -1265,7 +1309,8 @@ document.getElementById('authorize-form').addEventListener('submit', function (e
     setTimeout(function () { location.assign('/?authorized=' + encodeURIComponent(id)); }, 400);
   }
 });
-</script>`);
+</script>
+${ceremonyScript(c)}`);
 }
 
 export function registrationClosedPage(): string {
@@ -1411,9 +1456,13 @@ const STATE_LINES: Record<string, string> = {
 };
 
 /**
- * Every money-moving button on this page carries a ceremony: the PIN box, or
- * the passkey the account holds instead of one. See CeremonyView above for why
- * an account with no PIN is a whole account.
+ * Every button on this page that moves money, freezes it, or writes a fact the
+ * deadlock rule then decides on carries a ceremony: the PIN box, or the
+ * passkey the account holds instead of one. See CeremonyView above for why an
+ * account with no PIN is a whole account. Adding tracking and saying an item
+ * went back are in that list because the rule reads them: whoever can show
+ * where the parcel went wins the payment, so a stolen session that could write
+ * those lines could take the payment without ever pressing a money button.
  */
 function pinField(v: SettlementView, which: string): string {
   return ceremonyField(v, which);
@@ -1614,23 +1663,29 @@ ${esc(v.amount)} comes back to you.</p>`,
 rule looks at if the two of you never agree.${
       v.deliveryTracking ? ` You have ${esc(v.deliveryTracking)} on here now.` : ''
     }</p>
-<form method="POST" action="/settlements/${esc(v.id)}/tracking">
+<form method="POST" action="/settlements/${esc(v.id)}/tracking" id="trackingForm">
   <label for="tracking">Tracking reference</label>
   <input id="tracking" name="tracking" type="text" maxlength="200" required
          value="${esc(v.deliveryTracking ?? '')}">
-  <button type="submit">Add tracking</button>
-</form>`);
+  ${pinField(v, 'tracking')}
+  ${ceremonySubmit(v, { formId: 'trackingForm', label: 'Add tracking' })}
+</form>
+${ceremonyAlt(v, 'trackingForm')}
+${ceremonyNote(v)}`);
   }
   if (v.canMarkReturned) {
     blocks.push(`<h2>I've sent it back</h2>
 <p>Send it back with tracking and put the reference here. When the seller says they have it,
 ${esc(v.amount)} comes back to you; if they say nothing for a week after that, it comes back
 anyway. Postage is between the two of you — the only money held here is ${esc(v.amount)}.</p>
-<form method="POST" action="/settlements/${esc(v.id)}/returned">
+<form method="POST" action="/settlements/${esc(v.id)}/returned" id="returnedForm">
   <label for="rtracking">Tracking reference</label>
   <input id="rtracking" name="tracking" type="text" maxlength="200" required>
-  <button type="submit">I've sent it back</button>
-</form>`);
+  ${pinField(v, 'returned')}
+  ${ceremonySubmit(v, { formId: 'returnedForm', label: "I've sent it back" })}
+</form>
+${ceremonyAlt(v, 'returnedForm')}
+${ceremonyNote(v)}`);
   }
   if (v.returnedOnDay && !v.canMarkReturned) {
     blocks.push(
@@ -1683,13 +1738,16 @@ that allows for it, and postage itself is between the two of you.</p>
 <p class="small muted">${
       v.split ? 'Putting up different figures replaces what is on the table now.' : ''
     }</p>
-<form method="POST" action="/settlements/${esc(v.id)}/resolution">
+<form method="POST" action="/settlements/${esc(v.id)}/resolution" id="proposeForm">
   <label for="refund_to_buyer">Back to the buyer (${esc(v.ccy)})</label>
   <input id="refund_to_buyer" name="refund_to_buyer" type="number" step="0.01" min="0" required>
   <label for="release_to_seller">To the seller (${esc(v.ccy)})</label>
   <input id="release_to_seller" name="release_to_seller" type="number" step="0.01" min="0" required>
-  <button type="submit">Propose this split</button>
-</form>`);
+  ${pinField(v, 'propose')}
+  ${ceremonySubmit(v, { formId: 'proposeForm', label: 'Propose this split' })}
+</form>
+${ceremonyAlt(v, 'proposeForm')}
+${ceremonyNote(v)}`);
   }
   // Raising it in the first place stays folded away at the bottom, under the
   // things this person is more likely to want.
@@ -1704,15 +1762,18 @@ days the payment goes to whichever side can show where the item went.${
             : ''
         } The introductory fee and the card processing stay paid whatever happens, because the card
 processor keeps its own fee on a refund.</p>
-<form method="POST" action="/settlements/${esc(v.id)}/dispute">
+<form method="POST" action="/settlements/${esc(v.id)}/dispute" id="disputeForm">
   <label for="ground">What went wrong</label>
   <div class="choice">
     <label><input type="radio" name="ground" value="not_arrived"> It never arrived</label>
     <label><input type="radio" name="ground" value="not_as_described" checked> It arrived and something is wrong with it</label>
   </div>
   <p class="small muted">Picked it up in person? That is the second one — there is no parcel to go astray.</p>
-  <button type="submit" class="danger">Something is wrong — hold the payment</button>
-</form>`,
+  ${pinField(v, 'dispute')}
+  ${ceremonySubmit(v, { formId: 'disputeForm', label: 'Something is wrong — hold the payment', className: 'danger' })}
+</form>
+${ceremonyAlt(v, 'disputeForm')}
+${ceremonyNote(v)}`,
       )
     : '';
   return layout('Settlement', `

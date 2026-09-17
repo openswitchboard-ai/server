@@ -2229,6 +2229,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (ground !== 'not_arrived' && ground !== 'not_as_described') {
         return html(reply, pages.messagePage('Not quite', '<p>Say which of the two things went wrong.</p>'), 400);
       }
+      // Freezing a payment is a sensitive action: it stops a release that was
+      // otherwise going to happen.
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
       return settlementStep(reply, async () => {
         const row = await settlements.openDispute(
           settlements.counterAction(s.accountId!),
@@ -2269,6 +2273,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
+      // The deadlock rule decides on this line, so writing it is sensitive.
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
       return settlementStep(reply, async () => {
         await settlements.addDeliveryTracking(
           settlements.counterAction(s.accountId!),
@@ -2289,6 +2296,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
+      // Starting the return clock is what puts the agreed amount on its way
+      // back, so it takes the same ceremony the release does.
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
       return settlementStep(reply, async () => {
         await settlements.markReturned(
           settlements.counterAction(s.accountId!),
@@ -2337,6 +2348,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
+      // Proposing IS agreeing — this stamps the proposer's own approval on two
+      // figures — so it takes what approving the other side's figures takes.
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
       const b: any = req.body ?? {};
       const money = (raw: unknown) => {
         const n = Number(String(raw ?? '').trim());
@@ -2600,6 +2615,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     const numbersView = async (
       accountId: string,
       cardId: string,
+      sess0: Session,
     ): Promise<home.CardNumbersView | undefined> => {
       const cards = await ops.ledgerCards(cfg, accountId);
       const c = cards.find((x) => x.id === cardId);
@@ -2615,13 +2631,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         mode: neg.mode,
         mandate: neg.mandate,
         ...(draft ? { draft: { ...draftToFields(draft), matchId: draft.matchId } } : {}),
+        ceremony: await ceremonyFor(accountId, sess.isElevated(sess0)),
       };
     };
 
     counter.get('/ledger/:id/numbers', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const v = await numbersView(s.accountId!, String((req.params as any).id));
+      const v = await numbersView(s.accountId!, String((req.params as any).id), s);
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
       return html(reply, home.cardNumbersPage(v));
     });
@@ -2630,7 +2647,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const id = String((req.params as any).id);
-      const v = await numbersView(s.accountId!, id);
+      const v = await numbersView(s.accountId!, id, s);
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
       const b: any = req.body ?? {};
       const mode: NegotiationMode = b.mode === 'mandate' ? 'mandate' : 'relay';
@@ -2646,7 +2663,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       // own matches.
       const returnTo = String(b.return_to ?? '').trim();
       const backToMatch = async (error?: string, notice?: string, code = 200) => {
-        const v2 = await offersView(s.accountId!, returnTo);
+        const v2 = await offersView(s.accountId!, returnTo, s);
         if (!v2) return undefined;
         return html(reply, home.matchOffersPage({ ...v2, mode }, error, notice), code);
       };
@@ -2673,6 +2690,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           return html(reply, home.cardNumbersPage({ ...v, mode, form }, mandate.error), 400);
         }
       }
+      // Auto-negotiate hands the agent a band it can spend inside without
+      // coming back, and the figures ARE that band. Setting either takes the
+      // same ceremony an approval takes; going back to Pass on with nothing
+      // written is a de-escalation and takes nothing.
+      if (mode === 'mandate' || wroteNumbers) {
+        const okNow = await ceremony(s, reply, String(b.pin ?? ''));
+        if (!okNow) return;
+      }
       await saveNegotiation(
         s.accountId!,
         id,
@@ -2684,7 +2709,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         const back = await backToMatch(undefined, notice);
         if (back) return back;
       }
-      const saved = await numbersView(s.accountId!, id);
+      const saved = await numbersView(s.accountId!, id, s);
       return html(reply, home.cardNumbersPage(saved!, undefined, notice));
     });
 
@@ -2692,10 +2717,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const id = String((req.params as any).id);
-      const v = await numbersView(s.accountId!, id);
+      const v = await numbersView(s.accountId!, id, s);
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
       await saveNegotiation(s.accountId!, id, { mode: 'relay', mandate: null }, 'counter');
-      const saved = await numbersView(s.accountId!, id);
+      const saved = await numbersView(s.accountId!, id, s);
       return html(
         reply,
         home.cardNumbersPage(
@@ -2715,6 +2740,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     const offersView = async (
       accountId: string,
       matchId: string,
+      sess0: Session,
     ): Promise<home.MatchOffersView | undefined> => {
       const m = await ops.matchForHuman(accountId, matchId);
       if (!m) return undefined;
@@ -2743,6 +2769,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         category: categoryLeafLabel(m.category),
         type: m.card_type,
         mode: neg.mode,
+        ceremony: await ceremonyFor(accountId, sess.isElevated(sess0)),
         canOffer: !blocked,
         canOfferBlockedBecause: blocked,
         // There is something to close while it is open, and nothing to close
@@ -2767,7 +2794,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.get('/matches/:id', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const v = await offersView(s.accountId!, String((req.params as any).id));
+      const v = await offersView(s.accountId!, String((req.params as any).id), s);
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       return html(reply, home.matchOffersPage(v));
     });
@@ -2809,7 +2836,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const matchId = String((req.params as any).id);
-      const v = await offersView(s.accountId!, matchId);
+      const v = await offersView(s.accountId!, matchId, s);
       if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
       const b: any = req.body ?? {};
       const form = {
@@ -2860,7 +2887,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         if (e?.notFound) return bad('This match is no longer yours to offer on.', 404);
         throw e;
       }
-      const after = await offersView(s.accountId!, matchId);
+      const after = await offersView(s.accountId!, matchId, s);
       return html(
         reply,
         home.matchOffersPage(after!, undefined, 'Sent. Your number is on the table for the other side.'),
@@ -2882,11 +2909,18 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     });
 
     // ------------------------------------------------------------------
-    // Kill switch: one tap on; login + PIN off.
+    // Kill switch: the same ceremony either way.
+    //
+    // Turning it ON used to be one tap on a signed-in session alone. It is a
+    // sensitive action all the same — it suspends every agent token the
+    // account holds and takes every want and have out of matching — and a
+    // stolen session could switch a person off and leave them wondering.
     // ------------------------------------------------------------------
     counter.post('/kill', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
       await ops.killSwitchOn(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
       if (email) await notifyBestEffort(req, 'kill-switch-on', () => sendKillSwitchEmail(cfg, email, s.accountId!, true));
@@ -3426,7 +3460,13 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       }
       return html(
         reply,
-        pages.authorizePage(v.client!.client_name, '/authorize', {}, v.client!.client_id),
+        pages.authorizePage(
+          v.client!.client_name,
+          '/authorize',
+          {},
+          v.client!.client_id,
+          await ceremonyFor(s.accountId, sess.isElevated(s as Session), a),
+        ),
       );
     });
 
@@ -3445,13 +3485,19 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       if (!a || a.status !== 'active') {
         return html(reply, pages.messagePage('Account not active', '<p>Finish opening your account first.</p>'), 403);
       }
-      await sess.setOauthCtx(s.id, null);
       const target = new URL(ctx.redirect_uri);
       if (String((req.body as any)?.decision ?? '') !== 'approve') {
+        await sess.setOauthCtx(s.id, null);
         target.searchParams.set('error', 'access_denied');
         if (ctx.state) target.searchParams.set('state', ctx.state);
         return reply.redirect(target.toString(), 303);
       }
+      // Handing an agent a key is a sensitive action. The pending request is
+      // cleared only once the ceremony is through, so a wrong PIN leaves the
+      // person on a page that still knows what they were being asked.
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
+      await sess.setOauthCtx(s.id, null);
       const code = await createAuthCode({
         clientId: ctx.client_id,
         accountId: s.accountId!,

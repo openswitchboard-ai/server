@@ -278,11 +278,13 @@ matching and your agents' tokens are suspended. Turning back on needs ${esc(back
 ${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
     : `<div class="kill">
 <h2>Kill switch</h2>
-<p class="small">One tap: every want and have paused, every agent token suspended,
-confirmation email sent. Un-pausing needs ${esc(backOnWord)}.</p>
-<form method="POST" action="/kill">
-  <button type="submit" class="danger">Pause everything now</button>
-</form></div>`;
+<p class="small">Every want and have paused, every agent token suspended,
+confirmation email sent. Pausing and un-pausing both need ${esc(backOnWord)}.</p>
+<form method="POST" action="/kill" id="killOnForm">
+  ${cpages.ceremonyField(c, 'killon')}
+  ${cpages.ceremonySubmit(c, { formId: 'killOnForm', label: 'Pause everything now', className: 'danger' })}
+</form>
+${cpages.ceremonyAlt(c, 'killOnForm')}</div>`;
 
   // 1. Decisions. Whole card is the tap target; the wording of the button
   //    stays on the card so the person knows what they are opening.
@@ -391,7 +393,7 @@ ${renewals}
 ${nav}
 ${kill}
 <form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>
-${v.killSwitchOn ? cpages.ceremonyScript(c) : ''}`);
+${cpages.ceremonyScript(c)}`);
 }
 
 export interface LedgerCardView {
@@ -585,9 +587,18 @@ export interface CardNumbersView {
   /** A figure this card's agent was refused for on Pass on, waiting to be sent
    *  from the match it belongs to. */
   draft?: OfferDraftView & { matchId: string };
+  /** Setting a mandate hands the agent a band it can spend inside without
+   *  asking again, so writing one takes the same ceremony an approval takes.
+   *  Absent means "ask nothing", which is what the standalone page renderers
+   *  in the tests want. */
+  ceremony?: cpages.CeremonyView;
 }
 
+/** A ceremony view that asks for nothing, for a page rendered without one. */
+const ASKS_NOTHING: cpages.CeremonyView = { hasPin: false, hasPasskey: false, elevated: true };
+
 export function cardNumbersPage(v: CardNumbersView, error?: string, notice?: string): string {
+  const c = v.ceremony ?? ASKS_NOTHING;
   const f = v.form ?? {
     open: v.mandate?.open != null ? String(v.mandate.open) : '',
     limit: v.mandate?.limit != null ? String(v.mandate.limit) : '',
@@ -629,7 +640,7 @@ ${draft}
 <p class="lead">Every figure this ${thing} carries into a negotiation is one you
 wrote. Your agent presents and advises; it never invents a price of its own.</p>
 ${current}
-<form method="POST" action="/ledger/${esc(v.id)}/numbers">
+<form method="POST" action="/ledger/${esc(v.id)}/numbers" id="numbersForm">
   <h2>How this ${thing} negotiates</h2>
   ${modeRadio('relay')}
   ${modeRadio('mandate')}
@@ -645,8 +656,11 @@ ${current}
   <input id="step" name="step" type="number" step="0.01" min="0" value="${esc(f.step ?? '')}" placeholder="amount">
   <label for="ccy">Currency</label>
   <input id="ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(f.ccy ?? '')}" placeholder="AUD">
-  <button type="submit">Save</button>
+  ${cpages.ceremonyField(c, 'numbers')}
+  ${cpages.ceremonySubmit(c, { formId: 'numbersForm', label: 'Save' })}
 </form>
+${cpages.ceremonyAlt(c, 'numbersForm')}
+${cpages.ceremonyNote(c)}
 ${
   v.mandate
     ? `<form method="POST" action="/ledger/${esc(v.id)}/numbers/clear">
@@ -657,7 +671,8 @@ ${
 <p class="small muted">Whichever way this is set, accepting an offer still
 comes to you here, for you to approve. Auto-negotiate lets your agent put figures on
 the table between the two you wrote; it never agrees anything.</p>
-<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to your ${thing}</a>`);
+<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to your ${thing}</a>
+${cpages.ceremonyScript(c)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +720,11 @@ export interface MatchOffersView {
    *  The report road sits beside every open introduction, so that reporting
    *  somebody never depends on an assistant being in the room. */
   canReport?: boolean;
+  /** Setting a mandate hands the agent a band it can spend inside without
+   *  asking again, so writing one takes the same ceremony an approval takes.
+   *  Absent means "ask nothing", which is what the standalone page renderers
+   *  in the tests want. */
+  ceremony?: cpages.CeremonyView;
 }
 
 /**
@@ -776,6 +796,7 @@ const OFFER_STATE_WORDS: Record<string, string> = {
  * person back here afterwards.
  */
 function negotiationControl(v: MatchOffersView): string {
+  const c = v.ceremony ?? ASKS_NOTHING;
   const m = v.mandate;
   const val = (n?: number) => (n != null ? String(n) : '');
   const opt = (
@@ -788,7 +809,7 @@ function negotiationControl(v: MatchOffersView): string {
   <span class="small muted">${esc(rest)}</span>
 </label>`;
   return `<h2>How your agent negotiates</h2>
-<form method="POST" action="/ledger/${esc(v.cardId)}/numbers">
+<form method="POST" action="/ledger/${esc(v.cardId)}/numbers" id="negForm">
   <input type="hidden" name="return_to" value="${esc(v.matchId)}">
   <div class="modegrid">
     ${opt('relay', 'Pass on:', 'your agent brings every offer to you and sends back the numbers you give it')}
@@ -806,8 +827,11 @@ function negotiationControl(v: MatchOffersView): string {
     <label for="neg_ccy">Currency</label>
     <input id="neg_ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(m?.ccy ?? '')}" placeholder="AUD">
   </div>
-  <button type="submit" class="secondary">Save how it negotiates</button>
+  ${cpages.ceremonyField(c, 'neg')}
+  ${cpages.ceremonySubmit(c, { formId: 'negForm', label: 'Save how it negotiates', className: 'secondary' })}
 </form>
+${cpages.ceremonyAlt(c, 'negForm')}
+${cpages.ceremonyNote(c)}
 <p class="small muted">Accepting an offer comes to you here whichever way this
 is set, for you to approve. Auto-negotiate lets your agent put figures on the table
 between the two you wrote; it agrees nothing.</p>

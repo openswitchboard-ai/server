@@ -119,6 +119,8 @@ interface World {
   stage: number;
   matchState: 'open' | 'declined' | 'closed';
   writes: { sql: string; params: any[] }[];
+  /** Whether the browser session is inside a ceremony's window. */
+  elevated: boolean;
 }
 let world: World;
 let offerSeq = 0;
@@ -146,7 +148,17 @@ function fakePool() {
 
       if (/FROM counter_sessions/.test(sql) && /SELECT id, account_id/.test(sql)) {
         return params[0] === sha256hex(SID)
-          ? rows([{ id: 'sess-1', account_id: ANA, pin_ok_until: null, oauth_ctx: null }])
+          ? rows([
+              {
+                id: 'sess-1',
+                account_id: ANA,
+                // Writing the numbers takes a ceremony, so the session these
+                // tests drive is inside a ceremony's window. `world.elevated`
+                // turns that off for the test that checks the door is shut.
+                pin_ok_until: world.elevated ? new Date(Date.now() + 600_000) : null,
+                oauth_ctx: null,
+              },
+            ])
           : rows([]);
       }
       if (/SELECT account_id, type, negotiation_mode, mandate_enc FROM cards/.test(sql)) {
@@ -263,6 +275,7 @@ beforeEach(async () => {
     stage: 2,
     matchState: 'open',
     writes: [],
+    elevated: true,
   };
   offerSeq = 0;
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
@@ -733,6 +746,33 @@ describe('the human page class owns both settings', () => {
     expect(cleared.statusCode).toBe(200);
     expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
     expect(world.cards[CARD_W].mandate_enc).toBeNull();
+  });
+
+  it('writing the numbers takes a ceremony; a session that has not had one writes nothing', async () => {
+    world.elevated = false;
+    const res = await inject('POST', `/ledger/${CARD_W}/numbers`, {
+      mode: 'mandate',
+      open: '300',
+      limit: '400',
+      ccy: 'AUD',
+    });
+    expect(res.statusCode).toBe(401);
+    expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
+    expect(world.cards[CARD_W].mandate_enc).toBeNull();
+  });
+
+  it('going back to Pass on with nothing written is a de-escalation and takes nothing', async () => {
+    world.elevated = false;
+    const res = await inject('POST', `/ledger/${CARD_W}/numbers`, { mode: 'relay' });
+    expect(res.statusCode).toBe(200);
+    expect(world.cards[CARD_W].negotiation_mode).toBe('relay');
+  });
+
+  it('the page carries the PIN box the save now asks for', async () => {
+    world.elevated = false;
+    const res = await inject('GET', `/ledger/${CARD_W}/numbers`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Confirm with your PIN');
   });
 
   it('the match page shows both sides\' figures and the box for the next one', async () => {
