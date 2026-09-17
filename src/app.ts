@@ -141,7 +141,12 @@ export function buildApp(cfg: Config): FastifyInstance {
       const legacyPath = path === '/counter' || path.startsWith('/counter/');
       if (legacyHost || legacyPath) {
         const rest = legacyPath ? req.url.slice('/counter'.length) : req.url;
-        const target = rest.startsWith('/') ? rest : `/${rest}`;
+        // Exactly one leading slash. `/counter//evil.example/x` would
+        // otherwise leave `//evil.example/x`, which a browser reads as a
+        // scheme-relative URL and follows off this site entirely; a backslash
+        // does the same in some browsers. Everything after the slash is the
+        // path we were asked for and is left alone.
+        const target = '/' + rest.replace(/^[/\\]+/, '');
         return reply.redirect(legacyHost ? `${cfg.counterOrigin}${target}` : target, 308);
       }
     }
