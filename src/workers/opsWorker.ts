@@ -351,7 +351,9 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                 break;
               }
               default:
-                log('ops: unknown op', { body: msg.Body?.slice(0, 200) });
+                // The shape, never the contents: an ops message carries
+                // account ids, email addresses and people's own words.
+                log('ops: unknown op', { op: body?.op, fields: Object.keys(body ?? {}) });
             }
             await sqs.send(
               new DeleteMessageCommand({

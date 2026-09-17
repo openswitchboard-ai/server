@@ -64,7 +64,8 @@ export function startMatchingWorker(cfg: Config, log: (msg: string, extra?: any)
                 }
               }
             } else {
-              log('matcher: unknown message kind', { body: msg.Body?.slice(0, 200) });
+              // The shape, never the contents.
+              log('matcher: unknown message kind', { op: body?.op, fields: Object.keys(body ?? {}) });
             }
             await sqs.send(
               new DeleteMessageCommand({

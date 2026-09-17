@@ -92,7 +92,8 @@ export function startScreeningWorker(cfg: Config, log: (msg: string, extra?: any
                 }
               }
             } else {
-              log('screening: unknown message kind', { body: msg.Body?.slice(0, 200) });
+              // The shape, never the contents.
+              log('screening: unknown message kind', { op: body?.op, fields: Object.keys(body ?? {}) });
             }
             await sqs.send(
               new DeleteMessageCommand({

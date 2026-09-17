@@ -280,16 +280,22 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   } catch (e: any) {
     const sandboxRejected =
       e?.name === 'MessageRejected' && /not verified|sandbox/i.test(String(e?.message ?? ''));
+    // What SES says went wrong, without saying who it was going to. An SES
+    // error message quotes the recipient address back — "Email address is not
+    // verified: someone@example.com" — and that address would then sit in the
+    // log stream and in the email_sends row forever. The name and the HTTP
+    // status are enough to tell a throttle from a rejection from an outage.
+    const detail = `${e?.name ?? 'Error'} (HTTP ${e?.$metadata?.httpStatusCode ?? '?'})`;
     if (cfg.envName === 'dev' && sandboxRejected) {
       // eslint-disable-next-line no-console
       console.error(
         `SES SANDBOX: send to unverified recipient rejected (dev tolerated; see email/send.ts): ` +
-          `template=${input.template} ${e.message}`,
+          `template=${input.template} ${detail}`,
       );
-      await updateSend(input.dedupeKey, 'sandbox-rejected', undefined, String(e.message));
-      return { status: 'sandbox-rejected', detail: String(e.message) };
+      await updateSend(input.dedupeKey, 'sandbox-rejected', undefined, detail);
+      return { status: 'sandbox-rejected', detail };
     }
-    await updateSend(input.dedupeKey, 'failed', undefined, String(e?.message ?? e));
+    await updateSend(input.dedupeKey, 'failed', undefined, detail);
     throw e;
   }
 }
