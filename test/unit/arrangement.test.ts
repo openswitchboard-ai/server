@@ -78,7 +78,7 @@ function fakePool() {
       }
       // The read ceiling is checked before the sweep runs; this world never
       // gets near it.
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       // No matches, no cards: the sweep is empty and the arrangement is the
       // only thing it has to say.
       return rows([]);

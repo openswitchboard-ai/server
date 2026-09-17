@@ -16,7 +16,7 @@ import * as humanLinks from '../domain/humanLinks.js';
 import * as matches from '../domain/matches.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
-import { checkReadRate } from '../domain/quotas.js';
+import { checkReadRate, checkWriteRate } from '../domain/quotas.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
 import { APPROVAL_LINK_TTL_MINUTES } from '../counter/links.js';
 import { settlementsConfigured, type Config } from '../config.js';
@@ -771,6 +771,56 @@ function invalidInput(message: string, humanAction?: string): ToolResult {
 const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents']);
 
 /**
+ * THE WRITE SURFACE, AND THE CEILING THAT WAS MISSING (2026-09-17 audit).
+ *
+ * Reading has had one shared ceiling since migration 011. Writing had none:
+ * every write tool carried a limit of its own and every one of those limits was
+ * scoped to something smaller than the account, so an agent with introductions
+ * on ten conversations could send six hundred messages an hour inside the
+ * rules. See checkWriteRate in domain/quotas.ts for the whole of the reasoning.
+ *
+ * `respond` is on this list, which is what caps LINK MINTING: every request_*
+ * action is a respond action, so minting a page for a human to press costs an
+ * account the same as sending a message does. That is the point — a link is
+ * cheap for an agent to ask for and expensive for a human to be handed.
+ */
+const WRITE_TOOLS = new Set(['send_message', 'publish_intent', 'respond', 'settle']);
+
+/**
+ * AND THE ONE RAIL UNDER wait_for_press, which is charged for neither.
+ *
+ * A wait costs nothing per call and that is right (see the note above), but it
+ * HOLDS: it sits open for up to a minute waiting on one press. Nothing stopped
+ * an agent opening a thousand of them at once and holding a thousand sockets
+ * and a thousand pollers for a human who is going to press one link.
+ *
+ * Three at a time per account, which is more than any honest agent needs: a
+ * human is handed one link at a time and presses it or does not. A fourth is
+ * refused with the ordinary paced answer rather than queued.
+ *
+ * IN MEMORY, DELIBERATELY. This is the one rail in the system that is not in
+ * the database, and it is sound because of what it guards: a wait is held by
+ * ONE process — the task holding the socket — so a per-process count is a count
+ * of exactly the thing being limited. A replica cannot hold another replica's
+ * wait open. Prod running ten tasks means the true ceiling is up to thirty
+ * across the fleet only if an agent spreads its calls over ten connections,
+ * and thirty held waits is still thirty rather than a thousand. A restart
+ * clears the map, which is correct: a restarted process is holding no waits.
+ */
+export const MAX_CONCURRENT_WAITS = 3;
+
+const waitsInFlight = new Map<string, number>();
+
+/** For the suite: nothing is in flight at the start of a test. */
+export function resetWaitsInFlight(): void {
+  waitsInFlight.clear();
+}
+
+export function waitsHeldFor(accountId: string): number {
+  return waitsInFlight.get(accountId) ?? 0;
+}
+
+/**
  * The id of the introduction a call is about. `intro_id` is the name the agent
  * is given; `match_id` is still accepted so a client holding the older tool
  * schema keeps working, and nothing the switchboard sends uses that word any
@@ -869,6 +919,9 @@ export async function dispatchTool(
     // ceiling. Checked before the work, so a refused call costs the switchboard
     // a single statement.
     if (READ_TOOLS.has(name)) await checkReadRate(accountId);
+    // And one over everything that changes something. Checked before the work,
+    // for the same reason: a refused call costs the switchboard one statement.
+    if (WRITE_TOOLS.has(name)) await checkWriteRate(accountId, cfg.quotas);
     switch (name) {
       case 'publish_intent': {
         // `listing` is the wire's name for the field. `card` is still accepted so
@@ -1246,12 +1299,30 @@ export async function dispatchTool(
         }
       }
       case 'wait_for_press': {
-        // Costs nothing against the hourly ceiling: see the note on READ_TOOLS.
+        // Costs nothing against either hourly ceiling: see the note on
+        // READ_TOOLS. What it does cost is one of three concurrent waits.
         const pressId = args?.press_id;
         if (!pressId || typeof pressId !== 'string') {
           return invalidInput('wait_for_press requires the press_id that came back with the link');
         }
-        return ok(await humanLinks.waitForPress(cfg, accountId, pressId));
+        const held = waitsInFlight.get(accountId) ?? 0;
+        if (held >= MAX_CONCURRENT_WAITS) {
+          return protocolAnswer(
+            new OsbError('RATE_LIMITED', {
+              retry_after: 60,
+              human_action:
+                'There are already several of these waiting on your human at once. Let one of them finish before opening another — a wait ends by itself inside a minute.',
+            }).payload,
+          );
+        }
+        waitsInFlight.set(accountId, held + 1);
+        try {
+          return ok(await humanLinks.waitForPress(cfg, accountId, pressId));
+        } finally {
+          const now = (waitsInFlight.get(accountId) ?? 1) - 1;
+          if (now > 0) waitsInFlight.set(accountId, now);
+          else waitsInFlight.delete(accountId);
+        }
       }
       default:
         return invalidInput(`unknown tool '${name}'`);

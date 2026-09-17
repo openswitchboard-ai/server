@@ -109,7 +109,7 @@ function fakePool() {
     query: async (sql: string, params: unknown[] = []) => {
       world.sql.push({ sql, params });
       const rows = (r: unknown[]) => ({ rows: r, rowCount: r.length });
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT arrangement FROM accounts/.test(sql)) return rows([{ arrangement: null }]);
       if (/SELECT hears_via FROM accounts/.test(sql)) return rows([{ hears_via: 'email' }]);
       if (/SELECT timezone FROM accounts/.test(sql)) return rows([{ timezone: 'Australia/Perth' }]);

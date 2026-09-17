@@ -258,7 +258,7 @@ function fakePool() {
             })),
         );
       }
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       world.writes.push({ sql, params });
       return rows([]);
     },

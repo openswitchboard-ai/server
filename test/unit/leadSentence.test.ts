@@ -104,7 +104,7 @@ function fakePool() {
         opened_at: world.stage === 4 ? new Date('2026-09-13T00:00:00Z') : null,
         my_optin: world.myOptin,
       });
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT arrangement FROM accounts/.test(sql)) return rows([{ arrangement: null }]);
       if (/SELECT hears_via FROM accounts/.test(sql)) return rows([{ hears_via: 'email' }]);
       if (/SELECT timezone FROM accounts/.test(sql)) return rows([{ timezone: 'Australia/Perth' }]);

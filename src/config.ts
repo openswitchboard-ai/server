@@ -13,6 +13,10 @@ export interface Quotas {
   maxPublishesPerDay: number;
   /** Max offers proposed per rolling hour per account (RATE_LIMITED_OFFERS). */
   maxOffersPerHour: number;
+  /** One ceiling over every write tool together, per account, per rolling
+   *  hour: send_message, publish_intent, respond and settle. It sits above the
+   *  per-thing limits rather than replacing them. */
+  maxWritesPerHour: number;
 }
 
 export interface Config {
@@ -171,6 +175,7 @@ export function loadConfig(): Config {
       maxOpenCards: Number(process.env.QUOTA_MAX_OPEN_CARDS ?? 5),
       maxPublishesPerDay: Number(process.env.QUOTA_MAX_PUBLISHES_PER_DAY ?? 10),
       maxOffersPerHour: Number(process.env.QUOTA_MAX_OFFERS_PER_HOUR ?? 6),
+      maxWritesPerHour: Number(process.env.QUOTA_MAX_WRITES_PER_HOUR ?? 300),
     },
     docsBase: 'https://openswitchboard.ai/docs',
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,

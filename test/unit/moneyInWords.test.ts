@@ -239,18 +239,50 @@ describe('what the agent is told', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The send itself: refused before anything is written.
+// The send itself: refused before anything is written, and after the one
+// question that is cheaper than the check — whose conversation is this?
+//
+// The order changed on 2026-09-17. It used to be: check the words, then look
+// up the introduction. Which meant an agent could aim send_message at a
+// conversation its human was not party to and still spend the whole intake
+// pipe — a Bedrock call, a ledger row, and where the classifier flagged it a
+// safety_reviews row — against a match it was about to be thrown out of.
+// Authorisation is the cheapest question here, so it is the first one.
 // ---------------------------------------------------------------------------
 
 describe('send_message with a figure in it', () => {
   let queries: string[];
+
+  /** An open conversation this human really is on one side of. */
+  const theChannel = (sql: string) => {
+    if (/FROM matches/.test(sql)) {
+      return {
+        rows: [
+          {
+            id: MATCH,
+            card_want: 'dddddddd-4444-4444-8444-dddddddddddd',
+            card_have: 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee',
+            account_want: ANA,
+            account_have: 'cccccccc-3333-4333-8333-cccccccccccc',
+            category: 'goods.bicycles.mountain-bike',
+            stage: 4,
+            state: 'open',
+            channel_id: 'ffffffff-6666-4666-8666-ffffffffffff',
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (/channel_send_rate/.test(sql)) return { rows: [{ n: 1 }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
 
   beforeEach(() => {
     queries = [];
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string) => {
         queries.push(sql);
-        return { rows: [], rowCount: 0 };
+        return theChannel(sql);
       },
       connect: async () => {
         queries.push('CONNECT');
@@ -259,13 +291,31 @@ describe('send_message with a figure in it', () => {
     } as any);
   });
 
-  it('refuses, and never touches the database at all', async () => {
+  it('refuses, and writes nothing', async () => {
     await expect(
       channel.sendMessage(ANA, MATCH, 'Happy to confirm $420 for it', cfg),
     ).rejects.toBeInstanceOf(OsbError);
-    // Nothing read, nothing written, no allowance spent: the refusal lands
-    // before the introduction is even looked up.
-    expect(queries).toEqual([]);
+    // Nothing encrypted, nothing stored, and no transaction opened: the
+    // refusal lands before any of the work.
+    expect(queries).not.toContain('CONNECT');
+    expect(queries.some((q) => /INSERT INTO channel_messages/.test(q))).toBe(false);
+  });
+
+  it('but it does spend the channel allowance, because the attempt is the cost', async () => {
+    await expect(
+      channel.sendMessage(ANA, MATCH, 'Happy to confirm $420 for it', cfg),
+    ).rejects.toBeInstanceOf(OsbError);
+    expect(queries.some((q) => /channel_send_rate/.test(q))).toBe(true);
+  });
+
+  it('and a conversation this human is not on costs nothing at all', async () => {
+    const stranger = 'bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb';
+    await expect(
+      channel.sendMessage(stranger, MATCH, 'Happy to confirm $420 for it', cfg),
+    ).rejects.toThrow();
+    // The introduction was read, and that is where it stopped: no allowance
+    // spent, and above all no model call made on somebody else's words.
+    expect(queries.some((q) => /channel_send_rate/.test(q))).toBe(false);
   });
 
   it('hands back the sentence, on the code the other refusals use', async () => {
@@ -282,7 +332,7 @@ describe('send_message with a figure in it', () => {
     await expect(
       channel.sendMessage(ANA, MATCH, 'four hundred and twenty dollars, final', cfg),
     ).rejects.toBeInstanceOf(OsbError);
-    expect(queries).toEqual([]);
+    expect(queries.some((q) => /INSERT INTO channel_messages/.test(q))).toBe(false);
   });
 
   it('lets an ordinary arrangement through to the transport', async () => {

@@ -94,6 +94,63 @@ export async function checkReadRate(accountId: string): Promise<void> {
   });
 }
 
+/**
+ * AND ONE SHARED CEILING OVER THE WRITE TOOLS (2026-09-17 audit).
+ *
+ * Migration 011 capped reading and nothing capped writing. Every write tool had
+ * a limit of its own, and every one of those limits was scoped to something
+ * smaller than the account: offers per hour per account, publishes per day,
+ * messages per channel per hour. An agent holding introductions on ten
+ * conversations could send six hundred messages an hour inside the rules —
+ * every one of them a model call and a ledger row — and nothing anywhere was
+ * counting the ACCOUNT.
+ *
+ * This sits above the per-thing limits rather than replacing any of them: how
+ * fast one conversation may move is a different question from how much one
+ * account may do in an hour. It is deliberately generous, so that only a
+ * runaway meets it and nobody doing something a human asked for ever does.
+ *
+ * `wait_for_press` is not counted, for the reason it is not counted against the
+ * read ceiling either (see READ_TOOLS in src/mcp/tools.ts); what stops a
+ * thousand waits is a different rail, and it is in that file.
+ *
+ * Same one statement as checkReadRate: prune what has fallen out of the window,
+ * count what is still in it, record this call only if it fits.
+ */
+export const MAX_WRITES_PER_HOUR = 300;
+
+export async function checkWriteRate(accountId: string, q?: Quotas): Promise<void> {
+  const cap = q?.maxWritesPerHour ?? MAX_WRITES_PER_HOUR;
+  const r = await getPool().query(
+    `WITH pruned AS (
+       DELETE FROM write_calls
+        WHERE account_id = $1 AND called_at <= now() - interval '1 hour'
+     ), live AS (
+       SELECT count(*)::int AS n, min(called_at) AS oldest
+         FROM write_calls
+        WHERE account_id = $1 AND called_at > now() - interval '1 hour'
+     ), recorded AS (
+       INSERT INTO write_calls (account_id)
+       SELECT $1 FROM live WHERE live.n < $2
+     )
+     SELECT n, oldest FROM live`,
+    [accountId, cap],
+  );
+  // The aggregate above always returns exactly one row against a real
+  // database, so no row at all means there is no window here to count — a
+  // stood-in pool in the suite. Read as empty rather than as full: a rail that
+  // shut every door whenever its own table was unreachable would be a worse
+  // failure than the one it guards against.
+  const n = Number(r.rows[0]?.n ?? 0);
+  if (n < cap) return;
+  const oldest = new Date(r.rows[0].oldest).getTime();
+  const retry = Math.max(1, Math.ceil((oldest + 3_600_000 - Date.now()) / 1000));
+  throw new OsbError('RATE_LIMITED', {
+    retry_after: retry,
+    human_action: `That is a great deal of activity on this account in one hour, so the switchboard is pacing it. Come back ${roughWait(retry)} — nothing your human needs to do.`,
+  });
+}
+
 /** Anti-probing rail: max 3 offers per side per MATCH per rolling 24h. */
 export const MAX_OFFERS_PER_MATCH_PER_DAY = 3;
 

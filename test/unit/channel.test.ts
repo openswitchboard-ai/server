@@ -269,7 +269,7 @@ function run(sql: string, params: any[] = []) {
   }
   // The shared read ceiling is checked before every read tool; this world is
   // never near it, so the window always has room.
-  if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+  if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
   // Anything the transport reaches for that this world does not know about is
   // a change worth noticing, so it comes back empty rather than plausible.
   return rows([]);
@@ -896,7 +896,7 @@ describe('check_in says when something is waiting', () => {
     // query with the one match it holds.
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string, params: any[] = []) => {
-        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        if (/read_calls|write_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
         if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 }; // no collection window
         if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
         // Stage 3 is behind stage 4, so the sweep also builds the mutual
@@ -950,7 +950,7 @@ describe('check_in says when something is waiting', () => {
     await channel.sendMessage(ANA, MATCH, 'only one');
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string, params: any[] = []) => {
-        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        if (/read_calls|write_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
         if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 };
         if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
         if (/count\(DISTINCT account_id\)/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };
@@ -998,7 +998,7 @@ describe('check_in says when something is waiting', () => {
   it('reads as nothing waiting only when nothing is', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string, params: any[] = []) => {
-        if (/read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        if (/read_calls|write_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
         if (/FROM cards c/.test(sql)) return { rows: [], rowCount: 0 };
         if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return { rows: [theMatch()], rowCount: 1 };
         if (/count\(DISTINCT account_id\)/.test(sql)) return { rows: [{ n: 2 }], rowCount: 1 };

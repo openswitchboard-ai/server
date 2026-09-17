@@ -378,7 +378,7 @@ function fakePool() {
         world.stage = 3;
         return rows([]);
       }
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT count\(\*\)::int AS n FROM offers/.test(sql)) return rows([{ n: 0 }]);
       if (/SELECT count\(\*\)::int AS n,\s*min\(created_at\)/.test(sql)) {
         return rows([{ n: 0, oldest: new Date() }]);
