@@ -15,6 +15,26 @@ export function roughWait(seconds: number): string {
   return 'in a few hours';
 }
 
+/**
+ * THE COUNTING RAILS, AND WHY EACH ONE IS SAID TWICE (2026-09-17 audit).
+ *
+ * Every limit below used to be a SELECT count(*) followed, some distance later,
+ * by the INSERT it was supposed to be guarding. Two calls arriving together
+ * both counted the board as it was before either of them, both passed, and both
+ * inserted: the limit was a limit on sequential callers and no limit at all on
+ * concurrent ones. An agent that fires its whole day's posting in one burst met
+ * nothing.
+ *
+ * The fix is not to make the question earlier or the window tighter. It is to
+ * ask it in the statement that does the inserting: the predicates below go into
+ * the INSERT itself, so the count and the row that changes it are one
+ * statement and the database decides. What is left of the old check is a
+ * COURTESY — it runs first, it refuses early with the sentence a human can act
+ * on, and it saves an account with nothing left to spend from spending a model
+ * call. When the two disagree, the statement wins and the caller re-asks the
+ * check for the right words.
+ */
+
 /** Throws QUOTA_EXCEEDED when a publish would exceed newcomer quotas. */
 export async function checkPublishQuota(accountId: string, q: Quotas): Promise<void> {
   const pool = getPool();
@@ -41,6 +61,42 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
   }
 }
 
+/**
+ * The open-cards ceiling as a predicate, for the statement that inserts the
+ * card. `$1` is the account, and the limit arrives as the parameter named
+ * here. Written beside the check it mirrors so the two can never drift.
+ */
+export const OPEN_CARDS_GUARD_SQL = (limitParam: string) =>
+  `(SELECT count(*) FROM cards
+      WHERE account_id = $1 AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED'))
+   < ${limitParam}`;
+
+/**
+ * The day's posting, recorded and capped in one statement. A publish (and an
+ * amend, which is a re-publish) is counted by its publish_events row, so that
+ * row is where the ceiling lives: it goes in only if the day has room, and no
+ * row means the day is done.
+ */
+export async function recordPublishWithinQuota(
+  accountId: string,
+  cardId: string,
+  q: Quotas,
+): Promise<void> {
+  const r = await getPool().query(
+    `INSERT INTO publish_events (account_id, card_id)
+     SELECT $1, $2
+      WHERE (SELECT count(*) FROM publish_events
+               WHERE account_id = $1 AND created_at > now() - interval '24 hours') < $3
+     RETURNING id`,
+    [accountId, cardId, q.maxPublishesPerDay],
+  );
+  if (r.rowCount) return;
+  throw new OsbError('QUOTA_EXCEEDED', {
+    retry_after: 3600,
+    human_action: `That is the day's posting done. Try again ${roughWait(3600)} — nothing your human needs to do, and no clock time to pass on.`,
+  });
+}
+
 /** Throws RATE_LIMITED_OFFERS when the account exceeds the hourly offer rate. */
 export async function checkOfferRate(accountId: string, q: Quotas): Promise<void> {
   const r = await getPool().query(
@@ -54,6 +110,39 @@ export async function checkOfferRate(accountId: string, q: Quotas): Promise<void
       human_action: `Offers are paced. Send the next one ${roughWait(3600)} — nothing your human needs to do.`,
     });
   }
+}
+
+/**
+ * Both offer rails as one predicate, for the statement that inserts the offer:
+ * the account's hour and this introduction's day. `$1` is the introduction and
+ * `$2` the account, which is the order the INSERT in domain/offers.ts already
+ * uses; the two limits arrive as the parameters named here.
+ */
+export const OFFER_RATE_GUARD_SQL = (hourLimitParam: string, dayLimitParam: string) =>
+  `(SELECT count(*) FROM offers
+      WHERE proposer_account = $2 AND created_at > now() - interval '1 hour') < ${hourLimitParam}
+   AND (SELECT count(*) FROM offers
+          WHERE proposer_account = $2 AND match_id = $1
+            AND created_at > now() - interval '24 hours') < ${dayLimitParam}`;
+
+/**
+ * The offer statement inserted nothing, so one of the two rails above is full.
+ * Which one is a question for the checks, which know the words and the wait;
+ * they are re-asked here because by now they will see the count that refused
+ * the insert. A race that has since cleared falls through to the general
+ * sentence rather than to a silent success.
+ */
+export async function offerRateRefusal(
+  accountId: string,
+  matchId: string,
+  q: Quotas,
+): Promise<never> {
+  await checkOfferRate(accountId, q);
+  await checkPerMatchOfferRate(accountId, matchId);
+  throw new OsbError('RATE_LIMITED_OFFERS', {
+    retry_after: 3600,
+    human_action: `Offers are paced. Send the next one ${roughWait(3600)} — nothing your human needs to do.`,
+  });
 }
 
 /**
