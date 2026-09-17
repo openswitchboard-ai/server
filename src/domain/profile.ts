@@ -315,8 +315,8 @@ export async function saveSharedProfile(
     recorded_via: recordedVia,
   });
   const [nameEnc, locEnc] = await Promise.all([
-    encryptField(accountId, account.data_key_enc, value.firstName),
-    encryptField(accountId, account.data_key_enc, value.locality),
+    encryptField(accountId, account.data_key_enc, value.firstName, 'first_name'),
+    encryptField(accountId, account.data_key_enc, value.locality, 'locality'),
   ]);
   await getPool().query(
     'UPDATE accounts SET first_name_enc = $2, locality_enc = $3 WHERE id = $1',

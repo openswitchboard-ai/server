@@ -22,9 +22,9 @@ export async function createPendingAccount(email: string): Promise<{ id: string;
   const id = idRow.rows[0].id as string;
   const wrapped = await generateAccountDataKey(id);
   const [emailEnc, nameEnc, locEnc] = await Promise.all([
-    encryptField(id, wrapped, email),
-    encryptField(id, wrapped, ''),
-    encryptField(id, wrapped, ''),
+    encryptField(id, wrapped, email, 'email'),
+    encryptField(id, wrapped, '', 'first_name'),
+    encryptField(id, wrapped, '', 'locality'),
   ]);
   await pool.query(
     `INSERT INTO accounts (id, email_hash, email_hash_v2, email_enc, first_name_enc, locality_enc,

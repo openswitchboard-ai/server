@@ -1204,9 +1204,14 @@ export async function dispatchTool(
           }
           case 'propose_offer': {
             if (!offer) return invalidInput('propose_offer requires the offer object');
+            // The caller's object goes in FIRST and the introduction after
+            // it (2026-09-17 audit). Spread the other way round, an `offer`
+            // carrying its own `match_id` overwrote the intro_id this call was
+            // authorised against, and the figure went onto a different
+            // introduction from the one the door checked.
             const placed = await offers.proposeOffer(cfg, accountId, {
-              match_id: intro_id,
               ...offer,
+              match_id: intro_id,
             });
             return ok({
               ...placed,
