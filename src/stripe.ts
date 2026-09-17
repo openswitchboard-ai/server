@@ -174,6 +174,11 @@ const ZERO_DECIMAL = new Set([
   'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
 ]);
 
+/** True for a currency Stripe charges in whole units — JPY, KRW and the rest. */
+export function isZeroDecimal(ccy: string): boolean {
+  return ZERO_DECIMAL.has(ccy.toUpperCase());
+}
+
 export function toMinorUnits(amount: number, ccy: string): number {
   const scaled = ZERO_DECIMAL.has(ccy.toUpperCase()) ? amount : amount * 100;
   const minor = Math.round(scaled);

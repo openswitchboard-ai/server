@@ -88,7 +88,7 @@ import {
   presignPhotoUpload,
 } from '../domain/channelPhoto.js';
 import { settlementsConfigured } from '../config.js';
-import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
+import { formatMinor, isZeroDecimal, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
@@ -102,7 +102,7 @@ import {
 } from './verification.js';
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
 import { aboutThing, categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
-import { verifyEmailToken } from '../email/tokens.js';
+import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
 import { emailHash } from '../domain/accounts.js';
 import * as links from './links.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
@@ -113,6 +113,14 @@ import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
 import type { Config } from '../config.js';
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+
+/**
+ * Every `:id` on these pages is a uuid — a card, an introduction, an offer, a
+ * settlement. Anything else is not a thing that was ever handed out, so it is
+ * answered as missing rather than carried into a query that would throw and
+ * come back as a 500 with a database error in the log.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * A category as it reads inside a sentence: "your mountain bike match", where
@@ -130,6 +138,7 @@ type Session = NonNullable<Awaited<ReturnType<typeof sess.loadSession>>>;
 
 export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
   const mcpHost = new URL(cfg.publicOrigin).host;
+  const counterHostName = new URL(cfg.counterOrigin).host.toLowerCase();
 
   app.register(async (counter) => {
     counter.addHook('onRoute', (o) => {
@@ -151,6 +160,47 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         });
       }
       if ((req.headers.host ?? '').toLowerCase() === mcpHost.toLowerCase()) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      // ---- Nothing on another site may press a button on this one. ----
+      //
+      // The session cookie is SameSite=Lax, which stops a cross-site POST in
+      // every browser that honours it. This is the second lock, and it is the
+      // one the server itself holds: a form on another page, or a fetch from
+      // it, arrives with an Origin naming that page or a Sec-Fetch-Site
+      // saying cross-site, and is turned away before any route sees it.
+      //
+      // Only writes are checked. A GET changes nothing here, and the browsers
+      // that send neither header (old ones, and some in-app webviews) can
+      // still read.
+      if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') {
+        const site = String(req.headers['sec-fetch-site'] ?? '');
+        if (site && site !== 'same-origin' && site !== 'none') {
+          return reply.code(403).send({ error: 'cross_site_request' });
+        }
+        const origin = req.headers.origin;
+        if (typeof origin === 'string' && origin !== 'null') {
+          let host: string;
+          try {
+            host = new URL(origin).host.toLowerCase();
+          } catch {
+            return reply.code(403).send({ error: 'cross_site_request' });
+          }
+          const ours = (req.headers.host ?? '').toLowerCase();
+          if (host !== ours && host !== counterHostName) {
+            return reply.code(403).send({ error: 'cross_site_request' });
+          }
+        }
+      }
+      // ---- An id that is not an id is a page that does not exist. ----
+      const id = (req.params as any)?.id;
+      if (typeof id === 'string' && !UUID_RE.test(id)) {
+        if (req.method === 'GET') {
+          return reply
+            .code(404)
+            .type('text/html')
+            .send(pages.messagePage('Not found', '<p>There is nothing here.</p>'));
+        }
         return reply.code(404).send({ error: 'not_found' });
       }
     });
@@ -669,6 +719,17 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(
           reply,
           pages.messagePage('Too many codes', '<p>Too many codes have gone out for this account. Wait a few minutes.</p>'),
+          429,
+        );
+      }
+      // The same per-IP rail sign-in has. This door sends an email too, and
+      // being behind a session is no protection from one session pressing it
+      // in a loop and draining the sending quota.
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'confirm-code: per-IP verification-email limit hit');
+        return html(
+          reply,
+          pages.messagePage('Too many codes', '<p>Too many codes have gone out from this connection. Wait an hour.</p>'),
           429,
         );
       }
@@ -1457,10 +1518,17 @@ in on this device and lets you approve what is waiting.</p>
         q.elevated = sess.isElevated(s);
         return html(reply, pages.oneQuestionPage(q));
       }
-      await consumeLink(row.id); // single-use: burns on first authenticated view
+      // A settlement approval burns on the PRESS, the way the one-question
+      // pages do: this page is about money, and somebody who opens the link,
+      // looks at the figures and comes back to it in the evening must not find
+      // their own link dead because they read it once. The other two still
+      // burn on the view, where opening the page IS the disclosure.
+      const burnsOnPress = row.action === 'settlement-approve';
+      if (!burnsOnPress) await consumeLink(row.id);
       const v = await approvalView(s.accountId, row.action, row.ref_id);
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
+      if (burnsOnPress) v.linkToken = token;
       return html(reply, pages.approvalPage(v));
     });
 
@@ -1835,6 +1903,23 @@ in on this device and lets you approve what is waiting.</p>
       // Sensitive action: PIN (or a passkey ceremony that elevated the session).
       const okNow = await ceremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
+      // The link this page came from, spent here rather than when the page was
+      // opened. After the ceremony, so a mistyped PIN costs a retype and not
+      // the link. Absent when the person came from their own approval page,
+      // which is not a one-use road.
+      const linkToken = String(b.link_token ?? '');
+      if (linkToken) {
+        const check = await verifyLinkToken(linkToken);
+        if (!check.ok) {
+          const why = check.reason === 'used' || check.reason === 'expired' ? check.reason : 'invalid';
+          return html(reply, pages.linkDeadPage(why), why === 'invalid' ? 404 : 200);
+        }
+        const linkRow = check.row as ApprovalLinkRow;
+        if (linkRow.account_id !== s.accountId || linkRow.ref_id !== refId) {
+          return reply.code(400).send({ error: 'bad_request' });
+        }
+        if (!(await consumeLink(linkRow.id))) return html(reply, pages.linkDeadPage('used'));
+      }
       try {
         if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
         if (action === 'settlement-approve') {
@@ -2377,8 +2462,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           throw Object.assign(new Error('Both figures have to be amounts of money, and neither can be less than nothing.'), { validation: true });
         }
         // A zero side is a perfectly good proposal, so this cannot go through
-        // toMinorUnits, which refuses one.
-        return Math.round(n * (found.row.ccy.toUpperCase() === 'JPY' ? 1 : 100));
+        // toMinorUnits, which refuses one. The list of currencies with no minor
+        // unit is Stripe's and lives in one place; JPY was only ever the one we
+        // had thought of.
+        return Math.round(n * (isZeroDecimal(found.row.ccy) ? 1 : 100));
       };
       return settlementStep(reply, async () => {
         const row = await settlements.proposeResolution(
@@ -3382,6 +3469,11 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       const t = String((req.body as any)?.t ?? (req.query as any)?.t ?? '');
       const v = verifyEmailToken(t, 'renew-all');
       if (!v.ok) return html(reply, pages.linkDeadPage(v.reason ?? 'invalid'), 404);
+      // One press. Restarting the clock on everything an account holds is not
+      // something a forwarded email should be able to do over and over.
+      if (!(await consumeEmailToken({ ...v, purpose: 'renew-all' }))) {
+        return html(reply, pages.linkDeadPage('used'));
+      }
       const renewed = await ops.renewAllCards(v.accountId!, 'email-renew-all-link');
       return html(
         reply,
