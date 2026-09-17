@@ -1416,6 +1416,11 @@ export interface SettlementView {
   returnSilenceByDay?: string;
   /** seller: the buyer says it is back with them. */
   canConfirmReturn: boolean;
+  /** seller: a return is open and they have not answered it yet. */
+  canDisputeReturn?: boolean;
+  /** The seller has said the return is not what it claims to be. Both sides
+   *  see this, and it changes what every clock on the page does. */
+  returnDisputed?: boolean;
   /** The seller's last day to add tracking on a dispute that says nothing
    *  arrived, as a localised <time>. */
   trackingGraceByDay?: string;
@@ -1664,8 +1669,9 @@ evfile.addEventListener('change', async () => {
     const clock = v.deadlockByDay
       ? ` If neither of you does anything, the payment goes on ${v.deadlockByDay} to whichever
 side can show where the item went: the seller with tracking that shows it was delivered and
-nothing sent back, the buyer if it went back tracked, and the buyer if neither of you has
-tracking.`
+nothing sent back against it, the buyer if it went back tracked and the seller has not said
+otherwise, and the buyer if neither of you has tracking. A record the other side has answered
+counts for neither of you — it leaves the rule looking at what is left.`
       : '';
     blocks.push(`<p class="lead">The payment is on hold. Nothing has moved and nothing moves until
 the two of you agree how to settle it, the item goes back, or the rule below decides.${clock}</p>`);
@@ -1681,10 +1687,20 @@ ${v.trackingGraceByDay} to add tracking showing it was delivered; with nothing a
 ${esc(v.amount)} comes back to you.</p>`,
     );
   }
+  // Nothing arrived, and the seller has shown where it went. Two records, and
+  // the switchboard judges neither of them.
+  if (v.inDispute && v.disputeGround === 'not_arrived' && v.deliveryTracking) {
+    blocks.push(`<p class="lead">The buyer says it never arrived and the seller has put
+${esc(v.deliveryTracking)} up against that. Both of those stand, so nothing goes either way on
+its own: it is a split the two of you agree${
+      v.deadlockByDay ? `, or the rule on ${v.deadlockByDay}` : ''
+    }.</p>`);
+  }
   if (v.canAddTracking) {
     blocks.push(`<h2>Add tracking</h2>
 <p>The reference from whoever you posted it with. Both of you can see it, and it is what the
-rule looks at if the two of you never agree.${
+rule looks at if the two of you never agree. It does not change what the buyer said went wrong —
+that stays their word for it — and it does not move the deadlock day.${
       v.deliveryTracking ? ` You have ${esc(v.deliveryTracking)} on here now.` : ''
     }</p>
 <form method="POST" action="/settlements/${esc(v.id)}/tracking" id="trackingForm">
@@ -1716,11 +1732,30 @@ ${ceremonyNote(v)}`);
       `<p class="lead">Sent back on ${v.returnedOnDay}${
         v.returnTracking ? `, tracking ${esc(v.returnTracking)}` : ''
       }.${
-        v.returnSilenceByDay
-          ? ` If the seller says nothing by ${v.returnSilenceByDay}, ${esc(v.amount)} goes back to the buyer anyway.`
-          : ''
+        v.returnDisputed
+          ? ` The seller has said that is not what came back. Both of those stand, so ${esc(
+              v.amount,
+            )} does not go back on its own any more: it is a split the two of you agree${
+              v.deadlockByDay ? `, or the rule on ${v.deadlockByDay}` : ''
+            }.`
+          : v.returnSilenceByDay
+            ? ` If the seller says nothing by ${v.returnSilenceByDay}, ${esc(v.amount)} goes back to the buyer anyway.`
+            : ''
       }</p>`,
     );
+  }
+  if (v.canDisputeReturn) {
+    blocks.push(`<h2>That is not what came back</h2>
+<p>Say so if nothing arrived, or if what arrived is not what you sent. It moves no money — what
+it does is stop ${esc(v.amount)} going back on its own while the two of you disagree about the
+parcel. Your word and theirs both stand after it, and what is left is a split the two of you
+agree${v.deadlockByDay ? `, or the rule on ${v.deadlockByDay}` : ''}.</p>
+<form method="POST" action="/settlements/${esc(v.id)}/return-disputed" id="returnDisputeForm">
+  ${pinField(v, 'returnDispute')}
+  ${ceremonySubmit(v, { formId: 'returnDisputeForm', label: 'That is not what came back', className: 'danger' })}
+</form>
+${ceremonyAlt(v, 'returnDisputeForm')}
+${ceremonyNote(v)}`);
   }
   if (v.canConfirmReturn) {
     blocks.push(`<h2>I've got it back</h2>

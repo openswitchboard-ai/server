@@ -2082,6 +2082,15 @@ in on this device and lets you approve what is waiting.</p>
             )
           : undefined,
         canConfirmReturn: role === 'seller' && inDispute && !!row.returned_at && !row.return_received_at,
+        // The seller's answer to a return, on the same terms as confirming
+        // one: only while there is a return open to answer.
+        canDisputeReturn:
+          role === 'seller' &&
+          inDispute &&
+          !!row.returned_at &&
+          !row.return_received_at &&
+          !row.return_disputed_at,
+        returnDisputed: !!row.return_disputed_at,
         trackingGraceByDay:
           row.disputed_at && row.dispute_ground === 'not_arrived' && !row.delivery_tracking
             ? pages.localTime(
@@ -2444,6 +2453,27 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           body:
             '<p>The agreed amount is on its way to the buyer. The introductory fee and the card processing stay ' +
             'paid, because the card processor keeps its own fee on a refund.</p>',
+        };
+      });
+    });
+
+    // The seller's answer to a return: what came back is not what went out.
+    // It moves no money — it stops money moving on its own — but it decides
+    // which way two clocks fall, so it takes the same ceremony as the rest.
+    counter.post('/settlements/:id/return-disputed', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
+      if (!found) return settlementNotFound(reply);
+      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      if (!okNow) return;
+      return settlementStep(reply, async () => {
+        await settlements.disputeReturn(settlements.counterAction(s.accountId!), found.row.id);
+        return {
+          title: 'You have said the return is not what it claims to be',
+          body:
+            '<p>Nothing goes back on its own now. The buyer can see what you said, and the two of you have this ' +
+            'page to agree a split on; with nothing agreed, the rule decides on the deadlock day.</p>',
         };
       });
     });

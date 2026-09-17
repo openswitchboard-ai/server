@@ -125,6 +125,7 @@ describe('escrow state machine: no reachable money transition without a human si
     addDeliveryTracking: [baseCfg, 'sid', 'AP 7XY441'],
     markReturned: [baseCfg, 'sid', 'AP 7XY441'],
     confirmReturnReceived: ['sid'],
+    disputeReturn: ['sid'],
     recordRuleRefund: ['sid'],
   };
 
