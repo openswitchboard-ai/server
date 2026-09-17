@@ -29,6 +29,7 @@ so the blobs remain readable to anyone who fetches the repository.
   values. They are ignored by git. Regenerate them with the dev reset
   script the next time dev is reset so no file on disk matches a public
   blob.
-- History rewrite: not done. The keys are dead and the repository had no
-  forks at the time of the audit. A rewrite is still possible and gets
-  harder with each fork; it is the maintainer's call.
+- History rewrite: decided against, 17 September 2026. The keys are dead and
+  what remains readable is two revoked strings, two wiped account ids, a test
+  email and a test PIN. (An earlier history clean-up ran on 9 September, four
+  days before this commit, so it did not cover it.)
