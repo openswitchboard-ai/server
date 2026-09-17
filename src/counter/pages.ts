@@ -20,6 +20,13 @@
  *
  * Brand: Sora (display) / Newsreader (body) / IBM Plex Mono (data), light and
  * dark both designed, aligned with the public site's tokens.
+ *
+ * Those three faces used to be pulled from Google Fonts. They are not any
+ * more, and nothing on these pages reaches any origin but our own. The URL of
+ * an approval page carries a one-use token in its path, and a stylesheet link
+ * hands that URL to a third party in the Referer of every page load. The type
+ * stacks below fall back to the reader's own system faces, which cost a
+ * round trip to nobody.
  */
 import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 import { PHOTO_SCRUB_JS } from './photoScrub.js';
@@ -280,9 +287,6 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
 <title>${esc(title)} — OpenSwitchboard</title>
 <link rel="icon" type="image/png" href="${PATCH_FAVICON_URL}">
 <link rel="apple-touch-icon" href="${PATCH_FAVICON_URL}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>${CSS}</style>${opts.head ?? ''}</head><body>
 <div class="wrap">
 <header class="site">

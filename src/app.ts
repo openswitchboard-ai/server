@@ -70,6 +70,51 @@ export function buildApp(cfg: Config): FastifyInstance {
   // registers '/' too, and only one of them can be a route).
   const counterHost = new URL(cfg.counterOrigin).host.toLowerCase();
   const mcpHost = new URL(cfg.publicOrigin).host.toLowerCase();
+
+  // ------------------------------------------------------------------
+  // The headers every response carries, whatever answered it.
+  //
+  // Two policies, because there are two kinds of thing being served. The
+  // human pages are HTML with inline <style> and inline <script>, one image
+  // of our own, and browser-side uploads that PUT straight to a presigned S3
+  // URL; they are allowed exactly that and nothing else. The MCP and JSON
+  // host renders nothing in a browser at all, so it is allowed nothing.
+  //
+  // Inline script and style are permitted rather than nonced: every script on
+  // these pages is written into the document by the page function itself, so
+  // a nonce would buy nothing that 'self' plus server-side escaping does not
+  // already buy, and it would have to be threaded through every page.
+  // ------------------------------------------------------------------
+  const COUNTER_CSP = [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "img-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
+    // The photo and evidence uploads go straight from the browser to S3.
+    "connect-src 'self' https://*.amazonaws.com",
+  ].join('; ');
+  const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
+  app.addHook('onSend', async (req, reply, payload) => {
+    reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    // No page here should ever tell another origin where the reader came
+    // from: these URLs carry tokens in their paths.
+    reply.header('referrer-policy', 'no-referrer');
+    const host = (req.headers.host ?? '').toLowerCase();
+    // Only the MCP host gets the nothing-at-all policy. Everything else is
+    // the human surface — the counter hostname and the legacy hostnames that
+    // redirect to it — and a wrong guess there would break a page rather than
+    // merely loosen a host that renders nothing.
+    reply.header('content-security-policy', host === mcpHost ? STRICT_CSP : COUNTER_CSP);
+    return payload;
+  });
+
   app.addHook('onRequest', async (req, reply) => {
     const host = (req.headers.host ?? '').toLowerCase();
     if (

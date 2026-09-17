@@ -76,3 +76,41 @@ describe('trusted proxy hops', () => {
     expect(r.json().ip).toBe('10.0.0.7');
   });
 });
+
+describe('security headers', () => {
+  const common = (h: Record<string, any>) => {
+    expect(h['strict-transport-security']).toBe('max-age=31536000; includeSubDomains');
+    expect(h['x-content-type-options']).toBe('nosniff');
+    expect(h['x-frame-options']).toBe('DENY');
+    expect(h['referrer-policy']).toBe('no-referrer');
+  };
+
+  it('a human page carries them, with a policy that allows what the page uses', async () => {
+    const r = await app.inject({ method: 'GET', url: '/login', headers: { host: 'my.test' } });
+    expect(r.statusCode).toBe(200);
+    common(r.headers as any);
+    const csp = String(r.headers['content-security-policy']);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("img-src 'self' data:");
+    // The browser PUTs photos and evidence straight to a presigned S3 URL.
+    expect(csp).toContain("connect-src 'self' https://*.amazonaws.com");
+  });
+
+  it('the MCP host is allowed nothing at all, 404s included', async () => {
+    const r = await app.inject({ method: 'GET', url: '/nope', headers: { host: 'mcp.test' } });
+    expect(r.statusCode).toBe(404);
+    common(r.headers as any);
+    expect(r.headers['content-security-policy']).toBe("default-src 'none'; frame-ancestors 'none'");
+  });
+
+  it('no human page reaches a third-party origin for its type', async () => {
+    const r = await app.inject({ method: 'GET', url: '/login', headers: { host: 'my.test' } });
+    expect(r.body).not.toContain('fonts.googleapis.com');
+    expect(r.body).not.toContain('fonts.gstatic.com');
+  });
+});
