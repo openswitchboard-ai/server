@@ -31,7 +31,8 @@
     "sim:typecheck": "tsc -p test/sim/tsconfig.json",
     "duet": "RUN_DUET=1 tsx test/duet/run.ts",
     "duet:provision": "RUN_DUET_PROVISION=1 tsx test/duet/provision.ts",
-    "duet:typecheck": "tsc -p test/duet/tsconfig.json"
+    "duet:typecheck": "tsc -p test/duet/tsconfig.json",
+    "rehash-emails": "tsx scripts/ops/rehash-emails.mts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.700.0",

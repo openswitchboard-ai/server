@@ -27,7 +27,7 @@
  * operator rather than a side effect of a flag going on.
  */
 import { dbConfigured, getPool } from '../db.js';
-import { emailHash, getAccount } from '../domain/accounts.js';
+import { emailHashes, getAccount } from '../domain/accounts.js';
 import { decryptFields } from '../crypto.js';
 import type { Config } from '../config.js';
 
@@ -55,9 +55,15 @@ export async function isSuspended(accountId: string): Promise<boolean> {
 
 /** Is this address one a suspended account was opened under? */
 export async function emailIsSuspended(email: string): Promise<boolean> {
-  const r = await getPool().query('SELECT 1 FROM suspended_emails WHERE email_hash = $1', [
-    emailHash(email),
-  ]);
+  // BOTH SPELLINGS, PERMANENTLY. There is no plaintext behind an old row here
+  // — the account it belonged to may be long gone — so v1 can never be
+  // rehashed away on this table, and an address is suspended if either
+  // spelling of it is on the list.
+  const eh = emailHashes(email);
+  const r = await getPool().query(
+    'SELECT 1 FROM suspended_emails WHERE email_hash_v2 = $1 OR email_hash = $2 LIMIT 1',
+    [eh.v2, eh.v1],
+  );
   return !!r.rowCount;
 }
 
@@ -113,9 +119,13 @@ async function rememberEmail(accountId: string): Promise<boolean> {
       { purpose: 'suspension-email-hash', actor: 'operator', refs: { account_id: accountId } },
     );
     if (!email) return false;
+    // Both, because this row is looked up by both and there is no plaintext to
+    // come back for later.
+    const eh = emailHashes(email);
     await getPool().query(
-      `INSERT INTO suspended_emails (email_hash) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [emailHash(email)],
+      `INSERT INTO suspended_emails (email_hash, email_hash_v2) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [eh.v1, eh.v2],
     );
     return true;
   } catch {
@@ -209,7 +219,11 @@ export async function liftSuspension(accountId: string): Promise<{ lifted: boole
         },
       );
       if (email) {
-        await pool.query('DELETE FROM suspended_emails WHERE email_hash = $1', [emailHash(email)]);
+        const eh = emailHashes(email);
+        await pool.query(
+          'DELETE FROM suspended_emails WHERE email_hash_v2 = $1 OR email_hash = $2',
+          [eh.v2, eh.v1],
+        );
       }
     } catch {
       /* the flag is off either way */

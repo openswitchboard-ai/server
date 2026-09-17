@@ -19,7 +19,7 @@
 import { DeleteMessageCommand, ReceiveMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
-import { emailHash } from '../domain/accounts.js';
+import { emailHash, emailHashes } from '../domain/accounts.js';
 import { verifySnsSignature } from '../email/snsSignature.js';
 import type { Config } from '../config.js';
 
@@ -32,9 +32,11 @@ interface SesEvent {
 }
 
 async function accountIdForEmail(email: string): Promise<string | null> {
-  const r = await getPool().query(`SELECT id FROM accounts WHERE email_hash = $1`, [
-    emailHash(email),
-  ]);
+  const eh = emailHashes(email);
+  const r = await getPool().query(
+    `SELECT id FROM accounts WHERE email_hash_v2 = $1 OR email_hash = $2 LIMIT 1`,
+    [eh.v2, eh.v1],
+  );
   return r.rows[0]?.id ?? null;
 }
 

@@ -1,6 +1,7 @@
-import { createHash, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, hkdfSync, scryptSync, timingSafeEqual } from 'node:crypto';
 import { getPool } from '../db.js';
 import { encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
+import { counterKeys } from '../counter/keys.js';
 
 export interface Account {
   id: string;
@@ -29,8 +30,64 @@ export interface Account {
 export type HearsVia = 'email' | 'assistant';
 export const HEARS_VIA: HearsVia[] = ['email', 'assistant'];
 
-export function emailHash(email: string): string {
+/**
+ * THE ADDRESS, HASHED, AND WHY THE OLD ONE WAS NOT ENOUGH (2026-09-17 audit).
+ *
+ * This was a bare SHA-256 of the lowercased address, and a bare SHA-256 of an
+ * email address is not a one-way function in any sense that matters. The
+ * whole plausible space is small — a few billion real addresses, and the
+ * leaked-credential corpora everybody has are lists of exactly those — so
+ * anyone holding a copy of these columns can put a name to every row in an
+ * afternoon on a laptop. Three tables keyed on it: who has an account, whose
+ * account was stopped, and whose address bounced or complained. That is a
+ * membership list, a moderation record and a deliverability record, all
+ * readable by anyone who reads the database and nothing else.
+ *
+ * A PEPPER IS THE WHOLE OF THE FIX, and it costs no new secret. The counter
+ * already boots with a 32-byte HMAC key it will not run without, and HKDF
+ * gives a second, independent key from it under a different info string. The
+ * pepper lives only in the process; the dictionary attack now needs the key as
+ * well as the corpus, and the key is not in the database.
+ *
+ * VERSIONS, because the old hashes cannot be recomputed. v1 is the bare
+ * SHA-256 that is already written down. v2 is HMAC-SHA256 under the pepper.
+ * New writes carry v2; every lookup asks v2 first and falls back to v1, so
+ * nothing breaks on the way. scripts/ops/rehash-emails.mts fills v2 on accounts
+ * from the encrypted address each one already holds, and after it has run a
+ * later migration can drop v1 there. On suspended_emails there is no plaintext
+ * to rehash from — the account it belonged to may be gone — so v1 stays on that
+ * table permanently and both are checked.
+ */
+export function emailHashV1(email: string): string {
   return createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+}
+
+/** The derived pepper, recomputed if the process is re-keyed (tests do). */
+let pepperFor: { key: Buffer; pepper: Buffer } | undefined;
+
+function emailPepper(): Buffer {
+  const { linkHmacKey } = counterKeys();
+  if (pepperFor?.key === linkHmacKey) return pepperFor.pepper;
+  const pepper = Buffer.from(
+    hkdfSync('sha256', linkHmacKey, Buffer.alloc(0), 'email-hash-pepper-v1', 32),
+  );
+  pepperFor = { key: linkHmacKey, pepper };
+  return pepper;
+}
+
+/** The hash new writes carry. Needs the counter keys, the same as every other
+ *  keyed thing on the switchboard; a process without them cannot write. */
+export function emailHash(email: string): string {
+  return createHmac('sha256', emailPepper()).update(email.trim().toLowerCase()).digest('hex');
+}
+
+/**
+ * Both spellings of one address, for the tables that still hold some of each.
+ * A lookup asks for v2 first and takes v1 as the fallback — the SQL below
+ * spells that as one OR rather than two round trips.
+ */
+export function emailHashes(email: string): { v2: string; v1: string } {
+  return { v2: emailHash(email), v1: emailHashV1(email) };
 }
 
 /** scrypt hash format: scrypt$<salt-hex>$<hash-hex> (salt chosen by caller/CLI). */
@@ -55,8 +112,11 @@ export async function createAccount(input: {
   login_code_hash: string;
 }): Promise<string> {
   const pool = getPool();
-  const eh = emailHash(input.email);
-  const existing = await pool.query('SELECT id FROM accounts WHERE email_hash = $1', [eh]);
+  const eh = emailHashes(input.email);
+  const existing = await pool.query(
+    'SELECT id FROM accounts WHERE email_hash_v2 = $1 OR email_hash = $2',
+    [eh.v2, eh.v1],
+  );
   if (existing.rowCount) {
     // Idempotent bootstrap: refresh the login code hash.
     const id = existing.rows[0].id as string;
@@ -75,9 +135,10 @@ export async function createAccount(input: {
     encryptField(id, wrapped, input.locality),
   ]);
   await pool.query(
-    `INSERT INTO accounts (id, email_hash, email_enc, first_name_enc, locality_enc, login_code_hash, data_key_enc)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [id, eh, emailEnc, nameEnc, locEnc, input.login_code_hash, wrapped],
+    `INSERT INTO accounts (id, email_hash, email_hash_v2, email_enc, first_name_enc, locality_enc,
+                           login_code_hash, data_key_enc)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, eh.v1, eh.v2, emailEnc, nameEnc, locEnc, input.login_code_hash, wrapped],
   );
   await pool.query(
     'INSERT INTO reputation (account_id) VALUES ($1) ON CONFLICT DO NOTHING',
@@ -87,9 +148,13 @@ export async function createAccount(input: {
 }
 
 export async function findAccountByEmail(email: string): Promise<Account | undefined> {
-  const r = await getPool().query('SELECT * FROM accounts WHERE email_hash = $1', [
-    emailHash(email),
-  ]);
+  // v2 first, v1 as the fallback, in one statement: an account that has been
+  // rehashed and one that has not answer the same question the same way.
+  const eh = emailHashes(email);
+  const r = await getPool().query(
+    'SELECT * FROM accounts WHERE email_hash_v2 = $1 OR email_hash = $2 LIMIT 1',
+    [eh.v2, eh.v1],
+  );
   return r.rows[0];
 }
 

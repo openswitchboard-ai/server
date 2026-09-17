@@ -111,7 +111,7 @@ import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, send
 import { aboutThing, categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
 import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
 import { isEmailQueueFull } from '../email/send.js';
-import { emailHash } from '../domain/accounts.js';
+import { emailHashes } from '../domain/accounts.js';
 import * as links from './links.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
@@ -3621,7 +3621,9 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
         );
       }
       const a: any = await getAccount(s.accountId!);
-      if (!a || emailHash(result.email!) !== a.email_hash) {
+      // Either spelling: this account's row may or may not have been rehashed.
+      const codeHashes = emailHashes(result.email!);
+      if (!a || (codeHashes.v2 !== a.email_hash_v2 && codeHashes.v1 !== a.email_hash)) {
         return html(reply, pages.messagePage('Wrong account', '<p>That code belongs to a different address.</p>'), 403);
       }
       await ops.clearEmailUnreachable(s.accountId!);
