@@ -20,6 +20,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  foldForMoney,
   FIGURE_IN_OFFER_NOTE_ACTION,
   FIGURE_IN_WORDS_ACTION,
   carriesMoneyFigure,
@@ -403,5 +404,71 @@ describe('the manual', () => {
     const send = TOOLS.find((t) => t.name === 'send_message')!;
     expect(send.description).toMatch(/REFUSED/);
     expect(send.description).toMatch(/four hundred and twenty dollars/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * HOW A FIGURE IS SPELLED (2026-09-17 audit).
+ *
+ * Every rule in the detector is written in ASCII, and the audit sent figures
+ * that are not. Each of these reads as a price to the person on the other end,
+ * which is the only test that matters, and each one walked straight through.
+ *
+ * The answer is one spelling before any rule reads the words: NFKC, then format
+ * characters out, then every Unicode decimal digit folded to its ASCII twin.
+ * Nothing about what COUNTS as money moved — a bare number is still only money
+ * where a price opening or ending sits beside it, or where it opens the
+ * message, and a year or a number with its unit attached is still left alone.
+ */
+describe('a figure however it is spelled', () => {
+  const MUST_REFUSE: [string, string][] = [
+    ['fullwidth digits after a price opening', 'I can do \uff14\uff12\uff10 for it'],
+    ['fullwidth digits before a money word', 'Deal at \uff14\uff12\uff10 dollars'],
+    ['Arabic-Indic digits', 'I will accept \u0664\u0662\u0660'],
+    ['a zero-width space inside the number', 'Ill do 4\u200b20 for it'],
+    ['a bare "lets say"', 'lets say 420'],
+    ['a magnitude written half in digits', 'Happy with 4 hundred for it'],
+    ['a fullwidth currency code', 'Send 420 \uff55\uff53\uff44'],
+    ['and the plainest one of all', '420 dollars'],
+  ];
+
+  for (const [what, text] of MUST_REFUSE) {
+    it(`refuses ${what}`, () => {
+      expect(carriesMoneyFigure(text)).toBe(true);
+    });
+  }
+
+  /**
+   * And the other half of the bargain. A refused message that had no price in
+   * it is the whole cost of this check, so these have to keep passing — the
+   * rule is unchanged, and this is the proof.
+   */
+  const MUST_PASS = [
+    'see you at 4',
+    'built in 2019',
+    'size 42 frame',
+    'I can accept Saturday',
+    'I will accept it',
+    'say hello to your dog for me',
+    '29 inch wheels, 21 speed',
+    'about 8km away',
+    'I have two of them',
+    '42 Smith Street, unit 7',
+  ];
+
+  for (const text of MUST_PASS) {
+    it(`leaves alone: ${text}`, () => {
+      expect(carriesMoneyFigure(text)).toBe(false);
+    });
+  }
+
+  it('folds a digit from any script, not from a list somebody has to keep', () => {
+    // Devanagari, Thai and Bengali: never named anywhere in the source.
+    expect(foldForMoney('\u0968\u0966 \u0e54\u0e52\u0e50 \u09ea\u09e8\u09e6')).toBe('20 420 420');
+  });
+
+  it('leaves ordinary words exactly as they were, bar the case', () => {
+    expect(foldForMoney('Saturday morning works')).toBe('saturday morning works');
   });
 });

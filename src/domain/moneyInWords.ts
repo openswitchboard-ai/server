@@ -61,7 +61,7 @@ const SYMBOL = '(?:[a-z]{0,2}\\$|[€£¥₹])';
  * number, and after "how about" it is money.
  */
 const PRICE_LEAD_IN =
-  '(?:how about|what about|how\'?s|how does .{0,20} sound|i could do|could do|i can do|can do|can you do|could you do|would you take|will you take|would you do|i\'?ll take|i will take|i\'?d take|i would take|happy to take|(?:best|lowest|highest|max|maximum|minimum|budget|limit|ceiling|top) (?:i can do )?is|call it|drop to|drop it to|come down to|go down to|knock it down to|knock off|could go to|can go to|go up to|come up to|stretch to|push to|meet you at|meet you in the middle at|meet in the middle at|split the difference at|settle at|settle on|land on|asking|i am asking|i\'m asking|offer(?:ing)? you|i\'ll offer|i will offer|offer|i\'ll pay|i will pay|i\'d pay|i would pay|pay you|the price is|price is|priced at|it\'s worth|worth|sell it for|let it go for|take it for|do it for)';
+  '(?:how about|what about|how\'?s|how does .{0,20} sound|i could do|could do|i can do|can do|can you do|could you do|would you take|will you take|would you do|i\'?ll take|i will take|i\'?d take|i would take|happy to take|i\'?ll do|ill do|i will do|i\'?d do|id do|(?:i\'?ll |i will |i can |i could |happy to |we can |we could )?accept|let\'?s say|lets say|say|(?:best|lowest|highest|max|maximum|minimum|budget|limit|ceiling|top) (?:i can do )?is|call it|drop to|drop it to|come down to|go down to|knock it down to|knock off|could go to|can go to|go up to|come up to|stretch to|push to|meet you at|meet you in the middle at|meet in the middle at|split the difference at|settle at|settle on|land on|asking|i am asking|i\'m asking|offer(?:ing)? you|i\'ll offer|i will offer|offer|i\'ll pay|i will pay|i\'d pay|i would pay|pay you|the price is|price is|priced at|it\'s worth|worth|sell it for|let it go for|take it for|do it for)';
 
 /** Words that close a price rather than open one: "400 firm", "400 cash". */
 const PRICE_TAIL = '(?:firm|cash|ono|o\\.n\\.o\\.?|obo|or best offer|negotiable|neg)';
@@ -122,7 +122,9 @@ const numberThenMoneyWord = re(
 const numberThenEach = re(`(?:\\d+|\\b${NUM_WORD}\\b)\\s+(?:each|apiece)\\b`);
 /** `four hundred`, `fifteen hundred`, `a hundred and fifty`, `two grand`. */
 const spelledMagnitude = re(
-  `\\b(?:${NUM_WORD}|a|an|couple(?: of)?|few)[\\s-]+(?:hundred|thousand|grand)\\b(?!\\s+${NOT_MONEY_AFTER}\\b)`,
+  // `\\d+` is in the alternation because "4 hundred" is the same sentence as
+  // "four hundred" and the audit found it walking through.
+  `\\b(?:\\d+|${NUM_WORD}|a|an|couple(?: of)?|few)[\\s-]+(?:hundred|thousand|grand)\\b(?!\\s+${NOT_MONEY_AFTER}\\b)`,
 );
 /** `four twenty`, `two fifty`, `four-twenty` — a spoken price, unless it is a clock. */
 const spelledPairSrc = `\\b(${UNIT})[\\s-]+(${TENS})\\b`;
@@ -191,6 +193,68 @@ const RULES: Rule[] = [
   { name: 'a hedged number', test: (s) => hedgedNumber.test(s) },
 ];
 
+// ---------------------------------------------------------------------------
+// WHAT THE RULES ARE READ AGAINST (2026-09-17 audit).
+//
+// Every rule above is written in ASCII, and the audit sent figures that are not
+// in ASCII. `I can do \uff14\uff12\uff10 for it` is four hundred and twenty in
+// fullwidth digits, `I will accept \u0664\u0662\u0660` is four hundred and
+// twenty in Arabic-Indic, `Ill do 4\u200b20` is four hundred and twenty with a
+// zero-width space in the middle of it, and `Send 420 \uff55\uff53\uff44` is a
+// currency code nothing recognised. Each one reads as a price to the person on
+// the other end, which is the only test that matters here, and each one walked
+// straight through.
+//
+// So the text is put into one spelling before any rule reads it, in this order
+// and for these reasons:
+//
+//  - NFKC, which folds every compatibility form to the character it imitates:
+//    fullwidth digits and fullwidth letters become the ASCII ones, so `usd` is
+//    a currency code again.
+//  - Format characters out (`\p{Cf}`): a zero-width space between two digits
+//    is invisible to a reader and fatal to `\d{3}`.
+//  - Every Unicode decimal digit folded to its ASCII twin. NFKC does not do
+//    this, and deliberately: Arabic-Indic digits are a script, not a
+//    compatibility spelling. They are still digits to anybody reading them.
+//
+// Nothing here loosens what counts as money. A bare number is still only money
+// where a price opening or ending sits beside it, or where it opens the
+// message; a year between 1900 and 2099 and a number with its unit attached are
+// still left alone. "see you at 4", "built in 2019" and "size 42 frame" pass
+// before and after, which is the point: this change is about how a figure is
+// SPELLED, never about what a figure is.
+// ---------------------------------------------------------------------------
+
+/**
+ * One Unicode decimal digit as its ASCII twin.
+ *
+ * Every decimal digit set in Unicode is ten consecutive code points beginning
+ * at that script's zero, so the value is the distance back to the first code
+ * point in the run — at most nine steps, and no table to keep up to date.
+ */
+const isDigit = (cp: number): boolean => /\p{Nd}/u.test(String.fromCodePoint(cp));
+
+function asciiDigit(ch: string): string {
+  const cp = ch.codePointAt(0)!;
+  let zero = cp;
+  for (let i = 0; i < 9 && zero > 0 && isDigit(zero - 1); i++) zero--;
+  const value = cp - zero;
+  return value >= 0 && value <= 9 ? String(value) : ch;
+}
+
+/** The text, in the one spelling the rules are written in. */
+export function foldForMoney(text: string): string {
+  let s = text;
+  try {
+    s = s.normalize('NFKC');
+  } catch {
+    /* an unpaired surrogate cannot be normalised; the rest still runs */
+  }
+  s = s.replace(/\p{Cf}/gu, '');
+  s = s.replace(/\p{Nd}/gu, (d) => (d >= '0' && d <= '9' ? d : asciiDigit(d)));
+  return s.toLowerCase().replace(/[‘’]/g, "'");
+}
+
 /**
  * The name of the rule that fired, or undefined when the words carry no
  * figure. Exported for the suite and for anyone reading a refusal back: every
@@ -198,7 +262,7 @@ const RULES: Rule[] = [
  */
 export function moneyFigureRule(text: string): string | undefined {
   if (typeof text !== 'string' || !text) return undefined;
-  const s = text.toLowerCase().replace(/[‘’]/g, "'");
+  const s = foldForMoney(text);
   for (const rule of RULES) {
     if (rule.test(s)) return rule.name;
   }
