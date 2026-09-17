@@ -31,3 +31,38 @@ ALTER TABLE settlements
 -- for.
 ALTER TABLE settlements
   ADD COLUMN IF NOT EXISTS return_disputed_at timestamptz;
+
+-- --------------------------------------------------------------------------
+-- 2. The locks the reads were standing in for.
+--
+-- Every one of these is the same defect: a SELECT that asked whether something
+-- was allowed, and an INSERT or UPDATE some distance later that did it. Two
+-- callers arriving together both read the board as it was before either of
+-- them, both passed, and both wrote. The reads stay — they are what gives a
+-- person a sentence they can act on — and the rail moves into the database.
+
+-- One live settlement per introduction. A second proposal while one is in
+-- flight would put a second charge in front of the same buyer.
+CREATE UNIQUE INDEX IF NOT EXISTS settlements_one_live
+  ON settlements (match_id)
+  WHERE state NOT IN ('released','refunded','settled-split','declined');
+
+-- One settlement per payment. The funding webhook writes the payment
+-- reference; two funding events for the same settlement, or a reference
+-- written twice, would leave two rows claiming the same money.
+CREATE UNIQUE INDEX IF NOT EXISTS settlements_one_payment
+  ON settlements (stripe_payment_intent)
+  WHERE stripe_payment_intent IS NOT NULL;
+
+-- Best offer: one number each, and now it is the database saying so.
+--
+-- A sealed round is marked on the offer itself rather than inferred from the
+-- have's sale mode, because the mode can change and a window closes: what this
+-- index is about is the numbers that were put in UNDER a sealed window, and
+-- that is a fact about the row.
+ALTER TABLE offers
+  ADD COLUMN IF NOT EXISTS best_offer boolean NOT NULL DEFAULT false;
+
+CREATE UNIQUE INDEX IF NOT EXISTS offers_one_best_offer
+  ON offers (match_id, proposer_account)
+  WHERE best_offer;

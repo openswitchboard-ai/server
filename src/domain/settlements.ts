@@ -495,12 +495,30 @@ export function disputeNote(
 // THE single state writer. Every transition goes through here; nothing else
 // in the codebase writes settlements.state.
 // ---------------------------------------------------------------------------
+/**
+ * Where the transition runs, and what else it insists on.
+ *
+ * `client` puts the write on a caller's own connection, so a read taken under
+ * SELECT … FOR UPDATE and the transition that acts on it are one transaction
+ * rather than two statements with a gap between them.
+ *
+ * `also` is extra WHERE, appended with its parameters after the three this
+ * statement uses: the facts the human was looking at when they pressed, so a
+ * row that changed underneath them matches nothing and moves nothing. It is
+ * SQL written in this file, never anything from a request.
+ */
+interface TransitionWhere {
+  client?: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> };
+  also?: { sql: string; params: any[] };
+}
+
 async function applyTransition(
   ctx: TransitionCtx,
   settlementId: string,
   from: SettlementState[],
   to: SettlementState,
   stamp?: string,
+  where: TransitionWhere = {},
 ): Promise<SettlementRow> {
   assertTransitionContext(ctx);
   // The scheduled context buys the clocks their steps and nothing else.
@@ -559,11 +577,13 @@ async function applyTransition(
         : to === 'refunded' || to === 'settled-split'
           ? ', deadlock_at = NULL'
           : '';
-  const r = await getPool().query(
+  const runner = where.client ?? getPool();
+  const alsoSql = where.also ? ` AND ${where.also.sql}` : '';
+  const r = await runner.query(
     `UPDATE settlements SET state = $2, updated_at = now()${stampSql}${clockSql}
-     WHERE id = $1 AND state = ANY($3::text[])
+     WHERE id = $1 AND state = ANY($3::text[])${alsoSql}
      RETURNING *`,
-    [settlementId, to, from],
+    [settlementId, to, from, ...(where.also?.params ?? [])],
   );
   if (!r.rows[0]) {
     const cur = await getSettlement(settlementId);
@@ -578,6 +598,15 @@ async function applyTransition(
 // ---------------------------------------------------------------------------
 // Agent-facing: propose + read. Nothing here moves past 'proposed'.
 // ---------------------------------------------------------------------------
+
+/** One live settlement per introduction, said once so the read and the index
+ *  give the agent the same sentence. */
+function alreadyUnderWay(): OsbError {
+  return new OsbError('NOT_UNLOCKED_YET', {
+    human_action: 'A settlement is already under way on this introduction. Check its state first.',
+  });
+}
+
 export async function proposeSettlement(
   cfg: Config,
   accountId: string,
@@ -614,15 +643,18 @@ export async function proposeSettlement(
   }
   // One live settlement per match: a second proposal while one is in flight
   // would double-charge the buyer.
+  //
+  // THE QUESTION IS ASKED TWICE, in two different ways, and that is on purpose.
+  // This read is the one that gives a person a sentence they can act on. It
+  // cannot be the rail, because two proposals arriving together both read an
+  // empty board and both insert. The rail is a partial unique index on
+  // match_id over the non-terminal states (migration 043), and the catch below
+  // turns the database's refusal into this same sentence.
   const live = await getPool().query(
     `SELECT id FROM settlements WHERE match_id = $1 AND state <> ALL($2::text[])`,
     [input.match_id, TERMINAL_STATES],
   );
-  if (live.rowCount) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'A settlement is already under way on this introduction. Check its state first.',
-    });
-  }
+  if (live.rowCount) throw alreadyUnderWay();
   // One FINISHED protected payment per introduction, ever. The terms put it
   // plainly: after a protected payment has been released or refunded, no
   // further protected payment can be opened on the same introduction. That
@@ -644,20 +676,30 @@ export async function proposeSettlement(
   const description = input.description
     ? { text: String(input.description).slice(0, 2000), provenance: 'counterparty-untrusted' }
     : null;
-  const r = await getPool().query(
-    `INSERT INTO settlements
-       (match_id, proposer_account, buyer_account, seller_account, amount, ccy, description)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [
-      input.match_id,
-      accountId,
-      m.account_want, // the WANT side's human pays
-      m.account_have, // the HAVE side's human is paid
-      input.amount,
-      input.ccy,
-      description ? JSON.stringify(description) : null,
-    ],
-  );
+  let r;
+  try {
+    r = await getPool().query(
+      `INSERT INTO settlements
+         (match_id, proposer_account, buyer_account, seller_account, amount, ccy, description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [
+        input.match_id,
+        accountId,
+        m.account_want, // the WANT side's human pays
+        m.account_have, // the HAVE side's human is paid
+        input.amount,
+        input.ccy,
+        description ? JSON.stringify(description) : null,
+      ],
+    );
+  } catch (e: any) {
+    // The index said what the read above could not: somebody else's proposal
+    // landed first. Same news, same words.
+    if (e?.code === '23505' && String(e?.constraint ?? '').includes('settlements_one_live')) {
+      throw alreadyUnderWay();
+    }
+    throw e;
+  }
   const row: SettlementRow = r.rows[0];
   await notifyHumansOfProposal(cfg, row, m);
   return { settlement: serializeSettlement(row), row, match: m };
@@ -1299,15 +1341,61 @@ export async function approveResolution(
     ccy: s.ccy,
     recorded_via: ctx.recordedVia,
   });
-  await getPool().query(
-    `UPDATE settlements SET
-       split_buyer_approved_at  = COALESCE(split_buyer_approved_at,  CASE WHEN $2 = 'buyer'  THEN now() END),
-       split_seller_approved_at = COALESCE(split_seller_approved_at, CASE WHEN $2 = 'seller' THEN now() END),
-       updated_at = now()
-     WHERE id = $1 AND state IN ('resolution-proposed')`,
-    [settlementId, party],
-  );
-  return applyTransition(ctx, settlementId, ['resolution-proposed'], 'resolved', 'resolved_at');
+  // ONE TRANSACTION, ONE LOCKED ROW, AND THE FIGURES IN THE WHERE (2026-09-17
+  // audit). The read above, the stamp and the transition used to be three
+  // separate statements on the pool, and a counter-proposal landing between the
+  // first and the third moved money on two figures this human had never seen:
+  // the check was against the row as it was read, and the transition only asked
+  // whether the state was still 'resolution-proposed'. Both writes now happen
+  // under SELECT … FOR UPDATE on the same connection, and both carry the two
+  // figures the approver actually saw. A split that changed under them matches
+  // nothing, nothing moves, and they are told to look again.
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(
+      `SELECT * FROM settlements WHERE id = $1 FOR UPDATE`,
+      [settlementId],
+    );
+    const now: SettlementRow | undefined = locked.rows[0];
+    if (!now) throw Object.assign(new Error('settlement not found'), { notFound: true });
+    if (
+      now.state !== 'resolution-proposed' ||
+      now.refund_minor !== sawRefundMinor ||
+      now.release_minor !== sawReleaseMinor ||
+      now.split_proposed_by === ctx.accountId
+    ) {
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action:
+          'The two figures changed while you were looking at them. Open the page again and check what is on the table now.',
+      });
+    }
+    await client.query(
+      `UPDATE settlements SET
+         split_buyer_approved_at  = COALESCE(split_buyer_approved_at,  CASE WHEN $2 = 'buyer'  THEN now() END),
+         split_seller_approved_at = COALESCE(split_seller_approved_at, CASE WHEN $2 = 'seller' THEN now() END),
+         updated_at = now()
+       WHERE id = $1 AND state = 'resolution-proposed'
+         AND refund_minor = $3 AND release_minor = $4`,
+      [settlementId, party, sawRefundMinor, sawReleaseMinor],
+    );
+    const moved = await applyTransition(
+      ctx,
+      settlementId,
+      ['resolution-proposed'],
+      'resolved',
+      'resolved_at',
+      { client, also: { sql: 'refund_minor = $4 AND release_minor = $5', params: [sawRefundMinor, sawReleaseMinor] } },
+    );
+    await client.query('COMMIT');
+    return moved;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -1655,22 +1743,40 @@ export async function recordRuleRefund(
 // Webhook transitions (verified Stripe events only).
 // ---------------------------------------------------------------------------
 
-/** The buyer's money landed in the platform balance
- *  (checkout.session.completed / async_payment_succeeded): approved ->
- *  funded. The webhook handler verifies the payment matches the settlement
- *  first. */
+/**
+ * The buyer's money landed in the platform balance
+ * (checkout.session.completed / async_payment_succeeded): approved -> funded.
+ * The webhook handler verifies the payment matches the settlement first.
+ *
+ * THE PAYMENT REFERENCE IS WRITTEN ONCE (2026-09-17 audit). This used to write
+ * stripe_payment_intent unconditionally, before the transition that decides
+ * whether anything should move at all — so a second payment on an already
+ * funded settlement overwrote the reference to the payment that was actually
+ * being held. The transition then refused, correctly, and left the row
+ * pointing at money nobody would ever refund from: every later refund and
+ * every later check would have been against the wrong charge.
+ *
+ * Now the write is a compare-and-swap of its own: 'approved', and no payment
+ * on the row yet. Nothing matching means the buyer has been charged for a
+ * settlement that is not waiting to be funded, and that money goes straight
+ * back — the caller's stray-payment road. The caller is told which happened
+ * rather than left to infer it from an exception.
+ */
 export async function markFunded(
   ctx: WebhookCtx,
   settlementId: string,
   refs: { checkoutSession?: string; paymentIntent: string },
-): Promise<SettlementRow> {
+): Promise<{ funded: SettlementRow } | { stray: true }> {
   assertTransitionContext(ctx);
-  await getPool().query(
+  const claimed = await getPool().query(
     `UPDATE settlements SET stripe_checkout_session = COALESCE($2, stripe_checkout_session),
-       stripe_payment_intent = $3, updated_at = now() WHERE id = $1`,
+       stripe_payment_intent = $3, updated_at = now()
+     WHERE id = $1 AND state = 'approved' AND stripe_payment_intent IS NULL
+     RETURNING id`,
     [settlementId, refs.checkoutSession ?? null, refs.paymentIntent],
   );
-  return applyTransition(ctx, settlementId, ['approved'], 'funded', 'funded_at');
+  if (!claimed.rows[0]) return { stray: true };
+  return { funded: await applyTransition(ctx, settlementId, ['approved'], 'funded', 'funded_at') };
 }
 
 /** transfer.created (the seller's money left the platform balance):

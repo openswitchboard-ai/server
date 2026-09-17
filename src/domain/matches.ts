@@ -1008,13 +1008,37 @@ export async function openChannel(matchId: string, accountId: string) {
     // bodies are encrypted under it and nothing else can read them; it lives
     // on the match row and dies with it. See domain/channel.ts for why the
     // account envelope keys are deliberately not used for a conversation.
+    //
+    // ONE CHANNEL PER INTRODUCTION, AND ONE KEY (2026-09-17 audit). Both humans
+    // open the conversation, often within the same second, and the read above
+    // ran before either write. An unguarded UPDATE let the second one replace
+    // the channel id and — worse — the KEY, which is what every message body
+    // already on the row was encrypted under: the first human's messages became
+    // unreadable, and the two of them ended up holding different channel ids
+    // for the same introduction. So the write is a compare-and-swap on
+    // channel_id being empty. The loser gets nothing back, re-reads, and uses
+    // the winner's channel exactly as if it had been there all along.
     const channelKey = await generateChannelKey(channelId);
-    await getPool().query(
+    const won = await getPool().query(
       `UPDATE matches SET stage = 4, channel_id = $2, opened_at = $3,
               channel_key_enc = $4, updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND channel_id IS NULL
+       RETURNING channel_id, opened_at`,
       [matchId, channelId, openedAt, channelKey],
     );
+    if (!won.rows[0]) {
+      const fresh = await getMatch(matchId);
+      if (!fresh?.channel_id) {
+        // No channel of ours and none of theirs: the row moved out from under
+        // this call some other way, and inventing an answer would be worse
+        // than saying so.
+        throw new OsbError('NOT_UNLOCKED_YET', {
+          human_action: 'The conversation on this introduction could not be opened just now.',
+        });
+      }
+      channelId = fresh.channel_id;
+      openedAt = fresh.opened_at ?? openedAt;
+    }
   }
   return assertOutbound('conversation.open', {
     schema_version: SCHEMA_VERSION,

@@ -3,7 +3,11 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { encryptField } from '../crypto.js';
 import { getAccount } from './accounts.js';
-import { checkPublishQuota } from './quotas.js';
+import {
+  OPEN_CARDS_GUARD_SQL,
+  checkPublishQuota,
+  recordPublishWithinQuota,
+} from './quotas.js';
 import {
   OsbError,
   SCHEMA_VERSION,
@@ -301,13 +305,17 @@ export async function publishIntent(
     ? await encryptField(accountId, account.data_key_enc, JSON.stringify(card.price))
     : null;
 
+  // The open-cards ceiling, asked in the statement that changes the count
+  // rather than in a question some distance before it (domain/quotas.ts). The
+  // check at the top of this function is the courtesy; this is the rail.
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
                         protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind)
-     VALUES ($1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
+     SELECT $1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
-             $18::int, $19, $20)
+             $18::int, $19, $20
+      WHERE ${OPEN_CARDS_GUARD_SQL('$21::int')}
      RETURNING id`,
     [
       accountId,
@@ -334,17 +342,34 @@ export async function publishIntent(
       slotsOf(card),
       saleOf(card),
       kind,
+      cfg.quotas.maxOpenCards,
     ],
   );
+  if (!r.rows[0]) {
+    // The statement counted the board as it is now and there is no room. The
+    // check knows the sentence and the figures; re-asking it here gets them.
+    await checkPublishQuota(accountId, cfg.quotas);
+    throw new OsbError('QUOTA_EXCEEDED', {
+      human_action: `You are at the limit of ${cfg.quotas.maxOpenCards} open wants and haves. Withdraw one to post another.`,
+    });
+  }
   const id = r.rows[0].id as string;
   // The catalogue's gaps, counted from what went UP rather than from what was
   // turned away. Nothing about this reaches the agent, and nothing about it can
   // fail the publish.
   if (!known) await recordUnknownLeaf(cfg, accountId, card.category, kind);
-  await getPool().query(
-    'INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)',
-    [accountId, id],
-  );
+  // The day's posting, counted and capped in the one statement that records
+  // it (domain/quotas.ts). A publish that meets the day's end here has its card
+  // row already: it is withdrawn rather than left standing, so the refusal is
+  // the same board the agent would have had if the count had come first.
+  try {
+    await recordPublishWithinQuota(accountId, id, cfg.quotas);
+  } catch (e) {
+    await getPool()
+      .query(`UPDATE cards SET lifecycle_state = 'WITHDRAWN', updated_at = now() WHERE id = $1`, [id])
+      .catch(() => {});
+    throw e;
+  }
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,
@@ -649,10 +674,7 @@ export async function amendIntent(
       saleOf(next),
     ],
   );
-  await getPool().query('INSERT INTO publish_events (account_id, card_id) VALUES ($1,$2)', [
-    accountId,
-    intentId,
-  ]);
+  await recordPublishWithinQuota(accountId, intentId, cfg.quotas);
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,

@@ -15,7 +15,13 @@ import {
 import { runIntake } from '../intake/pipe.js';
 import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
-import { checkOfferRate, checkPerMatchOfferRate } from './quotas.js';
+import {
+  MAX_OFFERS_PER_MATCH_PER_DAY,
+  OFFER_RATE_GUARD_SQL,
+  checkOfferRate,
+  checkPerMatchOfferRate,
+  offerRateRefusal,
+} from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import type { Config } from '../config.js';
 
@@ -145,7 +151,7 @@ export async function proposeOffer(
   }
   // Best offer, if this is one: the floor, the one-number rule and the closed
   // window, all refused to the side that tried rather than silently dropped.
-  await assertBestOfferRules(m, accountId, input);
+  const sealed = await assertBestOfferRules(m, accountId, input);
   // HOW LONG A FIGURE STANDS FOR. The expiry was carried straight from the
   // caller and never looked at, so an agent could put up a figure that expired
   // last year — accepted by nobody, and every sweep telling its human a number
@@ -207,19 +213,43 @@ export async function proposeOffer(
   const message = note.value
     ? { text: note.value, provenance: 'counterparty-untrusted' }
     : null;
-  const r = await getPool().query(
-    `INSERT INTO offers (match_id, proposer_account, amount, ccy, expiry, message, authored_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [
-      input.match_id,
-      accountId,
-      input.amount,
-      input.ccy,
-      input.expiry,
-      message ? JSON.stringify(message) : null,
-      author,
-    ],
-  );
+  // BOTH RATE RAILS RIDE IN THE INSERT (2026-09-17 audit). The two checks above
+  // are the courtesy — they refuse early, in words, before a model call is
+  // spent — and this is the rail: the counts and the row that changes them are
+  // one statement, so offers fired together meet the limit that offers fired
+  // one after another meet. See domain/quotas.ts.
+  //
+  // `best_offer` marks a number put in under a sealed gathering window, and a
+  // partial unique index over (match_id, proposer_account) on exactly those
+  // rows is what makes "one number each" true rather than merely checked.
+  let r;
+  try {
+    r = await getPool().query(
+      `INSERT INTO offers (match_id, proposer_account, amount, ccy, expiry, message,
+                           authored_by, best_offer)
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8
+        WHERE ${OFFER_RATE_GUARD_SQL('$9::int', '$10::int')}
+       RETURNING *`,
+      [
+        input.match_id,
+        accountId,
+        input.amount,
+        input.ccy,
+        input.expiry,
+        message ? JSON.stringify(message) : null,
+        author,
+        sealed,
+        cfg.quotas.maxOffersPerHour,
+        MAX_OFFERS_PER_MATCH_PER_DAY,
+      ],
+    );
+  } catch (e: any) {
+    if (e?.code === '23505' && String(e?.constraint ?? '').includes('offers_one_best_offer')) {
+      throw oneNumberEach();
+    }
+    throw e;
+  }
+  if (!r.rows[0]) await offerRateRefusal(accountId, input.match_id, cfg.quotas);
   await detectLadderProbing(accountId, input.match_id);
   // A figure is movement: the slot's clock starts again (domain/sequencer.ts).
   const { noteMovement } = await import('./sequencer.js');
@@ -400,9 +430,9 @@ async function assertBestOfferRules(
   m: { id: string; account_have: string; account_want: string },
   accountId: string,
   input: { amount: number; ccy: string },
-): Promise<void> {
+): Promise<boolean> {
   const sale = await saleOf(m.id);
-  if (!sale || sale.sale !== 'best-offer') return;
+  if (!sale || sale.sale !== 'best-offer') return false;
   if (accountId === m.account_have) {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
@@ -430,12 +460,17 @@ async function assertBestOfferRules(
       WHERE match_id = $1 AND proposer_account = $2 AND state <> 'withdrawn' LIMIT 1`,
     [m.id, accountId],
   );
-  if (prior.rowCount) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action:
-        'This is a best offer, so it is one number each. Your human has already put theirs in and it stands until the window closes.',
-    });
-  }
+  if (prior.rowCount) throw oneNumberEach();
+  return true;
+}
+
+/** One number each, said once so the read above and the unique index behind it
+ *  give the agent the same sentence. */
+function oneNumberEach(): OsbError {
+  return new OsbError('NOT_UNLOCKED_YET', {
+    human_action:
+      'This is a best offer, so it is one number each. Your human has already put theirs in and it stands until the window closes.',
+  });
 }
 
 /**

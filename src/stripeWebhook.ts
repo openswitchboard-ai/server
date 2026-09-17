@@ -78,6 +78,30 @@ function settlementIdOf(obj: { metadata?: Record<string, string> | null }): stri
 }
 
 /**
+ * Money taken for a settlement that is not waiting to be funded: it goes
+ * straight back. With immediate capture the buyer really has been charged, so
+ * this is a refund and not a cancellation, and the idempotency key is the
+ * payment itself so a repeated event refunds it once.
+ */
+async function refundStrayPayment(
+  sid: string,
+  paymentIntent: string,
+  log: (m: string, x?: any) => void,
+): Promise<void> {
+  const stripe = await getStripe();
+  await stripe.refunds
+    .create(
+      { payment_intent: paymentIntent, metadata: { osb_settlement_id: sid } },
+      { idempotencyKey: `osb-settlement-stray-${paymentIntent}` },
+    )
+    .catch(() => {});
+  log('stray settlement payment refunded (settlement already funded)', {
+    settlement_id: sid,
+    payment_intent: paymentIntent,
+  });
+}
+
+/**
  * The funding path, shared by checkout.session.completed and
  * checkout.session.async_payment_succeeded: verify the payment matches the
  * settlement exactly (the buyer total the row recorded, currency, the
@@ -102,18 +126,7 @@ async function handleFunding(
   }
   if (current.state !== 'approved') {
     if (current.stripe_payment_intent !== paymentIntent) {
-      // A second payment landed after funding: give it straight back.
-      const stripe = await getStripe();
-      await stripe.refunds
-        .create(
-          { payment_intent: paymentIntent, metadata: { osb_settlement_id: sid } },
-          { idempotencyKey: `osb-settlement-stray-${paymentIntent}` },
-        )
-        .catch(() => {});
-      log('stray settlement payment refunded (settlement already funded)', {
-        settlement_id: sid,
-        payment_intent: paymentIntent,
-      });
+      await refundStrayPayment(sid, paymentIntent, log);
     }
     return;
   }
@@ -126,9 +139,18 @@ async function handleFunding(
     });
     return;
   }
-  const row = await markFunded(ctx, sid, { checkoutSession, paymentIntent });
+  // The read above is the cheap question; markFunded is the rail. Two funding
+  // events for the same settlement can be in flight at once (a retry, or a
+  // completed session and an async success), and only one of them claims the
+  // row. The other has taken a buyer's money for a settlement that is not
+  // waiting to be funded, so it goes straight back.
+  const outcome = await markFunded(ctx, sid, { checkoutSession, paymentIntent });
+  if ('stray' in outcome) {
+    await refundStrayPayment(sid, paymentIntent, log);
+    return;
+  }
   log('settlement funded', { settlement_id: sid, payment_intent: paymentIntent });
-  await notifyBothParties(cfg, row, 'payment-held');
+  await notifyBothParties(cfg, outcome.funded, 'payment-held');
 }
 
 async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?: any) => void) {

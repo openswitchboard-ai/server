@@ -180,6 +180,9 @@ function fakePool() {
       }
       if (/SELECT amount FROM offers/.test(sql)) return rows([]);
       if (/INSERT INTO cards/.test(sql)) return rows([{ id: CARD_H }]);
+      // The day's posting is counted in the statement that records it, so the
+      // recorded row is what says the publish was inside the day's ceiling.
+      if (/INSERT INTO publish_events/.test(sql)) return rows([{ id: 1 }]);
       if (/INSERT INTO offers/.test(sql)) {
         const row = {
           id: OFFER,
