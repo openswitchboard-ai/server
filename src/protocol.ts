@@ -331,7 +331,12 @@ export type ErrorCode =
   // Nothing in, nothing out: this account has been stopped by the operator
   // (docs/trust-and-safety.md). Ahead of the pinned error document — see
   // AHEAD_OF_SCHEMA below.
-  | 'SUSPENDED';
+  | 'SUSPENDED'
+  // This side of a conversation has spent the window its human's last press
+  // granted it (domain/conversationWindow.ts). Nothing is lost and collecting
+  // still works; one press starts a fresh window. Also ahead of the pinned
+  // error document.
+  | 'CONVERSATION_PAUSED';
 
 /**
  * Codes this server ships that the pinned error document has not caught up
@@ -343,7 +348,7 @@ export type ErrorCode =
  * an account — is not one this repository is willing to offer. The list is
  * meant to be short and to empty itself as the schema catches up.
  */
-const AHEAD_OF_SCHEMA: readonly ErrorCode[] = ['SUSPENDED'];
+const AHEAD_OF_SCHEMA: readonly ErrorCode[] = ['SUSPENDED', 'CONVERSATION_PAUSED'];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */
 export interface ErrorCandidate {

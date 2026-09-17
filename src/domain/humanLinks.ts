@@ -344,6 +344,42 @@ export async function reportLink(
 }
 
 // ---------------------------------------------------------------------------
+// (h) Keep the conversation going. The renewal of one side's own window
+// (domain/conversationWindow.ts): consent to talk runs out, and this is how it
+// is given again.
+//
+// It may be fetched at any time while the conversation is open, not only once
+// the window is spent — renewing early simply starts a fresh window, and a
+// human who has just said "yes, keep going" should not have to wait for the old
+// one to run out first. What it cannot do is be fetched by somebody who is not
+// a party or on a conversation that is not open, and loadOpenChannel is what
+// says so, in the same words every other door on an open conversation uses.
+//
+// It grants nothing to the other side and tells them nothing.
+// ---------------------------------------------------------------------------
+export async function keepTalkingLink(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+): Promise<HumanLink> {
+  const { loadOpenChannel } = await import('./channel.js');
+  const ch = await loadOpenChannel(matchId, accountId);
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'conversation-renew',
+    refId: matchId,
+    counterpartyAccount: ch.counterpartyAccount,
+  });
+  return {
+    link: url(cfg, token),
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does:
+      'Opens one page asking your human whether to keep this conversation going, with how many messages your side has sent so far on it. One press gives you a fresh run of messages and days on this one; Not now leaves it paused, and nothing is lost either way. It changes nothing for the other side, who are told none of this.',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // (d) There used to be a link here for closing the short window on a want or
 // have of the holder's own. The window is gone (migration 030): nothing blocks
 // a holder now, so there is nothing for them to close. See domain/sequencer.ts.

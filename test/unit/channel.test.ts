@@ -80,6 +80,11 @@ const cfg = { envName: 'dev', publicOrigin: 'https://mcp.test' } as unknown as C
 // A cfg that carries an ops queue, so send_message tries the waiting-message
 // nudge. Tests that omit it exercise the transport with the nudge switched off.
 const nudgeCfg = { ...cfg, opsQueueUrl: 'https://ops.test/queue' } as unknown as Config;
+// A cfg whose conversation budget is bigger than the hourly slot, for the tests
+// that are about the hourly slot. The two limits are genuinely separate rails
+// and this is what keeps each test about one of them; the budget has its own
+// suite (conversationWindow.test.ts).
+const roomyCfg = { ...cfg, conversationBudgetMessages: 500, conversationBudgetDays: 30 } as unknown as Config;
 
 const MATCH = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const ANA = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb'; // WANT side
@@ -118,6 +123,9 @@ interface World {
     created_at: Date;
   }[];
   rate: Map<string, number>; // `${channel}|${account}|${hour}` -> n
+  // The conversation budget, one row per side: `${match}|${account}` -> the
+  // window that side's last press granted it.
+  windows: Map<string, { started_at: Date; messages_sent: number; granted_via: string }>;
   // `${channel}|${recipient}` -> the throttle row behind the waiting-message nudge.
   notify: Map<string, { last_notified_at: Date; unread_notified: boolean }>;
   clockSkewMs: number;
@@ -164,6 +172,42 @@ function run(sql: string, params: any[] = []) {
   if (/^\s*SELECT \* FROM cards WHERE id/.test(sql)) {
     const state = world.cards[params[0]];
     return rows(state ? [{ id: params[0], lifecycle_state: state }] : []);
+  }
+  // The conversation budget (domain/conversationWindow.ts). The spend is one
+  // statement whose WHERE clause IS the budget, so the stand-in has to apply
+  // both halves of it — the count and the days — or the tests would prove
+  // nothing about the thing that actually enforces it.
+  if (/UPDATE conversation_windows/.test(sql)) {
+    const w = world.windows.get(`${params[0]}|${params[1]}`);
+    if (!w) return rows([]);
+    const cutoff = nowMs() - Number(params[3]) * 86_400_000;
+    if (w.messages_sent >= Number(params[2]) || w.started_at.getTime() <= cutoff) return rows([]);
+    w.messages_sent += 1;
+    return rows([{ messages_sent: w.messages_sent }]);
+  }
+  if (/INSERT INTO conversation_windows/.test(sql)) {
+    const key = `${params[0]}|${params[1]}`;
+    const existing = world.windows.get(key);
+    // The renewal upsert writes over what is there; the lazy open from an
+    // opt-in does nothing when a row already exists.
+    if (/DO UPDATE SET started_at = now\(\)/.test(sql) || !existing) {
+      world.windows.set(key, {
+        started_at: new Date(nowMs()),
+        messages_sent: 0,
+        granted_via: String(params[2]),
+      });
+    }
+    return rows([]);
+  }
+  if (/FROM conversation_windows WHERE match_id/.test(sql)) {
+    const w = world.windows.get(`${params[0]}|${params[1]}`);
+    if (!w) return rows([]);
+    return rows([
+      {
+        messages_sent: w.messages_sent,
+        in_time: w.started_at.getTime() > nowMs() - Number(params[2]) * 86_400_000,
+      },
+    ]);
   }
   if (/INSERT INTO channel_send_rate/.test(sql)) {
     const key = `${params[0]}|${params[1]}|${hourKey()}`;
@@ -287,6 +331,12 @@ beforeEach(() => {
     messages: [],
     offers: [],
     rate: new Map(),
+    // Both sides start with a fresh window, the way a pair who have just
+    // pressed the names page do.
+    windows: new Map([
+      [`${MATCH}|${ANA}`, { started_at: new Date(), messages_sent: 0, granted_via: 'names-press' }],
+      [`${MATCH}|${BEPPE}`, { started_at: new Date(), messages_sent: 0, granted_via: 'names-press' }],
+    ]),
     notify: new Map(),
     clockSkewMs: 0,
   };
@@ -437,7 +487,9 @@ describe('delete on delivery', () => {
 
   it('hands over a batch at a time and says when there is more', async () => {
     for (let i = 0; i < channel.RECEIVE_BATCH + 3; i++) {
-      await channel.sendMessage(ANA, MATCH, `message ${i}`);
+      // roomyCfg: this test is about the size of a batch, and 53 messages is
+      // more than one press of the conversation budget buys.
+      await channel.sendMessage(ANA, MATCH, `message ${i}`, roomyCfg);
     }
     const first = await channel.receiveMessages(BEPPE, MATCH);
     expect(first.messages).toHaveLength(channel.RECEIVE_BATCH);
@@ -506,9 +558,9 @@ describe('size cap', () => {
 describe('rate limit', () => {
   it('allows the hour worth and then answers QUOTA_EXCEEDED', async () => {
     for (let i = 0; i < channel.MAX_MESSAGES_PER_HOUR; i++) {
-      await channel.sendMessage(ANA, MATCH, `message ${i}`);
+      await channel.sendMessage(ANA, MATCH, `message ${i}`, roomyCfg);
     }
-    const e = await channel.sendMessage(ANA, MATCH, 'one too many').catch((x) => x);
+    const e = await channel.sendMessage(ANA, MATCH, 'one too many', roomyCfg).catch((x) => x);
     expect(e).toBeInstanceOf(OsbError);
     expect(e.payload.code).toBe('QUOTA_EXCEEDED');
     expect(e.payload.retry_after).toBeGreaterThan(0);
@@ -517,9 +569,9 @@ describe('rate limit', () => {
 
   it('counts each side separately', async () => {
     for (let i = 0; i < channel.MAX_MESSAGES_PER_HOUR; i++) {
-      await channel.sendMessage(ANA, MATCH, `message ${i}`);
+      await channel.sendMessage(ANA, MATCH, `message ${i}`, roomyCfg);
     }
-    await expect(channel.sendMessage(BEPPE, MATCH, 'my turn')).resolves.toBeTruthy();
+    await expect(channel.sendMessage(BEPPE, MATCH, 'my turn', roomyCfg)).resolves.toBeTruthy();
   });
 
   it('spends no allowance on a refused send', async () => {

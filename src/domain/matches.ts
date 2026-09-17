@@ -470,6 +470,14 @@ export async function recordStage3OptIn(
      ON CONFLICT (match_id, account_id, kind) DO NOTHING`,
     [matchId, accountId, recordedVia],
   );
+  // THE CONVERSATION BUDGET STARTS HERE, from this press
+  // (domain/conversationWindow.ts). The names press is what opens the door to
+  // talking at all, so it is also what grants this side its first window: so
+  // many messages from them, or so many days, and then their human is asked
+  // again. Written after the consent row, so a window never exists without the
+  // press behind it.
+  const { openWindowFromOptIn } = await import('./conversationWindow.js');
+  await openWindowFromOptIn(matchId, accountId, 'names-press');
   await noteMovement(matchId); // the slot's clock starts again
   const n = await stage3OptinCount(matchId);
   if (n >= 2 && m.stage < 3) {

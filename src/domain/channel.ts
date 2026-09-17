@@ -184,6 +184,23 @@ export async function sendMessage(
   // thrown out of. Authorisation is the cheapest question here and it is now
   // the first one.
   const ch = await loadOpenChannel(matchId, accountId);
+  // THE WINDOW THIS HUMAN'S LAST PRESS GRANTED, and it is spent before
+  // anything else is (domain/conversationWindow.ts). Their go-ahead buys so
+  // many messages from this side, or so many days, and when it is gone the
+  // send stops here and the agent is told to ask them. The other side is told
+  // nothing at all: their sends still deliver and still wait to be collected,
+  // and this one can still collect them. A side with no row is one whose
+  // opt-in predates the table, so it gets a window dated from that opt-in and
+  // one more go before it is believed to be paused.
+  const { openWindowFromOptIn, spendMessage, conversationPaused } = await import(
+    './conversationWindow.js'
+  );
+  let window = await spendMessage(cfg, matchId, accountId);
+  if (!window.spent) {
+    await openWindowFromOptIn(matchId, accountId);
+    window = await spendMessage(cfg, matchId, accountId);
+  }
+  if (!window.spent) throw conversationPaused();
   // And the per-channel allowance, also ahead of the model. THE SLOT IS SPENT
   // BY THE ATTEMPT, not by the delivery: it used to sit inside the write
   // transaction and roll back with it, so a refused message cost nothing and an
@@ -217,6 +234,11 @@ export async function sendMessage(
     text,
   });
   if (intake.outcome === 'refuse') {
+    // A message refused here has already spent both the hourly slot and one of
+    // the window's messages, for the same reason: the attempt is the thing
+    // being paced, and an allowance that rolled back would let an agent send an
+    // unlimited number of refused messages through the classifier.
+    //
     // A refusal at this door is normally the money-figure rule, and it is the
     // human's to act on: CONSENT_REQUIRED, with the sentence to say. A
     // suspended account is a different answer entirely — there is nothing for

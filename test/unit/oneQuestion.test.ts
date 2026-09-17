@@ -129,6 +129,11 @@ interface World {
   /** The humans whose names-step press has been recorded, and how each one
    *  was recorded. Only a press on their own page ever puts one here. */
   optins: Map<string, string>;
+  /** Set once the two of them are talking, which is what the renewal page
+   *  asks about. */
+  channelId: string | null;
+  /** The conversation budget, one row per side of this introduction. */
+  windows: Map<string, { started_at: Date; messages_sent: number; granted_via: string }>;
 }
 let world: World;
 
@@ -144,7 +149,7 @@ const theMatch = () => ({
   interest_want: true,
   interest_have: true,
   state: world.matchState,
-  channel_id: null,
+  channel_id: world.channelId,
   opened_at: null,
 });
 
@@ -378,6 +383,23 @@ function fakePool() {
         world.stage = 3;
         return rows([]);
       }
+      // ---- the conversation budget ----
+      if (/INSERT INTO conversation_windows/.test(sql)) {
+        const k = `${params[0]}|${params[1]}`;
+        const renewal = /DO UPDATE SET started_at = now\(\)/.test(sql);
+        if (renewal || !world.windows.has(k)) {
+          world.windows.set(k, {
+            started_at: new Date(),
+            messages_sent: 0,
+            granted_via: String(params[2]),
+          });
+        }
+        return rows([]);
+      }
+      if (/FROM conversation_windows WHERE match_id/.test(sql)) {
+        const w = world.windows.get(`${params[0]}|${params[1]}`);
+        return rows(w ? [{ messages_sent: w.messages_sent, in_time: true }] : []);
+      }
       if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT count\(\*\)::int AS n FROM offers/.test(sql)) return rows([{ n: 0 }]);
       if (/SELECT count\(\*\)::int AS n,\s*min\(created_at\)/.test(sql)) {
@@ -432,6 +454,8 @@ beforeEach(async () => {
     savedHearsVia: [],
     elevatedUntil: null,
     optins: new Map(),
+    channelId: null,
+    windows: new Map(),
   };
   linkSeq = 0;
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
@@ -1137,5 +1161,96 @@ describe('a link belongs to one person', () => {
     await expect(
       humanLinks.autoNegotiateLink(cfg, ANA, CARD_W, { limit: 400, ccy: 'AUD' }),
     ).rejects.toBeInstanceOf(OsbError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (h) Keep the conversation going. The renewal of one side's own window
+// (domain/conversationWindow.ts): a human's go-ahead to talk runs out, and this
+// is the page that gives it again.
+describe('(h) keep the conversation going', () => {
+  beforeEach(() => {
+    world.stage = 4;
+    world.channelId = 'ch_11111111-2222-4333-8444-555555555555';
+    world.optins.set(ANA, 'counter');
+    world.optins.set(BEPPE, 'counter');
+    world.windows.set(`${MATCH}|${ANA}`, {
+      started_at: new Date(Date.now() - 86_400_000),
+      messages_sent: 12,
+      granted_via: 'names-press',
+    });
+  });
+
+  const keepTalkingToken = async (): Promise<string> => {
+    const r: any = await respond({ intro_id: MATCH, action: 'request_keep_talking' });
+    expect(r.isError).toBeFalsy();
+    expect(body(r).link).toContain('https://my.test/a/');
+    return encodeURIComponent(tokenOf(body(r).link));
+  };
+
+  it('mints and returns, and changes nothing at all', async () => {
+    const r: any = await respond({ intro_id: MATCH, action: 'request_keep_talking' });
+    expect(body(r).expires_in_minutes).toBe(15);
+    expect(body(r).what_it_does).toContain('keep this conversation going');
+    expect(world.links).toHaveLength(1);
+    expect(world.links[0].action).toBe('conversation-renew');
+    expect(body(r).press_id).toBe(world.links[0].id);
+    // The window is exactly as it was: minting a page is not pressing it.
+    expect(world.windows.get(`${MATCH}|${ANA}`)!.messages_sent).toBe(12);
+  });
+
+  it('asks one question, says how many have gone, and takes the PIN', async () => {
+    const t = await keepTalkingToken();
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).toContain('Keep the conversation going?');
+    expect(page.body).toContain('12 messages have gone from your side so far.');
+    expect(page.body).toContain('Keep going');
+    expect(page.body).toContain('Confirm with your PIN');
+    // Reading the question does not answer it.
+    expect(world.windows.get(`${MATCH}|${ANA}`)!.messages_sent).toBe(12);
+  });
+
+  it('the press starts a fresh window, and only for the human who pressed', async () => {
+    const t = await keepTalkingToken();
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(200);
+    expect(pressed.body).toContain('Carry on');
+    const mine = world.windows.get(`${MATCH}|${ANA}`)!;
+    expect(mine.messages_sent).toBe(0);
+    expect(mine.granted_via).toBe('renewal-press');
+    // Nothing was granted to the other side, who hears none of this.
+    expect(world.windows.has(`${MATCH}|${BEPPE}`)).toBe(false);
+  });
+
+  it('may be pressed EARLY, while there is still room in the window', async () => {
+    world.windows.get(`${MATCH}|${ANA}`)!.messages_sent = 1;
+    const t = await keepTalkingToken();
+    await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(world.windows.get(`${MATCH}|${ANA}`)!.messages_sent).toBe(0);
+  });
+
+  it('Not now leaves it paused, and changes nothing', async () => {
+    const t = await keepTalkingToken();
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'no' });
+    expect(pressed.body).toContain('Not now');
+    expect(world.windows.get(`${MATCH}|${ANA}`)!.messages_sent).toBe(12);
+    expect(world.links[0].decision).toBe('declined');
+  });
+
+  it('is not minted at all where there is no open conversation', async () => {
+    world.channelId = null;
+    world.stage = 3;
+    const r: any = await respond({ intro_id: MATCH, action: 'request_keep_talking' });
+    expect(body(r).code).toBe('NOT_UNLOCKED_YET');
+    expect(world.links).toHaveLength(0);
+  });
+
+  it('works once: a second press of the same page finds nothing left', async () => {
+    const t = await keepTalkingToken();
+    await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    world.windows.get(`${MATCH}|${ANA}`)!.messages_sent = 7;
+    const again = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(again.body.toLowerCase()).toContain('used');
+    expect(world.windows.get(`${MATCH}|${ANA}`)!.messages_sent).toBe(7);
   });
 });
