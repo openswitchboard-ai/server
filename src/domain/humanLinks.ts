@@ -202,6 +202,13 @@ export async function acceptNumberLink(
       human_action: `That figure is ${o.state} — there is nothing left to accept.`,
     });
   }
+  // And its own clock, refused HERE rather than at the press: minting a page
+  // for a human to accept something that has already run out is a page nobody
+  // should be handed (2026-09-17 audit).
+  const { OFFER_EXPIRED_WORDS, offerHasExpired } = await import('./offers.js');
+  if (offerHasExpired(o)) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: OFFER_EXPIRED_WORDS });
+  }
   const { token, id } = await createApprovalLink({
     accountId,
     action: 'offer-accept',
