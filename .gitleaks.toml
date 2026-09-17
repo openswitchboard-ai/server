@@ -1,11 +1,27 @@
 # gitleaks configuration for the OpenSwitchboard server.
 #
-# The default rule set is kept in full; this file only records the one string
-# in the repository that looks like a credential and is not one.
+# The default rule set is kept in full; this file adds the shape of an
+# OpenSwitchboard agent key, which no scanner knows about but us, and records
+# the one string in the repository that looks like a credential and is not one.
 title = "OpenSwitchboard server"
 
 [extend]
 useDefault = true
+
+[[rules]]
+id = "osb-agent-key"
+description = "OpenSwitchboard agent key (osb_ak_...)"
+regex = '''osb_ak_[A-Za-z0-9_-]{20,}'''
+keywords = ["osb_ak_"]
+
+  # The render-suite fixture below has a real key's shape, so this rule finds
+  # it. It is the same string the file-wide allowlist describes; a rule's own
+  # allowlist has to repeat it, because a rule does not inherit the file's.
+  [[rules.allowlists]]
+  description = "The documented render-suite fixture key. See the note below."
+  matchCondition = "AND"
+  regexes = ['''osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU''']
+  paths = ['''test/unit/.*\.test\.ts''']
 
 [[allowlists]]
 description = """
@@ -15,6 +31,12 @@ string "example-key-value-for-the-render-suite", chosen so the token has a real
 key's shape and length for the HTML templates under test while saying plainly
 in its own bytes that it is a fixture. It grants nothing, and no deployment has
 ever issued or accepted it.
+
+matchCondition is AND deliberately. gitleaks ORs regexes and paths by default,
+which would have made this block excuse EVERY finding anywhere under
+test/unit, whatever the string. With AND it excuses only this string, and
+only there.
 """
+matchCondition = "AND"
 regexes = ['''osb_ak_ZXhhbXBsZS1rZXktdmFsdWUtZm9yLXRoZS1yZW5kZXItc3VpdGU''']
 paths = ['''test/unit/.*\.test\.ts''']
