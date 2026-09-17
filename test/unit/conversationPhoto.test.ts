@@ -163,8 +163,9 @@ function run(sql: string, params: any[] = []) {
       (p) =>
         p.channel_id === params[0] &&
         p.sender_account === params[1] &&
-        ((p.sent_at && !p.collected_at) ||
-          (!p.sent_at && p.created_at.getTime() > nowMs() - 3_600_000)),
+        // An unsent row is an unsent row however old it is: the hour window
+        // that used to be here made the cap a cap on an hour.
+        ((p.sent_at && !p.collected_at) || !p.sent_at),
     ).length;
     return rows([{ n }]);
   }
@@ -188,7 +189,30 @@ function run(sql: string, params: any[] = []) {
     world.photos.push(row);
     return rows([{ id: row.id }]);
   }
-  if (/SELECT id, s3_key, channel_id, content_type FROM conversation_photos/.test(sql)) {
+  // The send claim: the attempt is counted in the same statement that hands
+  // the row back, so the cap is spent whether or not the send then works.
+  if (/UPDATE conversation_photos SET send_attempts = send_attempts \+ 1/.test(sql)) {
+    const p = world.photos.find(
+      (x) =>
+        x.id === params[0] &&
+        x.sender_account === params[1] &&
+        x.match_id === params[2] &&
+        !x.sent_at &&
+        (x.send_attempts ?? 0) < params[3],
+    );
+    if (!p) return rows([]);
+    p.send_attempts = (p.send_attempts ?? 0) + 1;
+    return rows([
+      {
+        id: p.id,
+        s3_key: p.s3_key,
+        channel_id: p.channel_id,
+        content_type: p.content_type,
+        send_attempts: p.send_attempts,
+      },
+    ]);
+  }
+  if (/SELECT send_attempts FROM conversation_photos/.test(sql)) {
     return rows(
       world.photos
         .filter(
@@ -198,12 +222,7 @@ function run(sql: string, params: any[] = []) {
             p.match_id === params[2] &&
             !p.sent_at,
         )
-        .map((p) => ({
-          id: p.id,
-          s3_key: p.s3_key,
-          channel_id: p.channel_id,
-          content_type: p.content_type,
-        })),
+        .map((p) => ({ send_attempts: p.send_attempts ?? 0 })),
     );
   }
   if (/UPDATE conversation_photos SET sent_at/.test(sql)) {
@@ -527,7 +546,7 @@ describe('limits', () => {
     await expect(photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg())).resolves.toBeTruthy();
   });
 
-  it('counts presigns nobody sent against the same cap', async () => {
+  it('counts presigns nobody sent against the same cap, at any age', async () => {
     // One link is one send, but the presign behind it is a fetch: a script on
     // the page must not be able to sign URL after URL for bytes nobody comes
     // for.
@@ -537,9 +556,18 @@ describe('limits', () => {
     await expect(photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg())).rejects.toMatchObject({
       validation: true,
     });
-    // An hour later those stale ones stop counting.
+    // AND WAITING DOES NOT CLEAR IT (2026-09-17 audit). The unsent half of this
+    // cap used to count only the last hour, which made it a cap on an hour and
+    // no cap at all: a script that paused between bursts presigned for ever.
     world.clockSkewMs = 3_700_000;
-    await expect(photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg())).resolves.toBeTruthy();
+    await expect(photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg())).rejects.toMatchObject({
+      validation: true,
+    });
+    // A day later, still refused. What clears an unsent row is the sweep.
+    world.clockSkewMs = 25 * 3_600_000;
+    await expect(photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg())).rejects.toMatchObject({
+      validation: true,
+    });
   });
 
   it('waits exactly as long as a message does', () => {
@@ -786,6 +814,47 @@ describe('the send press puts the photo through the pipe', () => {
       Name: p.key,
     });
     expect(world.photos[0].sent_at).not.toBeNull();
+  });
+
+  it('gives one uploaded photo three goes at being screened, and no more', async () => {
+    // Sending is where the picture is looked at, and a look is a model call
+    // over an object in a bucket. Nothing counted the attempts, so one upload
+    // bought an unlimited number of them: every refusal left the row unsent
+    // and ready for another go, and the loop was free.
+    const p = await uploaded();
+    rekogThrows = new Error('rekognition unreachable');
+    for (let i = 0; i < photo.MAX_SEND_ATTEMPTS; i++) {
+      await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+        validation: true,
+      });
+    }
+    expect(askedAbout).toHaveLength(photo.MAX_SEND_ATTEMPTS);
+    // The fourth is refused before the service is asked anything at all, and
+    // says what to do instead.
+    await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+      validation: true,
+      message: expect.stringMatching(/tried enough times/),
+    });
+    expect(askedAbout).toHaveLength(photo.MAX_SEND_ATTEMPTS);
+    // The bytes are still there and the row is still unsent: running out of
+    // attempts decides nothing, it only stops the loop.
+    expect(world.objects.has(p.key)).toBe(true);
+    expect(world.photos[0].sent_at).toBeNull();
+  });
+
+  it('counts an attempt that never reached the look at all', async () => {
+    // The count goes up in the statement that claims the row, before the
+    // bytes are checked for, so a caller that never uploaded anything cannot
+    // press send for ever either.
+    const p = await photo.presignPhotoUpload(looking, ANA, MATCH, jpeg());
+    for (let i = 0; i < photo.MAX_SEND_ATTEMPTS; i++) {
+      await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+        message: expect.stringMatching(/never finished uploading/),
+      });
+    }
+    await expect(photo.markPhotoSent(looking, ANA, MATCH, p.photo_id)).rejects.toMatchObject({
+      message: expect.stringMatching(/tried enough times/),
+    });
   });
 
   it('sends a sexual photo back, deletes the bytes, and never marks it sent', async () => {

@@ -122,6 +122,12 @@ export const MAX_CAPTION_CHARS = 200;
  */
 export const MAX_WAITING_PHOTOS = 12;
 
+/**
+ * How many times one uploaded photo may be sent. See markPhotoSent: sending is
+ * where the picture is screened, and a screen is a model call.
+ */
+export const MAX_SEND_ATTEMPTS = 3;
+
 /** A photo waits exactly as long as a message does: the relay's own number. */
 export const PHOTO_TTL_DAYS = MESSAGE_TTL_DAYS;
 
@@ -268,14 +274,21 @@ export async function presignPhotoUpload(
 
   const ch = await loadOpenChannel(matchId, accountId);
   // What counts against the cap: photos waiting to be picked up, AND photos
-  // presigned in the last hour that were never sent. The second half is what
-  // stops a script on the page signing URL after URL for bytes nobody will ever
-  // collect — one link is one send, but the presign behind it is a fetch.
+  // presigned and never sent. The second half is what stops a script on the
+  // page signing URL after URL for bytes nobody will ever collect — one link is
+  // one send, but the presign behind it is a fetch.
+  //
+  // AN HOUR IS NOT A BOUND (2026-09-17 audit). The unsent half used to count
+  // only the last hour, which made the cap a cap on an hour rather than on
+  // anything: a script pausing between bursts presigned for ever and left an
+  // unbounded tail of rows behind it, each one a row in the table and a signed
+  // PUT into the bucket. An unsent row is an unsent row however old it is, and
+  // the sweep is what clears them.
   const waiting = await getPool().query(
     `SELECT count(*)::int AS n FROM conversation_photos
       WHERE channel_id = $1 AND sender_account = $2
         AND ((sent_at IS NOT NULL AND collected_at IS NULL)
-          OR (sent_at IS NULL AND created_at > now() - interval '1 hour'))`,
+          OR sent_at IS NULL)`,
     [ch.channelId, accountId],
   );
   if (waiting.rows[0].n >= MAX_WAITING_PHOTOS) {
@@ -337,13 +350,38 @@ export async function markPhotoSent(
   caption?: string,
 ): Promise<{ photo_id: string }> {
   const bucket = mustBucket(cfg);
+  // EACH ATTEMPT IS COUNTED, AND THERE ARE THREE (2026-09-17 audit). Sending is
+  // where the picture is looked at, and that is a model call over an object in
+  // a bucket. Nothing counted the attempts, so the same uploaded photo could be
+  // sent again and again — each refusal leaving the row unsent and ready for
+  // another go — and one upload bought an unlimited number of screenings. Three
+  // is more than a flaky connection needs and fewer than a loop wants.
+  //
+  // The count goes up BEFORE the work, so an attempt that fails anywhere —
+  // including inside the pipe — is still an attempt. The claim is one statement
+  // with the attempt check in it, so two calls arriving together cannot both
+  // read two and both spend a screen.
   const r = await getPool().query(
-    `SELECT id, s3_key, channel_id, content_type FROM conversation_photos
-      WHERE id = $1 AND sender_account = $2 AND match_id = $3 AND sent_at IS NULL`,
-    [photoId, accountId, matchId],
+    `UPDATE conversation_photos SET send_attempts = send_attempts + 1
+      WHERE id = $1 AND sender_account = $2 AND match_id = $3 AND sent_at IS NULL
+        AND send_attempts < $4
+      RETURNING id, s3_key, channel_id, content_type, send_attempts`,
+    [photoId, accountId, matchId, MAX_SEND_ATTEMPTS],
   );
   const row = r.rows[0];
-  if (!row) throw validation('that photo is not waiting to be sent.');
+  if (!row) {
+    const spent = await getPool().query(
+      `SELECT send_attempts FROM conversation_photos
+        WHERE id = $1 AND sender_account = $2 AND match_id = $3 AND sent_at IS NULL`,
+      [photoId, accountId, matchId],
+    );
+    if (spent.rows[0] && spent.rows[0].send_attempts >= MAX_SEND_ATTEMPTS) {
+      throw validation(
+        'that photo has been tried enough times. Upload it again if it still needs to go.',
+      );
+    }
+    throw validation('that photo is not waiting to be sent.');
+  }
   try {
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.s3_key }));
   } catch {

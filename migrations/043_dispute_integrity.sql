@@ -150,3 +150,18 @@ ALTER TABLE settlements
 -- view, and in the warn line the webhook writes.
 ALTER TABLE settlements
   ADD COLUMN IF NOT EXISTS chargeback_at timestamptz;
+
+-- --------------------------------------------------------------------------
+-- 6. Photo sends are counted.
+--
+-- Sending a photo is where the picture is screened, and a screen is a model
+-- call over an object in a bucket. Nothing counted the attempts, so one upload
+-- bought an unlimited number of screens: every refusal left the row unsent and
+-- ready for another go, and the loop was free.
+--
+-- Three is more than a flaky connection needs and fewer than a loop wants. The
+-- count goes up before the work, in the same statement that claims the row, so
+-- an attempt that fails anywhere is still an attempt and two calls arriving
+-- together cannot both spend a screen.
+ALTER TABLE conversation_photos
+  ADD COLUMN IF NOT EXISTS send_attempts int NOT NULL DEFAULT 0;
