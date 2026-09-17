@@ -248,6 +248,48 @@ Saying this beats implying a privacy we do not have. The people we are
 protecting a child from are the two humans in the conversation, not the
 operator, and that protection needs the operator to be able to look.
 
+## Runbook: the email-hash rehash (migration 043)
+
+`accounts.email_hash`, `suspended_emails.email_hash` and `email_suppressions`
+key on the hash of an address rather than the address. Until migration 043 that
+hash was a bare SHA-256, which for email addresses is not much of a hash at
+all: the plausible space is a few billion real addresses, everybody has the
+leaked-credential corpora that list them, and an afternoon on a laptop puts a
+name to every row. Three tables key on it — who has an account, whose account
+was stopped, whose address bounced — so what was readable from a copy of the
+database was a membership list, a moderation record and a deliverability
+record.
+
+**v2** is HMAC-SHA256 under a pepper derived with HKDF from the counter's
+existing link HMAC key (info `email-hash-pepper-v1`). No new secret: the
+counter already refuses to boot without that key, and the pepper is never
+written anywhere. A v1 hash cannot be turned into a v2 hash — that is the point
+of both — so the columns live side by side while the switchboard catches up.
+Every lookup asks v2 first and takes v1 as the fallback, so nothing breaks
+during the changeover.
+
+**Run it once, after 043 is deployed.**
+
+```
+npm run rehash-emails             # dry run: counts, writes nothing
+npm run rehash-emails -- --apply
+```
+
+It goes through every account with a NULL `email_hash_v2`, decrypts the
+address the account already holds under its own data key, writes the peppered
+hash, and touches nothing else. It is safe to run again: a second run picks up
+whatever the first left. Each account read writes the ordinary decrypt-audit
+line to the WORM consent log, which is deliberate — a job that reads every
+address on the switchboard should leave a record that it did.
+
+**Afterwards.** When the script reports nothing left to do (accounts with no
+stored address are reported separately and stay on v1 forever), a later
+migration may drop `accounts.email_hash` and the fallback with it.
+
+**`suspended_emails` keeps both, permanently.** There is no plaintext behind
+those rows — the account it belonged to may be long gone — so nothing can
+rehash them, and `emailIsSuspended` checks either spelling for good.
+
 ## Policy surfaces to update
 
 Two layers, deliberately kept apart. The **behaviour** of the software is

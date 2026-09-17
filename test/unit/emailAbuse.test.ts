@@ -21,7 +21,7 @@
  *
  * WHAT IS PROVED HERE, with no database, no AWS and no network.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,15 @@ import { processSesEvent } from '../../src/workers/emailEventsWorker.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(join(here, '..', '..', 'src', p), 'utf8');
+
+// The address hash is peppered from the counter's own key now, so the suites
+// that hash an address need the keys the server boots with.
+beforeAll(async () => {
+  process.env.COUNTER_LINK_HMAC_KEY = 'ab'.repeat(32);
+  process.env.COUNTER_COOKIE_KEY = 'cd'.repeat(32);
+  const { initCounterKeys } = await import('../../src/counter/keys.js');
+  await initCounterKeys({} as any);
+});
 
 afterEach(() => vi.restoreAllMocks());
 

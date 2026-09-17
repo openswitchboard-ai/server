@@ -88,3 +88,38 @@ CREATE TABLE IF NOT EXISTS email_suppressions (
   reason     text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- --------------------------------------------------------------------------
+-- 4. The address hash gets a pepper.
+--
+-- email_hash was a bare SHA-256 of the lowercased address, and a bare SHA-256
+-- of an email address is not a one-way function in any sense that matters: the
+-- plausible space is a few billion real addresses, and the leaked-credential
+-- corpora everybody already has are lists of exactly those. Anyone holding a
+-- copy of these columns could put a name to every row in an afternoon. Three
+-- tables key on it — who has an account, whose account was stopped, whose
+-- address bounced or complained — which is a membership list, a moderation
+-- record and a deliverability record, readable with nothing but the database.
+--
+-- v2 is HMAC-SHA256 under a pepper derived with HKDF from the counter's
+-- existing link HMAC key (info 'email-hash-pepper-v1'), so no new secret is
+-- needed and the pepper never touches a row. The old hashes cannot be
+-- recomputed from themselves, so the two live side by side: new writes carry
+-- v2, every lookup asks v2 first and takes v1 as the fallback.
+--
+-- ON ACCOUNTS this is temporary. scripts/ops/rehash-emails.mts fills v2 from
+-- the encrypted address each account already holds; once it has run over the
+-- whole table a later migration drops email_hash there.
+--
+-- ON SUSPENDED_EMAILS it is permanent. There is no plaintext behind those rows
+-- — the account may be long gone — so v1 can never be rehashed away, and the
+-- check stays "either spelling".
+ALTER TABLE accounts
+  ADD COLUMN IF NOT EXISTS email_hash_v2 text;
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_email_hash_v2
+  ON accounts (email_hash_v2) WHERE email_hash_v2 IS NOT NULL;
+
+ALTER TABLE suspended_emails
+  ADD COLUMN IF NOT EXISTS email_hash_v2 text;
+CREATE INDEX IF NOT EXISTS suspended_emails_hash_v2
+  ON suspended_emails (email_hash_v2) WHERE email_hash_v2 IS NOT NULL;

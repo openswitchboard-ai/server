@@ -5,15 +5,18 @@
  */
 import { getPool } from '../db.js';
 import { decryptFields, encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
-import { emailHash, getAccount } from './accounts.js';
+import { emailHashes, getAccount } from './accounts.js';
 import { describeStoredGeo, describeStoredReach } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
 /** Create a 'pending' account at email-verification time (counter registration). */
 export async function createPendingAccount(email: string): Promise<{ id: string; status: string }> {
   const pool = getPool();
-  const eh = emailHash(email);
-  const existing = await pool.query('SELECT id, status FROM accounts WHERE email_hash = $1', [eh]);
+  const eh = emailHashes(email);
+  const existing = await pool.query(
+    'SELECT id, status FROM accounts WHERE email_hash_v2 = $1 OR email_hash = $2',
+    [eh.v2, eh.v1],
+  );
   if (existing.rowCount) return existing.rows[0];
   const idRow = await pool.query('SELECT gen_random_uuid() AS id');
   const id = idRow.rows[0].id as string;
@@ -24,9 +27,10 @@ export async function createPendingAccount(email: string): Promise<{ id: string;
     encryptField(id, wrapped, ''),
   ]);
   await pool.query(
-    `INSERT INTO accounts (id, email_hash, email_enc, first_name_enc, locality_enc, data_key_enc, status)
-     VALUES ($1,$2,$3,$4,$5,$6,'pending')`,
-    [id, eh, emailEnc, nameEnc, locEnc, wrapped],
+    `INSERT INTO accounts (id, email_hash, email_hash_v2, email_enc, first_name_enc, locality_enc,
+                           data_key_enc, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
+    [id, eh.v1, eh.v2, emailEnc, nameEnc, locEnc, wrapped],
   );
   await pool.query('INSERT INTO reputation (account_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
   return { id, status: 'pending' };
