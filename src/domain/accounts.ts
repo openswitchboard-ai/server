@@ -130,9 +130,9 @@ export async function createAccount(input: {
   const id = idRow.rows[0].id as string;
   const wrapped = await generateAccountDataKey(id);
   const [emailEnc, nameEnc, locEnc] = await Promise.all([
-    encryptField(id, wrapped, input.email),
-    encryptField(id, wrapped, input.first_name),
-    encryptField(id, wrapped, input.locality),
+    encryptField(id, wrapped, input.email, 'email'),
+    encryptField(id, wrapped, input.first_name, 'first_name'),
+    encryptField(id, wrapped, input.locality, 'locality'),
   ]);
   await pool.query(
     `INSERT INTO accounts (id, email_hash, email_hash_v2, email_enc, first_name_enc, locality_enc,

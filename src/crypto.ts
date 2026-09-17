@@ -77,17 +77,59 @@ async function unwrapDataKey(accountId: string, wrapped: Buffer): Promise<Buffer
   return unwrapKey({ account_id: accountId, env: d.envName }, wrapped);
 }
 
-function gcmSeal(key: Buffer, plaintext: string): Buffer {
+/**
+ * WHAT THE CIPHERTEXT IS FOR, SEALED IN WITH IT (2026-09-17 audit).
+ *
+ * Every identity field on an account is encrypted under the SAME per-account
+ * data key: email_enc, first_name_enc, locality_enc. AES-GCM with no
+ * associated data authenticates the bytes and says nothing about where they
+ * belong, so anyone who can write a column could move one field's ciphertext
+ * into another field's column and it would decrypt perfectly — an address
+ * appearing where the first name is read and shown to a counterparty, or a
+ * locality where the address is read and mailed. A blob could be moved between
+ * accounts too, if the data keys were ever shared.
+ *
+ * So new writes bind the ciphertext to the account and the field: the AAD is
+ * "<account id>:<field>", which is not secret and does not need to be — it is
+ * a promise that these bytes were sealed for this column on this row, and GCM
+ * refuses to open them anywhere else.
+ *
+ * THE VERSION BYTE IS HOW BOTH LIVE AT ONCE. A blob written before this has no
+ * prefix: 12 bytes of IV, 16 of tag, then the ciphertext. A blob written after
+ * it starts with 0x01 and the same three parts follow. On the way out, a blob
+ * beginning with 0x01 is tried the new way first and falls back to the old one
+ * if the tag does not check — a legacy IV can happen to start with 0x01, and
+ * the authentication tag is what settles which reading is the true one rather
+ * than a guess about the first byte.
+ */
+const AAD_VERSION = 1;
+
+function gcmSeal(key: Buffer, plaintext: string, aad?: string): Buffer {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
+  if (aad !== undefined) cipher.setAAD(Buffer.from(aad, 'utf8'));
   const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return Buffer.concat([iv, cipher.getAuthTag(), ct]); // 12 | 16 | n
+  const body = Buffer.concat([iv, cipher.getAuthTag(), ct]); // 12 | 16 | n
+  return aad === undefined ? body : Buffer.concat([Buffer.from([AAD_VERSION]), body]);
 }
 
-function gcmOpen(key: Buffer, blob: Buffer): string {
-  const decipher = createDecipheriv('aes-256-gcm', key, blob.subarray(0, 12));
-  decipher.setAuthTag(blob.subarray(12, 28));
-  return Buffer.concat([decipher.update(blob.subarray(28)), decipher.final()]).toString('utf8');
+function gcmUnseal(key: Buffer, body: Buffer, aad?: string): string {
+  const decipher = createDecipheriv('aes-256-gcm', key, body.subarray(0, 12));
+  if (aad !== undefined) decipher.setAAD(Buffer.from(aad, 'utf8'));
+  decipher.setAuthTag(body.subarray(12, 28));
+  return Buffer.concat([decipher.update(body.subarray(28)), decipher.final()]).toString('utf8');
+}
+
+function gcmOpen(key: Buffer, blob: Buffer, aad?: string): string {
+  if (aad !== undefined && blob[0] === AAD_VERSION) {
+    try {
+      return gcmUnseal(key, blob.subarray(1), aad);
+    } catch {
+      // A blob from before the version byte whose IV happens to begin 0x01.
+      // The tag said so; fall through and read it the way it was written.
+    }
+  }
+  return gcmUnseal(key, blob);
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +185,32 @@ export async function decryptForChannel(
   return gcmOpen(await unwrapKey(channelContext(channelId), wrappedKey), blob);
 }
 
+/**
+ * Encrypt one field under an account's data key.
+ *
+ * Pass `field` — the name decryptFields will ask for it under — and the
+ * ciphertext is bound to this account and this column (see gcmSeal). Every
+ * identity field should; the optional shape is for the blobs that predate the
+ * binding and for the ones that are read back by something other than
+ * decryptFields.
+ */
 export async function encryptField(
   accountId: string,
   wrappedKey: Buffer,
   plaintext: string,
+  field?: string,
 ): Promise<Buffer> {
-  return gcmSeal(await unwrapDataKey(accountId, wrappedKey), plaintext);
+  return gcmSeal(
+    await unwrapDataKey(accountId, wrappedKey),
+    plaintext,
+    field === undefined ? undefined : fieldAad(accountId, field),
+  );
+}
+
+/** What a field's ciphertext is bound to: this account, this column. Not a
+ *  secret — a promise, which GCM then refuses to break. */
+function fieldAad(accountId: string, field: string): string {
+  return `${accountId}:${field}`;
 }
 
 export interface DecryptContext {
@@ -175,7 +237,12 @@ export async function decryptFields(
   const auditKey = await writeDecryptAudit(accountId, Object.keys(fields), ctx);
   const key = await unwrapDataKey(accountId, wrappedKey);
   const out: Record<string, string> = {};
-  for (const [name, blob] of Object.entries(fields)) out[name] = gcmOpen(key, blob);
+  // Each blob is opened under the name it was asked for. A field sealed with
+  // the binding opens only in its own column on its own row; one sealed before
+  // the binding existed opens as it always did.
+  for (const [name, blob] of Object.entries(fields)) {
+    out[name] = gcmOpen(key, blob, fieldAad(accountId, name));
+  }
   void auditKey; // object key returned for callers that want to reference it
   return out;
 }
