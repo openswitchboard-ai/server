@@ -45,6 +45,34 @@ export const REASON_MAX_CHARS = 300;
  */
 export const REPORT_PRESERVE_DAYS = 90;
 
+/**
+ * HOW MANY REPORTS ONE ACCOUNT MAY FILE IN A DAY (2026-09-17 audit).
+ *
+ * Nothing capped this, and a report is not a cheap thing to file: it severs an
+ * introduction, mutes a pairing for good, holds ninety days of ledger entries
+ * against the thirty-day sweep, and puts a line in front of the operator. An
+ * account could file one against every person it had ever been introduced to,
+ * as fast as it could mint the links.
+ *
+ * Five a day, which is far more than anybody reporting real harm needs and far
+ * fewer than a campaign needs. It is refused at the PRESS rather than at the
+ * link, deliberately: minting a link changes nothing, and a human standing at
+ * the page deserves the sentence rather than an agent being told no earlier on
+ * their behalf.
+ *
+ * AND IT IS NOT A SAFETY DECISION. The number is here to stop one account
+ * emptying the queue, not to weigh whether somebody is telling the truth. An
+ * account that reaches it is counted as a signal for the operator
+ * (src/opsMetrics.ts, reports_filed_24h) and told, plainly, to come back — the
+ * one thing this must never do is tell somebody frightened that they have used
+ * up their reports and leave it there.
+ */
+export const MAX_REPORTS_PER_DAY = 5;
+
+/** The sentence at the ceiling. It names a way through rather than a wall. */
+export const REPORT_CEILING_WORDS =
+  'That is several reports from this account today, so the switchboard is pacing them; this one has not been filed. Anything urgent — anything about a child, or anybody in danger — should go to safety@openswitchboard.ai now rather than waiting, and the rest can go in tomorrow.';
+
 /** The line the operator gets. No content, ever — an id and an id. */
 export function reportLogLine(reportId: string, matchId: string | null): string {
   return JSON.stringify({ event: 'report', report_id: reportId, match_id: matchId });
@@ -82,6 +110,22 @@ export async function fileReport(
   const side = sideOf(m, input.reporterAccount);
   const reported = side === 'want' ? m.account_have : m.account_want;
   const reason = readReason(input.reason);
+
+  // The ceiling, before anything is written and before the words cost a model
+  // call. Counted on the reports this account has FILED, not on the ones filed
+  // against it: what is being paced is the act, never the person.
+  const filed = await getPool().query(
+    `SELECT count(*)::int AS n FROM reports
+      WHERE reporter_account = $1 AND created_at > now() - interval '24 hours'`,
+    [input.reporterAccount],
+  );
+  const cap = cfg?.maxReportsPerDay ?? MAX_REPORTS_PER_DAY;
+  if (Number(filed.rows[0]?.n ?? 0) >= cap) {
+    throw new OsbError('QUOTA_EXCEEDED', {
+      retry_after: 3600,
+      human_action: REPORT_CEILING_WORDS,
+    });
+  }
 
   // The words through the pipe. A pass writes them; anything else holds them,
   // and the ledger keeps the body either way because a hold keeps its body.

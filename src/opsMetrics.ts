@@ -132,6 +132,17 @@ export interface OpsAbuse {
   read_calls_24h: number;
   read_call_accounts_24h: number;
   channel_sends_counted_24h: number;
+  /**
+   * Reports filed in the last day, and by how many accounts (2026-09-17
+   * audit). COUNTS ONLY, and that is the whole of the design: no reporter, no
+   * reported, no introduction, not a word of what anybody said. A report is
+   * one of the few things here that is both a safety signal and a thing an
+   * account could abuse, and the operator needs to see the SHAPE of it — five
+   * reports from five people is a Tuesday, five from one account is a
+   * campaign — without any of it becoming a way to read the reports.
+   */
+  reports_filed_24h: number;
+  report_accounts_24h: number;
 }
 
 /** Everything the database can answer. Injectable so tests need no Postgres. */
@@ -383,6 +394,13 @@ export function realOpsDataSource(): OpsDataSource {
         `SELECT coalesce(sum(n), 0)::int AS channel_sends_counted_24h
          FROM channel_send_rate WHERE window_start > now() - interval '24 hours'`,
       );
+      // Two counts and nothing else. This query names no column that could
+      // carry a word of a report or the identity of anybody in one.
+      const reportsFiled = await pool.query(
+        `SELECT count(*)::int AS reports_filed_24h,
+                count(DISTINCT reporter_account)::int AS report_accounts_24h
+         FROM reports WHERE created_at > now() - interval '24 hours'`,
+      );
 
       const s = status.rows[0];
       const a = accounts.rows[0];
@@ -487,6 +505,8 @@ export function realOpsDataSource(): OpsDataSource {
           read_calls_24h: num(readCalls.rows[0]?.read_calls_24h),
           read_call_accounts_24h: num(readCalls.rows[0]?.read_call_accounts_24h),
           channel_sends_counted_24h: num(channelSends.rows[0]?.channel_sends_counted_24h),
+          reports_filed_24h: num(reportsFiled.rows[0]?.reports_filed_24h),
+          report_accounts_24h: num(reportsFiled.rows[0]?.report_accounts_24h),
         },
       };
     },

@@ -173,6 +173,8 @@ interface World {
   /** Every statement the fake pool was asked to run, for the tests about what
    *  suspending an account reaches. */
   sql: { sql: string; params: any[] }[];
+  /** How many reports this account has already filed inside the day. */
+  reportsFiled24h: number;
 }
 let world: World;
 let linkSeq = 0;
@@ -298,6 +300,9 @@ function fakePool() {
       if (/SELECT timezone FROM accounts/.test(sql)) return rows([{ timezone: null }]);
 
       // ---- reports, mutes, preservation ----
+      if (/count\(\*\)::int AS n FROM reports/.test(sql)) {
+        return rows([{ n: world.reportsFiled24h }]);
+      }
       if (/INSERT INTO reports/.test(sql)) {
         world.reports.push({
           reporter: params[0],
@@ -353,6 +358,7 @@ beforeEach(async () => {
     credential: 'pin',
     elevatedUntil: null,
     sql: [],
+    reportsFiled24h: 0,
   };
   linkSeq = 0;
   pinHash = pinHash ?? (await hashPin(PIN));
@@ -961,5 +967,76 @@ describe('a report from a stopped account', () => {
     } catch (e: any) {
       expect(e.payload.human_action).toBe(SUSPENDED_WORDS);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * HOW MANY REPORTS ONE ACCOUNT MAY FILE IN A DAY (2026-09-17 audit).
+ *
+ * Nothing capped this, and a report is not a cheap thing to file: it severs an
+ * introduction, mutes a pairing for good, holds ninety days of ledger entries
+ * against the thirty-day sweep, and puts a line in front of the operator. An
+ * account could file one against every person it had ever met here, as fast as
+ * it could mint the links.
+ *
+ * Five a day. And the sentence at the ceiling is the thing to get right: the
+ * one answer this must never give is "you have used up your reports", full
+ * stop, to somebody frightened.
+ */
+const reportsModule = () => import('../../src/safety/reports.js');
+
+describe('five reports a day, and what the fifth one is told', () => {
+
+  it('files them while there is room', async () => {
+    const { fileReport, MAX_REPORTS_PER_DAY } = await reportsModule();
+    world.reportsFiled24h = MAX_REPORTS_PER_DAY - 1;
+    const r = await fileReport(cfg, { reporterAccount: ANA, matchId: MATCH, reason: 'creepy' });
+    expect(r.report_id).toBeTruthy();
+    expect(world.reports).toHaveLength(1);
+  });
+
+  it('refuses the one past the ceiling, and writes nothing at all', async () => {
+    const { fileReport, MAX_REPORTS_PER_DAY } = await reportsModule();
+    world.reportsFiled24h = MAX_REPORTS_PER_DAY;
+    await expect(
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH, reason: 'creepy' }),
+    ).rejects.toMatchObject({ payload: { code: 'QUOTA_EXCEEDED' } });
+    // Nothing written, nothing severed, nothing muted, nothing preserved.
+    expect(world.reports).toEqual([]);
+    expect(world.mutes).toEqual([]);
+    expect(world.preserves).toEqual([]);
+    expect(world.matchState).toBe('open');
+  });
+
+  it('the sentence names a way through rather than a wall', async () => {
+    const { fileReport, MAX_REPORTS_PER_DAY, REPORT_CEILING_WORDS } = await reportsModule();
+    world.reportsFiled24h = MAX_REPORTS_PER_DAY;
+    const err: any = await fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }).catch((e) => e);
+    expect(err.payload.human_action).toBe(REPORT_CEILING_WORDS);
+    // Somebody frightened is told where to go NOW, not told to come back.
+    expect(REPORT_CEILING_WORDS).toContain('safety@openswitchboard.ai');
+    expect(REPORT_CEILING_WORDS).toContain('child');
+  });
+
+  it('the ceiling is on the act, not on the person: it counts what THEY filed', async () => {
+    const { fileReport, MAX_REPORTS_PER_DAY } = await reportsModule();
+    world.reportsFiled24h = MAX_REPORTS_PER_DAY;
+    await fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }).catch(() => undefined);
+    const counted = world.sql.find((q) => /count\(\*\)::int AS n FROM reports/.test(q.sql));
+    expect(counted).toBeTruthy();
+    expect(counted!.sql).toContain('reporter_account');
+    expect(counted!.params[0]).toBe(ANA);
+  });
+
+  it('the deployment can set its own number', async () => {
+    const { fileReport } = await reportsModule();
+    world.reportsFiled24h = 1;
+    await expect(
+      fileReport({ ...cfg, maxReportsPerDay: 1 } as any, {
+        reporterAccount: ANA,
+        matchId: MATCH,
+      }),
+    ).rejects.toMatchObject({ payload: { code: 'QUOTA_EXCEEDED' } });
   });
 });

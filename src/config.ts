@@ -68,6 +68,9 @@ export interface Config {
   registrationMode: 'open' | 'dev-bootstrap' | 'closed';
   region: string;
   quotas: Quotas;
+  /** How many reports one account may file in a rolling 24 hours
+   *  (src/safety/reports.ts). Paces the act, never the person. */
+  maxReportsPerDay: number;
   docsBase: string;
   /** Secrets Manager secret holding {secret_key, webhook_secret?} for the
    *  env's Stripe account. Unset = settlement handling is OFF for this
@@ -177,6 +180,7 @@ export function loadConfig(): Config {
       maxOffersPerHour: Number(process.env.QUOTA_MAX_OFFERS_PER_HOUR ?? 6),
       maxWritesPerHour: Number(process.env.QUOTA_MAX_WRITES_PER_HOUR ?? 300),
     },
+    maxReportsPerDay: Number(process.env.MAX_REPORTS_PER_DAY ?? 5),
     docsBase: 'https://openswitchboard.ai/docs',
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,
