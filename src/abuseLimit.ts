@@ -57,6 +57,56 @@ export function rateLimitBypassed(headers: Record<string, unknown>): boolean {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * THE CEILING OVER ALL OF THEM (2026-09-17 audit).
+ *
+ * Every limiter above is per IP, and a verification send needs no account. A
+ * botnet is a thousand IPs, so a thousand addresses an hour could be mailed
+ * inside every rule the switchboard had: the SES quota gone, the bounce rate
+ * poisoned by a thousand addresses nobody typed, and the switchboard unable to
+ * send anything to anybody. A per-IP cap cannot see that, because no IP did
+ * anything wrong.
+ *
+ * So there is one ceiling over accountless verification sends together, across
+ * the process: two hundred an hour. It is deliberately far above what an
+ * ordinary hour of registrations looks like, and far below what a burst does.
+ *
+ * Per-process, for the reason in this file's header: the job is blunting a
+ * burst, not precise global accounting, and prod runs a small number of tasks.
+ *
+ * A refusal says the same non-enumerating thing every other refusal on this
+ * door says — an address that exists and one that does not get the same
+ * sentence, because saying otherwise IS the enumeration.
+ */
+export const ACCOUNTLESS_VERIFICATIONS_PER_HOUR = 200;
+
+function makeGlobalLimiter(maxPerWindow: number, windowMs: number) {
+  let windowStart = 0;
+  let n = 0;
+  return {
+    /** True when this hit exceeds the ceiling and should be refused. */
+    limited(): boolean {
+      const now = Date.now();
+      if (now - windowStart >= windowMs) {
+        windowStart = now;
+        n = 1;
+        return false;
+      }
+      n += 1;
+      return n > maxPerWindow;
+    },
+    /** How many hits are in the live window. For the log line beside a refusal. */
+    depth(): number {
+      return Date.now() - windowStart >= windowMs ? 0 : n;
+    },
+  };
+}
+
+export const accountlessVerificationCeiling = makeGlobalLimiter(
+  ACCOUNTLESS_VERIFICATIONS_PER_HOUR,
+  60 * 60 * 1000,
+);
+
 /** DCR: 5 client registrations per IP per hour. */
 export const clientRegistrationLimiter = makeIpLimiter(5, 60 * 60 * 1000);
 

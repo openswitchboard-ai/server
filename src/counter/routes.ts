@@ -15,6 +15,8 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  ACCOUNTLESS_VERIFICATIONS_PER_HOUR,
+  accountlessVerificationCeiling,
   areaSuggestLimiter,
   killSwitchLimiter,
   rateLimitBypassed,
@@ -108,6 +110,7 @@ import {
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
 import { aboutThing, categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
 import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
+import { isEmailQueueFull } from '../email/send.js';
 import { emailHash } from '../domain/accounts.js';
 import * as links from './links.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
@@ -259,6 +262,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         await sendVerificationEmail(cfg, email, v.code, v.linkToken, purpose);
         return undefined;
       } catch (err) {
+        if (isEmailQueueFull(err)) {
+          // The queue in front of SES is full, so this code was never sent and
+          // waiting for it would be waiting for nothing. Say so plainly.
+          req.log.warn({ purpose }, 'verification email refused: the send queue is full');
+          return 'Our email sending is backed up right now, so no code went out. Try again in a minute.';
+        }
         req.log.warn({ err }, 'verification email send failed; showing code page with delay note');
         return 'Our email sending is congested right now, so the code may take a while to arrive. This page keeps working — enter the code once it lands.';
       }
@@ -536,6 +545,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         return html(
           reply,
           pages.registerEmailPage('Too many codes requested from this connection. Wait an hour.'),
+          429,
+        );
+      }
+      // The ceiling over every accountless verification at once. A botnet is a
+      // thousand IPs and no IP that did anything wrong, so this is the only
+      // limiter that can see it. The sentence is the same one an address that
+      // already exists would get: nothing here enumerates anybody.
+      if (accountlessVerificationCeiling.limited()) {
+        req.log.warn(
+          { depth: accountlessVerificationCeiling.depth(), ceiling: ACCOUNTLESS_VERIFICATIONS_PER_HOUR },
+          'counter-register: accountless verification ceiling hit',
+        );
+        return html(
+          reply,
+          pages.registerEmailPage('Too many codes requested just now. Try again in a minute.'),
           429,
         );
       }
@@ -986,6 +1010,19 @@ in on this device and lets you approve what is waiting.</p>
         return html(
           reply,
           pages.loginEmailPage('Too many codes requested from this connection. Wait an hour.'),
+          429,
+        );
+      }
+      // The same ceiling over every accountless verification at once; see the
+      // register door above, and src/abuseLimit.ts for why it exists at all.
+      if (accountlessVerificationCeiling.limited()) {
+        req.log.warn(
+          { depth: accountlessVerificationCeiling.depth(), ceiling: ACCOUNTLESS_VERIFICATIONS_PER_HOUR },
+          'counter-login: accountless verification ceiling hit',
+        );
+        return html(
+          reply,
+          pages.loginEmailPage('Too many codes requested just now. Try again in a minute.'),
           429,
         );
       }

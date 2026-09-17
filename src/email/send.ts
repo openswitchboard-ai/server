@@ -173,17 +173,67 @@ async function updateSend(
 // for the attempt and land as a reclaimable 'failed' row.
 // ---------------------------------------------------------------------------
 const SES_MIN_SEND_GAP_MS = 1100;
+
+/**
+ * AND THE QUEUE IN FRONT OF IT HAS AN END (2026-09-17 audit).
+ *
+ * The gate below is a promise chain with a 1.1 second link, and nothing counted
+ * how long it had grown. Anything that could cause sends — a digest tick over a
+ * large board, or a burst of verification requests — could put thousands of
+ * them on the chain: the last one waited an hour, every one of them held a
+ * database connection and its whole closure the entire time, and the process
+ * ran out of memory long before SES ran out of quota. It was a queue with no
+ * ceiling in front of a service with a rate limit, which is the shape of an
+ * outage rather than of pacing.
+ *
+ * Two hundred waiting is roughly four minutes of sending. Past that the send is
+ * refused, now, with something a caller can act on: the best-effort notifiers
+ * swallow it and the send is simply not made, and the code and sign-in paths
+ * turn it into a sentence telling the person to try again in a minute.
+ */
+export const SES_MAX_QUEUED = 200;
+
+export class EmailQueueFull extends Error {
+  readonly queueFull = true;
+  constructor(waiting: number) {
+    super(`email queue full (${waiting} sends waiting)`);
+    this.name = 'EmailQueueFull';
+  }
+}
+
+/** True for the refusal above, wherever it surfaces. */
+export const isEmailQueueFull = (e: unknown): boolean => (e as any)?.queueFull === true;
+
 let sesGate: Promise<void> = Promise.resolve();
+let sesWaiting = 0;
+
+/** How many sends are on the gate right now. Read by the ops metrics. */
+export const sesQueueDepth = (): number => sesWaiting;
+
 function paceSes(): Promise<void> {
+  if (sesWaiting >= SES_MAX_QUEUED) throw new EmailQueueFull(sesWaiting);
+  sesWaiting += 1;
   const turn = sesGate;
   sesGate = turn.then(() => new Promise((r) => setTimeout(r, SES_MIN_SEND_GAP_MS)));
-  return turn;
+  return turn.finally(() => {
+    sesWaiting -= 1;
+  });
 }
 // SESv2 raises TooManyRequestsException for the per-second throttle AND the
 // daily quota; only the former is worth a quick retry.
 const isSesThrottle = (e: any) => /sending rate exceeded/i.test(String(e?.message ?? ''));
 
 export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<SendOutcome> {
+  // The queue in front of SES, asked before anything is written down: a send
+  // that cannot be made should not consume its dedupe key or leave a row
+  // behind saying it was tried.
+  if (sesWaiting >= SES_MAX_QUEUED) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `email queue full: ${sesWaiting} sends waiting, ceiling ${SES_MAX_QUEUED}; refusing template=${input.template}`,
+    );
+    throw new EmailQueueFull(sesWaiting);
+  }
   // VOICE gate: banned phrases never leave the building, any env.
   const context = `template=${input.template}`;
   assertEmailCopyClean(input.content.subject, context);
@@ -203,6 +253,33 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
     );
     if (input.accountId && (await getHearsVia(input.accountId)) !== 'email') {
       const won = await recordSend(input, 'suppressed', 'their assistant brings them the news');
+      return { status: won ? 'suppressed' : 'duplicate' };
+    }
+  }
+
+  // THE SUPPRESSION LIST IS ABOUT THE ADDRESS, NOT THE ACCOUNT (2026-09-17
+  // audit). Every suppression the switchboard had lived on an accounts row, so
+  // a hard bounce or a complaint from an address with no account behind it was
+  // logged and then forgotten: the registration door would mail that address
+  // again on the next attempt, and again, and the bounce rate that decides
+  // whether the switchboard can send mail at all is counted per DOMAIN rather
+  // than per account. So the list is its own table, keyed on the hash of the
+  // address, and it is asked FIRST — before the account gates below, which can
+  // only answer for an address that has an account.
+  //
+  // Re-verification is the one send that still goes: it is the only way back,
+  // and the whole point of a bounce suppression is to stop everything else.
+  if (input.template !== 'verification') {
+    const sup = await getPool().query(
+      `SELECT reason FROM email_suppressions WHERE email_hash = $1`,
+      [emailHash(input.to)],
+    );
+    if (sup.rows[0]) {
+      const won = await recordSend(
+        input,
+        'suppressed',
+        `address on the suppression list (${sup.rows[0].reason})`,
+      );
       return { status: won ? 'suppressed' : 'duplicate' };
     }
   }

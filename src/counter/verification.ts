@@ -71,14 +71,35 @@ export async function createVerification(
   return { id, code, linkToken };
 }
 
-/** Simple per-email rate limit: max 3 open verifications per 15 minutes. */
+/**
+ * Per-address rate limits: 3 in a quarter of an hour, and 10 in a day.
+ *
+ * THE SECOND ONE IS THE NEW HALF (2026-09-17 audit). Three per fifteen minutes
+ * is the right shape for somebody who mistyped a code and asked again — and it
+ * is also twelve an hour, two hundred and eighty-eight a day, every one of them
+ * a mail into the inbox of whoever actually owns that address. A short window
+ * paces a person; it does not stop someone using the sign-in door to post mail
+ * at a stranger all day. Ten in twenty-four hours is more than anybody signing
+ * in has ever needed and an order of magnitude less than a nuisance.
+ *
+ * Both windows count the same rows, so a caller who is inside one and outside
+ * the other is refused, and the refusal never says which: the sentence on this
+ * door is the same whether or not an account exists.
+ */
+export const VERIFICATIONS_PER_QUARTER_HOUR = 3;
+export const VERIFICATIONS_PER_DAY = 10;
+
 export async function verificationRateLimited(email: string): Promise<boolean> {
   const r = await getPool().query(
-    `SELECT count(*)::int AS n FROM email_verifications
-     WHERE email_hash = $1 AND created_at > now() - interval '15 minutes'`,
+    `SELECT
+       count(*) FILTER (WHERE created_at > now() - interval '15 minutes')::int AS recent,
+       count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int AS day
+     FROM email_verifications
+     WHERE email_hash = $1`,
     [emailHash(email)],
   );
-  return r.rows[0].n >= 3;
+  const row = r.rows[0] ?? { recent: 0, day: 0 };
+  return row.recent >= VERIFICATIONS_PER_QUARTER_HOUR || row.day >= VERIFICATIONS_PER_DAY;
 }
 
 export interface VerifyResult {
