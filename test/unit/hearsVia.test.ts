@@ -226,7 +226,7 @@ function fakePool() {
         }
         return rows([]);
       }
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       return rows([]);
     },
   } as any;

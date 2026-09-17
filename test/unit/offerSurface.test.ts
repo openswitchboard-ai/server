@@ -108,7 +108,7 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       if (/SELECT arrangement FROM accounts/.test(sql)) return rows([{ arrangement: null }]);
       if (/SELECT hears_via FROM accounts/.test(sql)) return rows([{ hears_via: 'email' }]);
       if (/FROM matches m/.test(sql) && /SELECT m\.\*/.test(sql)) return rows([theMatch()]);

@@ -176,16 +176,43 @@ export async function sendMessage(
       { validation: ['text'] },
     );
   }
+  // WHO IS ASKING, AND MAY THEY, BEFORE ANYTHING IS SPENT ON THE WORDS
+  // (2026-09-17 audit). This used to run after the intake pipe, which meant an
+  // agent could aim send_message at an introduction its human was not party to
+  // and still spend a Bedrock call, a ledger row and — where the classifier
+  // flagged it — a safety_reviews row, all against a match it was about to be
+  // thrown out of. Authorisation is the cheapest question here and it is now
+  // the first one.
+  const ch = await loadOpenChannel(matchId, accountId);
+  // And the per-channel allowance, also ahead of the model. THE SLOT IS SPENT
+  // BY THE ATTEMPT, not by the delivery: it used to sit inside the write
+  // transaction and roll back with it, so a refused message cost nothing and an
+  // agent could send an unlimited number of refused messages through the
+  // classifier. Paying for the attempt is the whole point of a rail like this.
+  // Fixed window per clock hour; the DO UPDATE only fires below the cap, so no
+  // row comes back once the allowance is spent.
+  const rate = await getPool().query(
+    `INSERT INTO channel_send_rate (channel_id, sender_account, window_start, n)
+     VALUES ($1, $2, date_trunc('hour', now()), 1)
+     ON CONFLICT (channel_id, sender_account, window_start)
+     DO UPDATE SET n = channel_send_rate.n + 1
+     WHERE channel_send_rate.n < $3
+     RETURNING n`,
+    [ch.channelId, accountId, MAX_MESSAGES_PER_HOUR],
+  );
+  if (!rate.rowCount) {
+    throw new OsbError('QUOTA_EXCEEDED', { retry_after: secondsToNextHour() });
+  }
   // The one pipe every person-to-person thing goes through (src/intake,
   // docs/trust-and-safety.md). At this door it is the money-figure rule: A
   // FIGURE NEVER TRAVELS IN THE WORDS (run 8, 13 September 2026 — see
-  // domain/moneyInWords.ts). Refused here, before the introduction is even
-  // read: nothing is stored, nothing is encrypted, no allowance is spent, and
-  // the agent is told to send the number the one way that reads its human's
-  // own limits first.
+  // domain/moneyInWords.ts). Refused here, before anything is stored or
+  // encrypted, and the agent is told to send the number the one way that reads
+  // its human's own limits first.
   const intake = await runIntake(cfg, {
     door: 'message',
     sender_account: accountId,
+    recipient_account: ch.counterpartyAccount,
     match_id: matchId,
     text,
   });
@@ -199,29 +226,12 @@ export async function sendMessage(
     }
     throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
   }
-  const ch = await loadOpenChannel(matchId, accountId);
   const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
   const bodyEnc = await encryptForChannel(ch.channelId, wrappedKey, text);
 
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
-    // Fixed window per clock hour. The DO UPDATE only fires below the cap, so
-    // no row comes back once the allowance is spent, and a refused attempt
-    // never inflates the tally.
-    const rate = await client.query(
-      `INSERT INTO channel_send_rate (channel_id, sender_account, window_start, n)
-       VALUES ($1, $2, date_trunc('hour', now()), 1)
-       ON CONFLICT (channel_id, sender_account, window_start)
-       DO UPDATE SET n = channel_send_rate.n + 1
-       WHERE channel_send_rate.n < $3
-       RETURNING n`,
-      [ch.channelId, accountId, MAX_MESSAGES_PER_HOUR],
-    );
-    if (!rate.rowCount) {
-      await client.query('ROLLBACK');
-      throw new OsbError('QUOTA_EXCEEDED', { retry_after: secondsToNextHour() });
-    }
     const r = await client.query(
       `INSERT INTO channel_messages
          (channel_id, match_id, sender_account, recipient_account, body_enc, expires_at)

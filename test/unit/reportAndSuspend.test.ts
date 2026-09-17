@@ -330,7 +330,7 @@ function fakePool() {
       if (/SELECT card_want, card_have FROM matches/.test(sql)) {
         return rows([{ card_want: CARD_W, card_have: CARD_H }]);
       }
-      if (/read_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
+      if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       return rows([]);
     },
   } as any;
