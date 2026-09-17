@@ -1,9 +1,11 @@
 /**
  * Counter sessions — the HUMAN route class's own credential, structurally
  * disjoint from the agent path:
- *  - the cookie (osb_counter) is HttpOnly + Secure + SameSite=Lax and
+ *  - the cookie (__Host-osb_counter) is HttpOnly + Secure + SameSite=Lax and
  *    host-only (no Domain attribute), so browsers never present it to the
  *    MCP hostname;
+ *  - signing in always mints a fresh one and deletes the old row, so a cookie
+ *    somebody else planted never becomes a signed-in credential;
  *  - the cookie value is opaque; only its sha256 is stored;
  *  - nothing in this module reads the Authorization header, and the counter
  *    route guard hard-rejects any request that carries one.
@@ -12,7 +14,21 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
 
-export const COUNTER_COOKIE = 'osb_counter';
+/**
+ * The cookie's name, and the one it used to have.
+ *
+ * `__Host-` is a promise the BROWSER enforces rather than one the server
+ * makes: a cookie with that prefix is refused unless it is Secure, has
+ * Path=/, and carries no Domain — so no other host on openswitchboard.ai can
+ * write one, which is the whole of what the attribute is for here.
+ *
+ * The old name is still READ, for one release, so that a person signed in on
+ * their phone last week is not signed out by a rename. Nothing ever writes it
+ * again: the first response after this ships sets the new one, and the old one
+ * is cleared on sign-out.
+ */
+export const COUNTER_COOKIE = '__Host-osb_counter';
+export const LEGACY_COUNTER_COOKIE = 'osb_counter';
 const SESSION_TTL_HOURS = 24 * 7;
 
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -46,11 +62,13 @@ export async function createSession(
 function cookieValue(req: FastifyRequest): string | undefined {
   const raw = req.headers.cookie;
   if (!raw) return undefined;
+  let legacy: string | undefined;
   for (const part of raw.split(';')) {
     const [k, ...rest] = part.trim().split('=');
     if (k === COUNTER_COOKIE) return rest.join('=');
+    if (k === LEGACY_COUNTER_COOKIE) legacy = rest.join('=');
   }
-  return undefined;
+  return legacy;
 }
 
 export async function loadSession(req: FastifyRequest): Promise<CounterSession | undefined> {
@@ -75,14 +93,38 @@ export async function destroySession(req: FastifyRequest, reply: FastifyReply): 
   if (sid) {
     await getPool().query('DELETE FROM counter_sessions WHERE sid_hash = $1', [sha256hex(sid)]);
   }
-  reply.header('set-cookie', `${COUNTER_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+  // Both names, because the browser may still be holding the old one.
+  reply.header('set-cookie', [
+    `${COUNTER_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+    `${LEGACY_COUNTER_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+  ]);
 }
 
-export async function attachAccount(sessionId: string, accountId: string): Promise<void> {
-  await getPool().query('UPDATE counter_sessions SET account_id = $2 WHERE id = $1', [
-    sessionId,
-    accountId,
-  ]);
+/**
+ * Signing in takes a NEW session, not the old one with a name written on it.
+ *
+ * The cookie a person arrives holding may not be theirs: anyone who can set a
+ * cookie on this host — a shared machine, a browser extension, a link that
+ * planted one — can hand somebody an identifier and then wait for them to sign
+ * in on it. Attaching the account to that row would make the planted
+ * identifier a live credential for the person who signed in. So the row is
+ * replaced: a fresh identifier the attacker has never seen, and the old row
+ * deleted in the same act.
+ *
+ * What DOES carry across is the pending authorization request, because it is
+ * the reason the person was sent to sign in and it belongs to them, not to
+ * whoever might have planted the cookie.
+ */
+export async function rotateSession(
+  reply: FastifyReply,
+  previous: CounterSession | undefined,
+  accountId: string,
+): Promise<CounterSession> {
+  const fresh = await createSession(reply, accountId, previous?.oauthCtx ?? undefined);
+  if (previous) {
+    await getPool().query('DELETE FROM counter_sessions WHERE id = $1', [previous.id]);
+  }
+  return fresh;
 }
 
 export async function setOauthCtx(sessionId: string, ctx: any): Promise<void> {
