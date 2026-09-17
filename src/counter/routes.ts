@@ -948,7 +948,7 @@ in on this device and lets you approve what is waiting.</p>
               400,
             );
           }
-          await saveSharedProfile(s.accountId!, checked.value, 'counter');
+          await saveSharedProfile(s.accountId!, checked.value, 'counter', cfg);
         }
       }
       await ops.markOnboarded(s.accountId!);
@@ -1748,7 +1748,7 @@ in on this device and lets you approve what is waiting.</p>
         }
         if (row.action === 'stage3-disclosure') {
           // The press itself, and the only thing that records the go-ahead.
-          if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
+          if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter', cfg);
           const r = await recordStage3OptIn(cfg, row.ref_id, s.accountId!, 'counter');
           await links.recordLinkDecision(row.id, 'approved');
           return html(
@@ -1921,7 +1921,7 @@ in on this device and lets you approve what is waiting.</p>
         if (!(await consumeLink(linkRow.id))) return html(reply, pages.linkDeadPage('used'));
       }
       try {
-        if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter');
+        if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter', cfg);
         if (action === 'settlement-approve') {
           const r = await settlements.approveSettlement(
             settlements.counterAction(s.accountId!),
@@ -3198,7 +3198,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           400,
         );
       }
-      await saveSharedProfile(s.accountId!, checked.value, 'counter');
+      await saveSharedProfile(s.accountId!, checked.value, 'counter', cfg);
       return html(
         reply,
         home.sharedProfilePage(checked.value, {

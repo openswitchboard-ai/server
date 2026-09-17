@@ -66,6 +66,24 @@ person that the switchboard has not looked at and cannot account for.*
 | Grooming, exploitation, threats | Contact with minors, coercion, moving a child off-platform, sextortion, threats of harm, and a sender who sounds at risk themselves | Model classifier on message text (Haiku, the same client and model the screen uses; the first 2,000 characters; `MESSAGE_SAFETY=off` turns it off for a deployment). Five flags: `minor_involved`, `grooming`, `sexual_exploitation`, `threat`, `self_harm_risk`. Any of them HOLDS, and it can never refuse — and a hold at this door still DELIVERS the message: it is a flag for review, never a stall, because the person waiting for a reply must not be silently ghosted on a fast model's word. The hold opens a `safety_reviews` row (the flag names and the ledger entry id, never the words), holds that introduction's ledger entries ninety days exactly as a report does, and puts one line in front of the operator: `{event:'safety-review', review_id, match_id}`. A model that does not answer is a PASS with a `{event:'message-safety-unavailable'}` warn line — deliberately the opposite of the photo rule, because an outage must not stop every ordinary conversation and the words are in the ledger to be read afterwards. A model that DOES answer, with something that is not a verdict in the shape asked for, is the opposite again: that HOLDS, with `{event:'message-safety-unreadable'}` and a review row carrying the single name `unreadable_verdict`. An outage is an outage; a classifier talked out of classifying is what a successful injection looks like from here, and it must not be spent as a pass. The second-model pass below is not wired to it yet; every hold reaches a person today | Messages |
 | Suspended sender or recipient | Nothing in, nothing out | Flag on the account | Every door |
 
+Three of the doors named above were built in step one and left without a
+caller. Two now have one (2026-09-17). **`offer_words`**: the note beside a
+figure is the same free text a message is, sent between the same two people, so
+`proposeOffer` runs the pipe over it and the message classifier stands at that
+door alongside the message door — and the note is held to `validateOfferNote`,
+the two-hundred-character, no-contact-details, no-angle-brackets rule the
+approval page had always applied and an agent calling `propose_offer` directly
+had been walking past. A hold there behaves as a hold on a message does: the
+figure still goes on the table and a person is told. **`shared_identity`**:
+`saveSharedProfile` runs the pipe, so a suspended account cannot hand a first
+name and a suburb to anyone and the ledger accounts for the one thing here that
+most needs accounting for. No model reads that door — a first name and a suburb
+ARE personal details, so the screen that refuses personal details has no
+business at it. **`amendment`** still has no direct caller and does not need
+one: an amend sets the card back to `PENDING_SCREENING` and re-enqueues it, so
+its words go through the `posting` door on the screening worker, and the tool
+surface answers `SUSPENDED` before `amendIntent` is reached.
+
 Pornography of any kind stays off the switchboard. A photo is for showing the
 thing being sold; there is no legitimate use for a sexual image here, so the
 threshold is "any explicit label", not "probably illegal".
