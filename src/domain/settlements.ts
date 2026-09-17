@@ -204,11 +204,21 @@ export type DisputeGround = 'not_arrived' | 'not_as_described';
 export function deadlockOutcome(s: {
   returned_at: Date | null;
   delivery_tracking: string | null;
+  /** Set when the seller says the return is not what it claims to be. */
+  return_disputed_at?: Date | null;
 }): 'release' | 'refund' {
-  // A tracked return sent: the item is on its way back, so the money goes back
-  // with it. This beats delivery tracking, because both can be true at once.
-  if (s.returned_at) return 'refund';
-  // Delivery tracking and no return: the seller can show where it went.
+  // A tracked return sent, and the seller has not said a word against it: the
+  // item is on its way back, so the money goes back with it. This beats
+  // delivery tracking, because both can be true at once.
+  //
+  // A DISPUTED RETURN OUTRANKS NOTHING. The buyer's return record and the
+  // seller's answer to it are two accounts of the same parcel, and the rule
+  // does not judge between them — so the contested record simply stops
+  // counting, and the rule falls back to what it always did on the records
+  // that are left.
+  if (s.returned_at && !s.return_disputed_at) return 'refund';
+  // Delivery tracking and no return standing against it: the seller can show
+  // where it went.
   if (s.delivery_tracking) return 'release';
   // Neither: refunded to the buyer, because posting tracked is the seller's
   // responsibility.
@@ -290,6 +300,12 @@ export interface SettlementRow {
   return_tracking_key: string | null;
   returned_at: Date | null;
   return_received_at: Date | null;
+  /** When the seller added their delivery tracking. A record of its own, so
+   *  that recording it never has to edit anything the buyer said. */
+  tracking_added_at: Date | null;
+  /** When the seller said the return is not what it claims to be. It decides
+   *  nothing; it makes the two records contested. */
+  return_disputed_at: Date | null;
   /** The two figures: a split while one is on the table, the record of what
    *  moved once anything has. They always add up to the agreed amount, and
    *  neither has ever included a fee. */
@@ -439,17 +455,33 @@ export function disputeNote(
       `same two figures.${tail}`
     );
   }
+  // A return the seller has answered. Two records, and neither of them decides
+  // anything on its own.
+  if (s.returned_at && !s.return_received_at && s.return_disputed_at) {
+    return side === 'seller'
+      ? `Your human has said the return is not what it claims to be. Nothing goes back on its own now: the two records stand against each other, so it is a split the two of them agree or the rule on ${by ?? 'the deadlock day'}.${page}${tail}`
+      : `The seller says the return is not what it claims to be. Nothing comes back on its own now: the two records stand against each other, so it is a split the two of them agree, or the rule.${tail}`;
+  }
   // A return is under way.
   if (s.returned_at && !s.return_received_at) {
     return side === 'seller'
-      ? `The buyer says they have sent it back. Once your human says they have it, the agreed amount goes back to the buyer; if they say nothing, it goes back on its own after a week.${page}`
-      : `You have said it is on its way back. The agreed amount goes back to your human once the seller says they have it, or after a week of them saying nothing.${tail}`;
+      ? `The buyer says they have sent it back. Once your human says they have it, the agreed amount goes back to the buyer; if they say nothing, it goes back on its own after a week. If it is not what it claims to be, they can say so, and then nothing moves on its own.${page}`
+      : `You have said it is on its way back. The agreed amount goes back to your human once the seller says they have it, or after a week of them saying nothing — unless the seller says the return is not what it claims to be, and then nothing moves on its own.${tail}`;
   }
-  // Nothing arrived, and the seller has a short while to show it was sent.
+  // Nothing arrived, and the seller has a short while to show it was sent. A
+  // seller who HAS added tracking is past this: both records stand, and the
+  // general sentence below is the true one.
   if (s.dispute_ground === 'not_arrived' && !s.delivery_tracking) {
     return side === 'seller'
       ? `The buyer says it never arrived. Your human has seven days from the day this came up to add the tracking that shows it was delivered, and the agreed amount goes back to the buyer if nothing is added.${page}`
       : `You have said it never arrived. The seller has seven days to add tracking showing it was delivered; with nothing added, the agreed amount comes back to your human.${tail}`;
+  }
+  // Nothing arrived, and the seller has shown where it went. Both records
+  // stand, and neither of them sends the money anywhere on its own.
+  if (s.dispute_ground === 'not_arrived' && s.delivery_tracking) {
+    return side === 'seller'
+      ? `Your human has added the tracking for it. The buyer's account of it stands too, so nothing goes either way on its own: it is a split the two of them agree, or the rule.${page}${tail}`
+      : `The seller has added tracking for it. Your human's account of it stands too, so nothing goes either way on its own: it is a split the two of them agree, or the rule.${page}${tail}`;
   }
   // The general frozen case.
   return (
@@ -958,11 +990,20 @@ export async function openDispute(
  * handover, before anything has gone wrong, or inside a dispute as the answer
  * to "it never arrived".
  *
- * Adding it changes the GROUND, not the clock. A 'not_arrived' dispute becomes
- * 'not_as_described' — the argument is now about the item rather than the
- * post — and deadlock_at stays exactly where it was, because the terms say
- * "after fourteen days in dispute" and that is measured from the day the
- * dispute landed.
+ * IT CHANGES NEITHER THE GROUND NOR THE CLOCK. The ground is the disputer's own
+ * word for what went wrong, and this is the other human's hand: rewriting
+ * 'not_arrived' into 'not_as_described' — which is what this used to do — let
+ * one party edit the other party's account of the argument, and erased from the
+ * row the very words the vault record was keeping a frozen copy of. deadlock_at
+ * does not move either, because the terms say "after fourteen days in dispute"
+ * and that is measured from the day the dispute landed.
+ *
+ * What the seller's record DOES do is take the settlement out of the automatic
+ * refund for a parcel nobody can show: the tracking is there now, so silence is
+ * no longer the answer. Both records then stand — the buyer's "it never
+ * arrived" and the seller's "here is where it went" — and nobody wins
+ * automatically. What is left is the road the two of them can agree on, or the
+ * fourteen-day rule.
  *
  * Moves no state, so it needs no transition beyond the human context that
  * proves whose hand this is.
@@ -1004,8 +1045,7 @@ export async function addDeliveryTracking(
   });
   const r = await getPool().query(
     `UPDATE settlements SET delivery_tracking = $2, delivery_tracking_key = $3,
-       dispute_ground = CASE WHEN dispute_ground = 'not_arrived' THEN 'not_as_described'
-                             ELSE dispute_ground END,
+       tracking_added_at = COALESCE(tracking_added_at, now()),
        updated_at = now()
      WHERE id = $1 AND state IN ('funded','evidence-locked','disputed','resolution-proposed')
      RETURNING *`,
@@ -1102,6 +1142,63 @@ export async function confirmReturnReceived(
      WHERE id = $1 AND state IN ('disputed','resolution-proposed')
      RETURNING *`,
     [settlementId, agreedMinor],
+  );
+  return afterSideWrite(r, settlementId);
+}
+
+/**
+ * The seller's answer to a return: what came back is not what went out, or
+ * nothing came back at all.
+ *
+ * IT DECIDES NOTHING. It is the mirror of the buyer's own return record, and
+ * the switchboard judges neither: what it does is stop the return record
+ * winning on its own. While it is set, the return-silence clock does not run —
+ * silence was the point of that clock, and the seller has not been silent — and
+ * the default rule stops treating the return as the last word on where the
+ * parcel is. Both records stand, and what is left is the road the two of them
+ * can agree on, or the fourteen-day rule.
+ *
+ * Only while there is a return to answer: the buyer has marked one sent back
+ * and the seller has not said they have it.
+ */
+export async function disputeReturn(
+  ctx: HumanCtx,
+  settlementId: string,
+): Promise<SettlementRow> {
+  assertTransitionContext(ctx);
+  const s = await getSettlement(settlementId);
+  if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
+  if (partyOf(s, ctx.accountId) !== 'seller') {
+    throw Object.assign(new Error('the seller is the one answering a return'), { notFound: true });
+  }
+  if (!s.returned_at) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'The buyer has not said they sent it back yet.',
+    });
+  }
+  if (s.return_received_at) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'You have already said you have it back.',
+    });
+  }
+  if (s.return_disputed_at) return s; // idempotent: already said
+  await writeConsentEvent({
+    event: 'settlement-return-disputed',
+    settlement_id: settlementId,
+    match_id: s.match_id,
+    account_id: ctx.accountId,
+    party: 'seller',
+    returned_at: new Date(s.returned_at).toISOString(),
+    return_tracking: s.return_tracking,
+    recorded_via: ctx.recordedVia,
+  });
+  const r = await getPool().query(
+    `UPDATE settlements SET return_disputed_at = COALESCE(return_disputed_at, now()),
+       updated_at = now()
+     WHERE id = $1 AND state IN ('disputed','resolution-proposed')
+       AND returned_at IS NOT NULL AND return_received_at IS NULL
+     RETURNING *`,
+    [settlementId],
   );
   return afterSideWrite(r, settlementId);
 }
@@ -1376,6 +1473,11 @@ function wholeDays(days: number, what: string): number {
  * The buyer marked a tracked return and the seller has said nothing since.
  * After SETTLEMENT_RETURN_SILENCE_DAYS the agreed amount goes back.
  *
+ * A SELLER WHO ANSWERED IS NOT A SELLER WHO SAID NOTHING. This clock counts
+ * silence, so a seller who has disputed the return stops it: the settlement
+ * leaves this set and waits for the two of them to agree, or for the
+ * fourteen-day rule.
+ *
  * A settlement whose refund has already been sent (stripe_refund_id written as
  * the API returned) is out of the set, so a slow webhook never buys a second
  * refund. The refund's idempotency key is the belt to that brace.
@@ -1389,6 +1491,7 @@ export async function settlementsDueForReturnRefund(
      WHERE state IN ('disputed','resolution-proposed')
        AND returned_at IS NOT NULL
        AND return_received_at IS NULL
+       AND return_disputed_at IS NULL
        AND stripe_refund_id IS NULL
        AND returned_at + make_interval(days => $1::int) <= now()
      ORDER BY returned_at
@@ -1404,9 +1507,12 @@ export async function settlementsDueForReturnRefund(
  * back to the buyer, because posting with tracking is the seller's
  * responsibility.
  *
- * Adding tracking moves the ground to 'not_as_described', so a seller who
- * answered is out of this set by construction and the tracking check is the
- * belt to that brace.
+ * THE GROUND IS THE BUYER'S WORD AND STAYS IT. This set is still selected on
+ * 'not_arrived', and adding tracking no longer rewrites that into something
+ * else — what takes a seller who answered out of the set is the tracking
+ * itself. Two records then stand and neither wins here: the automatic refund
+ * simply does not fire, and the settlement waits for the two of them to agree
+ * or for the fourteen-day rule.
  */
 export async function settlementsDueForNeverArrivedRefund(
   graceDays: number,
@@ -1648,5 +1754,6 @@ export const SETTLEMENT_RECORD_WRITERS: Record<string, 'human' | 'scheduled'> = 
   addDeliveryTracking: 'human',
   markReturned: 'human',
   confirmReturnReceived: 'human',
+  disputeReturn: 'human',
   recordRuleRefund: 'scheduled',
 };
