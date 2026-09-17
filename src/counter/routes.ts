@@ -108,7 +108,12 @@ import {
   verifyByLinkToken,
 } from './verification.js';
 import { sendKillSwitchEmail, sendSecurityNoticeEmail, sendSettlementEmail, sendVerificationEmail } from './email.js';
-import { aboutThing, categoryPhrase, offerAmountInWords as templateMoney } from '../email/templates.js';
+import {
+  aboutThing,
+  categoryPhrase,
+  theirThing,
+  offerAmountInWords as templateMoney,
+} from '../email/templates.js';
 import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
 import { isEmailQueueFull } from '../email/send.js';
 import { emailHashes } from '../domain/accounts.js';
@@ -1401,6 +1406,44 @@ in on this device and lets you approve what is waiting.</p>
           needsPin: true,
         };
       }
+      if (row.action === 'conversation-renew') {
+        // Keeping a conversation going. The question is the human's own
+        // attention, so it takes the same credential the rest of these take —
+        // an assistant that could press this for its human would have made the
+        // budget a formality it renews for itself, which is the whole of what
+        // the budget exists to stop.
+        const m = await getMatch(row.ref_id);
+        if (!m) return { error: 'There is no such introduction of yours.' };
+        try {
+          sideOf(m, accountId);
+        } catch {
+          return { error: 'This introduction is not yours.' };
+        }
+        if (m.state !== 'open' || m.stage < 4 || !m.channel_id) {
+          return { error: 'There is no open conversation on this one.' };
+        }
+        const other = m.account_want === accountId ? m.account_have : m.account_want;
+        const name = await ops.disclosedFirstName(
+          accountId,
+          other,
+          { match_id: row.ref_id },
+          'one-question-page',
+        );
+        const { readWindow } = await import('../domain/conversationWindow.js');
+        const w = await readWindow(cfg, row.ref_id, accountId);
+        const sent = w.sent === 1 ? 'One message has gone' : `${w.sent} messages have gone`;
+        return {
+          ...base,
+          question: `Your assistant has been talking with ${name ?? 'the other person'}'s assistant about ${theirThing(phrase(m.category), m.account_have === accountId ? 'have' : 'want')}. Keep the conversation going?`,
+          detail: [
+            `${sent} from your side so far.`,
+            'Saying yes gives your assistant another run of messages on this one. Not now leaves it paused: nothing is lost, anything they send still reaches you, and you can start it again whenever you like.',
+            'They are told none of this.',
+          ],
+          yesLabel: 'Keep going',
+          needsPin: true,
+        };
+      }
       if (row.action === 'collection-close') {
         // A link minted before migration 030, opened after it. The window it
         // was for no longer exists, so the page says so rather than failing.
@@ -1800,6 +1843,29 @@ in on this device and lets you approve what is waiting.</p>
               r.both
                 ? '<p>Both of you have said yes. Your first name and area are with them now, and theirs with you.</p>'
                 : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
+            ),
+          );
+        }
+        if (row.action === 'conversation-renew') {
+          // The press that starts a fresh window for this side, and the whole
+          // of what it does. It writes a consent event the way every other
+          // press here does, because that is what it is: one human saying, on
+          // the record, that this conversation still matters to them.
+          const { startFreshWindow } = await import('../domain/conversationWindow.js');
+          const { writeConsentEvent } = await import('../crypto.js');
+          await writeConsentEvent({
+            event: 'conversation-renew',
+            match_id: row.ref_id,
+            account_id: s.accountId!,
+            recorded_via: 'counter',
+          });
+          await startFreshWindow(row.ref_id, s.accountId!, 'renewal-press');
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(
+            reply,
+            pages.donePage(
+              'Carry on',
+              '<p>Your assistant can keep talking on this one. It will ask you again after a while, and nothing goes out from your side in the meantime that you have not asked for.</p>',
             ),
           );
         }

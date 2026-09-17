@@ -6,6 +6,31 @@ function required(name: string): string {
   return v;
 }
 
+/**
+ * A whole number from the environment, held to a range.
+ *
+ * A boot failure rather than a silent fallback, because the values that come
+ * through here decide how long a human's go-ahead lasts: a typo that quietly
+ * became the default would leave an operator believing they had changed
+ * something they had not. An unset variable is not a typo, so absence takes
+ * the default without complaint.
+ */
+export function inRange(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+  name: string,
+): number {
+  const v = (raw ?? '').trim();
+  if (!v) return fallback;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new Error(`${name} must be a whole number between ${min} and ${max}`);
+  }
+  return n;
+}
+
 export interface Quotas {
   /** Max simultaneously non-terminal (pending/active/latent) cards per account. */
   maxOpenCards: number;
@@ -71,6 +96,12 @@ export interface Config {
   /** How many reports one account may file in a rolling 24 hours
    *  (src/safety/reports.ts). Paces the act, never the person. */
   maxReportsPerDay: number;
+  /** How many messages one side may send on one introduction before its human
+   *  is asked again whether to keep going (domain/conversationWindow.ts).
+   *  Consent to talk is a thing that runs out rather than a thing given once. */
+  conversationBudgetMessages: number;
+  /** And how long that same press is good for, in days, whichever ends first. */
+  conversationBudgetDays: number;
   docsBase: string;
   /** Secrets Manager secret holding {secret_key, webhook_secret?} for the
    *  env's Stripe account. Unset = settlement handling is OFF for this
@@ -181,6 +212,20 @@ export function loadConfig(): Config {
       maxWritesPerHour: Number(process.env.QUOTA_MAX_WRITES_PER_HOUR ?? 300),
     },
     maxReportsPerDay: Number(process.env.MAX_REPORTS_PER_DAY ?? 5),
+    conversationBudgetMessages: inRange(
+      process.env.CONVERSATION_BUDGET_MESSAGES,
+      40,
+      1,
+      1000,
+      'CONVERSATION_BUDGET_MESSAGES',
+    ),
+    conversationBudgetDays: inRange(
+      process.env.CONVERSATION_BUDGET_DAYS,
+      7,
+      1,
+      365,
+      'CONVERSATION_BUDGET_DAYS',
+    ),
     docsBase: 'https://openswitchboard.ai/docs',
     stripeSecretArn: process.env.STRIPE_SECRET_ARN || undefined,
     evidenceBucket: process.env.EVIDENCE_BUCKET || undefined,

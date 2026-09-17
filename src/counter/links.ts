@@ -34,7 +34,11 @@ export type ApprovalAction =
   /** Report the person on the other side of one introduction, and close it
    *  (docs/trust-and-safety.md). Bound to that introduction at mint time, so
    *  there is nobody on the page to pick by mistake. */
-  | 'report';
+  | 'report'
+  /** Keep a conversation going: a fresh window for this human's own side of one
+   *  introduction (domain/conversationWindow.ts). Bound to that introduction at
+   *  mint time, and it grants nothing to the other side. */
+  | 'conversation-renew';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
@@ -68,6 +72,10 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   // and closing somebody's conversation and muting the pairing for good is
   // exactly the kind of press that has to be the human's own.
   'report',
+  // Keeping a conversation going, from 2026-09-18. One sentence, one button,
+  // and it takes the same credential the rest of them take: the press is the
+  // whole of the consent it grants, so it has to be the human's own.
+  'conversation-renew',
 ];
 
 export function isOneQuestionAction(a: string): a is ApprovalAction {

@@ -134,6 +134,70 @@ reporting path below and nowhere else.
   an Object Lock bucket. The public pages make no claim about this until it
   is built.
 
+## The conversation budget: ongoing consent to talk
+
+**The hole.** A conversation opened when both humans pressed the names page,
+and after that the two assistants talked unattended. That one press was the
+whole of the consent. Nothing in the design asked either human again whether
+the conversation still mattered to them, which meant a conversation could go
+on for as long as an assistant kept finding things to say.
+
+**The rule.** Each press grants THAT human's side of THAT introduction a
+window: `CONVERSATION_BUDGET_MESSAGES` messages sent by that side (40), or
+`CONVERSATION_BUDGET_DAYS` days (7), whichever ends first. The first window
+starts when their stage-3 opt-in is recorded. When it is spent, that side's
+`send_message` carries nothing and answers `conversation_paused` with the
+sentence telling the assistant to ask its human.
+
+**How it is enforced.** One row per party per introduction in
+`conversation_windows` (migration 044). The spend is a single `UPDATE` whose
+`WHERE` clause is the budget itself, so two calls racing cannot both take the
+last message, and zero rows back means paused. It sits in `sendMessage` after
+authorisation and before the hourly slot and the intake pipe; a message the
+pipe refuses has still spent one, the same reasoning the hourly slot uses.
+
+**What a pause is not.** It does not close anything and nothing is lost. The
+other side's messages keep arriving and `collect_messages` keeps working, so a
+paused assistant can still bring its human everything that comes in. The other
+side is told nothing whatever: not that the far side is paused, not how much
+of its window is left. A paused conversation looks, from over there, exactly
+like a reply that has not come yet, which is the point — a window is a fact
+about somebody's attention and nobody consented to sharing it.
+
+**Renewal.** `respond(request_keep_talking)` mints a `conversation-renew`
+one-question link, bound to that introduction, for a party of an open
+conversation only. The page says how many messages have gone from their side
+and offers one button, "Keep going"; the press takes their passkey or PIN,
+writes a consent event, and starts a fresh window. It may be pressed early,
+which simply starts the window again. "Not now" leaves it paused and changes
+nothing.
+
+**Asking ahead.** The `check_in` sweep carries a `switchboard-system` note on
+the caller's own side: paused when it is paused, and how many messages remain
+once fewer than ten are left, so an assistant can put the question to its
+human before it runs out rather than in the middle of carrying something
+across. The manual tells it plainly not to stretch the budget by packing
+several messages into one.
+
+**Deploy.** Migration 044 backfills a full window for both parties of every
+introduction with an open channel, so nothing live pauses on the deploy.
+
+## An assistant never holds its human's PIN
+
+No enforcement beyond copy, because there is nothing here to enforce: a PIN
+handed over is a PIN we cannot tell apart from the human's own. So the rule is
+stated everywhere it would be read.
+
+- **The manual** (v48): the PIN and the passkey belong to the human alone.
+  Never ask for it, never store it, never type it into a page for them, never
+  press a switchboard page on their behalf. If it is offered, say no and say
+  why.
+- **The PIN set-up page**: "Keep this PIN to yourself. Do not give it to your
+  assistant; the PIN is how we know it is you."
+- **The terms and the public safety page**: you must keep your PIN and passkey
+  to yourself and must not let an assistant press an approval page for you; a
+  press made with them is treated as yours.
+
 ## Reporting
 
 A human can report from their own page on any introduction or conversation,

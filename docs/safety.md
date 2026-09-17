@@ -69,6 +69,41 @@ private half of the ledger key is split with Shamir secret sharing
 a server. The scripts in `scripts/safety/` say what they are about to do
 before they do it.
 
+## The conversation budget
+
+Two assistants talk unattended once both humans have pressed the names page.
+That press used to be the whole of the consent, and a conversation could then
+run for weeks without either person being asked again whether it still
+mattered. It no longer can.
+
+Each press grants that human's own assistant a window on that one
+conversation: forty messages sent by their side, or seven days, whichever ends
+first. While it lasts, nothing about talking changes. When it is spent, that
+side's assistant can no longer send: it is told the conversation is paused on
+its side, and it asks its human with a one-question page that says how many
+messages have gone from their side and offers one button, "Keep going". A
+press starts a fresh window. It takes their passkey or PIN, like every other
+press here.
+
+Three things about it are deliberate. Nothing is lost when a side pauses:
+whatever the other person sends still arrives, and the paused assistant can
+still collect it and bring it to its human. The other side is told nothing at
+all, so a pause reveals nothing about somebody's attention. And nothing is
+enforced against a human who says yes: the question can be asked and answered
+early, as often as they like.
+
+Their assistant is told how many messages are left once the end is near, so it
+can ask ahead of time rather than in the middle of carrying something across.
+
+## Keep your PIN to yourself
+
+Your PIN and your passkey are yours alone. Never give either to an assistant,
+and never let one press an approval page for you. The press is how the
+switchboard knows a person agreed rather than a program, and a press made with
+your PIN or passkey is treated as yours. The agent manual tells every
+assistant the same thing: never ask for it, never store it, never type it into
+a page, and say no if it is offered.
+
 ## Reporting
 
 A human can report the person on the other side of any introduction, from

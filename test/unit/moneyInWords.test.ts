@@ -275,6 +275,11 @@ describe('send_message with a figure in it', () => {
       };
     }
     if (/channel_send_rate/.test(sql)) return { rows: [{ n: 1 }], rowCount: 1 };
+    // And a conversation budget with room in it, so what this suite tests is
+    // the money rule rather than the window (domain/conversationWindow.ts).
+    if (/UPDATE conversation_windows/.test(sql)) {
+      return { rows: [{ messages_sent: 1 }], rowCount: 1 };
+    }
     return { rows: [], rowCount: 0 };
   };
 

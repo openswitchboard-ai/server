@@ -53,6 +53,10 @@ describe('the refusals that are the switchboard working', () => {
       [
         'CATEGORY_PROHIBITED',
         'CONSENT_REQUIRED',
+        // One side of a conversation has spent the window its human's last
+        // press granted it. Nothing has gone wrong, nothing is lost, and there
+        // is exactly one thing to do about it, so the sentence says what.
+        'CONVERSATION_PAUSED',
         'INTENT_EXPIRED',
         'LOCATION_AMBIGUOUS',
         'LOCATION_UNRESOLVED',
