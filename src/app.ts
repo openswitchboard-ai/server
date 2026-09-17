@@ -137,6 +137,16 @@ export function buildApp(cfg: Config): FastifyInstance {
     "connect-src 'self' https://*.amazonaws.com",
   ].join('; ');
   const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
+  // The operator metrics page is the one HTML page on the MCP host. It has a
+  // stylesheet of its own inline and nothing else at all — no scripts, no
+  // images, no fetches — so it gets exactly that and no more.
+  const OPS_CSP = [
+    "default-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "style-src 'unsafe-inline'",
+  ].join('; ');
   app.addHook('onSend', async (req, reply, payload) => {
     reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
     reply.header('x-content-type-options', 'nosniff');
@@ -149,7 +159,11 @@ export function buildApp(cfg: Config): FastifyInstance {
     // the human surface — the counter hostname and the legacy hostnames that
     // redirect to it — and a wrong guess there would break a page rather than
     // merely loosen a host that renders nothing.
-    reply.header('content-security-policy', host === mcpHost ? STRICT_CSP : COUNTER_CSP);
+    const strict = host === mcpHost;
+    reply.header(
+      'content-security-policy',
+      strict ? (pathOf(req.url).startsWith('/ops') ? OPS_CSP : STRICT_CSP) : COUNTER_CSP,
+    );
     return payload;
   });
 
