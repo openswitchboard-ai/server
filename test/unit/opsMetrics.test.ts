@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
@@ -104,6 +105,8 @@ function fakeMetrics(over: Partial<OpsDbMetrics> = {}): OpsDbMetrics {
       read_calls_24h: 60,
       read_call_accounts_24h: 7,
       channel_sends_counted_24h: 12,
+      reports_filed_24h: 3,
+      report_accounts_24h: 1,
     },
     ...over,
   };
@@ -270,5 +273,31 @@ describe('OPS_METRICS_BASIC_AUTH validation', () => {
   it('refuses an empty password or an empty user', () => {
     expect(() => opsMetricsBasicAuthFrom('ops:')).toThrow(/both halves/);
     expect(() => opsMetricsBasicAuthFrom(':letmein')).toThrow(/both halves/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * REPORTS, AS TWO NUMBERS AND NOTHING ELSE (2026-09-17 audit).
+ *
+ * A report is both a safety signal and a thing an account could abuse, so the
+ * operator needs the shape of it — three reports from three people is a
+ * Tuesday, three from one account is a campaign — without any of it becoming a
+ * way to read a report. Counts only: no reporter, no reported, no introduction,
+ * not a word of what anybody said.
+ */
+describe('the reports signal is a count, and only a count', () => {
+  it('carries how many were filed and by how many accounts', async () => {
+    const m = fakeMetrics();
+    expect(m.abuse.reports_filed_24h).toBe(3);
+    expect(m.abuse.report_accounts_24h).toBe(1);
+  });
+
+  it('the query behind it names nothing that could identify anybody', async () => {
+    const src = await readFile(new URL('../../src/opsMetrics.ts', import.meta.url), 'utf8');
+    const query = src.slice(src.indexOf('reports_filed_24h'), src.indexOf('FROM reports WHERE'));
+    for (const forbidden of ['reason_words', 'reported_account', 'match_id']) {
+      expect(query).not.toContain(forbidden);
+    }
   });
 });
