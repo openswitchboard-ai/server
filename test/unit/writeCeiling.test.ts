@@ -23,6 +23,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as db from '../../src/db.js';
+import { bedrock, sqs } from '../../src/aws.js';
+import { SCHEMA_VERSION } from '../../src/protocol.js';
 import * as humanLinks from '../../src/domain/humanLinks.js';
 import { MAX_WRITES_PER_HOUR, checkWriteRate } from '../../src/domain/quotas.js';
 import { OsbError, validatePayload } from '../../src/protocol.js';
@@ -58,6 +60,8 @@ function writeCallsStatement(accountId: string, cap: number) {
 }
 
 beforeEach(() => {
+  vi.spyOn(bedrock, 'send').mockResolvedValue({} as any);
+  vi.spyOn(sqs, 'send').mockResolvedValue({} as any);
   calls = new Map();
   now = Date.parse('2026-09-17T10:00:00.000Z');
   resetWaitsInFlight();
@@ -227,5 +231,61 @@ describe('three waits at a time, and no more', () => {
     release();
     await open;
     expect(calls.get(ANA) ?? []).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * AND THE ORDER INSIDE publish_intent (2026-09-17 audit).
+ *
+ * checkPublishQuota used to sit below the category gate and the intake pipe, so
+ * an account that had already used up its day could still make the switchboard
+ * embed a category to suggest alternatives, and still push a posting through
+ * the pipe, on every call. Two statements against this account's own rows is
+ * the cheapest question there is, so it is now the first one.
+ */
+describe('an account with nothing left to spend spends nothing', () => {
+  let asked: string[];
+
+  const publishCfg = {
+    ...cfg,
+    bedrockModelId: 'anthropic.claude-3-5-haiku',
+    screeningQueueUrl: 'http://unused',
+    quotas: { ...cfg.quotas, maxPublishesPerDay: 10, maxOpenCards: 5 },
+  } as unknown as Config;
+
+  const listing = {
+    schema_version: SCHEMA_VERSION,
+    type: 'offering',
+    category: 'goods.a-leaf-nobody-wrote-down',
+    kind: 'bouldering mat',
+    geo: { place: 'Canberra, ACT', radius_km: 25 },
+    urgency: 'none',
+    visibility: 'anonymous-until-introduced',
+    status: 'active',
+  };
+
+  beforeEach(() => {
+    asked = [];
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (sql: string) => {
+        asked.push(sql);
+        if (/write_calls|read_calls/.test(sql)) return { rows: [{ n: 0, oldest: null }], rowCount: 1 };
+        // The day is spent: ten publishes already on record.
+        if (/FROM publish_events/.test(sql)) return { rows: [{ n: 10 }], rowCount: 1 };
+        if (/FROM cards/.test(sql)) return { rows: [{ n: 0 }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+    } as any);
+  });
+
+  it('is turned away by the quota, and no model is asked anything', async () => {
+    const r: any = await dispatchTool(publishCfg, ANA, 'publish_intent', { listing });
+    expect(r.structuredContent.code).toBe('QUOTA_EXCEEDED');
+    // Nothing embedded to suggest a category, nothing screened, nothing queued.
+    expect(vi.mocked(bedrock.send)).not.toHaveBeenCalled();
+    expect(vi.mocked(sqs.send)).not.toHaveBeenCalled();
+    // And the quota was asked before anything else about the posting.
+    expect(asked.some((q) => /publish_events/.test(q))).toBe(true);
   });
 });

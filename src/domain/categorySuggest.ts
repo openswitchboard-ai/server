@@ -201,6 +201,60 @@ export function warmCategoryCorpus(
 }
 
 // ---------------------------------------------------------------------------
+// The query embedding, remembered (2026-09-17 audit).
+//
+// Every refused posting embedded its own category path before the switchboard
+// would say what to try instead. A refusal is cheap to provoke and cheap to
+// repeat, and an agent that keeps sending the same wrong category — which is
+// exactly what a confused agent does — bought a Titan call each time for an
+// answer that could not possibly have changed. The corpus side of this has
+// always been warmed once and kept; the query side was the half nobody cached.
+//
+// Five hundred entries, least-recently-used out first, keyed on the input
+// normalised the same way the text handed to the model is. A Map in JavaScript
+// keeps insertion order, so re-inserting on a hit is the whole of the LRU. In
+// memory per process, which is right for what this is: a pure function of a
+// string, wrong about nothing if a replica has to work it out again, and gone
+// on restart without anybody having to clean it up.
+// ---------------------------------------------------------------------------
+
+export const SUGGEST_CACHE_MAX = 500;
+
+const queryVectors = new Map<string, number[]>();
+
+/** The key: the same string in any spelling of whitespace or case is one key. */
+const cacheKey = (category: string): string =>
+  String(category ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** For the suite, and for a corpus rebuild: the vectors are only ever a cache. */
+export function resetSuggestCache(): void {
+  queryVectors.clear();
+}
+
+export function suggestCacheSize(): number {
+  return queryVectors.size;
+}
+
+async function embedQuery(cfg: Config, category: string): Promise<number[]> {
+  const key = cacheKey(category);
+  const hit = queryVectors.get(key);
+  if (hit) {
+    // Touch it, so the ones being asked for are the ones that stay.
+    queryVectors.delete(key);
+    queryVectors.set(key, hit);
+    return hit;
+  }
+  const vector = await embedText(cfg, nodeText(category));
+  queryVectors.set(key, vector);
+  while (queryVectors.size > SUGGEST_CACHE_MAX) {
+    const oldest = queryVectors.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    queryVectors.delete(oldest);
+  }
+  return vector;
+}
+
+// ---------------------------------------------------------------------------
 // The entry point.
 // ---------------------------------------------------------------------------
 
@@ -227,7 +281,7 @@ export async function suggestCategories(
     // Kick the warm-up off, but do not wait for it.
     void warmCategoryCorpus(cfg, log);
     if (!corpus) return lexical();
-    const q = await embedText(cfg, nodeText(category));
+    const q = await embedQuery(cfg, category);
     const scored = corpus.categories.map((c, i) => ({
       category: c,
       score: cosine(q, corpus!.vectors[i]),

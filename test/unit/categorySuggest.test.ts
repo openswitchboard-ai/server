@@ -7,7 +7,10 @@ import {
   lexicalScore,
   lexicalSuggestions,
   nodeText,
+  SUGGEST_CACHE_MAX,
   resetCategoryCorpus,
+  resetSuggestCache,
+  suggestCacheSize,
   suggestCategories,
   suggestionSentence,
   warmCategoryCorpus,
@@ -18,6 +21,7 @@ const cfg = { bedrockEmbedModelId: 'test-embed' } as any;
 
 beforeEach(() => {
   resetCategoryCorpus();
+  resetSuggestCache();
   vi.restoreAllMocks();
 });
 
@@ -138,5 +142,68 @@ describe('embedding closeness', () => {
   it('embeds the path together with its human label path', () => {
     expect(nodeText('goods.electronics.laptop')).toContain('goods.electronics.laptop');
     expect(nodeText('goods.electronics.laptop')).toContain('Laptops');
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * THE QUERY EMBEDDING, REMEMBERED (2026-09-17 audit).
+ *
+ * A refusal is cheap to provoke and cheap to repeat, and an agent that keeps
+ * sending the same wrong category — which is exactly what a confused agent
+ * does — bought a Titan call each time for an answer that could not possibly
+ * have changed. The corpus side was always warmed once and kept; the query side
+ * was the half nobody cached.
+ */
+describe('the same wrong category is embedded once', () => {
+  const fakeEmbed = (text: string): number[] => [text.length % 7, text.length % 5, 0.01];
+
+  const warm = async () => {
+    const spy = vi.spyOn(embeddings, 'embedText').mockImplementation(async (_c, t) => fakeEmbed(t));
+    await warmCategoryCorpus(cfg);
+    spy.mockClear();
+    return spy;
+  };
+
+  it('asks the embedder once, however many times the agent asks', async () => {
+    const spy = await warm();
+    for (let i = 0; i < 5; i++) await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(spy.mock.calls.length).toBe(1);
+  });
+
+  it('and gives the same answer every time', async () => {
+    await warm();
+    const first = await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    const again = await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(again.categories).toEqual(first.categories);
+    expect(again.source).toBe('embedding');
+  });
+
+  it('one key however the whitespace and case were spelled', async () => {
+    const spy = await warm();
+    await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    await suggestCategories(cfg, '  GOODS.laptop.macbook-air  ');
+    expect(spy.mock.calls.length).toBe(1);
+  });
+
+  it('a different category is a different call', async () => {
+    const spy = await warm();
+    await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    await suggestCategories(cfg, 'social.conversation.language-exchange');
+    expect(spy.mock.calls.length).toBe(2);
+  });
+
+  it('holds five hundred and lets the least recently asked for go', async () => {
+    await warm();
+    for (let i = 0; i < SUGGEST_CACHE_MAX + 20; i++) {
+      await suggestCategories(cfg, `goods.made-up.${i}`);
+    }
+    expect(suggestCacheSize()).toBe(SUGGEST_CACHE_MAX);
+  });
+
+  it('an embedder that throws caches nothing, so it is tried again', async () => {
+    vi.spyOn(embeddings, 'embedText').mockRejectedValue(new Error('bedrock unavailable'));
+    await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(suggestCacheSize()).toBe(0);
   });
 });
