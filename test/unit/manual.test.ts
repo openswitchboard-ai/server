@@ -634,7 +634,8 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   42: '018e63c59ca4d7d8370fc4dbebb53ab6d84b40c732326e4949e3f2de8270403b',
   43: '1bfa7c69974b24e1639c564a3fadef3d5eb6f679a4cd63d177b1163e447bab1f',
   44: '8371c2ea9332fecca15d40e7a32f2cdf499961b43703b39e09e44e6a301dbdfb',
-  45: 'PENDING',
+  45: '74be1235f6b188480e38e3f45a70593a76a8e67ccb127f1492fedadff3c672fd',
+  46: 'PENDING',
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');

@@ -8,6 +8,10 @@
  *  - respond(request_report) MINTS AND RETURNS, like every other link action,
  *    and changes nothing at all until the press;
  *  - the page it opens is the ordinary one-question page, with one box on it;
+ *  - the press takes the human's OWN credential — a passkey where they hold
+ *    one, a PIN otherwise — because an assistant driving a browser could
+ *    otherwise close a conversation for good without its human. An account
+ *    holding neither is sent to set one up, and the link survives the trip;
  *  - the press does four things in one breath — the report is written, the
  *    introduction is severed, the pairing is muted, and every ledger entry
  *    behind that introduction is held past the thirty days;
@@ -75,6 +79,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import * as db from '../../src/db.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
+import { hashPin } from '../../src/counter/pin.js';
 import { dispatchTool, EXPECTED_REFUSALS } from '../../src/mcp/tools.js';
 import { instructionsFor } from '../../src/mcp/mcp.js';
 import { SUSPENDED_BLOCK, SUSPENDED_HEADING, OWN_HUMAN_HEADING } from '../../src/mcp/connectFacts.js';
@@ -122,7 +127,9 @@ const CARD_W = 'dddddddd-4444-4444-8444-dddddddddddd';
 const CARD_H = 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee';
 const REPORT_ID = '9f9f9f9f-0000-4000-8000-000000000009';
 const SID = 'osb_cs_testsessionvaluetestsessionvalue';
+const PIN = '241083';
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
+let pinHash: string;
 
 interface LinkRow {
   id: string;
@@ -157,6 +164,12 @@ interface World {
   stoppedEmails: Set<string>;
   /** Every warn line the report path wrote. */
   warned: string[];
+  /** What this account holds. The report press asks for it, so the whole of
+   *  this file's press machinery depends on it. */
+  credential: 'none' | 'pin' | 'passkey';
+  /** Set by a PIN check, and read back as the session's elevation. A passkey
+   *  press arrives with this already set, which is what the button does. */
+  elevatedUntil: Date | null;
 }
 let world: World;
 let linkSeq = 0;
@@ -239,13 +252,28 @@ function fakePool() {
       // ---- sessions ----
       if (/FROM counter_sessions/.test(sql) && /SELECT id, account_id/.test(sql)) {
         return params[0] === sha256hex(SID)
-          ? rows([{ id: 'sess-1', account_id: ANA, pin_ok_until: null, oauth_ctx: null }])
+          ? rows([
+              { id: 'sess-1', account_id: ANA, pin_ok_until: world.elevatedUntil, oauth_ctx: null },
+            ])
           : rows([]);
       }
+      if (/UPDATE counter_sessions SET pin_ok_until/.test(sql)) {
+        world.elevatedUntil = new Date(Date.now() + 5 * 60_000);
+        return rows([]);
+      }
 
-      // ---- accounts ----
+      // ---- what this account holds ----
+      if (/FROM webauthn_credentials/.test(sql)) {
+        return world.credential === 'passkey' ? rows([{ '?column?': 1 }]) : rows([]);
+      }
       if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
-        return rows([{ pin_hash: null, pin_failed_attempts: 0, pin_locked_until: null }]);
+        return rows([
+          {
+            pin_hash: world.credential === 'pin' ? pinHash : null,
+            pin_failed_attempts: 0,
+            pin_locked_until: null,
+          },
+        ]);
       }
       if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
         return rows([
@@ -253,6 +281,7 @@ function fakePool() {
             id: params[0],
             data_key_enc: Buffer.from('wrapped'),
             status: 'active',
+            pin_hash: world.credential === 'pin' ? pinHash : null,
             hears_via: 'assistant',
             onboarded_at: new Date('2026-01-01'),
             first_name_enc: Buffer.from('enc:Ana'),
@@ -317,8 +346,11 @@ beforeEach(async () => {
     stopped: new Set(),
     stoppedEmails: new Set(),
     warned: [],
+    credential: 'pin',
+    elevatedUntil: null,
   };
   linkSeq = 0;
+  pinHash = pinHash ?? (await hashPin(PIN));
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
   // The suspension check asks whether this process HAS a database before it
   // asks the database anything, so the harness has to say yes.
@@ -416,6 +448,110 @@ describe('the page it opens is the ordinary one-question page', () => {
     expect(page.body).toMatch(/never told that you reported them/i);
     expect(page.body).toMatch(/closes this one straight away/i);
   });
+
+  it('says in one plain sentence why it asks for a credential', async () => {
+    const token = await mintedToken();
+    const page = await inject('GET', `/a/${encodeURIComponent(token)}`);
+    expect(page.body).toContain(
+      'This press is yours alone, so it asks for your passkey or PIN like every other decision here.',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The press is the human's own
+//
+// Built credential-free on 17 September; the same day it was decided that a
+// report is a formal press like the others, because an assistant with a
+// browser could otherwise sit at this page and complete it alone. A passkey is
+// the one thing an assistant cannot press for its human.
+// ---------------------------------------------------------------------------
+describe('the report press takes the human own credential', () => {
+  it('prints a PIN box on an account that holds a PIN', async () => {
+    const token = await mintedToken();
+    const page = await inject('GET', `/a/${encodeURIComponent(token)}`);
+    expect(page.body).toContain('Confirm with your PIN');
+  });
+
+  it('refuses the press with no credential offered at all', async () => {
+    const token = await mintedToken();
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, { decision: 'yes' });
+    expect(r.statusCode).toBe(401);
+    // Nothing filed, nothing closed, and the link is still good.
+    expect(world.reports).toEqual([]);
+    expect(world.matchState).toBe('open');
+    expect(world.links[0].used_at).toBeNull();
+  });
+
+  it('refuses the press on a wrong PIN, and keeps the link', async () => {
+    const token = await mintedToken();
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, {
+      decision: 'yes',
+      pin: '000000',
+    });
+    expect(r.statusCode).toBe(401);
+    expect(world.reports).toEqual([]);
+    expect(world.matchState).toBe('open');
+    expect(world.links[0].used_at).toBeNull();
+  });
+
+  it('files it on the right PIN', async () => {
+    const token = await mintedToken();
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, {
+      decision: 'yes',
+      pin: PIN,
+      reason: 'he would not let it go',
+    });
+    expect(r.statusCode).toBe(200);
+    expect(world.reports).toHaveLength(1);
+    expect(world.matchState).toBe('closed');
+  });
+
+  it('files it on a passkey, with no box to fill in', async () => {
+    world.credential = 'passkey';
+    const token = await mintedToken();
+    const page = await inject('GET', `/a/${encodeURIComponent(token)}`);
+    // A passkey-only account is never shown a PIN box it cannot fill: the
+    // button itself runs the ceremony.
+    expect(page.body).not.toContain('Confirm with your PIN');
+    expect(page.body).toMatch(/This takes your passkey/i);
+    // Which is what the button does before it submits.
+    world.elevatedUntil = new Date(Date.now() + 5 * 60_000);
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, { decision: 'yes' });
+    expect(r.statusCode).toBe(200);
+    expect(world.reports).toHaveLength(1);
+    expect(world.matchState).toBe('closed');
+  });
+
+  it('sends an account holding neither off to set one up, link intact', async () => {
+    world.credential = 'none';
+    const token = await mintedToken();
+    const page = await inject('GET', `/a/${encodeURIComponent(token)}`);
+    expect(page.statusCode).toBe(303);
+    expect(page.headers.location).toBe('/secure');
+    const pressed = await inject('POST', `/a/${encodeURIComponent(token)}`, { decision: 'yes' });
+    expect(pressed.statusCode).toBe(303);
+    expect(world.reports).toEqual([]);
+    expect(world.matchState).toBe('open');
+    // The link their assistant gave them still works once they have one.
+    expect(world.links[0].used_at).toBeNull();
+    world.credential = 'pin';
+    const again = await inject('POST', `/a/${encodeURIComponent(token)}`, {
+      decision: 'yes',
+      pin: PIN,
+    });
+    expect(again.statusCode).toBe(200);
+    expect(world.reports).toHaveLength(1);
+  });
+
+  it('a Not now still needs no credential at all', async () => {
+    world.credential = 'pin';
+    const token = await mintedToken();
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, { decision: 'no' });
+    expect(r.statusCode).toBe(200);
+    expect(world.reports).toEqual([]);
+    expect(world.matchState).toBe('open');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -424,6 +560,7 @@ describe('the press: report, sever, block, preserve', () => {
     const token = await mintedToken();
     return inject('POST', `/a/${encodeURIComponent(token)}`, {
       decision: 'yes',
+      pin: PIN,
       ...(reason === undefined ? {} : { reason }),
     });
   };
@@ -500,6 +637,7 @@ describe('the press: report, sever, block, preserve', () => {
     const token = await mintedToken();
     const r = await inject('POST', `/a/${encodeURIComponent(token)}`, {
       decision: 'yes',
+      pin: PIN,
       reason: 'x'.repeat(REASON_MAX_CHARS + 1),
     });
     expect(r.statusCode).toBe(400);

@@ -122,6 +122,9 @@ A human can report from their own page on any introduction or conversation,
 and can say "report this person" to their assistant, which fetches the same
 one-question link. The report carries a reason in plain words and the
 introduction id. It points at ledger entries; nothing needs to be re-sent.
+The page takes the human's own passkey or PIN before it files anything, the
+same ceremony the disclosure and settlement pages take, so an assistant
+driving a browser cannot make the press for them.
 
 A report does three things at once: opens a hold on the introduction (nothing
 further is delivered either way), queues the ledger entries for review, and

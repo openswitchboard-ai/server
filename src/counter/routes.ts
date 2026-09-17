@@ -1246,11 +1246,14 @@ in on this device and lets you approve what is waiting.</p>
         };
       }
       if (row.action === 'report') {
-        // THE ONE PAGE THAT ENDS SOMETHING. It takes no PIN: making a
-        // frightened person find a credential before they can report a
-        // stranger is a way of getting fewer reports rather than fewer bad
-        // ones, and the press itself changes nothing about their account, their
-        // money or what anyone else can see.
+        // THE ONE PAGE THAT ENDS SOMETHING, and it takes the credential every
+        // other press here takes. Built credential-free on 17 September, on the
+        // argument that a frightened person should not have to find a PIN
+        // first; the same day Lachlan decided a report is a formal press like
+        // the others, because a browser-driving assistant could otherwise
+        // complete it alone. A passkey is the one thing an assistant cannot
+        // press for its human, and closing a conversation for good is not a
+        // press anybody but the human should be able to make.
         const m = await getMatch(row.ref_id);
         if (!m) return { error: 'There is no such introduction of yours.' };
         try {
@@ -1267,6 +1270,7 @@ in on this device and lets you approve what is waiting.</p>
           detail: [
             'Reporting closes this one straight away. Nothing more goes either way, the two of you are never put together again, and somebody here looks at what was said.',
             'They are told only that the switchboard has closed the conversation. They are never told that you reported them, who you are, or what you wrote here.',
+            'This press is yours alone, so it asks for your passkey or PIN like every other decision here.',
           ],
           collectReason: {
             label: 'What happened?',
@@ -1275,7 +1279,7 @@ in on this device and lets you approve what is waiting.</p>
             maxLength: REASON_MAX_CHARS,
           },
           yesLabel: 'Report and close this',
-          needsPin: false,
+          needsPin: true,
         };
       }
       if (row.action === 'collection-close') {
@@ -1411,6 +1415,13 @@ in on this device and lets you approve what is waiting.</p>
           ),
           401,
         );
+      }
+      if (row.action === 'report' && !(await holdsCredential(s.accountId))) {
+        // Nothing to press with. Rather than show a question this account
+        // cannot answer, send it where every other page sends an account that
+        // holds neither credential, and let them come back: a one-question link
+        // burns on the press and never on the view, so it is still good.
+        return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       if (row.action === 'conversation-photo') {
         // NOT consumed on the view: the link has to survive the person going
@@ -1581,6 +1592,11 @@ in on this device and lets you approve what is waiting.</p>
           ),
           400,
         );
+      }
+      // Nothing to press with. The same door as the view, held shut here too:
+      // no credential, no report, and the link is left unburnt behind them.
+      if (row.action === 'report' && !(await holdsCredential(s.accountId!))) {
+        return reply.redirect(await nextStep(s.accountId!, s as Session), 303);
       }
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
       // someone the link their assistant gave them.
