@@ -18,6 +18,7 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decidingCheck, runIntake } from '../intake/pipe.js';
+import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
 import type { Config } from '../config.js';
 
@@ -120,9 +121,15 @@ export function rejectionInPlainWords(
  */
 export function collectFreeText(card: Pick<CardRow, 'attributes'> & { kind?: string | null }): string[] {
   const out: string[] = [];
-  if (typeof card.kind === 'string' && card.kind.trim()) out.push(`kind: ${card.kind.trim()}`);
+  // Every piece here is the author's own words — the kind, the attribute names
+  // they chose and the values they wrote — so every piece goes through
+  // promptSafe on its way to a prompt (src/intake/promptText.ts). An attribute
+  // KEY is as much theirs as the value is.
+  if (typeof card.kind === 'string' && card.kind.trim()) {
+    out.push(promptSafePair('kind', card.kind.trim()));
+  }
   for (const [k, v] of Object.entries(card.attributes ?? {})) {
-    if (typeof v === 'string') out.push(`${k}: ${v}`);
+    if (typeof v === 'string') out.push(promptSafePair(k, v));
   }
   return out;
 }

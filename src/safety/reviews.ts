@@ -35,7 +35,7 @@ import { preserveEntriesForMatch } from './ledger.js';
 import {
   SAFETY_REVIEW_REASON,
   flagsFromDetail,
-  type SafetyFlagName,
+  type ReviewFlagName,
 } from '../intake/checks/messageSafety.js';
 import type { IntakeItem, Verdict } from '../intake/types.js';
 
@@ -56,7 +56,7 @@ const uuidOrNull = (v: string | undefined): string | null =>
 
 export interface ReviewOutcome {
   review_id: string;
-  flags: SafetyFlagName[];
+  flags: ReviewFlagName[];
   preserved: number;
 }
 
