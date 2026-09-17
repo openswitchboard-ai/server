@@ -4,3 +4,6 @@
 # Listing a fingerprint only silences a finding whose secret is proven dead.
 1924688e02037e9dcfaae3d66c59d30b5f8b911c:bilby-fixed.json:generic-api-key:1
 1924688e02037e9dcfaae3d66c59d30b5f8b911c:nagatha-fresh.json:generic-api-key:1
+# The same two dead keys, matched again by the osb-agent-key rule added on 2026-09-17.
+1924688e02037e9dcfaae3d66c59d30b5f8b911c:bilby-fixed.json:osb-agent-key:1
+1924688e02037e9dcfaae3d66c59d30b5f8b911c:nagatha-fresh.json:osb-agent-key:1
