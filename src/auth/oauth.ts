@@ -4,7 +4,7 @@
  * (RFC 7591), refresh tokens (rotated), RFC 8414 + RFC 9728 metadata.
  * Tokens are opaque and stored as sha256 hashes, bound to one human account.
  */
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { clientRegistrationLimiter, rateLimitBypassed } from '../abuseLimit.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
@@ -18,6 +18,29 @@ const b64url = (b: Buffer) => b.toString('base64url');
 const ACCESS_TTL_S = 3600; // 1h
 const REFRESH_TTL_S = 30 * 24 * 3600; // 30d
 const CODE_TTL_S = 600; // 10m
+
+/**
+ * How long a grant may go on renewing itself before the person has to say yes
+ * again. Rotation alone has no end: an agent refreshing every hour holds a
+ * live credential for ever off one press. Ninety days is the end of it,
+ * counted from the press and not from the last rotation.
+ */
+export const FAMILY_MAX_AGE_S = 90 * 24 * 3600;
+
+/**
+ * What a PKCE verifier may be (RFC 7636 §4.1): 43 to 128 characters from the
+ * unreserved set. Checked before it is hashed, so a client sending something
+ * else is told it is malformed rather than quietly failing the compare.
+ */
+const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
+
+/** A constant-time compare of two strings that may differ in length. */
+function sameSecret(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'utf8');
+  const y = Buffer.from(b, 'utf8');
+  if (x.length !== y.length) return false;
+  return timingSafeEqual(x, y);
+}
 
 export interface AuthContext {
   accountId: string;
@@ -169,11 +192,22 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
           .code(400)
           .send({ error: 'invalid_redirect_uri', error_description: `unparseable: ${u}` });
       }
-      const isLoopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '[::1]';
-      if (parsed.protocol === 'http:' && !isLoopback) {
+      // Two schemes and no others. https anywhere, and plain http on the
+      // loopback address for a CLI listening on the person's own machine.
+      // Anything else — a custom scheme, a javascript: or data: URL — is a
+      // place this switchboard will not send an authorization code, because
+      // it cannot tell who would be listening at the other end of it.
+      const isLoopback =
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '[::1]' ||
+        parsed.hostname === '::1';
+      const allowed = parsed.protocol === 'https:' || (parsed.protocol === 'http:' && isLoopback);
+      if (!allowed) {
         return reply.code(400).send({
           error: 'invalid_redirect_uri',
-          error_description: 'http redirect URIs are allowed for loopback only',
+          error_description:
+            'redirect URIs must be https, or http on the loopback address',
         });
       }
     }
@@ -242,14 +276,27 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
     clientId: string,
     scope: string,
     manualVersion: number | null = null,
+    // The family this pair belongs to. A code exchange starts one; a refresh
+    // carries the one it was handed, so the whole chain from one press stays
+    // killable in a single statement and ages from the press.
+    family: { id: string; startedAt: Date | string } = { id: randomUUID(), startedAt: new Date() },
   ) => {
     const access = `osb_at_${b64url(randomBytes(32))}`;
     const refresh = `osb_rt_${b64url(randomBytes(32))}`;
     await getPool().query(
-      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version, expires_at)
-       VALUES ($1,'access',$3,$4,$5,$6, now() + interval '${ACCESS_TTL_S} seconds'),
-              ($2,'refresh',$3,$4,$5,$6, now() + interval '${REFRESH_TTL_S} seconds')`,
-      [sha256hex(access), sha256hex(refresh), accountId, clientId, scope, manualVersion],
+      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version, family_id, family_started_at, expires_at)
+       VALUES ($1,'access',$3,$4,$5,$6,$7,$8, now() + interval '${ACCESS_TTL_S} seconds'),
+              ($2,'refresh',$3,$4,$5,$6,$7,$8, now() + interval '${REFRESH_TTL_S} seconds')`,
+      [
+        sha256hex(access),
+        sha256hex(refresh),
+        accountId,
+        clientId,
+        scope,
+        manualVersion,
+        family.id,
+        family.startedAt,
+      ],
     );
     return {
       access_token: access,
@@ -266,58 +313,119 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       if (typeof b.code !== 'string' || typeof b.code_verifier !== 'string') {
         return reply.code(400).send({ error: 'invalid_request' });
       }
-      const r = await getPool().query('SELECT * FROM oauth_codes WHERE code_hash = $1', [
-        sha256hex(b.code),
-      ]);
+      if (!VERIFIER_RE.test(b.code_verifier)) {
+        req.log.warn({ why: 'malformed-verifier' }, 'token exchange refused');
+        return reply.code(400).send({
+          error: 'invalid_request',
+          error_description: 'code_verifier must be 43-128 characters from [A-Za-z0-9._~-]',
+        });
+      }
+      // Single use, decided by the database rather than by this code reading a
+      // row and then writing it. Two exchanges of the same code arriving at
+      // once used both to pass the read before either wrote; whoever wins this
+      // UPDATE gets the row and the loser gets nothing back.
+      const r = await getPool().query(
+        `UPDATE oauth_codes SET used = true
+          WHERE code_hash = $1 AND NOT used AND expires_at > now()
+        RETURNING *`,
+        [sha256hex(b.code)],
+      );
       const row = r.rows[0];
-      if (!row || row.used || new Date(row.expires_at) < new Date()) {
-        const why = !row ? 'unknown-code' : row.used ? 'code-already-used' : 'code-expired';
+      if (!row) {
+        req.log.warn({ why: 'code-unusable' }, 'token exchange refused');
+        return reply
+          .code(400)
+          .send({ error: 'invalid_grant', error_description: 'code-unusable' });
+      }
+      // From here the code is spent whatever happens next. That is the point:
+      // a mismatched client, redirect or verifier is somebody presenting a
+      // code that is not theirs, and it must not be presentable again.
+      if (b.client_id !== row.client_id || b.redirect_uri !== row.redirect_uri) {
+        const why = b.client_id !== row.client_id ? 'client-mismatch' : 'redirect-uri-mismatch';
         req.log.warn({ why }, 'token exchange refused');
         return reply.code(400).send({ error: 'invalid_grant', error_description: why });
       }
-      if (b.client_id !== row.client_id || b.redirect_uri !== row.redirect_uri) {
-        const why = b.client_id !== row.client_id ? 'client-mismatch' : 'redirect-uri-mismatch';
-        req.log.warn({ why, got_redirect: b.redirect_uri, want_redirect: row.redirect_uri }, 'token exchange refused');
-        return reply.code(400).send({ error: 'invalid_grant', error_description: why });
-      }
       const challenge = b64url(createHash('sha256').update(b.code_verifier).digest());
-      if (challenge !== row.code_challenge) {
+      if (!sameSecret(challenge, String(row.code_challenge))) {
         req.log.warn({ why: 'pkce-mismatch' }, 'token exchange refused');
         return reply.code(400).send({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
       }
-      await getPool().query('UPDATE oauth_codes SET used = true WHERE code_hash = $1', [
-        sha256hex(b.code),
-      ]);
       return reply.send(await issueTokens(row.account_id, row.client_id, row.scope));
     }
     if (b.grant_type === 'refresh_token') {
       if (typeof b.refresh_token !== 'string') return reply.code(400).send({ error: 'invalid_request' });
       const hash = sha256hex(b.refresh_token);
+      // The row is read WITHOUT the revoked filter, because a revoked refresh
+      // token being presented is the thing worth knowing about.
       const r = await getPool().query(
-        `SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind='refresh' AND NOT revoked AND NOT suspended AND expires_at > now()`,
+        `SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh'`,
         [hash],
       );
       const row = r.rows[0];
-      if (!row) return reply.code(400).send({ error: 'invalid_grant' });
-      if (b.client_id && b.client_id !== row.client_id) {
-        return reply.code(400).send({ error: 'invalid_grant' });
+      const refuse = (why: string) => {
+        req.log.warn({ why }, 'refresh refused');
+        return reply.code(400).send({ error: 'invalid_grant', error_description: why });
+      };
+      if (!row) return refuse('unknown-refresh-token');
+      /** End every token descended from the same authorization. */
+      const killFamily = async () => {
+        if (row.family_id) {
+          await getPool().query(
+            `UPDATE oauth_tokens SET revoked = true WHERE family_id = $1 AND NOT revoked`,
+            [row.family_id],
+          );
+        } else {
+          // Minted before families existed: the one token is all there is to
+          // reach, and rotated_from is the only thread back.
+          await getPool().query(
+            `UPDATE oauth_tokens SET revoked = true WHERE token_hash = $1 OR rotated_from = $1`,
+            [hash],
+          );
+        }
+      };
+      // REUSE. This token was rotated already, so either the agent retried
+      // after an answer it never received, or somebody else has a copy. The
+      // switchboard cannot tell the two apart and must assume the second: the
+      // whole family dies and the person authorises again.
+      if (row.revoked) {
+        await killFamily();
+        req.log.warn(
+          { why: 'refresh-reuse', account_id: row.account_id, client_id: row.client_id },
+          'a rotated refresh token was presented again; the family is revoked',
+        );
+        return reply
+          .code(400)
+          .send({ error: 'invalid_grant', error_description: 'refresh-token-reused' });
+      }
+      if (row.suspended) return refuse('token-suspended');
+      if (new Date(row.expires_at) <= new Date()) return refuse('refresh-token-expired');
+      if (b.client_id && b.client_id !== row.client_id) return refuse('client-mismatch');
+      // THE END OF THE GRANT. Rotation on its own never expires: an agent
+      // refreshing every hour would hold a live credential for ever off one
+      // press. The family dies ninety days after that press.
+      const startedAt = row.family_started_at ? new Date(row.family_started_at) : null;
+      if (startedAt && Date.now() - startedAt.getTime() > FAMILY_MAX_AGE_S * 1000) {
+        await killFamily();
+        return refuse('authorization-expired');
       }
       // A stopped account gets no new keys. Suspending flips `suspended` on
-      // every token it can see, and the SELECT above honours that; this is the
-      // floor under it, for a token minted in the same second or a row the
-      // update missed. Refusing here rather than rotating means a suspension
-      // ends an agent's access within the access token's own hour.
-      if (await isSuspended(row.account_id)) {
-        req.log.warn({ why: 'account-suspended' }, 'refresh refused');
-        return reply.code(400).send({ error: 'invalid_grant', error_description: 'account-suspended' });
-      }
-      // Rotate: revoke the old refresh token, issue a fresh pair.
+      // every token it can see; this is the floor under it, for a token minted
+      // in the same second or a row the update missed. Refusing here rather
+      // than rotating means a suspension ends an agent's access within the
+      // access token's own hour.
+      if (await isSuspended(row.account_id)) return refuse('account-suspended');
+      // Rotate: revoke the old refresh token, issue a fresh pair in the same
+      // family, ageing from the same press.
       await getPool().query('UPDATE oauth_tokens SET revoked = true WHERE token_hash = $1', [hash]);
       const tokens = await issueTokens(
         row.account_id,
         row.client_id,
         row.scope,
         row.manual_version ?? null,
+        {
+          id: row.family_id ?? randomUUID(),
+          startedAt: row.family_started_at ?? new Date(),
+        },
       );
       await getPool().query(
         `UPDATE oauth_tokens SET rotated_from = $1 WHERE token_hash = $2`,
