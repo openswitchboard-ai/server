@@ -47,6 +47,7 @@
  */
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrock } from '../../aws.js';
+import { promptSafe } from '../promptText.js';
 import { passed, type Check, type CheckResult } from '../types.js';
 import type { Config } from '../../config.js';
 
@@ -65,6 +66,19 @@ export type SafetyFlags = Record<SafetyFlagName, boolean> & { note: string };
 
 /** The one reason code this check ever gives. A hold, never a refusal. */
 export const SAFETY_REVIEW_REASON = 'safety-review';
+
+/**
+ * Not a flag the model raises — a flag the switchboard raises ABOUT the model:
+ * it answered, and the answer was not a verdict. It rides in the same `detail`
+ * field and lands in the same review row, so a person looking at the queue sees
+ * why the row is there without any word of the message travelling with it.
+ */
+export const UNREADABLE_DETAIL = 'unreadable_verdict';
+
+/** Everything a review row's `flags` column may ever contain. */
+export const REVIEW_FLAG_NAMES = [...SAFETY_FLAGS, UNREADABLE_DETAIL] as const;
+
+export type ReviewFlagName = (typeof REVIEW_FLAG_NAMES)[number];
 
 /** How much of a message is screened. The rest costs money to read twice. */
 export const SCREEN_CHARS = 2000;
@@ -91,6 +105,23 @@ function safetyLog(level: 'log' | 'warn', event: string, fields: Record<string, 
   console[level](JSON.stringify({ event, ...fields }));
 }
 
+/**
+ * A verdict the model would not, or could not, give in the shape asked for.
+ *
+ * It is its own error class because the two failures behind this check have
+ * opposite answers and must not be told apart by reading an error message. A
+ * call that never came back is an outage and passes (see the header). A call
+ * that came back carrying something that is not a verdict is a model that was
+ * talked out of its job — which is exactly what a successful injection looks
+ * like — and that HOLDS, with a row for a person to read.
+ */
+export class UnreadableVerdict extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnreadableVerdict';
+  }
+}
+
 export async function screenMessageWithBedrock(
   cfg: Config,
   text: string,
@@ -100,10 +131,16 @@ export async function screenMessageWithBedrock(
     max_tokens: 300,
     system: SYSTEM_PROMPT,
     messages: [
+      // The message, alone in its own turn, with every angle bracket and every
+      // invisible character already taken out of it (src/intake/promptText.ts),
+      // so the closing tag below is the only one in the turn.
       {
         role: 'user',
-        content: `<untrusted_message>\n${text.slice(0, SCREEN_CHARS)}\n</untrusted_message>`,
+        content: `<untrusted_message>\n${promptSafe(text, SCREEN_CHARS)}\n</untrusted_message>`,
       },
+      // The verdict's opening brace, written for the model, so the first thing
+      // it can say is the answer.
+      { role: 'assistant', content: '{' },
     ],
   };
   const r = await bedrock.send(
@@ -116,13 +153,36 @@ export async function screenMessageWithBedrock(
   );
   const parsed = JSON.parse(new TextDecoder().decode(r.body));
   const said: string = parsed.content?.map((c: any) => c.text ?? '').join('') ?? '';
-  const jsonMatch = said.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('message safety model returned no JSON verdict');
-  const flags = JSON.parse(jsonMatch[0]);
-  // Strict, exactly as the posting screen is: a verdict missing a flag is a
-  // verdict that was never made, and it throws rather than being read as false.
+  return parseSafetyVerdict(said);
+}
+
+/**
+ * Strict: exactly the five booleans, plus `note` and nothing else. Anything
+ * short of that throws an UnreadableVerdict, which holds.
+ */
+export function parseSafetyVerdict(said: string): SafetyFlags {
+  const whole = said.trimStart().startsWith('{') ? said : `{${said}`;
+  const jsonMatch = whole.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new UnreadableVerdict('message safety model returned no JSON verdict');
+  let flags: any;
+  try {
+    flags = JSON.parse(jsonMatch[0]);
+  } catch {
+    throw new UnreadableVerdict('message safety verdict was not JSON');
+  }
+  if (!flags || typeof flags !== 'object' || Array.isArray(flags)) {
+    throw new UnreadableVerdict('message safety verdict was not an object');
+  }
   for (const k of SAFETY_FLAGS) {
-    if (typeof flags[k] !== 'boolean') throw new Error(`safety verdict missing boolean '${k}'`);
+    if (typeof flags[k] !== 'boolean') {
+      throw new UnreadableVerdict(`safety verdict missing boolean '${k}'`);
+    }
+  }
+  const allowed = new Set<string>([...SAFETY_FLAGS, 'note']);
+  for (const k of Object.keys(flags)) {
+    if (!allowed.has(k)) {
+      throw new UnreadableVerdict(`safety verdict carried an unexpected key '${k}'`);
+    }
   }
   return flags as SafetyFlags;
 }
@@ -143,9 +203,9 @@ export function detailFromFlags(fired: readonly SafetyFlagName[]): string {
 }
 
 /** And back, filtered against the known names so nothing else can arrive. */
-export function flagsFromDetail(detail: string | undefined): SafetyFlagName[] {
+export function flagsFromDetail(detail: string | undefined): ReviewFlagName[] {
   const parts = (detail ?? '').split(',').map((p) => p.trim());
-  return SAFETY_FLAGS.filter((f) => parts.includes(f));
+  return REVIEW_FLAG_NAMES.filter((f) => parts.includes(f));
 }
 
 export const messageSafety: Check = {
@@ -167,6 +227,21 @@ export const messageSafety: Check = {
     try {
       flags = await screenMessageWithBedrock(cfg, item.text);
     } catch (e: any) {
+      if (e instanceof UnreadableVerdict) {
+        // THE MODEL ANSWERED, AND THE ANSWER WAS NOT A VERDICT. That is not an
+        // outage — it is the one failure that looks like a successful
+        // injection, and it must not be spent as a pass. It holds, so the
+        // message still goes out (a hold at this door never stalls anything)
+        // and a `safety_reviews` row puts it in front of a person.
+        safetyLog('warn', 'message-safety-unreadable', { door: item.door });
+        return {
+          name: 'messageSafety',
+          outcome: 'hold',
+          reason_code: SAFETY_REVIEW_REASON,
+          detail: UNREADABLE_DETAIL,
+          model_id: cfg.bedrockModelId,
+        };
+      }
       // A PASS, on purpose, and loudly. See the header: a model that is down
       // must not stop ordinary conversations, and the words are in the ledger.
       safetyLog('warn', 'message-safety-unavailable', {
