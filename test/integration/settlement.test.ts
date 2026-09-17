@@ -854,8 +854,9 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
   it('G9: the default rule releases to the side that can show where it went', async () => {
     const { sid, piId } = await frozenSettlement('not_arrived');
 
-    // The seller adds tracking. That answers the ground — the argument is now
-    // about the item rather than the post — and leaves the fourteen days
+    // The seller adds tracking. The ground stays what the buyer said (it is
+    // never rewritten), but a tracking record beside a never-arrived dispute
+    // turns the automatic refund into a deadlock, and leaves the fourteen days
     // exactly where they were.
     const tracked = await counterFetch(
       seller.jar,
@@ -865,14 +866,14 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     expect(tracked.status, await tracked.clone().text()).toBe(200);
     const afterTracking = await disputeOf(sid);
     expect(afterTracking.deliveryTracking).toBe('INTEG-DELIVERY-4410092');
-    expect(afterTracking.ground).toBe('not_as_described');
+    expect(afterTracking.ground).toBe('not_arrived');
     // The reference the whole rule turns on is frozen where it cannot be
     // altered, and the row points at that record: the column is the fast read,
     // the object in the WORM bucket is the record of truth.
     expect(afterTracking.deliveryTrackingKey).toContain(`/${sid}/tracking-delivery-`);
 
-    // Past the seller's grace, the never-arrived rule no longer applies: the
-    // ground moved, so nothing refunds.
+    // Past the seller's grace, the never-arrived rule no longer applies: a
+    // tracking record exists, so nothing refunds.
     await windDisputeBack(sid, 8);
     await sendOp({ op: 'settlement-auto-release' });
     await new Promise((r) => setTimeout(r, 20_000));
