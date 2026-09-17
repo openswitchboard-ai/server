@@ -196,3 +196,17 @@ describe('the pages those doors are pressed from carry the box', () => {
     expect(html).toContain(PIN_BOX);
   });
 });
+
+// ---------------------------------------------------------------------------
+// And the one thing an assistant may never hold. There is nothing to enforce
+// here — a PIN handed over is a PIN we cannot tell apart from the human's own —
+// so the rule lives entirely in copy, and copy that has to be there is copy a
+// test holds down.
+describe('the PIN belongs to the human', () => {
+  it('the page where one is chosen says so, on the way in and on a change', () => {
+    const line = 'Do not give it to your assistant; the PIN is how we know it is you.';
+    expect(cpages.pinSetPage()).toContain(line);
+    expect(cpages.pinSetPage(undefined, { hasPin: true })).toContain(line);
+    expect(cpages.pinSetPage()).toContain('Keep this PIN to yourself.');
+  });
+});
