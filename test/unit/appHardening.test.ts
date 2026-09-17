@@ -5,7 +5,7 @@
  * is allowed to say about a URL that carries a credential.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
-import { buildApp } from '../../src/app.js';
+import { buildApp, loggedUrl } from '../../src/app.js';
 import type { Config } from '../../src/config.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -155,5 +155,68 @@ describe('security headers', () => {
     const r = await app.inject({ method: 'GET', url: '/login', headers: { host: 'my.test' } });
     expect(r.body).not.toContain('fonts.googleapis.com');
     expect(r.body).not.toContain('fonts.gstatic.com');
+  });
+});
+
+describe('what the request log is allowed to say a request was for', () => {
+  it('an approval link is logged as its pattern, never as its token', () => {
+    const line = loggedUrl({ url: '/a/s3cr3t-token-here', routeOptions: { url: '/a/:token' } });
+    expect(line).toBe('/a/:token');
+    expect(line).not.toContain('s3cr3t');
+  });
+
+  it('the photo endpoint under an approval link too', () => {
+    expect(
+      loggedUrl({ url: '/a/s3cr3t/photo', routeOptions: { url: '/a/:token/photo' } }),
+    ).toBe('/a/:token/photo');
+  });
+
+  it('an OAuth path is logged as its pattern', () => {
+    expect(
+      loggedUrl({
+        url: '/oauth/authorize?client_id=x&state=y',
+        routeOptions: { url: '/oauth/authorize' },
+      }),
+    ).toBe('/oauth/authorize');
+  });
+
+  it('the query string goes everywhere else as well', () => {
+    expect(loggedUrl({ url: '/verify?token=s3cr3t', routeOptions: { url: '/verify' } })).toBe(
+      '/verify',
+    );
+    expect(loggedUrl({ url: '/renew?t=s3cr3t', routeOptions: { url: '/renew' } })).toBe('/renew');
+    expect(
+      loggedUrl({ url: '/email/unsub?token=s3cr3t', routeOptions: { url: '/email/unsub' } }),
+    ).toBe('/email/unsub');
+  });
+
+  it('an ordinary path keeps its identifiers, which are not credentials', () => {
+    expect(
+      loggedUrl({ url: '/settlements/abc-123?x=1', routeOptions: { url: '/settlements/:id' } }),
+    ).toBe('/settlements/abc-123');
+  });
+
+  it('a request that matched no route still loses its query string', () => {
+    expect(loggedUrl({ url: '/nope?token=s3cr3t' })).toBe('/nope');
+  });
+
+  it('on a live request the pattern is already known, so the log gets it', async () => {
+    // pino serializes the request in the same phase the onRequest hooks run,
+    // so what a hook can see here is what the serializer can see there.
+    const seen: string[] = [];
+    const probe = buildApp(cfg);
+    probe.addHook('onRequest', async (req) => {
+      seen.push(loggedUrl(req as any));
+    });
+    await probe.ready();
+    await probe.inject({
+      method: 'GET',
+      url: '/a/lookatthissecret?token=alsosecret',
+      headers: { host: 'my.test' },
+    });
+    await probe.close();
+    expect(seen).toContain('/a/:token');
+    expect(seen.join(' ')).not.toContain('lookatthissecret');
+    expect(seen.join(' ')).not.toContain('alsosecret');
   });
 });

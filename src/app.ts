@@ -14,9 +14,47 @@ function pathOf(url: string): string {
   return q === -1 ? url : url.slice(0, q);
 }
 
+/**
+ * Route patterns whose own PATH carries a credential, so the path a person
+ * actually asked for must never reach the log — only the pattern. Everything
+ * else is logged with its query string removed, which is where the rest of
+ * the credentials live: /verify, /renew and /email/unsub take their token as
+ * a query parameter, and so does an OAuth code coming back to /oauth.
+ */
+const CREDENTIAL_IN_PATH = [/:token/, /^\/oauth\//];
+
+/**
+ * What the request log is allowed to say a request was for.
+ *
+ * Fastify's own serializer logs req.url whole. That url is frequently a
+ * one-use credential — /a/<approval token>, /verify?token=..., an OAuth code
+ * on its way back — and a request log is copied, shipped and kept. The route
+ * pattern says everything an operator needs and names nobody.
+ */
+export function loggedUrl(req: {
+  url?: string;
+  routeOptions?: { url?: string };
+}): string {
+  const pattern = req.routeOptions?.url;
+  if (pattern && CREDENTIAL_IN_PATH.some((re) => re.test(pattern))) return pattern;
+  return pathOf(req.url ?? '');
+}
+
 export function buildApp(cfg: Config): FastifyInstance {
   const app = Fastify({
-    logger: true,
+    logger: {
+      serializers: {
+        req(req: any) {
+          return {
+            method: req.method,
+            url: loggedUrl(req),
+            host: req.host,
+            remoteAddress: req.ip,
+            remotePort: req.socket ? req.socket.remotePort : undefined,
+          };
+        },
+      },
+    },
     // One hop, and one only: the ALB in front of us. `true` would trust the
     // whole X-Forwarded-For chain, so anyone could prepend an address of their
     // choosing and become that address as far as the rate limiters and the
