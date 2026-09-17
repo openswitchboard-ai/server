@@ -521,6 +521,7 @@ export function categoryCloseness(a: string, b: string): number {
 // ---------------------------------------------------------------------------
 export { decodeGeohash, encodeGeohash, haversineKm, isGeohash } from '../geo/geohash.js';
 import { decodeGeohash, haversineKm, isGeohash } from '../geo/geohash.js';
+import { promptSafe } from '../intake/promptText.js';
 
 /** Radius assumed for a card that carries a centre point but no radius. */
 export const DEFAULT_GEO_RADIUS_KM = 25;
@@ -953,8 +954,20 @@ export function categoryPhrase(labelOrId?: string, kind?: string | null): string
  * phrase of its own still has a written label, and the mechanical rule reads
  * better on a heading than on anybody's free text.
  */
+/** The schema's own ceiling on `kind` (common.json, $defs/kind). A sentence
+ *  the switchboard signs never carries more of somebody else's words than the
+ *  field was ever allowed to hold. */
+export const KIND_MAX_CHARS = 60;
+
 function ownWords(labelOrId?: string, kind?: string | null): string | undefined {
-  const own = typeof kind === 'string' ? kind.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+  // THE ONE PLACE THE OTHER SIDE'S OWN WORDS BECOME PART OF A SENTENCE THE
+  // SWITCHBOARD SIGNS. `kind` passed the model screen to be posted at all, so
+  // it is not an unread string; but it is still a stranger's free text going
+  // into a note labelled `switchboard-system`, and the same helper that fences
+  // it out of a prompt fences it here (src/intake/promptText.ts): no angle
+  // brackets, no invisible characters, and the schema's own ceiling on the
+  // field, so a sentence cannot be stretched by a `kind` nobody capped.
+  const own = promptSafe(kind, KIND_MAX_CHARS).trim().toLowerCase().replace(/\s+/g, ' ');
   if (!own) return undefined;
   const key = String(labelOrId ?? '').trim();
   if (key && (taxonomy().nodes ?? {})[key]) return undefined;

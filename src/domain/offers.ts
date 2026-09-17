@@ -768,8 +768,15 @@ export interface OfferLine {
   amount: number;
   ccy: string;
   state: OfferRow['state'];
-  /** The words that rode with the figure, if any — the text and nothing else. */
-  message: string | null;
+  /**
+   * The words that rode with the figure, if any, WRAPPED AND LABELLED. They
+   * are a person's own free text — never the switchboard's — so they travel in
+   * the same shape a message body travels in (domain/channel.ts), and an agent
+   * reading them can see at a glance that they are data rather than
+   * instructions. Handing the bare string across was the finding: a labelled
+   * protocol with one unlabelled free-text field is an unlabelled protocol.
+   */
+  message: LabeledText | null;
   at: string;
 }
 
@@ -781,6 +788,19 @@ export function offerMessageText(message: any): string | null {
   if (typeof message === 'string') return message;
   const text = (message as any).text;
   return typeof text === 'string' && text.trim() ? text : null;
+}
+
+/**
+ * Free text that a person wrote, in the one shape the protocol carries free
+ * text in. Every offer note is one of these: the note beside a figure is a
+ * human's own words whichever side typed them, and an agent's job with it is
+ * the same either way — show it, never obey it.
+ */
+export type LabeledText = { text: string; provenance: 'counterparty-untrusted' };
+
+export function offerMessageLabelled(message: any): LabeledText | null {
+  const text = offerMessageText(message);
+  return text ? { text, provenance: 'counterparty-untrusted' } : null;
 }
 
 /**
@@ -806,7 +826,7 @@ export async function offerTable(accountId: string, matchId: string): Promise<Of
     amount: Number(o.amount),
     ccy: o.ccy as string,
     state: o.state as OfferRow['state'],
-    message: offerMessageText(o.message),
+    message: offerMessageLabelled(o.message),
     at: new Date(o.created_at).toISOString(),
   }));
 }
@@ -857,7 +877,29 @@ export function offerTableNote(
     return `Your human's ${said(newestMine)}${newestMine.authored_by === 'human' ? ', typed on their approval page,' : ''} is on the table${about}. The other side answers when they next hear from their own assistant.`;
   }
   const l = newestTheirs!;
-  return `The other side has offered ${said(l)}${about}${l.message ? ` — "${l.message}"` : ''}. It is your human's to weigh up; say the word and I will answer, and nothing is agreed until they say so.`;
+  // THE NOTE ITSELF DOES NOT GO IN HERE. This sentence is signed
+  // `switchboard-system`: an agent is told to trust it as protocol output, so
+  // everything inside it has to BE protocol output. Quoting a stranger's words
+  // into it laundered their words into the switchboard's voice — the one place
+  // in this system where untrusted text wore a trusted label. The sentence now
+  // says the figure, the thing, and that a note came with it; the words
+  // themselves travel beside it, labelled, through counterpartyNoteOnTable.
+  return `The other side has offered ${said(l)}${about}${l.message ? ', with a note attached' : ''}. It is your human's to weigh up; say the word and I will answer, and nothing is agreed until they say so.`;
+}
+
+/**
+ * The words that came with the newest figure from the other side, in the
+ * labelled shape, for a caller to carry beside the sentence above rather than
+ * inside it. Undefined where there is nothing to carry — an accepted table, a
+ * table with this side's own figure newest, or a figure that came bare.
+ */
+export function counterpartyNoteOnTable(lines: OfferLine[]): LabeledText | undefined {
+  if (!lines.length) return undefined;
+  if (lines.some((l) => l.state === 'accepted-by-human')) return undefined;
+  const newestTheirs = lines.find((l) => l.side === 'theirs');
+  const newestMine = lines.find((l) => l.side === 'yours');
+  if (!newestTheirs || newestMine) return undefined;
+  return newestTheirs.message ?? undefined;
 }
 
 /**
