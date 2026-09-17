@@ -330,7 +330,7 @@ async function frozenSettlement(
   await approveOnCounter(seller, sid);
   const piId = await fundAndWait(sid);
   await declareHandover(sid);
-  const froze = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({ ground }));
+  const froze = await counterFetch(buyer.jar, `/settlements/${sid}/dispute`, form({ ground, pin: buyer.pin }));
   expect(froze.status, await froze.clone().text()).toBe(200);
   expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
   // Freezing sends nothing anywhere. This is the whole change of behaviour, so
@@ -522,7 +522,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const dispute = await counterFetch(
       buyer.jar,
       `/settlements/${sid}/dispute`,
-      form({ ground: 'not_as_described' }),
+      form({ ground: 'not_as_described', pin: buyer.pin }),
     );
     expect(dispute.status, await dispute.clone().text()).toBe(200);
     expect(await settleState(buyer.accessToken, sid)).toBe('disputed');
@@ -677,7 +677,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const wrong = await counterFetch(
       seller.jar,
       `/settlements/${sid}/resolution`,
-      form({ refund_to_buyer: '21.40', release_to_seller: '80.00' }),
+      form({ refund_to_buyer: '21.40', release_to_seller: '80.00', pin: seller.pin }),
     );
     expect(wrong.status).toBe(400);
     expect(await settleState(seller.accessToken, sid)).toBe('disputed');
@@ -690,6 +690,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
       form({
         refund_to_buyer: (REFUND_PART / 100).toFixed(2),
         release_to_seller: (RELEASE_PART / 100).toFixed(2),
+        pin: seller.pin,
       }),
     );
     expect(proposed.status, await proposed.clone().text()).toBe(200);
@@ -768,7 +769,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const returned = await counterFetch(
       buyer.jar,
       `/settlements/${sid}/returned`,
-      form({ tracking: 'INTEG-RETURN-7XY4410092' }),
+      form({ tracking: 'INTEG-RETURN-7XY4410092', pin: buyer.pin }),
     );
     expect(returned.status, await returned.clone().text()).toBe(200);
     const afterReturn = await disputeOf(sid);
@@ -859,7 +860,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     const tracked = await counterFetch(
       seller.jar,
       `/settlements/${sid}/tracking`,
-      form({ tracking: 'INTEG-DELIVERY-4410092' }),
+      form({ tracking: 'INTEG-DELIVERY-4410092', pin: seller.pin }),
     );
     expect(tracked.status, await tracked.clone().text()).toBe(200);
     const afterTracking = await disputeOf(sid);
