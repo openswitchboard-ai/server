@@ -559,14 +559,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         }
         account = { id: (await ops.createPendingAccount(result.email!)).id };
       }
+      // A fresh session row and a fresh cookie, and the one they arrived with
+      // deleted: see rotateSession for why signing in never reuses a row.
       const existing = await sess.loadSession(req);
-      let s: Session;
-      if (existing) {
-        await sess.attachAccount(existing.id, account.id);
-        s = { ...existing, accountId: account.id } as Session;
-      } else {
-        s = (await sess.createSession(reply, account.id)) as Session;
-      }
+      let s: Session = (await sess.rotateSession(reply, existing, account.id)) as Session;
       // An account with NO PIN holds a passkey, and a person can be standing
       // at a device that has never seen it. The emailed code is that account's
       // whole recovery already, so here it is also the sensitive-action
@@ -952,14 +948,17 @@ in on this device and lets you approve what is waiting.</p>
       if (!challenge) return reply.code(400).send({ error: 'no_pending_challenge' });
       const accountId = await wa.verifyAuthentication(cfg, challenge, req.body);
       const b: any = req.body ?? {};
+      let live = s;
       if (b.elevate_only) {
         if (s.accountId !== accountId) return reply.code(403).send({ error: 'wrong_account' });
       } else {
-        await sess.attachAccount(s.id, accountId);
+        // Signing in takes a new row and a new cookie, never the one the
+        // browser arrived holding.
+        live = await sess.rotateSession(reply, s, accountId);
       }
       // A successful passkey ceremony is a sensitive-action ceremony.
-      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
-      const next = await nextStep(accountId, { ...s, accountId } as Session);
+      await sess.elevateSession(live.id, PIN_ELEVATION_MINUTES);
+      const next = await nextStep(accountId, { ...live, accountId } as Session);
       return reply.send({ ok: true, next });
     });
 

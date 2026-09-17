@@ -18,6 +18,7 @@
  */
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { COUNTER_COOKIE } from '../../src/counter/session.js';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   BASE_URL,
@@ -433,14 +434,14 @@ test('route isolation live: bearer x every human-page route; cookie x /mcp', asy
 
   // A REAL counter session cookie (from the signed-in page) against /mcp.
   const cookies = await page.context().cookies(COUNTER_URL);
-  const session = cookies.find((c) => c.name === 'osb_counter');
+  const session = cookies.find((c) => c.name === COUNTER_COOKIE);
   expect(session).toBeTruthy();
   const mcpRes = await fetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
-      cookie: `osb_counter=${session!.value}`,
+      cookie: `${COUNTER_COOKIE}=${session!.value}`,
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
   });
@@ -455,9 +456,9 @@ test('route isolation live: bearer x every human-page route; cookie x /mcp', asy
 
 test('6 wrong PINs lock the PIN with backoff', async () => {
   const cookies = await page.context().cookies(COUNTER_URL);
-  const session = cookies.find((c) => c.name === 'osb_counter')!;
+  const session = cookies.find((c) => c.name === COUNTER_COOKIE)!;
   const jar = new Jar();
-  jar.cookies.set('osb_counter', session.value);
+  jar.cookies.set(COUNTER_COOKIE, session.value);
   // Elevation from the earlier approval may still be active; expire it so the
   // ceremony actually checks the PIN.
   await dbExec('UPDATE counter_sessions SET pin_ok_until = NULL WHERE account_id = :a::uuid', [
