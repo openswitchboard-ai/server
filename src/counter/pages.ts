@@ -821,7 +821,8 @@ ${DONE_BLOCK}`);
 //
 // The assistant does the talking. Where a formality is needed it hands its
 // human a single-use link, and the link opens this: one sentence, two buttons,
-// and the PIN ceremony where identity or money moves. Nothing else is on the
+// and the credential ceremony on every press that is the human's own to make —
+// identity, money, or ending a conversation for good. Nothing else is on the
 // page — no navigation, no second decision, no detail to weigh up, because the
 // weighing already happened in the conversation the person was having.
 //
@@ -839,7 +840,8 @@ export interface OneQuestionView {
   detail?: string[];
   yesLabel: string;
   noLabel: string;
-  /** True where identity or money moves: the ceremony rides along. */
+  /** True where the press is the human's own to make — identity, money, or
+   *  ending a conversation for good: the ceremony rides along. */
   needsPin: boolean;
   /** This account has a PIN. False on a passkey-only account, where the press
    *  itself runs the passkey ceremony and no box is printed. */
@@ -857,8 +859,8 @@ export interface OneQuestionView {
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
-  // The ceremony rides along only where identity or money moves; a question
-  // that moves neither is two buttons and nothing else.
+  // The ceremony rides along on every press the human alone may make; a
+  // question that asks for no credential is two buttons and nothing else.
   const c: CeremonyView = v.needsPin
     ? { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated }
     : { hasPin: false, hasPasskey: false, elevated: true };

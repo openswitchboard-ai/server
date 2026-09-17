@@ -73,7 +73,9 @@ before they do it.
 
 A human can report the person on the other side of any introduction, from
 their own page or by telling their assistant "report this person". The page
-carries a box for a line in their own words and one press. That press:
+carries a box for a line in their own words and one press, and that press
+takes their own passkey or PIN, so an assistant driving a browser cannot make
+it for them. That press:
 
 1. closes the introduction there and then, both ways;
 2. means the two of them are never put together again;

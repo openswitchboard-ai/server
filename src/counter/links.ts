@@ -60,9 +60,13 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   'collection-close',
   'negotiation-auto',
   // Reporting joined them on 2026-09-17. It is the same page with one box on
-  // it — a short line of the person's own words — and it takes no PIN: making
-  // somebody find a credential before they can report a stranger is a way of
-  // getting fewer reports rather than fewer bad ones.
+  // it — a short line of the person's own words — and it takes the same
+  // credential every other press on this page takes. Built credential-free on
+  // 17 September; the same day Lachlan decided a report is a formal press like
+  // the others, because a browser-driving assistant could otherwise complete it
+  // alone. A passkey is the one thing an assistant cannot press for its human,
+  // and closing somebody's conversation and muting the pairing for good is
+  // exactly the kind of press that has to be the human's own.
   'report',
 ];
 
