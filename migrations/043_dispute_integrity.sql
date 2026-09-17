@@ -123,3 +123,30 @@ ALTER TABLE suspended_emails
   ADD COLUMN IF NOT EXISTS email_hash_v2 text;
 CREATE INDEX IF NOT EXISTS suspended_emails_hash_v2
   ON suspended_emails (email_hash_v2) WHERE email_hash_v2 IS NOT NULL;
+
+-- --------------------------------------------------------------------------
+-- 5. The sweep's retries, and a chargeback.
+--
+-- The settlement sweep retried a failed transfer on every pass, hourly, for
+-- ever. A seller whose Stripe account cannot take the money — closed,
+-- restricted, in a country the platform cannot pay — is not a transient
+-- failure, and hammering it hourly until the heat death of the universe is not
+-- a retry policy: it hides the settlements that are genuinely stuck in a log
+-- line that looks the same on pass one and pass four hundred.
+--
+-- Exponential backoff, doubling from an hour and capped at a day, and after
+-- ten attempts the sweep stops and says so with a count an operator can see.
+-- Nothing is decided by giving up: the money is still held and the settlement
+-- is still 'confirmed'. What changes is that somebody is told.
+ALTER TABLE settlements
+  ADD COLUMN IF NOT EXISTS transfer_attempts        int NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS next_transfer_attempt_at timestamptz;
+
+-- The buyer went to their card issuer instead. Recorded, and nothing else: the
+-- switchboard moves no money on a chargeback. Whether a dispute at the issuer
+-- succeeds is between the buyer, their bank and us, and it happens on a clock
+-- nobody here controls; what this column buys is that a settlement which has
+-- had a chargeback raised against it says so on the row, in the operator's
+-- view, and in the warn line the webhook writes.
+ALTER TABLE settlements
+  ADD COLUMN IF NOT EXISTS chargeback_at timestamptz;

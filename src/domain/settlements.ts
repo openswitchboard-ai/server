@@ -319,6 +319,86 @@ export interface SettlementRow {
   /** Each leg of a split, stamped when the verified event reports it. */
   refund_leg_at: Date | null;
   release_leg_at: Date | null;
+  /** How many times the sweep has tried to send the seller's money, and when
+   *  it may try again. The backoff doubles from an hour, caps at a day, and
+   *  stops at TRANSFER_ATTEMPT_CEILING. */
+  transfer_attempts: number;
+  next_transfer_attempt_at: Date | null;
+  /** The buyer went to their card issuer. Recorded; no money moves on it. */
+  chargeback_at: Date | null;
+}
+
+/**
+ * THE SWEEP'S TRANSFER RETRIES (2026-09-17 audit).
+ *
+ * The sweep retried a failed transfer on every pass, hourly, for ever. A seller
+ * whose Stripe account cannot take the money — closed, restricted, in a country
+ * the platform cannot pay — is not a transient failure, and an hourly retry
+ * until the heat death of the universe is not a retry policy: it buries the
+ * settlements that are genuinely stuck under a log line that looks the same on
+ * pass one and on pass four hundred.
+ *
+ * So: the delay doubles from an hour and caps at a day, and after ten attempts
+ * the sweep stops trying and counts it. Nothing is decided by giving up — the
+ * money is still held, the settlement is still 'confirmed' — but somebody is
+ * told, which is the whole difference.
+ */
+export const TRANSFER_ATTEMPT_CEILING = 10;
+export const TRANSFER_BACKOFF_CAP_HOURS = 24;
+
+/** Hours to wait after the nth attempt: 1, 2, 4, 8, 16, then 24 for ever. */
+export function transferBackoffHours(attempts: number): number {
+  return Math.min(TRANSFER_BACKOFF_CAP_HOURS, 2 ** Math.max(0, attempts - 1));
+}
+
+/**
+ * The sweep tried and it did not go through. Records the attempt and when the
+ * next one may be, and says whether this settlement has run out of attempts.
+ */
+export async function noteTransferAttempt(
+  settlementId: string,
+): Promise<{ attempts: number; stuck: boolean }> {
+  const r = await getPool().query(
+    `UPDATE settlements
+        SET transfer_attempts = transfer_attempts + 1,
+            next_transfer_attempt_at =
+              now() + make_interval(hours => LEAST($2::int, POWER(2, GREATEST(0, transfer_attempts))::int)),
+            updated_at = now()
+      WHERE id = $1
+      RETURNING transfer_attempts`,
+    [settlementId, TRANSFER_BACKOFF_CAP_HOURS],
+  );
+  const attempts = Number(r.rows[0]?.transfer_attempts ?? 0);
+  return { attempts, stuck: attempts >= TRANSFER_ATTEMPT_CEILING };
+}
+
+/** A transfer that went through clears the clock behind it. */
+export async function clearTransferAttempts(settlementId: string): Promise<void> {
+  await getPool().query(
+    `UPDATE settlements SET next_transfer_attempt_at = NULL, updated_at = now()
+      WHERE id = $1 AND next_transfer_attempt_at IS NOT NULL`,
+    [settlementId],
+  );
+}
+
+/**
+ * The buyer went to their card issuer: charge.dispute.created. Recorded and
+ * nothing else — the switchboard moves no money on a chargeback, because
+ * whether the issuer's dispute succeeds is decided elsewhere, on a clock
+ * nobody here controls. No state moves, so this needs no transition context
+ * beyond the verified webhook one the caller already holds.
+ */
+export async function markChargeback(
+  ctx: WebhookCtx,
+  settlementId: string,
+): Promise<SettlementRow | undefined> {
+  assertTransitionContext(ctx);
+  const r = await getPool().query(
+    `UPDATE settlements SET chargeback_at = COALESCE(chargeback_at, now()), updated_at = now()
+      WHERE id = $1 RETURNING *`,
+    [settlementId],
+  );
+  return r.rows[0];
 }
 
 export async function getSettlement(id: string): Promise<SettlementRow | undefined> {
@@ -1471,9 +1551,11 @@ export async function autoReleasesAwaitingTransfer(limit = 50): Promise<Settleme
   const r = await getPool().query(
     `SELECT * FROM settlements
      WHERE state = 'confirmed' AND auto_released = true AND stripe_transfer_id IS NULL
+       AND transfer_attempts < $2
+       AND (next_transfer_attempt_at IS NULL OR next_transfer_attempt_at <= now())
      ORDER BY confirmed_at
      LIMIT $1`,
-    [limit],
+    [limit, TRANSFER_ATTEMPT_CEILING],
   );
   return r.rows;
 }

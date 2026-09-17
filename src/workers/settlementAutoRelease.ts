@@ -57,8 +57,11 @@
  * picked up again on the next pass.
  */
 import {
+  TRANSFER_ATTEMPT_CEILING,
   autoReleaseSettlement,
   autoReleasesAwaitingTransfer,
+  clearTransferAttempts,
+  noteTransferAttempt,
   deadlockOutcome,
   deadlockReleaseSettlement,
   recordRuleRefund,
@@ -87,8 +90,12 @@ export interface AutoReleaseSweepResult {
   /** Settlements another sweep, a confirmation or a dispute got to first. */
   skipped: number;
   /** Settlements confirmed by the clock whose transfer did not go through,
-   *  on this pass or an earlier one. Retried on every pass. */
+   *  on this pass or an earlier one. Retried on a doubling backoff. */
   failed: number;
+  /** Settlements that have run out of transfer attempts. The money is still
+   *  held and nothing has been decided; what has changed is that the sweep has
+   *  stopped trying and an operator can see the count. */
+  transferStuck: number;
   /** Earlier auto-releases whose transfer went through on this pass. */
   recovered: number;
   /** Agreed splits whose money did not go out, and went out on this pass. */
@@ -111,6 +118,7 @@ export async function runAutoReleaseSweep(
     released: 0,
     skipped: 0,
     failed: 0,
+    transferStuck: 0,
     recovered: 0,
     splitsRecovered: 0,
     returnRefunded: 0,
@@ -163,15 +171,38 @@ export async function runAutoReleaseSweep(
   // own confirmation has a retry on their page and a release the clock made
   // has nobody to press it, so the sweep is that retry. It covers a deadlock
   // release too — both roads reach 'confirmed' with auto_released set.
+  //
+  // ON A DOUBLING BACKOFF, AND WITH AN END (2026-09-17 audit). This used to
+  // retry every settlement on every hourly pass for ever. A seller whose
+  // account cannot take the money is not a transient failure, and retrying it
+  // four hundred times buries the ones that are genuinely stuck under a line
+  // that reads the same on pass one and pass four hundred. The query already
+  // skips anything whose next attempt is not due and anything past the
+  // ceiling; what happens here is the recording of each attempt.
   for (const stuck of await autoReleasesAwaitingTransfer()) {
     try {
       await transferToSellerForSettlement(cfg, stuck, stuck.release_minor ?? undefined);
+      await clearTransferAttempts(stuck.id);
       result.recovered += 1;
       log('settlement release transfer recovered', { settlement_id: stuck.id });
     } catch (e: any) {
       result.failed += 1;
+      const { attempts, stuck: done } = await noteTransferAttempt(stuck.id);
+      if (done) {
+        result.transferStuck += 1;
+        // The loudest line this file writes, and the only one that says a
+        // settlement now needs a person. The money is still held.
+        log('transfer_stuck: the seller\'s money cannot be sent and the sweep has stopped trying', {
+          settlement_id: stuck.id,
+          attempts,
+          ceiling: TRANSFER_ATTEMPT_CEILING,
+          error: e?.message,
+        });
+        continue;
+      }
       log('settlement release transfer still failing; nothing moved', {
         settlement_id: stuck.id,
+        attempts,
         error: e?.message,
       });
     }
