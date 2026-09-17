@@ -775,6 +775,24 @@ document.getElementById('pk').addEventListener('click', async () => {
 </script>`);
 }
 
+/** The one place safety can be written to about an account that was stopped. */
+export const SAFETY_ADDRESS = 'safety@openswitchboard.ai';
+
+/**
+ * What a suspended person meets at every door on this surface.
+ *
+ * It says the one thing that is true and the one thing they can do. There is
+ * no Back button: there is nowhere on these pages for them to go, and a button
+ * offering one would just bring them back here.
+ */
+export function suspendedPage(): string {
+  return layout('Account suspended', `<h1>This account is suspended.</h1>
+<p class="lead">Nothing can be posted, sent or collected from it, and your wants
+and haves have come down.</p>
+<p>If you think this is wrong, write to <a href="mailto:${SAFETY_ADDRESS}">${SAFETY_ADDRESS}</a>
+and a person will read it.</p>`);
+}
+
 export function messagePage(title: string, html: string, backHref = '/', backLabel = 'Back to your approval page'): string {
   return layout(title, `<h1>${esc(title)}</h1>${html}
 <a class="btn secondary" href="${esc(backHref)}">${esc(backLabel)}</a>`);

@@ -30,6 +30,8 @@ import { getPool } from '../db.js';
 import { runIntake } from '../intake/pipe.js';
 import { preserveEntriesForMatch } from './ledger.js';
 import { getMatch, severMatch, sideOf } from '../domain/matches.js';
+import { SUSPENDED_REASON_CODE, SUSPENDED_WORDS } from '../intake/checks/suspended.js';
+import { OsbError } from '../protocol.js';
 import type { Config } from '../config.js';
 
 /** As long a line as the page takes, and as the column allows. */
@@ -83,17 +85,27 @@ export async function fileReport(
 
   // The words through the pipe. A pass writes them; anything else holds them,
   // and the ledger keeps the body either way because a hold keeps its body.
-  let words_kept = true;
-  if (reason) {
-    const verdict = await runIntake(cfg, {
-      door: 'report',
-      sender_account: input.reporterAccount,
-      recipient_account: reported,
-      match_id: input.matchId,
-      text: reason,
-    });
-    words_kept = verdict.outcome === 'pass';
+  //
+  // It runs with no words as readily as with them. The pipe's first check is
+  // the one that asks whether either account has been stopped, and that answer
+  // does not depend on anything in the box: a report filed with an empty box
+  // used to skip the pipe altogether and so skipped that check too.
+  const verdict = await runIntake(cfg, {
+    door: 'report',
+    sender_account: input.reporterAccount,
+    recipient_account: reported,
+    match_id: input.matchId,
+    text: reason ?? '',
+  });
+  // A refusal for suspension is the ONE refusal this door honours. Everything
+  // else a report can trip is a hold on the words, never on the report. Where
+  // it does refuse, nothing is written, nothing is severed, nothing is muted
+  // and nothing is preserved — and the answer is the same plain word the tools
+  // give, because the human page and the agent surface say one thing.
+  if (verdict.outcome === 'refuse' && verdict.reason_code === SUSPENDED_REASON_CODE) {
+    throw new OsbError('SUSPENDED', { human_action: verdict.plain_words ?? SUSPENDED_WORDS });
   }
+  const words_kept = !reason || verdict.outcome === 'pass';
 
   const pool = getPool();
   const inserted = await pool.query(

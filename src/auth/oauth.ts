@@ -9,6 +9,7 @@ import { clientRegistrationLimiter, rateLimitBypassed } from '../abuseLimit.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
 import { registrationClosedPage } from '../counter/pages.js';
+import { isSuspended } from '../safety/suspend.js';
 import type { Config } from '../config.js';
 
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -300,6 +301,15 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       if (!row) return reply.code(400).send({ error: 'invalid_grant' });
       if (b.client_id && b.client_id !== row.client_id) {
         return reply.code(400).send({ error: 'invalid_grant' });
+      }
+      // A stopped account gets no new keys. Suspending flips `suspended` on
+      // every token it can see, and the SELECT above honours that; this is the
+      // floor under it, for a token minted in the same second or a row the
+      // update missed. Refusing here rather than rotating means a suspension
+      // ends an agent's access within the access token's own hour.
+      if (await isSuspended(row.account_id)) {
+        req.log.warn({ why: 'account-suspended' }, 'refresh refused');
+        return reply.code(400).send({ error: 'invalid_grant', error_description: 'account-suspended' });
       }
       // Rotate: revoke the old refresh token, issue a fresh pair.
       await getPool().query('UPDATE oauth_tokens SET revoked = true WHERE token_hash = $1', [hash]);

@@ -170,6 +170,9 @@ interface World {
   /** Set by a PIN check, and read back as the session's elevation. A passkey
    *  press arrives with this already set, which is what the button does. */
   elevatedUntil: Date | null;
+  /** Every statement the fake pool was asked to run, for the tests about what
+   *  suspending an account reaches. */
+  sql: { sql: string; params: any[] }[];
 }
 let world: World;
 let linkSeq = 0;
@@ -199,6 +202,7 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
+      world.sql.push({ sql, params });
 
       // ---- the suspension flag, in front of every door ----
       if (/SELECT suspended_at FROM accounts/.test(sql)) {
@@ -348,6 +352,7 @@ beforeEach(async () => {
     warned: [],
     credential: 'pin',
     elevatedUntil: null,
+    sql: [],
   };
   linkSeq = 0;
   pinHash = pinHash ?? (await hashPin(PIN));
@@ -850,5 +855,111 @@ describe('onboarding on a stopped address', () => {
     // The same address, however it was typed.
     expect(await emailIsSuspended('someone@example.com  ')).toBe(true);
     expect(await emailIsSuspended('someone.else@example.com')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nothing in, nothing out — on the HUMAN surface too. The flag used to stand
+// at the agent doors alone: a stopped person's browser session went on
+// working, and so did the refresh token in their agent's pocket.
+// ---------------------------------------------------------------------------
+describe('a stopped account on the human surface', () => {
+  const SAFETY = 'safety@openswitchboard.ai';
+
+  it('meets a plain page at a signed-in door, and is told where to write', async () => {
+    world.stopped.add(ANA);
+    const r = await inject('GET', '/ledger');
+    expect(r.statusCode).toBe(403);
+    expect(r.body).toContain('This account is suspended.');
+    expect(r.body).toContain(SAFETY);
+  });
+
+  it('meets it on a link its assistant handed over, before any press', async () => {
+    const token = await mintedToken();
+    world.stopped.add(ANA);
+    const r = await inject('GET', `/a/${encodeURIComponent(token)}`);
+    expect(r.statusCode).toBe(403);
+    expect(r.body).toContain('This account is suspended.');
+    // Nothing is spent: the link is not burnt on a door that would not open.
+    expect(world.links[0].used_at).toBeNull();
+  });
+
+  it('meets it on the press as well, and the press does nothing', async () => {
+    const token = await mintedToken();
+    world.stopped.add(ANA);
+    const r = await inject('POST', `/a/${encodeURIComponent(token)}`, {
+      decision: 'yes',
+      pin: PIN,
+      reason: 'he asked for my address',
+    });
+    expect(r.statusCode).toBe(403);
+    expect(world.reports).toEqual([]);
+    expect(world.matchState).toBe('open');
+  });
+
+  it('lets everybody else through the same door', async () => {
+    const r = await inject('GET', '/ledger');
+    expect(r.statusCode).not.toBe(403);
+  });
+});
+
+describe('suspending pulls back the credentials already out in the world', () => {
+  it('deletes the browser sessions and suspends the agents refresh tokens', async () => {
+    const { suspendAccount } = await import('../../src/safety/suspend.js');
+    world.sql = [];
+    await suspendAccount(BEPPE, 'operator says so');
+    const ran = (re: RegExp) => world.sql.filter((q) => re.test(q.sql));
+    const sessions = ran(/DELETE FROM counter_sessions WHERE account_id/);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].params).toEqual([BEPPE]);
+    const tokens = ran(/UPDATE oauth_tokens SET suspended = true WHERE account_id/);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].params).toEqual([BEPPE]);
+    // Suspended rather than revoked, the way the kill switch does it, because
+    // lifting a suspension has to be able to hand them back.
+    expect(tokens[0].sql).not.toMatch(/revoked = true/);
+  });
+});
+
+describe('a report from a stopped account', () => {
+  it('is refused with the same plain word the tools give, and writes nothing', async () => {
+    const { fileReport } = await import('../../src/safety/reports.js');
+    world.stopped.add(ANA);
+    await expect(
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH, reason: 'anything' }),
+    ).rejects.toMatchObject({ payload: { code: 'SUSPENDED' } });
+    expect(world.reports).toEqual([]);
+    expect(world.mutes).toEqual([]);
+    expect(world.preserves).toEqual([]);
+    expect(world.matchState).toBe('open');
+  });
+
+  it('is refused with an empty box too: the check does not depend on the words', async () => {
+    const { fileReport } = await import('../../src/safety/reports.js');
+    world.stopped.add(ANA);
+    await expect(
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }),
+    ).rejects.toMatchObject({ payload: { code: 'SUSPENDED' } });
+    expect(world.reports).toEqual([]);
+  });
+
+  it('is refused when the account being reported is the stopped one', async () => {
+    const { fileReport } = await import('../../src/safety/reports.js');
+    world.stopped.add(BEPPE);
+    await expect(
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }),
+    ).rejects.toMatchObject({ payload: { code: 'SUSPENDED' } });
+    expect(world.reports).toEqual([]);
+  });
+
+  it('carries the sentence the agent surface says, word for word', async () => {
+    const { fileReport } = await import('../../src/safety/reports.js');
+    world.stopped.add(ANA);
+    try {
+      await fileReport(cfg, { reporterAccount: ANA, matchId: MATCH });
+      throw new Error('should have refused');
+    } catch (e: any) {
+      expect(e.payload.human_action).toBe(SUSPENDED_WORDS);
+    }
   });
 });
