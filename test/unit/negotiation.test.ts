@@ -220,6 +220,18 @@ function fakePool() {
       if (/^\s*SELECT \* FROM offers WHERE match_id/.test(sql)) {
         return rows(world.offers.filter((o) => o.match_id === params[0]));
       }
+      if (/^\s*SELECT \* FROM offers WHERE id/.test(sql)) {
+        const o = world.offers.find((x) => x.id === params[0]);
+        return o ? rows([o]) : rows([]);
+      }
+      // The join acceptNumberLink reads: the offer with its introduction.
+      if (/FROM offers o\s*\n?\s*JOIN matches m/.test(sql)) {
+        const o = world.offers.find((x) => x.id === params[0]);
+        const m = theMatch();
+        return o
+          ? rows([{ ...o, category: m.category, account_want: ANA, account_have: BEPPE }])
+          : rows([]);
+      }
       if (/INSERT INTO offers/.test(sql)) {
         const row: OfferState = {
           id: offerId(++offerSeq),
@@ -1070,5 +1082,116 @@ describe('the offer-words door', () => {
       offers.proposeOffer(seen, BEPPE, anOffer(7654.25, { message: 'pickup Saturday' })),
     ).rejects.toBeInstanceOf(OsbError);
     expect(vi.mocked(bedrock.send)).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * HOW LONG A FIGURE STANDS FOR (2026-09-17 audit).
+ *
+ * The expiry on an offer was carried straight from the caller and never looked
+ * at, and neither accept path ever read it back. So an agent could put up a
+ * figure that expired last year — accepted by nobody, and every sweep telling
+ * its human a number was on the table — or one good for a decade, which is not
+ * an offer so much as a standing claim on somebody. And a figure whose time WAS
+ * up could still be taken, weeks later, by a human on their own page, because
+ * the state column never moves on its own and the date was the only thing that
+ * said it had run out.
+ */
+describe('a figure has a clock, and both ends of it are honoured', () => {
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  it('refuses an expiry already in the past', async () => {
+    inMandate();
+    await expect(
+      offers.proposeOffer(cfg, BEPPE, { ...anOffer(7654.25), expiry: at(-1000) }),
+    ).rejects.toThrow(/still to come/);
+    expect(world.offers).toHaveLength(0);
+  });
+
+  it('refuses an expiry further out than a month', async () => {
+    inMandate();
+    await expect(
+      offers.proposeOffer(cfg, BEPPE, { ...anOffer(7654.25), expiry: at(31 * 86_400_000) }),
+    ).rejects.toThrow(/30 days/);
+    expect(world.offers).toHaveLength(0);
+  });
+
+  it('refuses something that is not a date at all', async () => {
+    inMandate();
+    await expect(
+      offers.proposeOffer(cfg, BEPPE, { ...anOffer(7654.25), expiry: 'whenever' }),
+    ).rejects.toThrow(/date and a time/);
+  });
+
+  it('takes anything inside the month', async () => {
+    inMandate();
+    await offers.proposeOffer(cfg, BEPPE, { ...anOffer(7654.25), expiry: at(29 * 86_400_000) });
+    expect(world.offers).toHaveLength(1);
+  });
+
+  it('the human path is held to it too', async () => {
+    await expect(
+      offers.proposeOffer(cfg, BEPPE, { ...anOffer(3000), expiry: at(-1000) }, { author: 'human' }),
+    ).rejects.toThrow(/still to come/);
+  });
+
+  it('a figure whose time is up cannot be accepted on the page', async () => {
+    world.offers.push({
+      id: offerId(99),
+      match_id: MATCH,
+      proposer_account: BEPPE,
+      amount: 415,
+      ccy: 'AUD',
+      expiry: new Date(Date.now() - 1000),
+      state: 'proposed',
+      message: null,
+      authored_by: 'human',
+      created_at: new Date(Date.now() - 86_400_000),
+    });
+    await expect(
+      offers.acceptOfferByHuman(offerId(99), ANA, 'counter', cfg),
+    ).rejects.toMatchObject({ payload: { human_action: offers.OFFER_EXPIRED_WORDS } });
+  });
+
+  it('and no page is minted for one, either', async () => {
+    world.offers.push({
+      id: offerId(98),
+      match_id: MATCH,
+      proposer_account: BEPPE,
+      amount: 415,
+      ccy: 'AUD',
+      expiry: new Date(Date.now() - 1000),
+      state: 'proposed',
+      message: null,
+      authored_by: 'human',
+      created_at: new Date(Date.now() - 86_400_000),
+    });
+    const { acceptNumberLink } = await import('../../src/domain/humanLinks.js');
+    await expect(acceptNumberLink(cfg, ANA, offerId(98))).rejects.toMatchObject({
+      payload: { human_action: offers.OFFER_EXPIRED_WORDS },
+    });
+  });
+
+  it('a live one is still accepted, so the clock is the only thing that changed', async () => {
+    world.offers.push({
+      id: offerId(97),
+      match_id: MATCH,
+      proposer_account: BEPPE,
+      amount: 415,
+      ccy: 'AUD',
+      expiry: new Date(Date.now() + 86_400_000),
+      state: 'proposed',
+      message: null,
+      authored_by: 'human',
+      created_at: new Date(),
+    });
+    // The stub database cannot finish the acceptance; what matters here is
+    // that the clock is not what stopped it.
+    const err: any = await offers
+      .acceptOfferByHuman(offerId(97), ANA, 'counter', cfg)
+      .then(() => undefined)
+      .catch((e) => e);
+    expect(err?.payload?.human_action).not.toBe(offers.OFFER_EXPIRED_WORDS);
   });
 });

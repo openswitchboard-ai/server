@@ -57,6 +57,52 @@ export function serializeOffer(o: OfferRow) {
   return assertReasonless(assertOutbound('offer', payload));
 }
 
+/**
+ * HOW LONG A FIGURE MAY STAND FOR (2026-09-17 audit).
+ *
+ * Thirty days. Long enough for anything somebody is genuinely waiting on an
+ * answer about, short enough that a figure cannot sit on the table past the
+ * point where either person still means it — and short enough that it is gone
+ * well inside the thirty-day window the switchboard keeps anything for.
+ */
+export const MAX_OFFER_DAYS = 30;
+
+/** The expiry on a new offer: a date, ahead of now, and inside the month. */
+export function assertOfferExpiry(raw: unknown): Date {
+  const at = new Date(String(raw ?? ''));
+  if (Number.isNaN(at.getTime())) {
+    throw Object.assign(new Error('the expiry on a figure is a date and a time'), {
+      validation: ['expiry'],
+    });
+  }
+  const now = Date.now();
+  if (at.getTime() <= now) {
+    throw Object.assign(
+      new Error('that figure would have run out before it went up. Give it a date still to come.'),
+      { validation: ['expiry'] },
+    );
+  }
+  if (at.getTime() > now + MAX_OFFER_DAYS * 86_400_000) {
+    throw Object.assign(
+      new Error(
+        `a figure stands for up to ${MAX_OFFER_DAYS} days. Put a nearer date on it and send another when it runs out.`,
+      ),
+      { validation: ['expiry'] },
+    );
+  }
+  return at;
+}
+
+/** The sentence both accept paths give on a figure whose time is up. */
+export const OFFER_EXPIRED_WORDS =
+  'That figure has run out, so there is nothing left to accept. Ask them for another and it can be taken then.';
+
+/** True where this offer's own clock has run out. */
+export function offerHasExpired(o: { expiry: Date | string }): boolean {
+  const at = new Date(o.expiry).getTime();
+  return !Number.isNaN(at) && at < Date.now();
+}
+
 /** This side's own offer amounts on a match, oldest first (withdrawn aside). */
 async function ownOfferAmounts(accountId: string, matchId: string): Promise<number[]> {
   const r = await getPool().query(
@@ -100,6 +146,12 @@ export async function proposeOffer(
   // Best offer, if this is one: the floor, the one-number rule and the closed
   // window, all refused to the side that tried rather than silently dropped.
   await assertBestOfferRules(m, accountId, input);
+  // HOW LONG A FIGURE STANDS FOR. The expiry was carried straight from the
+  // caller and never looked at, so an agent could put up a figure that expired
+  // last year — accepted by nobody, and every sweep telling its human a number
+  // was on the table — or one good for a decade, which is not an offer so much
+  // as a standing claim on somebody. A date, in the future, and inside a month.
+  assertOfferExpiry(input.expiry);
   // THE NOTE, HELD TO ONE RULE WHATEVER WROTE IT. Two hundred characters, no
   // way of reaching anybody, no angle brackets — the rule the approval page has
   // always applied to a note a human typed (domain/negotiation.ts,
@@ -678,6 +730,14 @@ export async function acceptOfferByHuman(
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: `This offer is no longer open to accept (it is ${o.state}).`,
     });
+  }
+  // AND ITS OWN CLOCK. An offer carries an expiry, send_to_human has always
+  // honoured it, and the two accept paths never looked at it — so a figure
+  // whose time was up could still be taken, weeks later, by a human on their
+  // own page. The state column never moves on its own; the date is the only
+  // thing that says an offer has run out.
+  if (offerHasExpired(o)) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: OFFER_EXPIRED_WORDS });
   }
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('introduction missing');
