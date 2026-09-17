@@ -220,3 +220,15 @@ describe('what the request log is allowed to say a request was for', () => {
     expect(seen.join(' ')).not.toContain('alsosecret');
   });
 });
+
+describe('the one HTML page on the MCP host', () => {
+  it('the operator metrics page may style itself, and do nothing else', async () => {
+    // It is absent without a credential, so this asks for the policy rather
+    // than for the page: the header is set whatever answered.
+    const r = await app.inject({ method: 'GET', url: '/ops/metrics', headers: { host: 'mcp.test' } });
+    const csp = String(r.headers['content-security-policy']);
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).not.toContain('script-src');
+  });
+});
