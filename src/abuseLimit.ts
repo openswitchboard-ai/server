@@ -72,3 +72,18 @@ export const verificationEmailLimiter = makeIpLimiter(5, 60 * 60 * 1000);
  * query length and the eight-answer ceiling are the rest of that.
  */
 export const areaSuggestLimiter = makeIpLimiter(60, 60 * 1000);
+
+/**
+ * The kill switch, ON: 5 taps per ACCOUNT per hour.
+ *
+ * The odd one out in this file, because it is keyed on an account rather than
+ * an IP and it sits behind a signed-in session. It is here all the same, and
+ * with the same caveat the header gives: the job is blunting a burst, not
+ * precise global accounting.
+ *
+ * Turning the switch on is one tap and stays one tap — a brake somebody has to
+ * find a credential for is a brake that fails when it matters. What this stops
+ * is the other thing a loop of taps does: one confirmation email each, into the
+ * inbox of the person who just paused everything.
+ */
+export const killSwitchLimiter = makeIpLimiter(5, 60 * 60 * 1000);

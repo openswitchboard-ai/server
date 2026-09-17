@@ -48,10 +48,26 @@ const SENSITIVE = [
   '/authorize',
   '/agent-keys',
   '/ledger/:id/numbers',
-  // The switch that suspends every agent token the account holds, both ways.
-  '/kill',
+  // Turning the switch back ON. Turning it off is deliberately NOT here: see
+  // below.
   '/kill/off',
 ];
+
+/**
+ * THE BRAKE IS NOT A DOOR (2026-09-17).
+ *
+ * POST /kill took a ceremony for a day and does not any more. Somebody reaching
+ * for the kill switch wants everything to stop NOW, and the wrong end of that
+ * trade is a person hunting for a credential while the thing they are
+ * frightened of carries on. It is the one direction that is safe to make easy:
+ * everything it does is reversible by them and nothing it does is reversible by
+ * anybody else, and turning it back ON is where the ceremony belongs and stays.
+ *
+ * What guards it instead is asserted here, so a later edit cannot quietly leave
+ * it bare: the cross-site check over this whole page class, and a limiter, so a
+ * stolen session cannot hold the tap down and drown the person in mail.
+ */
+const ONE_TAP = ['/kill'];
 
 describe('the doors that ask again', () => {
   it('every one of them is a route that exists', () => {
@@ -91,6 +107,30 @@ const settlementView = (over: Partial<any> = {}): any => ({
   ...over,
 });
 
+describe('the one door that must NOT ask again', () => {
+  it('runs no ceremony', () => {
+    for (const path of ONE_TAP) {
+      expect(HANDLERS.has(path)).toBe(true);
+      expect(HANDLERS.get(path)!).not.toMatch(/await ceremony\(/);
+    }
+  });
+
+  it('is paced instead, so a run of taps cannot become a run of emails', () => {
+    expect(HANDLERS.get('/kill')!).toMatch(/killSwitchLimiter\.limited\(/);
+  });
+
+  it('and the email behind it is keyed on the state rather than the moment', () => {
+    const email = readFileSync(join(__dirname, '..', '..', 'src', 'counter', 'email.ts'), 'utf8');
+    const line = email.split('\n').find((l) => l.includes('dedupeKey: `kill-'))!;
+    expect(line).toBeTruthy();
+    expect(line).not.toContain('Date.now()');
+  });
+
+  it('but it still requires a signed-in session of this person`s own', () => {
+    expect(HANDLERS.get('/kill')!).toMatch(/await requireSession\(/);
+  });
+});
+
 describe('the pages those doors are pressed from carry the box', () => {
   it('raising a dispute', () => {
     const html = cpages.settlementPage(settlementView({ canDispute: true }));
@@ -126,15 +166,22 @@ describe('the pages those doors are pressed from carry the box', () => {
     expect(html).toContain('formnovalidate');
   });
 
-  it('pausing everything, not just un-pausing it', () => {
-    const on = chome.dashboardPage({
-      killSwitchOn: false,
-      cardCounts: { total: 0, published: 0, pending: 0 },
-      pendingApprovals: [],
-      ceremony: ASKS,
-    } as any);
+  it('un-pausing everything — and pausing it asks for nothing', () => {
+    const view = (killSwitchOn: boolean) =>
+      chome.dashboardPage({
+        killSwitchOn,
+        cardCounts: { total: 0, published: 0, pending: 0 },
+        pendingApprovals: [],
+        ceremony: ASKS,
+      } as any);
+    const off = view(true);
+    expect(off).toContain('id="killOffForm"');
+    expect(off).toContain(PIN_BOX);
+    // And the brake itself: one button, no box.
+    const on = view(false);
     expect(on).toContain('id="killOnForm"');
-    expect(on).toContain(PIN_BOX);
+    expect(on).not.toContain(PIN_BOX);
+    expect(on).toContain('One tap, no PIN');
   });
 
   it('setting the band an agent may spend inside', () => {
