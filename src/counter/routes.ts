@@ -14,7 +14,12 @@
  *  - these routes 404 on the MCP hostname (and /mcp 404s on this one).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { areaSuggestLimiter, rateLimitBypassed, verificationEmailLimiter } from '../abuseLimit.js';
+import {
+  areaSuggestLimiter,
+  killSwitchLimiter,
+  rateLimitBypassed,
+  verificationEmailLimiter,
+} from '../abuseLimit.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
 import { isValidTimeZone } from '../domain/localTime.js';
@@ -3014,18 +3019,39 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     });
 
     // ------------------------------------------------------------------
-    // Kill switch: the same ceremony either way.
+    // Kill switch: ONE TAP OFF, A CEREMONY BACK ON.
     //
-    // Turning it ON used to be one tap on a signed-in session alone. It is a
-    // sensitive action all the same — it suspends every agent token the
-    // account holds and takes every want and have out of matching — and a
-    // stolen session could switch a person off and leave them wondering.
+    // It briefly took a PIN in both directions. It does not any more
+    // (2026-09-17). A brake is not a door: somebody reaching for this is
+    // somebody who wants everything to stop NOW, and the wrong end of that
+    // trade is a person hunting for a credential while the thing they are
+    // frightened of carries on. Everything it does is reversible by them and
+    // nothing it does is reversible by anybody else — it pauses their postings
+    // and suspends their agents' tokens, and turning it back ON is where the
+    // ceremony belongs and stays.
+    //
+    // What guards it instead: the cross-site check that now stands over this
+    // whole page class, so no other site can press it, and the pacing below, so
+    // a stolen session cannot hold the tap down and drown the person in mail.
     // ------------------------------------------------------------------
     counter.post('/kill', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
-      if (!okNow) return;
+      // Five an hour, per account. This is not a security boundary — the
+      // cross-site check is — it is the thing that stops a loop turning one
+      // switch into an inbox. In memory and per process on purpose, the same
+      // reasoning as every other limiter in src/abuseLimit.ts: blunting a burst
+      // rather than precise global accounting.
+      if (killSwitchLimiter.limited(s.accountId!)) {
+        return html(
+          reply,
+          pages.messagePage(
+            'Just a moment',
+            '<p>That switch has been pressed several times in the last hour. Everything is already paused; give it a few minutes before pressing again.</p>',
+          ),
+          429,
+        );
+      }
       await ops.killSwitchOn(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
       if (email) await notifyBestEffort(req, 'kill-switch-on', () => sendKillSwitchEmail(cfg, email, s.accountId!, true));

@@ -276,15 +276,22 @@ matching and your agents' tokens are suspended. Turning back on needs ${esc(back
   ${cpages.ceremonySubmit(c, { formId: 'killOffForm', label: 'Turn everything back on' })}
 </form>
 ${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
-    : `<div class="kill">
+    : // THE BRAKE IS ONE TAP. It briefly took a PIN; it does not any more
+      // (2026-09-17). Somebody reaching for this is somebody who wants
+      // everything to stop NOW, and the wrong end of that trade is a person
+      // hunting for a credential while the thing they are frightened of carries
+      // on. It is the one direction that is safe to make easy: it stops things
+      // rather than starting them, and turning it back ON still asks. The
+      // cross-site check on this whole page class is what stops another site
+      // pressing it, and the tap is paced so it cannot be held down.
+      `<div class="kill">
 <h2>Kill switch</h2>
 <p class="small">Every want and have paused, every agent token suspended,
-confirmation email sent. Pausing and un-pausing both need ${esc(backOnWord)}.</p>
+confirmation email sent. One tap, no PIN — it stops things rather than starting
+them. Turning back on needs ${esc(backOnWord)}.</p>
 <form method="POST" action="/kill" id="killOnForm">
-  ${cpages.ceremonyField(c, 'killon')}
-  ${cpages.ceremonySubmit(c, { formId: 'killOnForm', label: 'Pause everything now', className: 'danger' })}
-</form>
-${cpages.ceremonyAlt(c, 'killOnForm')}</div>`;
+  <button type="submit" class="danger">Pause everything now</button>
+</form></div>`;
 
   // 1. Decisions. Whole card is the tap target; the wording of the button
   //    stays on the card so the person knows what they are opening.

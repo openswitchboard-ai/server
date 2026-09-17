@@ -85,7 +85,19 @@ export async function sendKillSwitchEmail(
     accountId,
     template: on ? 'kill-switch-on' : 'kill-switch-off',
     kind: 'transactional',
-    dedupeKey: `kill-${on ? 'on' : 'off'}:${accountId}:${Date.now()}`,
+    // KEYED ON THE STATE, NOT THE MOMENT (2026-09-17 audit). With Date.now()
+    // in it every key was unique, so the dedupe deduplicated nothing and ten
+    // taps on the brake were ten emails to the person who just pressed it.
+    //
+    // The key is the account, the direction, and the day. Not the account and
+    // the direction alone: a successful send holds its key forever
+    // (src/email/send.ts), so a bare key would mean somebody who paused
+    // everything in March is told nothing when they pause everything again in
+    // September — and this email is a security notice, which has to arrive the
+    // second time as much as the first. The day is the smallest bucket that
+    // makes a run of taps one email while leaving a genuine pause next month
+    // its own.
+    dedupeKey: `kill-${on ? 'on' : 'off'}:${accountId}:${new Date().toISOString().slice(0, 10)}`,
     content: renderKillSwitch({ on, counterUrl: `${cfg.counterOrigin}/` }, ctx.links),
   });
 }
