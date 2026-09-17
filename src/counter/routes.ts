@@ -58,7 +58,7 @@ import {
 } from '../domain/profile.js';
 import { rejectionInPlainWords } from '../domain/screening.js';
 import { REASON_MAX_CHARS, fileReport } from '../safety/reports.js';
-import { emailIsSuspended } from '../safety/suspend.js';
+import { emailIsSuspended, isSuspended } from '../safety/suspend.js';
 import { reportLink } from '../domain/humanLinks.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
@@ -218,6 +218,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       }
     };
 
+    /**
+     * A stopped account, met on the human surface.
+     *
+     * Suspending deletes the sessions, so in the ordinary course nobody gets
+     * this far. This is the floor under that: a session created in the same
+     * second, a link pressed from a tab that was already open, an account
+     * stopped by a path that did not go through suspendAccount. Returns true
+     * once it has answered, and the caller stops.
+     */
+    const stopped = async (accountId: string, reply: FastifyReply): Promise<boolean> => {
+      if (!(await isSuspended(accountId))) return false;
+      void html(reply, pages.suspendedPage(), 403);
+      return true;
+    };
+
     const requireSession = async (
       req: FastifyRequest,
       reply: FastifyReply,
@@ -228,6 +243,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         else void reply.code(401).send({ error: 'not_signed_in' });
         return undefined;
       }
+      // Nothing in, nothing out — on this surface as much as at the tools.
+      if (await stopped(s.accountId, reply)) return undefined;
       return s as Session;
     };
 
@@ -1416,6 +1433,7 @@ in on this device and lets you approve what is waiting.</p>
           401,
         );
       }
+      if (await stopped(s.accountId, reply)) return;
       if (row.action === 'report' && !(await holdsCredential(s.accountId))) {
         // Nothing to press with. Rather than show a question this account
         // cannot answer, send it where every other page sends an account that
@@ -1473,6 +1491,7 @@ in on this device and lets you approve what is waiting.</p>
           401,
         );
       }
+      if (await stopped(s.accountId, reply)) return;
       // The photo press. Ordered like every other press on this page: the
       // caption is checked BEFORE the link is burnt, so a figure typed beside
       // the picture costs a rewrite rather than the link their assistant gave

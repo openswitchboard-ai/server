@@ -12,7 +12,11 @@
  *      filed away the way a withdrawal always files them;
  *   3. every open introduction is SEVERED, and the person on the other side is
  *      told only that the switchboard closed the conversation;
- *   4. the email hash is remembered, so opening a fresh account on the same
+ *   4. every credential already out in the world is pulled back: the browser
+ *      sessions deleted, the agents' refresh tokens suspended. The flag alone
+ *      shuts a door when somebody knocks on it; these are the things holding
+ *      keys that were never going to knock;
+ *   5. the email hash is remembered, so opening a fresh account on the same
  *      address is refused. Suspending somebody who can sign up again five
  *      minutes later is a gesture rather than an enforcement.
  *
@@ -157,6 +161,16 @@ export async function suspendAccount(
     const r = await severMatch(id, undefined, cfg);
     if (r.severed) introductions_severed += 1;
   }
+  // THE CREDENTIALS THAT ARE ALREADY OUT. The flag is read at every door, but
+  // a door is only read when somebody knocks on it: a browser session sitting
+  // in a phone and a refresh token sitting in an agent are both live things
+  // the flag alone does not reach. So both go the way the kill switch sends
+  // them — the sessions deleted outright, the tokens suspended rather than
+  // revoked, because lifting a suspension has to be able to give them back.
+  await pool.query('DELETE FROM counter_sessions WHERE account_id = $1', [accountId]);
+  await pool.query('UPDATE oauth_tokens SET suspended = true WHERE account_id = $1 AND NOT revoked', [
+    accountId,
+  ]);
   const email_remembered = await rememberEmail(accountId);
   return {
     account_id: accountId,
