@@ -236,6 +236,15 @@ export async function publishIntent(
   }
   checkSchemaVersion(card.schema_version);
 
+  // THE QUOTA COMES FIRST, BEFORE ANYTHING COSTS ANYTHING (2026-09-17 audit).
+  // It used to sit below the category gate and the intake pipe, so an account
+  // that had already used up its day could still make the switchboard embed a
+  // category to suggest alternatives, and still push a posting through the
+  // pipe, on every call. Two statements against this account's own rows is the
+  // cheapest question here and it is now the first one: an account with nothing
+  // left to spend spends nothing.
+  await checkPublishQuota(accountId, cfg.quotas);
+
   const { known } = await assertCategoryOpen(cfg, card.category, accountId, card.kind);
   const kind = kindOf(card);
   // Everything a person hands over goes through the one pipe (src/intake,
@@ -271,8 +280,6 @@ export async function publishIntent(
   // Location resolution: a named place becomes a centre point and a
   // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
   const geo = normaliseGeo(card.geo);
-
-  await checkPublishQuota(accountId, cfg.quotas);
 
   const account = await getAccount(accountId);
   if (!account) throw new Error('account not found');
