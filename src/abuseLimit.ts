@@ -47,8 +47,14 @@ export function rateLimitBypassed(headers: Record<string, unknown>): boolean {
   const token = process.env.RATELIMIT_BYPASS_TOKEN;
   if (!token || token.length < 32) return false;
   const given = headers['x-osb-ratelimit-bypass'];
-  if (typeof given !== 'string' || given.length !== token.length) return false;
-  return timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  if (typeof given !== 'string') return false;
+  // Byte lengths, not string lengths: a header carrying anything outside ASCII
+  // is longer as bytes than as characters, so two strings of equal length can
+  // become two buffers of different length and timingSafeEqual throws.
+  const a = Buffer.from(given, 'utf8');
+  const b = Buffer.from(token, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /** DCR: 5 client registrations per IP per hour. */

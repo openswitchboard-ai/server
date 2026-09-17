@@ -987,9 +987,11 @@ export interface PhotoView {
 }
 
 export function photoPage(v: PhotoView, error?: string): string {
+  // The title is escaped by layout, so it takes the name raw; every other
+  // place on this page puts it into markup and escapes it here.
   const title = `Send a photo to ${v.who}`;
   return layout(title, `
-<h1>Send ${v.who} a photo of the ${esc(v.thing)}.</h1>
+<h1>Send ${esc(v.who)} a photo of the ${esc(v.thing)}.</h1>
 ${errBox(error)}
 <p class="small muted">It goes to ${esc(v.who)} and nobody else. They pick it up once and it is gone
 from here; if they never do, it goes by itself after ${v.ttlDays} days. JPEG, PNG or WebP, up to
@@ -1102,6 +1104,9 @@ export interface ApprovalView {
   hasPasskey: boolean;
   elevated: boolean;
   postPath: string; // decision endpoint
+  /** Set when this page was reached by a one-use link that has NOT been spent
+   *  yet: the form carries it back so the press is what spends it. */
+  linkToken?: string;
 }
 
 /** A number the agent brought back, ready for its human to check and send. */
@@ -1266,6 +1271,7 @@ ${headlineHtml}
 <form method="POST" action="${esc(v.postPath)}" id="approveForm">
   <input type="hidden" name="ref_id" value="${esc(v.refId)}">
   <input type="hidden" name="action" value="${esc(v.action)}">
+  ${v.linkToken ? `<input type="hidden" name="link_token" value="${esc(v.linkToken)}">` : ''}
   ${collect}
   ${ceremonyField(v, 'approve')}
   <div class="actions">
