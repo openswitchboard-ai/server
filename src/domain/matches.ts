@@ -8,6 +8,7 @@ import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
   THRESHOLD_BUMP_STEP,
+  categoryLeafLabel,
   categoryPhrase,
   categoryPhraseWithArticle,
   KIND_MAX_CHARS,
@@ -156,6 +157,30 @@ export async function createMatch(
 /** The caller's OWN card on this match. */
 export function ownCardId(m: MatchRow, accountId: string): string {
   return sideOf(m, accountId) === 'want' ? m.card_want : m.card_have;
+}
+
+/**
+ * THE THING IS NAMED FROM THE READER'S OWN POSTING, ALWAYS.
+ *
+ * Every sentence the switchboard writes to one person about an introduction
+ * names the thing in THAT person's words: the category they filed it under and
+ * the `kind` they wrote for it. A matches row carries the pair's own category
+ * and nothing else, so a caller that reached for `m.kind` got undefined and
+ * fell back to the node's heading — and on 19 September a person whose want
+ * was a Fanatec brake performance kit, filed under Electronics, was told that
+ * someone had come forward "with an electronic".
+ *
+ * Their own words are also the only ones safe to send: nothing the other side
+ * typed goes anywhere near an email. Falls back to the match's own category
+ * where the card has since gone, which is the old behaviour and still true.
+ */
+export async function readersOwnThingLabel(
+  m: { account_want: string; card_want: string; card_have: string; category: string },
+  accountId: string,
+): Promise<string> {
+  const cardId = accountId === m.account_want ? m.card_want : m.card_have;
+  const r = await getPool().query(`SELECT category, kind FROM cards WHERE id = $1`, [cardId]);
+  return categoryLeafLabel(r.rows[0]?.category ?? m.category, r.rows[0]?.kind ?? null);
 }
 
 // ---------------------------------------------------------------------------

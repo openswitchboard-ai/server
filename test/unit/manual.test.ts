@@ -173,6 +173,70 @@ describe('the manual introduces itself', () => {
     expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
     expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');
   });
+
+  // -------------------------------------------------------------------------
+  // Version 52. In the 19 September rehearsal an assistant posted, told its
+  // human it would let them know the moment somebody came forward, and then
+  // scheduled nothing and saved nothing. Two things were missing from the
+  // manual: when an agent that genuinely runs on its own should look, and what
+  // that promise costs to make.
+  // -------------------------------------------------------------------------
+  it('says to look once a few minutes after posting, outside the cadence', () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/Look once, a few minutes after you post or amend/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/screening takes seconds/i);
+    // One follow-up is not a rhythm, so the floor is not in play — and the
+    // floor itself is untouched.
+    expect(SERVER_INSTRUCTIONS).toMatch(/single follow-up on one posting/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/nowhere near the 30-minute floor/i);
+    expect(SERVER_INSTRUCTIONS).toContain(
+      'The switchboard will not let anyone check more often than every 30 minutes',
+    );
+  });
+
+  it('proposes hourly, agreed out loud and saved', () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/the shape to propose is about once an hour/i);
+    expect(SERVER_INSTRUCTIONS).toContain('shall I have a look every hour or so?');
+    expect(SERVER_INSTRUCTIONS).toContain('runs_on_its_own true and check_every_minutes 60');
+    expect(SERVER_INSTRUCTIONS).toMatch(/what to suggest and never what to assume/i);
+  });
+
+  it('makes the promise cost something to make', () => {
+    expect(SERVER_INSTRUCTIONS).toContain(
+      "I'll let you know the moment someone comes forward",
+    );
+    expect(SERVER_INSTRUCTIONS).toMatch(/a way to wake yourself and have saved the arrangement/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /If you wake only when you are spoken to, say that plainly and tell them the switchboard emails them instead/i,
+    );
+  });
+
+  it('carries all of that into the version 52 note', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(52);
+    const note = MANUAL_CHANGELOG.find((c) => c.version === 52)!.note;
+    expect(note).toMatch(/look again a few minutes later/i);
+    expect(note).toMatch(/30-minute floor has nothing to say about it/i);
+    expect(note).toMatch(/check_every_minutes 60/);
+    expect(note).toMatch(/way to wake yourself/i);
+    expect(note).toMatch(/a different heading means taking the posting down/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // A heading cannot be reached by an amend: amend_intent's patch has no
+  // category in it at all. Rule 3e used to offer it alongside widening and
+  // loosening, which sent an assistant looking for a tool that does not exist.
+  // -------------------------------------------------------------------------
+  it('tells the truth about what an amend can reach', () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /Widen the area or loosen an attribute and it is an amend/,
+    );
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /A heading is the one thing an amend cannot touch/,
+    );
+    expect(SERVER_INSTRUCTIONS).toMatch(
+      /taking the posting down and putting it up again/,
+    );
+  });
+
   it('teaches wrapping one up: notice, offer once, archive, retrieve', () => {
     expect(SERVER_INSTRUCTIONS).toContain('WRAPPING ONE UP');
     // The one-time offer, in the plain human-facing voice ("archive" is fine

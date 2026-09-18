@@ -895,17 +895,28 @@ type PhraseNode = { phrase?: string; countable?: boolean; article?: 'a' | 'an' }
  *  share a label today ("Board games", "Video games"); both pairs are written
  *  to the same phrase, so first-wins on the label side says the same thing
  *  either way. The taxonomy test in the schema repo is what keeps that true. */
-let phraseIndexCache: { byId: Map<string, PhraseNode>; byLabel: Map<string, PhraseNode> } | undefined;
+let phraseIndexCache:
+  | { byId: Map<string, PhraseNode>; byLabel: Map<string, PhraseNode>; headings: Map<string, string> }
+  | undefined;
 function phraseIndex() {
   if (!phraseIndexCache) {
     const byId = new Map<string, PhraseNode>();
     const byLabel = new Map<string, PhraseNode>();
+    // Every node with a heading and no hand-written phrase, by id AND by its
+    // own heading, because the email templates are handed a label.
+    const headings = new Map<string, string>();
     for (const [id, node] of Object.entries((taxonomy().nodes ?? {}) as Record<string, any>)) {
-      if (!node?.phrase) continue;
+      if (!node?.phrase) {
+        if (node?.label) {
+          headings.set(id, node.label);
+          if (!headings.has(node.label)) headings.set(node.label, node.label);
+        }
+        continue;
+      }
       byId.set(id, node);
       if (node.label && !byLabel.has(node.label)) byLabel.set(node.label, node);
     }
-    phraseIndexCache = { byId, byLabel };
+    phraseIndexCache = { byId, byLabel, headings };
   }
   return phraseIndexCache;
 }
@@ -917,18 +928,40 @@ function phraseNode(labelOrId?: string): PhraseNode | undefined {
   return byId.get(key) ?? byLabel.get(key);
 }
 
-/** A leaf id with no phrase — a reserved node, or a branch — still has a
- *  label, and the mechanical rule reads better on a heading than on a slug.
- *  A category the taxonomy has never seen at all falls back to its own last
- *  segment, where hyphens read as spaces so nothing arrives looking like code. */
+/** The heading of a node the taxonomy knows and nobody has written a phrase
+ *  for: a branch, or a reserved leaf. Answers to the dotted path and to the
+ *  heading itself. */
+function headingOnly(labelOrId?: string): string | undefined {
+  const key = String(labelOrId ?? '').trim();
+  if (!key) return undefined;
+  return phraseIndex().headings.get(key);
+}
+
+/**
+ * A HEADING IS NOT A NOUN, SO IT IS NOT TREATED AS ONE.
+ *
+ * Since postings started being filed under the nearest node the catalogue
+ * knows, branch headings reach these sentences often — and a branch has no
+ * hand-written phrase. Run through the mechanical rule, "Electronics" came out
+ * "electronic", and somebody was told that a person had come forward "with an
+ * electronic". So a heading is said as it stands, lower-cased, first clause
+ * only, and it takes no article: "your electronics", "someone nearby has
+ * electronics going". Slightly broad, and English.
+ */
+function headingPhrase(label: string): string {
+  return label.split(/[,&]/)[0].trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** A category the taxonomy has never seen falls back to its own last segment,
+ *  where hyphens read as spaces so nothing arrives looking like code. */
 function fallbackPhrase(labelOrId?: string): string {
   const key = String(labelOrId ?? '').trim();
   if (!key) return '';
+  const heading = headingOnly(key);
+  if (heading) return headingPhrase(heading);
   const isCategoryId = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/.test(key);
   if (!isCategoryId) return mechanicalPhrase(key);
-  const label = categoryLeafLabel(key);
-  const known = Boolean((taxonomy().nodes ?? {})[key]);
-  return mechanicalPhrase(known ? label : label.replace(/[-_]+/g, ' '));
+  return mechanicalPhrase(categoryLeafLabel(key).replace(/[-_]+/g, ' '));
 }
 
 /**
@@ -1028,7 +1061,10 @@ export function categoryPhraseIsCountable(labelOrId?: string, kind?: string | nu
   const node = phraseNode(labelOrId);
   if (node) return node.countable !== false;
   const own = ownWords(labelOrId, kind);
-  return own ? kindTakesArticle(own) : true;
+  if (own) return kindTakesArticle(own);
+  // A bare heading stands on its own: "an electronic" is how that went wrong.
+  if (headingOnly(labelOrId)) return false;
+  return true;
 }
 
 /** Letters whose NAME starts with a vowel sound, for a phrase that opens with
@@ -1064,6 +1100,8 @@ export function categoryPhraseWithArticle(labelOrId?: string, kind?: string | nu
   const phrase = own ?? node?.phrase ?? fallbackPhrase(labelOrId);
   if (!phrase) return '';
   if (!own && node?.countable === false) return phrase;
+  // A heading is said as it stands, with nothing in front of it.
+  if (!own && !node && headingOnly(labelOrId)) return phrase;
   // Words the poster typed get the rule rather than a hand-written answer.
   if (own && !kindTakesArticle(own)) return own;
   return `${node?.article ?? articleForPhrase(phrase)} ${phrase}`;

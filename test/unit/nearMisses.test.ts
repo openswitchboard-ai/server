@@ -115,6 +115,17 @@ describe('what a near miss says', () => {
     }
   });
 
+  // A patch carries no category (mcp/tools.ts AMENDABLE, domain/cards.ts
+  // amendIntent), so the sentence used to offer a move the switchboard has no
+  // tool for. It now says which of the two moves each one is.
+  it('says which move is an amend and which is a fresh posting', async () => {
+    const text = (await forMine())!.note.text;
+    expect(text).toContain('widening the area or loosening what your human asked for');
+    expect(text).toContain(
+      'a different heading means taking the posting down and putting it up again',
+    );
+  });
+
   it('counts one of them and several of them the way a person says it', async () => {
     expect((await forMine())!.note.text).toContain('One near miss this week');
     rows = [row(), row({ other_id: 'd1' }), row({ other_id: 'd2' })];

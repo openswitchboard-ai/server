@@ -44,7 +44,24 @@ export interface PublishResult {
   filed_under?: string;
   /** Said out loud, and only where that is somewhere other than what was sent. */
   filed_under_note?: { text: string; provenance: 'switchboard-system' };
+  /** When to look again, for an agent that can (see LOOK_AGAIN_NOTE). */
+  look_again_note?: { text: string; provenance: 'switchboard-system' };
 }
+
+/**
+ * THE FIRST PERSON OFTEN COMES FORWARD STRAIGHT AWAY.
+ *
+ * Screening takes seconds and the board is checked the moment a posting
+ * clears it, so somebody can be waiting on a want or a have minutes after it
+ * went up. In the 19 September rehearsal an assistant posted, promised its
+ * human it would say the moment anyone came forward, and then looked no more
+ * that day. The manual carries the rule; this is the reminder at the one
+ * moment it applies, in the same shape as every other note on the wire.
+ */
+export const LOOK_AGAIN_NOTE = {
+  text: 'Screening takes seconds and the first person often comes forward straight away. If you run on your own, look again in a few minutes. This one look is a follow-up on this posting and has nothing to do with your checking cadence.',
+  provenance: 'switchboard-system' as const,
+};
 
 /**
  * WHERE THE POSTING WAS FILED, said out loud.
@@ -456,6 +473,7 @@ export async function publishIntent(
     ...(filed.changed
       ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
       : {}),
+    look_again_note: LOOK_AGAIN_NOTE,
   };
 }
 
@@ -805,6 +823,7 @@ export async function amendIntent(
     ...(filed.changed
       ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
       : {}),
+    look_again_note: LOOK_AGAIN_NOTE,
   };
 }
 
