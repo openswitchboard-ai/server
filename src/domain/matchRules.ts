@@ -353,19 +353,23 @@ function taxonomy(): any {
   return taxonomyCache;
 }
 
-/** Human label for the category's leaf node ("Mountain bikes").
+/** How the thing is named to a human: the poster's own words first.
  *
- *  Where the taxonomy has never heard of the node, the poster's own words for
- *  the thing come first: `kind` is what an agent wrote when the catalogue had
- *  no leaf to lend, and "vintage synth repair" is what a person would have
- *  said anyway. The raw leaf segment is the fallback behind that, as it always
- *  was. Emails show ONLY this, never the raw slug. */
+ *  `kind` is what the agent wrote for the thing in plain words, and the
+ *  manual promises those words are said back wherever the switchboard names
+ *  the thing to a person. Until 2026-09-18 the node's label came first and
+ *  `kind` only filled in for a node the catalogue had never heard of. Then
+ *  postings started being filed under the nearest node the catalogue does
+ *  know, and a "Fanatec pedal upgrade spring" filed under console games
+ *  reached its owner as "your video games". So the poster's words win, the
+ *  node label is the fallback, and the raw leaf segment sits behind both.
+ *  Emails show ONLY this, never the raw slug. */
 export function categoryLeafLabel(category: string, kind?: string | null): string {
+  const own = promptSafe(kind, KIND_MAX_CHARS).trim();
+  if (own) return own;
   const nodes = taxonomy().nodes ?? {};
   const known = nodes[category]?.label;
   if (known) return known;
-  const own = typeof kind === 'string' ? kind.trim() : '';
-  if (own) return own;
   const parts = category.split('.');
   return parts[parts.length - 1];
 }
@@ -968,10 +972,7 @@ function ownWords(labelOrId?: string, kind?: string | null): string | undefined 
   // brackets, no invisible characters, and the schema's own ceiling on the
   // field, so a sentence cannot be stretched by a `kind` nobody capped.
   const own = promptSafe(kind, KIND_MAX_CHARS).trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!own) return undefined;
-  const key = String(labelOrId ?? '').trim();
-  if (key && (taxonomy().nodes ?? {})[key]) return undefined;
-  return own;
+  return own || undefined;
 }
 
 /** Tails that take no article because there is no counting them: "a climbing
@@ -1055,10 +1056,14 @@ export function articleForPhrase(phrase: string): 'a' | 'an' {
  */
 export function categoryPhraseWithArticle(labelOrId?: string, kind?: string | null): string {
   const node = phraseNode(labelOrId);
-  const own = node?.phrase ? undefined : ownWords(labelOrId, kind);
-  const phrase = node?.phrase ?? own ?? fallbackPhrase(labelOrId);
+  // The poster's own words come first, for the reason categoryLeafLabel
+  // gives: a posting filed by the switchboard under the nearest node it knows
+  // is still the thing the poster named, and "your video games" is no way to
+  // tell somebody about their pedal spring.
+  const own = ownWords(labelOrId, kind);
+  const phrase = own ?? node?.phrase ?? fallbackPhrase(labelOrId);
   if (!phrase) return '';
-  if (node?.countable === false) return phrase;
+  if (!own && node?.countable === false) return phrase;
   // Words the poster typed get the rule rather than a hand-written answer.
   if (own && !kindTakesArticle(own)) return own;
   return `${node?.article ?? articleForPhrase(phrase)} ${phrase}`;
