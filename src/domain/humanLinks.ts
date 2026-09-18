@@ -299,7 +299,7 @@ export async function photoLink(
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page where your human picks a photo from their own phone and presses Send. It goes to the person they are already talking to on this one and nowhere else, it is held until that side picks it up, and then it is gone. You cannot send a photo yourself, and nothing here reads the picture.',
+      'Opens one page where your human picks a photo from their own phone and presses Send. It goes to the person they are already talking to on this one and nowhere else, it is held until that side picks it up, and then it is gone. You cannot send a photo yourself. A machine looks at the picture once before it is delivered, no person at the switchboard sees it, and one that is turned back comes back with one plain sentence to say.',
   };
 }
 
