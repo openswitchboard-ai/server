@@ -205,11 +205,16 @@ describe('the sentences still read as English for a leaf nobody wrote down', () 
     expect(kindTakesArticle('chess set')).toBe(true);
   });
 
-  it('never lets the poster words override a node the taxonomy does know', () => {
-    // The catalogue's hand-written phrase is better than anybody free text
-    // wherever there is one, so `kind` is a fallback and never an override.
-    expect(categoryPhraseWithArticle('goods.bicycle.mountain', 'pushie')).toBe('a mountain bike');
-    expect(categoryLeafLabel('goods.bicycle.mountain', 'pushie')).toBe('Mountain bikes');
+  it('lets the poster words win over a node the taxonomy does know', () => {
+    // Since 2026-09-18 the switchboard files a posting under the nearest node
+    // it knows, so the node is often one the poster never chose. Their own
+    // words for the thing are the ones the manual promises to say back, and
+    // they come first wherever they were given; the node's phrase stands in
+    // only when there are none.
+    expect(categoryPhraseWithArticle('goods.bicycle.mountain', 'pushie')).toBe('a pushie');
+    expect(categoryLeafLabel('goods.bicycle.mountain', 'pushie')).toBe('pushie');
+    expect(categoryPhraseWithArticle('goods.bicycle.mountain')).toBe('a mountain bike');
+    expect(categoryLeafLabel('goods.bicycle.mountain')).toBe('Mountain bikes');
   });
 
   it('gives an email the poster words instead of a slug', () => {
