@@ -65,9 +65,9 @@ export interface NearMissesForCard {
 
 /**
  * The sentence for one near miss. It is honest that this one fell short, says
- * what the other side has or is after, and asks the one question the human can
- * actually answer. It offers a look and promises nothing, because there is
- * nothing here to promise.
+ * what the other side has or is after, says that nobody can be written to,
+ * and asks the one question the human can actually answer: whether to change
+ * their own posting. It promises nothing, because there is nothing to promise.
  */
 export function nearMissSentence(they: 'have' | 'want', what: string): string {
   const verb = they === 'have' ? 'has' : 'wants';
@@ -76,7 +76,11 @@ export function nearMissSentence(they: 'have' | 'want', what: string): string {
   // handed one says it out loud. The sentence still does the two things it has
   // to — it is honest that this is short of the bar, and it asks the one
   // question the human can answer.
-  return `Not quite a fit, but someone ${verb} ${what}. Want me to look?`;
+  // The question at the end names the one move there is. An earlier draft
+  // asked "want me to look?", and in the first rehearsal both assistants read
+  // "look" as "reach out": there is nothing to reach out with on a near miss,
+  // so the sentence now says so and asks about the posting instead.
+  return `Not quite a fit, but someone ${verb} ${what}. Nobody can be written to from here. The one move is a change to your own posting so it reaches them. Want me to try that?`;
 }
 
 /** The sentence for the group of them on one posting. */
