@@ -1564,9 +1564,17 @@ in on this device and lets you approve what is waiting.</p>
       }
       const row = check.row as ApprovalLinkRow;
       const s = await sess.loadSession(req);
-      if (!s?.accountId || s.accountId !== row.account_id) {
-        // Not signed in (or wrong account): the link is NOT consumed; sign in
-        // and come back to it.
+      if (s?.accountId && s.accountId !== row.account_id) {
+        // Signed in as somebody else. The link is NOT consumed. The old page
+        // said "sign in", and the sign-in page then saw a live session and
+        // bounced the person home, so they could go round that loop for ever
+        // without a word about why (first seen when one person ran both sides
+        // of a rehearsal in one browser). Say what is wrong and offer the
+        // one move that fixes it.
+        return html(reply, pages.wrongAccountPage(), 401);
+      }
+      if (!s?.accountId) {
+        // Not signed in: the link is NOT consumed; sign in and come back to it.
         return html(
           reply,
           pages.donePage(
@@ -1631,7 +1639,10 @@ in on this device and lets you approve what is waiting.</p>
         return reply.code(400).send({ error: 'bad_request' });
       }
       const s = await sess.loadSession(req);
-      if (!s?.accountId || s.accountId !== row.account_id) {
+      if (s?.accountId && s.accountId !== row.account_id) {
+        return html(reply, pages.wrongAccountPage(), 401);
+      }
+      if (!s?.accountId) {
         return html(
           reply,
           pages.donePage(
