@@ -8,6 +8,7 @@ import {
   screenCard,
   type StoredScreening,
 } from '../domain/screening.js';
+import { shadowCategoryTrial } from '../shadow/jevTrials.js';
 import type { Config } from '../config.js';
 
 /**
@@ -89,6 +90,22 @@ export function startScreeningWorker(cfg: Config, log: (msg: string, extra?: any
                 // actually flipped the row tells the human about it.
                 if (applied && !verdict.pass) {
                   await notifyScreeningRejection(cfg, card, screening, log);
+                }
+                // A posting that got through is the moment trial A asks an
+                // outside model where it would have filed this (dev only, off
+                // by default, records an answer and changes nothing —
+                // src/shadow/jevTrials.ts). Started, not awaited, and wrapped
+                // as well: the verdict is already written and nothing about
+                // this posting's journey may depend on a third party's API.
+                if (verdict.pass) {
+                  try {
+                    void shadowCategoryTrial(cfg, card, log);
+                  } catch (e: any) {
+                    log('screening: jev shadow could not be started', {
+                      card_id: card.id,
+                      error: e?.message,
+                    });
+                  }
                 }
               }
             } else {

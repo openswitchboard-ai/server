@@ -25,6 +25,12 @@ import {
   type PriceBand,
 } from './matchRules.js';
 import { resequenceCard } from './sequencer.js';
+import { jevEnabled } from '../shadow/jev.js';
+import {
+  JEV_PAIR_MIN_SCORE,
+  shadowPairTrials,
+  type JevPairCandidate,
+} from '../shadow/jevTrials.js';
 import type { CardRow } from './cards.js';
 import { geoOf } from '../geo/normalise.js';
 import type { Config } from '../config.js';
@@ -468,6 +474,11 @@ export async function runMatchingForCard(
     promoted: [],
   };
   const touchedCards = new Set<string>();
+  // Trial B's collecting bucket (src/shadow/jevTrials.ts). Filled as the run
+  // goes and handed over once at the end, so the shadow sees the pairs in the
+  // order the engine ranked them rather than the order they happened to
+  // arrive. Empty and untouched on any deployment where the shadow is off.
+  const shadowPairs: JevPairCandidate[] = [];
 
   for (const cand of candidates) {
     outcome.evaluated++;
@@ -521,6 +532,32 @@ export async function runMatchingForCard(
     const bumpWant = Number(sourceIsWant ? source.threshold_bump : cand.threshold_bump);
     const bumpHave = Number(sourceIsWant ? cand.threshold_bump : source.threshold_bump);
     const decision = decide(evaled.score, bumpWant, bumpHave);
+
+    // Noted, never acted on. The pair is recorded exactly as the engine judged
+    // it, and the judging above is already complete: nothing below this line
+    // reads shadowPairs, and the run's outcome is byte-for-byte what it would
+    // have been with the shadow off. What travels is the two postings' plain
+    // words, categories and attributes — never the bands that were just
+    // decrypted, never the geography, never an account id.
+    if (jevEnabled() && evaled.score >= JEV_PAIR_MIN_SCORE) {
+      shadowPairs.push({
+        want: {
+          id: want.id,
+          kind: (want as any).kind ?? null,
+          category: want.category,
+          attributes: want.attributes,
+        },
+        have: {
+          id: have.id,
+          kind: (have as any).kind ?? null,
+          category: have.category,
+          attributes: have.attributes,
+        },
+        score: evaled.score,
+        decision,
+        weights: evaled.weights,
+      });
+    }
 
     if (decision === 'match') {
       // The two facts the fit sequencer ranks a line on that only the engine
@@ -590,6 +627,14 @@ export async function runMatchingForCard(
     for (const id of await resequenceCard(cardId)) {
       if (!outcome.promoted.includes(id)) outcome.promoted.push(id);
     }
+  }
+  // Last, after every decision this run makes has been made and written.
+  // Started and not awaited, and wrapped as well, because a matching run must
+  // not be able to fail on the way out through a third party's API.
+  try {
+    void shadowPairTrials(shadowPairs, log);
+  } catch (e: any) {
+    log('matcher: jev shadow could not be started', { card_id: cardId, error: e?.message });
   }
   return outcome;
 }
