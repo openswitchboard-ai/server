@@ -89,7 +89,12 @@ export function nearMissGroupSentence(count: number): string {
     count === 1
       ? 'One near miss this week'
       : `${count} near misses this week`;
-  return `${head}. Nobody has been introduced and nothing has crossed either way. If any of these sound right, widening what your human is after, or putting it up under a different heading, is what brings them within reach.`;
+  // What this sentence used to offer was untrue: it put "a different heading"
+  // beside widening as though all three were an amend, and an amend cannot
+  // change the category at all (mcp/tools.ts, domain/cards.ts amendIntent). An
+  // assistant that took the sentence at its word had nothing to call. So the
+  // two moves are said apart: one is an amend, the other is a fresh posting.
+  return `${head}. Nobody has been introduced and nothing has crossed either way. If any of these sound right, widening the area or loosening what your human asked for is what brings them within reach; a different heading means taking the posting down and putting it up again.`;
 }
 
 interface Row {

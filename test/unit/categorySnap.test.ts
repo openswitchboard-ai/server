@@ -309,6 +309,23 @@ describe('what the row carries and what the assistant hears', () => {
     expect(update.params).toContain('goods.gaming.sim-racing');
   });
 
+  // Manual 52. Screening takes seconds and the first person often comes
+  // forward straight away, so an agent that can wake itself is told to look
+  // again a few minutes after it posts or amends. One follow-up on this
+  // posting, so the cadence floor has nothing to say about it.
+  it('tells an agent that runs on its own to look again in a few minutes', async () => {
+    for (const r of [
+      (await publishIntent(cfg, ACCOUNT, listing())) as any,
+      (await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' })) as any,
+    ]) {
+      expect(r.look_again_note.provenance).toBe('switchboard-system');
+      expect(r.look_again_note.text).toContain('look again in a few minutes');
+      expect(r.look_again_note.text).toContain('If you run on your own');
+      expect(r.look_again_note.text).toContain('nothing to do with your checking cadence');
+      expect(lintHumanCopy(r.look_again_note.text)).toEqual([]);
+    }
+  });
+
   it('changes nothing on an amend of a posting already on a known shelf', async () => {
     world.card.category = 'goods.bicycle.mountain';
     world.card.category_as_posted = 'goods.bicycle.mountain';

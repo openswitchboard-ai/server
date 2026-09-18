@@ -20,6 +20,7 @@
  */
 import { getPool } from '../db.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
+import { readersOwnThingLabel } from '../domain/matches.js';
 import { accountEmail } from '../domain/counterOps.js';
 import {
   renderChannelWaiting,
@@ -116,6 +117,9 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
             AND created_at <= (SELECT created_at FROM matches WHERE id = $2)`,
         [ownCard, matchId],
       );
+      // The thing is named from the READER'S OWN posting — see
+      // readersOwnThingLabel for why.
+      const ownLabel = await readersOwnThingLabel(m, accountId);
       await sendEmail(cfg, {
         to,
         accountId,
@@ -126,7 +130,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
           {
             count: 1,
             ordinal: Math.max(1, rank.rows[0]?.n ?? 1),
-            categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
+            categoryLabel: ctx.blind ? undefined : ownLabel,
             blind: ctx.blind,
             side: sideOf(m, accountId),
           },
@@ -155,15 +159,18 @@ export async function sendChannelWaitingNudge(
   cfg: Config,
   args: { matchId: string; channelId: string; recipientAccount: string; notifiedAt: string },
 ): Promise<void> {
-  const r = await getPool().query(`SELECT category, account_want FROM matches WHERE id = $1`, [
-    args.matchId,
-  ]);
+  const r = await getPool().query(
+    `SELECT category, account_want, card_want, card_have FROM matches WHERE id = $1`,
+    [args.matchId],
+  );
   const m = r.rows[0];
   if (!m) return; // match vanished — nothing to say
   const ctx = await emailAccountContext(cfg, args.recipientAccount);
   if (ctx.freqMatches === 'off') return; // opted out of switchboard match mail
   const to = await accountEmail(args.recipientAccount, 'channel-waiting');
   if (!to) return;
+  // Named from the reader's own posting, never the other side's.
+  const ownLabel = await readersOwnThingLabel(m, args.recipientAccount);
   await sendEmail(cfg, {
     to,
     accountId: args.recipientAccount,
@@ -172,7 +179,7 @@ export async function sendChannelWaitingNudge(
     dedupeKey: `channel-waiting:${args.channelId}:${args.recipientAccount}:${args.notifiedAt}`,
     content: renderChannelWaiting(
       {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
+        categoryLabel: ctx.blind ? undefined : ownLabel,
         blind: ctx.blind,
         side: sideOf(m, args.recipientAccount),
       },
@@ -207,7 +214,7 @@ export async function notifyYourMove(
 ): Promise<void> {
   if (step === 'details') return;
   const r = await getPool().query(
-    `SELECT category, account_want, account_have FROM matches WHERE id = $1`,
+    `SELECT category, account_want, account_have, card_want, card_have FROM matches WHERE id = $1`,
     [matchId],
   );
   const m = r.rows[0];
@@ -219,6 +226,8 @@ export async function notifyYourMove(
   // The step this nudge is about is the names step, and that step is reached
   // through a link the person's own assistant fetches and hands them. So the
   // mail says what happened and stops there.
+  // Named from the reader's own posting, never the other side's.
+  const ownLabel = await readersOwnThingLabel(m, recipientAccount);
   await sendEmail(cfg, {
     to,
     accountId: recipientAccount,
@@ -227,7 +236,7 @@ export async function notifyYourMove(
     dedupeKey: `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
       {
-        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(m.category, m.kind),
+        categoryLabel: ctx.blind ? undefined : ownLabel,
         blind: ctx.blind,
         step: 'names',
         side: sideOf(m, recipientAccount),

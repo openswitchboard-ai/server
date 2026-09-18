@@ -1,7 +1,7 @@
 import { aboutThing } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
-import { getMatch, ownCardId, sideOf } from './matches.js';
+import { getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
 import {
   checkAgainstMandate,
@@ -278,17 +278,18 @@ async function notifyCounterpartyOfHumanOffer(cfg: Config, o: OfferRow): Promise
     if (!m) return;
     const counterparty = o.proposer_account === m.account_want ? m.account_have : m.account_want;
     if ((await getHearsVia(counterparty)) !== 'email') return; // their agent brings it
-    const { categoryLeafLabel } = await import('./matchRules.js');
     const { sendOfferOnTheTableEmail } = await import('../counter/email.js');
     const { accountEmail } = await import('./counterOps.js');
     const to = await accountEmail(counterparty, 'offer-on-the-table');
     if (!to) return;
+    // Named from the reader's own posting, never the other side's.
+    const categoryLabel = await readersOwnThingLabel(m, counterparty);
     await sendOfferOnTheTableEmail(cfg, to, counterparty, {
       offerId: o.id,
       matchId: o.match_id,
       amount: Number(o.amount),
       ccy: o.ccy,
-      categoryLabel: categoryLeafLabel(m.category, m.kind),
+      categoryLabel,
       side: counterparty === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
@@ -823,17 +824,18 @@ async function notifyProposerOfAcceptance(cfg: Config, o: OfferRow): Promise<voi
   try {
     const m = await getMatch(o.match_id);
     if (!m) return;
-    const { categoryLeafLabel } = await import('./matchRules.js');
     const { sendDealAgreedEmail } = await import('../counter/email.js');
     const { accountEmail } = await import('./counterOps.js');
     const to = await accountEmail(o.proposer_account, 'deal-agreed');
     if (!to) return;
+    // Named from the reader's own posting, never the other side's.
+    const categoryLabel = await readersOwnThingLabel(m, o.proposer_account);
     await sendDealAgreedEmail(cfg, to, o.proposer_account, {
       offerId: o.id,
       matchId: o.match_id,
       amount: Number(o.amount),
       ccy: o.ccy,
-      categoryLabel: categoryLeafLabel(m.category, m.kind),
+      categoryLabel,
       side: o.proposer_account === m.account_want ? 'want' : 'have',
     });
   } catch (err) {
