@@ -33,8 +33,9 @@
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
-import { categoryStatus } from '../denylist.js';
-import { suggestCategories } from './categorySuggest.js';
+import { categoryDenied, categoryStatus } from '../denylist.js';
+import { suggestCategories, type SuggestionSource } from './categorySuggest.js';
+import { nearestKnownAncestor } from './matchRules.js';
 import { embedCard } from './embeddings.js';
 import type { Config } from '../config.js';
 
@@ -50,9 +51,156 @@ export const ISLAND_PREFIX = /^intg[-.]/;
 /** Below this closeness the sweep leaves the card where it is. */
 export const DEFAULT_MIN_SCORE = { embedding: 0.55, lexical: 0.2 };
 
+/**
+ * The floor at the publish door, which is higher on the lexical side than the
+ * sweep's and for a reason worth writing down.
+ *
+ * The sweep's lexical floor is generous because the alternative there is
+ * leaving a posting exactly where it is, under a path that meets nothing. Any
+ * plausible node beats that. At the door the alternative is better: the
+ * posting's own line up to a node the catalogue knows, which is never wrong,
+ * only vague. So a lexical guess has to actually be a guess about the same
+ * thing before it beats "this is a good".
+ *
+ * What 0.2 buys at the door is the case that made this obvious.
+ * 'goods.gaming.sim-racing' scores 0.218 against goods.clothing, on nothing
+ * but shared trigrams, and filing a racing rig under clothing is worse for
+ * everybody than filing it under goods. The embedding floor is unchanged,
+ * because the embedding side is measuring meaning and 0.55 there already
+ * means what it says.
+ */
+export const DOOR_MIN_SCORE = { embedding: 0.55, lexical: 0.45 };
+
 export interface SnapCursor {
   created_at: string;
   id: string;
+}
+
+// ---------------------------------------------------------------------------
+// ONE DECISION, TWO CALLERS.
+//
+// The sweep below has always answered one question: given a category the
+// taxonomy does not hold open, which node should this posting really sit
+// under. Since run 9 the publish door asks exactly the same question, at the
+// moment the row is written, so that an invented branch never becomes a
+// matching key in the first place — 'goods.gaming.sim-racing' matched nothing
+// because there is no goods.gaming for a sibling rule to reach, and the want
+// for the same object sat under goods.electronics unmet.
+//
+// The two callers differ in one thing only, and it is what happens when no
+// suggestion is close enough. The sweep is reading rows that are already up
+// and already matching or not matching on their own: inventing an answer for
+// one of them is worse than leaving it alone for an operator, so the sweep
+// leaves it. The door has no such luxury. A posting arriving now under a path
+// nobody has written down will match nothing at all if it keeps that path, so
+// it falls back to the nearest node on its own line that the catalogue does
+// know — at the very least 'goods', 'services' or 'social', which is the same
+// thing the manual has told assistants to do since version 44.
+//
+// WHAT THE SNAP MAY NEVER DO is move a posting into a family somebody closed.
+// The deny list is judged on what the thing is, and the answer to a weapon
+// filed under goods.weapons is the category's word, never a quieter node
+// nearby. So every candidate — suggestion and ancestor alike — is put back
+// through the same open check the door uses, and a closed one is skipped for
+// the next open answer.
+// ---------------------------------------------------------------------------
+
+/** How the switchboard arrived at the node a posting is filed under. */
+export type SnapHow =
+  | 'as-posted' // the catalogue knows this node and holds it open
+  | 'suggestion' // the nearest open node, close enough to be trusted
+  | 'ancestor' // nothing was close enough, so the line it was filed on
+  | 'unmatched'; // nothing was close enough and the caller asked to be left alone
+
+export interface SnapDecision {
+  /** Where the posting should be filed. */
+  category: string;
+  /** The path that was asked about. */
+  from: string;
+  /** Whether that is a move. */
+  changed: boolean;
+  how: SnapHow;
+  /** Which way closeness was measured, where a suggestion was weighed. */
+  source?: SuggestionSource;
+  /** The winning suggestion's closeness, where one won. */
+  score?: number;
+  /** The other answers considered, nearest first. */
+  runners_up?: string[];
+}
+
+/** True where the taxonomy holds this exact node and nobody has closed it. */
+const openNode = (category: string): boolean =>
+  categoryStatus(category).status === 'open' && !categoryDenied(category);
+
+/**
+ * Where a posting under `category` really belongs.
+ *
+ * Never throws: the suggester is a courtesy and the answer stands without it
+ * (`fallbackToAncestor` callers always get a node back, because the nearest
+ * known ancestor is a walk up the path and needs nothing outside the process).
+ */
+export async function snapCategory(
+  cfg: Config,
+  category: string,
+  log: (msg: string, extra?: any) => void = () => {},
+  opts: {
+    /** Below the floor: walk up the path rather than leaving it alone. */
+    fallbackToAncestor?: boolean;
+    minScore?: Partial<typeof DEFAULT_MIN_SCORE>;
+  } = {},
+): Promise<SnapDecision> {
+  const from = String(category ?? '');
+  if (openNode(from)) return { category: from, from, changed: false, how: 'as-posted' };
+  // Which floor depends on what the caller does when nothing clears it: a
+  // caller with the ancestor to fall back on can afford to be fussier.
+  const base = opts.fallbackToAncestor ? DOOR_MIN_SCORE : DEFAULT_MIN_SCORE;
+  const floor = { ...base, ...(opts.minScore ?? {}) };
+
+  let source: SuggestionSource | undefined;
+  let best: { category: string; score: number } | undefined;
+  let runnersUp: string[] = [];
+  try {
+    // Five rather than three: the top answer may be a family somebody closed,
+    // and the point of asking is to have an open one left after that.
+    const result = await suggestCategories(cfg, from, 5, log);
+    source = result.source;
+    runnersUp = result.categories;
+    best = result.scored.find((s) => s.score >= floor[result.source] && openNode(s.category));
+  } catch (e: any) {
+    log('snap: suggester unavailable', { category: from, error: e?.message });
+  }
+  if (best) {
+    return {
+      category: best.category,
+      from,
+      changed: best.category !== from,
+      how: 'suggestion',
+      source,
+      score: best.score,
+      runners_up: runnersUp.filter((c) => c !== best!.category),
+    };
+  }
+  if (!opts.fallbackToAncestor) {
+    return { category: from, from, changed: false, how: 'unmatched', source, runners_up: runnersUp };
+  }
+  // Up the posting's own line until the catalogue both knows the node and
+  // holds it open. The top level always resolves, because the gate before
+  // this refuses a top level the taxonomy has no name for.
+  const parts = nearestKnownAncestor(from).split('.');
+  for (let i = parts.length; i >= 1; i--) {
+    const path = parts.slice(0, i).join('.');
+    if (openNode(path)) {
+      return {
+        category: path,
+        from,
+        changed: path !== from,
+        how: 'ancestor',
+        source,
+        runners_up: runnersUp,
+      };
+    }
+  }
+  return { category: from, from, changed: false, how: 'unmatched', source, runners_up: runnersUp };
 }
 
 export interface SnapOutcome {
@@ -116,21 +264,24 @@ export async function snapCardCategories(
       outcome.islands++;
       continue;
     }
-    const { categories, scored, source } = await suggestCategories(cfg, row.category, 3, log);
-    const best = scored[0];
-    const target = best && best.score >= floor[source] ? best.category : undefined;
-    if (!target) {
+    // The sweep asks the same question the publish door asks, and takes the
+    // same answer — except that it does NOT walk up the path when nothing is
+    // close enough. A row already up is left for an operator; see snapCategory.
+    const decision = await snapCategory(cfg, row.category, log, { minScore: floor });
+    const source = decision.source ?? 'lexical';
+    if (!decision.changed) {
       outcome.unmatched++;
       log('snap-categories: no taxonomy node close enough', {
         card_id: row.id,
         category: row.category,
         source,
-        best: best?.category ?? null,
-        score: best?.score ?? null,
+        best: decision.runners_up?.[0] ?? null,
+        score: decision.score ?? null,
         floor: floor[source],
       });
       continue;
     }
+    const target = decision.category;
     if (opts.dryRun) {
       outcome.remapped.push({ card_id: row.id, from: row.category, to: target, source });
       log('snap-categories: would remap', {
@@ -138,8 +289,8 @@ export async function snapCardCategories(
         from: row.category,
         to: target,
         source,
-        score: best.score,
-        runners_up: categories.slice(1),
+        score: decision.score,
+        runners_up: decision.runners_up,
       });
       continue;
     }
@@ -153,8 +304,8 @@ export async function snapCardCategories(
       from: row.category,
       to: target,
       source,
-      score: best.score,
-      runners_up: categories.slice(1),
+      score: decision.score,
+      runners_up: decision.runners_up,
     });
     // The vector describes the category, so it has to be rebuilt.
     try {
