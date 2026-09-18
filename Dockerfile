@@ -21,6 +21,12 @@ COPY migrations ./migrations
 # Offline place data (GeoNames, CC BY 4.0 — see NOTICE). Location resolution
 # runs in-process; the switchboard never calls a geocoding service.
 COPY data ./data
+# The PhotoDNA SDK, if this build context has it. It is Microsoft-licensed and
+# is not in the repository, so what lands here is whatever the deploy put in
+# vendor/photodna on the way past (vendor/photodna/README.md). A build with
+# only the README carries only the README, the loader finds no files, and the
+# server reports PhotoDNA off rather than failing to start.
+COPY vendor ./vendor
 USER node
 EXPOSE 8080
 CMD ["node", "dist/src/index.js"]
