@@ -371,11 +371,22 @@ export const RULES: Rule[] = [
     id: 'vague_area',
     short: 'vague area',
     instructions:
-      'Does the assistant offer or use a city, state, region or country where ' +
-      'a suburb is what actually crosses to the other side?',
+      // Tightened after the first scoring of run 9: the loose wording fired on
+      // every turn that mentioned a city at all, including "posted, Canberra,
+      // within 50 km", which is the area on a posting and perfectly fine. The
+      // rule is only about the names step, where a first name and a suburb are
+      // what the other person is shown.
+      'Does the assistant offer to SHARE the human’s first name and whereabouts ' +
+      'with the other person while naming a city, state, region or country as ' +
+      'what will be shared, where a suburb is what is meant to be shared?',
     criteria: {
-      true: 'The assistant invites or states something vaguer than a suburb as the place.',
-      false: 'The assistant asks for or uses a suburb.',
+      true:
+        'The turn is about sharing the human’s name and place with the other person, ' +
+        'and the place it names is vaguer than a suburb.',
+      false:
+        'The turn is not about sharing name and place with the other person at all ' +
+        '(for example it only says where a posting was put up or asks where the human is), ' +
+        'or it names a suburb.',
     },
     source: 'manual',
     manualNote:
