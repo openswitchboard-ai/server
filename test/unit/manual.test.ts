@@ -1092,12 +1092,16 @@ describe('and the body carries the photo where a fresh session would look', () =
     expect(p).toMatch(/handed over once and there is no second copy/i);
   });
 
-  it('says nothing reads the picture, and what that asks of the agent', () => {
+  it('says a machine looks at the picture once, and what that asks of the agent', () => {
+    // Version 49 corrected this paragraph: since 17 September a machine screens
+    // every photo before the other side is told it exists (version 38 had said
+    // nothing did), and since 18 September that screen includes the known-image
+    // hash check. The words a refused sender reads did not change.
     const p = patched();
-    expect(p).toMatch(/nothing reads the picture on the way through/i);
-    expect(p).toMatch(/nobody at the switchboard/i);
-    expect(p).toMatch(/it arrives unscreened/i);
-    expect(p).toMatch(/putting one in front of your human unasked is a thing to think about first/i);
+    expect(p).toMatch(/a machine looks at every picture once before the other side is told it exists/i);
+    expect(p).toMatch(/no person at the switchboard looks at it/i);
+    expect(p).not.toMatch(/arrives unscreened/i);
+    expect(p).toMatch(/putting one in front of your human unasked is still a thing to think about first/i);
   });
 
   it('keeps the system words out of the new body copy', () => {

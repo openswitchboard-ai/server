@@ -18,11 +18,15 @@
  * the page, because a page that asks "which conversation?" is a page that can
  * be answered wrongly, and every other link here is bound the same way.
  *
- * THE BYTES NEVER TOUCH THIS SERVICE. A presigned PUT carries them from the
- * sender's own browser into the photo bucket, encrypted there with the bucket's
- * own key; a presigned GET carries them to the other side's agent. The server
- * signs URLs, keeps a row, and HEADs an object to check it landed. It never
- * holds an image in memory, which is also why it cannot look at one.
+ * THE BYTES DO NOT PASS THROUGH THIS SERVICE ON THE WAY IN OR OUT. A presigned
+ * PUT carries them from the sender's own browser into the photo bucket,
+ * encrypted there with the bucket's own key; a presigned GET carries them to
+ * the other side's agent. The server signs URLs, keeps a row, and HEADs an
+ * object to check it landed. Two checks read the object once at the send
+ * step, and only then: Rekognition by reference (intake/checks/
+ * photoModeration.ts), and the known-image hash check, which fetches the
+ * bytes into memory long enough to hash them and keeps neither the bytes nor
+ * the hash (intake/checks/photoHashMatch.ts, since 18 September 2026).
  *
  * THE FILE IS STRIPPED BEFORE IT LEAVES THE DEVICE (16 September 2026). The
  * bytes never touching this service is also why this service cannot take the
