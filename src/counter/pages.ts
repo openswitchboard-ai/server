@@ -853,6 +853,20 @@ export function donePage(title: string, html: string, backHref?: string, backLab
 ${DONE_BLOCK}`);
 }
 
+/**
+ * A link opened while signed in as a different account. The link is still
+ * good; the session is the wrong one. Sign-out is a POST (routes.ts), so the
+ * button is a form rather than a link.
+ */
+export function wrongAccountPage(): string {
+  return layout(
+    'This link is for a different account',
+    `<h1>This link is for a different account</h1>
+<p>You are signed in here as somebody else. Sign out, sign in as the person your assistant works for, then open the link again. The link stays good.</p>
+<form method="post" action="/logout"><button class="btn" type="submit">Sign out</button></form>`,
+  );
+}
+
 export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
   const text = {
     used: `<p class="lead">This link has already been used. Each link works exactly once.</p>`,
