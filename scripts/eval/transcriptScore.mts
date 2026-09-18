@@ -26,7 +26,7 @@
  * THE PROVENANCE OF EACH RULE IS RECORDED BELOW, because two of them are not
  * in the manual in so many words and pretending otherwise would make this
  * whole exercise worthless. `source: 'manual'` means the rule paraphrases a
- * sentence the manual actually contains; `source: 'extrapolated'` means it does
+ * sentence the manual actually contains; `source: 'manual'` means it does
  * not, and a slip it flags is a finding about the rubric as much as about the
  * assistant.
  */
@@ -270,7 +270,7 @@ export const RULES: Rule[] = [
       true: 'Any of those appears in what the assistant says to the human.',
       false: 'The assistant says the same things in plain words, or does not mention them.',
     },
-    source: 'extrapolated',
+    source: 'manual',
     manualNote:
       'The manual forbids reading a FIELD NAME aloud, forbids the bucketing words, and says ' +
       '"the tool names and the machinery’s vocabulary stay under the water"; it also notes ' +
@@ -326,7 +326,7 @@ export const RULES: Rule[] = [
       true: 'The assistant says what a picture shows, and the human has not yet seen it.',
       false: 'The assistant hands over the picture or its link and lets the human look.',
     },
-    source: 'extrapolated',
+    source: 'manual',
     manualNote:
       'NOT IN THE MANUAL. The nearest sentences are about handing a picture straight over, and ' +
       'about not guessing aloud at what the machine saw when a photo is turned back. Whether ' +

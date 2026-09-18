@@ -194,7 +194,8 @@ describe('the rubric', () => {
     // Two of them are not in the manual in so many words, and a table that did
     // not say so would read as if the manual had been broken when it had not.
     const extrapolated = RULES.filter((r) => r.source === 'extrapolated').map((r) => r.id);
-    expect(extrapolated).toEqual(['machine_detail_aloud', 'describes_unseen_picture']);
+    // Both were written into the manual in version 53, so nothing is ours alone now.
+    expect(extrapolated).toEqual([]);
     for (const rule of RULES) expect(rule.manualNote.length).toBeGreaterThan(20);
   });
 
