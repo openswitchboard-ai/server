@@ -49,7 +49,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1121.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@openswitchboard/schema": "github:openswitchboard-ai/schema#5c5245a08fae812137a617fe5b28051e14147b23",
-    "@simplewebauthn/server": "^13.3.3",
+    "@simplewebauthn/server": "^14.0.2",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "argon2": "^0.45.1",
