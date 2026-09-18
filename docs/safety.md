@@ -32,11 +32,26 @@ an assistant always has a sentence to say to its human.
 | Every door | The account is suspended (nothing in, nothing out) | `checks/suspended.ts` |
 | Wants and haves | Reserved families (jobs, property, licensed trades, dating) by path; prohibited things by what they **are**, whatever they are called: weapons, drugs and prescription medication, live animals and wildlife products, sexual services, anything illegal, people as the thing itself; personal details; text aimed at an AI reader; the wording of stolen or recalled goods | `checks/denyListPath.ts`, `checks/modelScreen.ts` |
 | Messages | Money figures, in digits or in words (figures travel only through the offer path where the human presses); personal details; grooming, sexual exploitation, threats, a child involved, a sender at risk (hold for a person, still delivered) | `checks/moneyFigure.ts`, `checks/modelScreen.ts`, `checks/messageSafety.ts` |
-| Photos | Hidden metadata removed in the sender's browser before upload; then, before the other side is told a photo exists, a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoModeration.ts` |
+| Photos | Hidden metadata removed in the sender's browser before upload; then, before the other side is told a photo exists, the picture is checked against the lists of known child abuse images, and a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoHashMatch.ts`, `checks/photoModeration.ts` |
 | Reports | Never refused for their words. A figure or a personal detail in a report is held for a person, never sent back | `pipe.ts` (`REFUSAL_FREE_DOORS`) |
 
 A lawful secondhand-goods conversation, blunt haggling, or rudeness is none
 of these, and the classifier is told so.
+
+### Known abuse images
+
+Every photo is also checked against the lists of known child abuse images
+before the other side is told it exists. The picture is turned into a hash on
+our own server and the hash is checked against the lists. If it matches, the
+photo does not go, it is kept unseen for the police, and the account that sent
+it is closed. A photo that matches nothing goes on through the other checks in
+the ordinary way.
+
+OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
+
+The licensed files are not in this repository and cannot be. Anyone running
+their own copy of this software has to obtain their own licence from Microsoft
+before this check can run at all.
 
 ## What is kept, and for how long
 
@@ -51,6 +66,8 @@ of these, and the classifier is told so.
 - **A photo stopped for sexual content**: held in quarantine, unseen, for up
   to **ninety days** so that a referral can be made; deleted once a person has
   reviewed and cleared it; anything referred is kept as the law requires.
+- **A photo that matched a known abuse image**: held the same way, marked as a
+  match, and referred to the police. Nothing referred is ever deleted.
 - **Message bodies never go into logs.** Operator log lines carry ids and
   reason codes only.
 - IP addresses appear in the application's request logs, kept for one month.
@@ -160,8 +177,6 @@ weakness.
 
 ## What is not built yet
 
-- A hash match against known child-abuse imagery (PhotoDNA). Applied for;
-  wired in when granted.
 - A second, stronger model on every hold before a person sees it.
 - Tamper evidence on the ledger itself: a database row can be deleted by an
   administrator, though it cannot be read. See `docs/trust-and-safety.md`.

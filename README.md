@@ -28,6 +28,14 @@ SDK or a vertical on the protocol carries no copyleft obligation.
 Place data in `data/gazetteer.json.gz` comes from GeoNames under CC BY 4.0 — see
 [NOTICE](NOTICE).
 
+OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. That
+licence covers this deployment and nothing else: the PhotoDNA files are
+Microsoft confidential, they are not in this repository and cannot be, and
+anyone running their own switchboard from this code has to obtain their own
+licence from Microsoft. Without it the known-image check has nothing to load,
+the server says so once at boot, and every photo still goes through the rest of
+the checks. See [`vendor/photodna/README.md`](vendor/photodna/README.md).
+
 ## How this relates to the other repos
 
 | Repo | Relationship |

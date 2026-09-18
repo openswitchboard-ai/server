@@ -62,7 +62,7 @@ person that the switchboard has not looked at and cannot account for.*
 | Injection | Text aimed at an AI reader | Existing model screen | Postings, messages |
 | Stolen / recalled markers | Existing | Existing model screen | Postings |
 | Sexual content | Nudity and sexual imagery of any kind, and violence, hate symbols and drugs alongside it | Rekognition `DetectModerationLabels` on the uploaded object at the send press, before the other side is told it exists, `MinConfidence` 50. Refused on any of these top-level labels, in both the old and the current taxonomy names: Explicit, Explicit Nudity, Non-Explicit Nudity of Intimate parts and Kissing, Suggestive, Sexual Activity, Swimwear or Underwear, Violence, Visually Disturbing, Graphic Violence Or Gore, Hate Symbols, Drugs & Tobacco, Drugs, Tobacco. Alcohol, Gambling and Rude Gestures are deliberately not refused: a bottle of wine is a thing somebody may lawfully be handing over. A refusal keeps the reason code alone; an error is a hold, never a pass. WHAT HAPPENS TO THE BYTES DEPENDS ON THE FAMILY. A refusal on violence, hate or drugs deletes the object, as before. A refusal on any of the SEXUAL labels does not: the object is copied to `conversation-photos/quarantine/<introduction>/<name>` in the same bucket, the original is deleted, and a `photo_quarantine` row is written (migration 038) — held ninety days, status `held`. The reason is s 474.25 of the Criminal Code (Cth): a host that becomes aware of child abuse material must refer it to the Australian Federal Police, and Rekognition says "Explicit", never "a child". Deleting on sight destroys the referrable thing, fastest in exactly the cases where that is worst. A copy that fails leaves the original where it is and logs `{event:'photo-quarantine-failed', match_id}` — nothing is ever deleted that could not first be copied. The operator gets one line, `{event:'photo-quarantined', quarantine_id, match_id}`, with no key and no label; the sender's assistant reads the same plain sentence either way and nothing about quarantine reaches any user. A person decides with `scripts/safety/quarantine.mts`, which displays and fetches no image: `--cleared` deletes the object, `--referred` marks it and keeps it forever. The daily sweep takes only `cleared` rows past expiry; a `held` row past ninety days is logged as overdue and left alone, and a `referred` row is never swept | Photos |
-| Known CSAM | Hash match against industry hash lists | PhotoDNA or Thorn Safer; apply early, it takes time to be granted | Photos |
+| Known abuse image | The picture IS one that has already been found, identified and hashed by the organisations that do that work | PhotoDNA, at the send press, BEFORE the moderation call. OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. The bytes are read out of the bucket and hashed on the task, twice where the picture has a border, so a cropped or letterboxed copy of a known image is caught too; the hashes and nothing else go to Microsoft's match service. A match REFUSES with the same sentence the sexual-label refusal uses, word for word, and behind that sentence: the object is quarantined with `hash_match` set (migration 045), a `safety_reviews` row is opened flagged `known_abuse_image` carrying the service's tracking id, and the sender's account is suspended. This is the only check here that suspends on its own. An error is a hold, never a pass. A deployment without the licensed files or without a subscription key PASSES with the detail `photodna_off` and carries on to the moderation call, and says which half is missing once at boot. The hash is never logged, never stored and never in a row. See "A known-image match" below | Photos |
 | Grooming, exploitation, threats | Contact with minors, coercion, moving a child off-platform, sextortion, threats of harm, and a sender who sounds at risk themselves | Model classifier on message text (Haiku, the same client and model the screen uses; the first 2,000 characters; `MESSAGE_SAFETY=off` turns it off for a deployment). Five flags: `minor_involved`, `grooming`, `sexual_exploitation`, `threat`, `self_harm_risk`. Any of them HOLDS, and it can never refuse — and a hold at this door still DELIVERS the message: it is a flag for review, never a stall, because the person waiting for a reply must not be silently ghosted on a fast model's word. The hold opens a `safety_reviews` row (the flag names and the ledger entry id, never the words), holds that introduction's ledger entries ninety days exactly as a report does, and puts one line in front of the operator: `{event:'safety-review', review_id, match_id}`. A model that does not answer is a PASS with a `{event:'message-safety-unavailable'}` warn line — deliberately the opposite of the photo rule, because an outage must not stop every ordinary conversation and the words are in the ledger to be read afterwards. A model that DOES answer, with something that is not a verdict in the shape asked for, is the opposite again: that HOLDS, with `{event:'message-safety-unreadable'}` and a review row carrying the single name `unreadable_verdict`. An outage is an outage; a classifier talked out of classifying is what a successful injection looks like from here, and it must not be spent as a pass. The second-model pass below is not wired to it yet; every hold reaches a person today | Messages |
 | Suspended sender or recipient | Nothing in, nothing out | Flag on the account | Every door |
 
@@ -243,6 +243,58 @@ first, before the manual; every tool answers `SUSPENDED` with the sentence to
 say; and the manual asks the assistant to keep the fact in its own memory as
 well, so the human hears it even in a client that never reconnects. Told every
 time beats remembered once.
+
+## A known-image match
+
+The one thing on this switchboard that is not a judgement call. See
+`src/intake/checks/photoHashMatch.ts` and `src/safety/photodna.ts`.
+
+**What the machine did, before anybody was told anything.** The photo was
+refused with the ordinary sentence. The bytes were copied to the quarantine
+prefix and the original deleted, with `hash_match` true and the names of the
+lists that held the hash on the row. A safety review was opened, flagged
+`known_abuse_image`, carrying the matching service's tracking id. The sender's
+account was suspended: every door shut, every posting down, every open
+conversation severed, every credential pulled back. Neither user was told
+anything beyond the ordinary refusal, and the person on the other side was
+never told there was a photo at all.
+
+**What the person does, within 24 hours.**
+
+1. **Do not view it.** There is nothing an operator learns by looking that the
+   match has not already said, and looking is its own harm. Nothing in this
+   repository displays or fetches a quarantined object, and
+   `scripts/safety/quarantine.mts` prints the match first and says to refer it.
+2. **Report it to the ACCCE**, the Australian Centre to Counter Child
+   Exploitation, on the AFP's online form at accce.gov.au. Quote the tracking
+   id from the review row, the quarantine id, the introduction id and the time.
+   Say that the material is preserved and where, and ask how they want it
+   handed over. This is the s 474.25 referral and it is not optional.
+3. **Preserve.** Mark the quarantine row `--referred`, which keeps it forever:
+   a referred row is never swept at any age and the object is never touched.
+   Preserve the introduction's ledger entries as well if the review's own
+   ninety days will not cover the request.
+4. **NCMEC, where there is a United States connection.** The CyberTipline is
+   the US channel and an electronic service provider reports through it. We do
+   not have an NCMEC ESP account yet and have not registered for one. Until we
+   do, a US-connected matter goes through the ACCCE, who deal with NCMEC
+   themselves. Registering is an open item.
+5. **Write it down.** Date, tracking id, review id, quarantine id, who was
+   told, what they said, and what was handed over. It is one line in the
+   transparency report as well: date, kind, what was produced, nothing
+   identifying.
+
+**What is logged, and what is not.** `{event:'photo-refused', reason_code:
+'KNOWN_ABUSE_IMAGE'}` at the moment of refusal; `{event:'photo-quarantined',
+quarantine_id, match_id, hash_match}`; `{event:'safety-review', review_id,
+match_id}`. No hash, ever, in any of them, in any row, or in the ledger: a hash
+is a handle on one specific picture and a log line is the one thing in this
+system that is read casually. The tracking id is on the review row and nowhere
+else, because that is what a referral quotes.
+
+**The licence.** The PhotoDNA files are Microsoft confidential and are not in
+this repository. `vendor/photodna/README.md` says what belongs there; a fork
+has to obtain its own licence from Microsoft.
 
 ## Law enforcement: the runbook
 
