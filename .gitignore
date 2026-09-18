@@ -20,3 +20,10 @@ bilby-fixed.json
 nagatha-fresh.json
 *-fresh.json
 *-fixed.json
+
+# The PhotoDNA SDK (vendor/photodna/README.md). Microsoft confidential,
+# licensed at no cost, and never committed: the deploy puts the two files
+# beside that README on the way past, and a local copy for the hashing tests
+# is expected. Only the README is in git.
+vendor/photodna/*
+!vendor/photodna/README.md
