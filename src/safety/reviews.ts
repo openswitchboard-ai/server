@@ -54,9 +54,15 @@ export function safetyReviewLogLine(reviewId: string, matchId: string | null): s
 const uuidOrNull = (v: string | undefined): string | null =>
   v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v : null;
 
+/**
+ * Everything a review row's flags may say: the classifier's own names, and the
+ * one flag no model raises (KNOWN_ABUSE_IMAGE_FLAG, below).
+ */
+export type ReviewFlag = ReviewFlagName | 'known_abuse_image';
+
 export interface ReviewOutcome {
   review_id: string;
-  flags: ReviewFlagName[];
+  flags: ReviewFlag[];
   preserved: number;
 }
 
@@ -113,6 +119,66 @@ export async function openSafetyReview(
   );
 
   return { review_id: reviewId, flags, preserved };
+}
+
+// ---------------------------------------------------------------------------
+// The other thing that opens a review, and the only one that is not about
+// words (src/intake/checks/photoHashMatch.ts).
+
+/**
+ * The flag on a review raised by a known-image hash match. It is not one of
+ * the classifier's flags and never will be: those are a model's opinion about
+ * a message, and this is a picture that has already been identified by the
+ * organisations that do that work.
+ */
+export const KNOWN_ABUSE_IMAGE_FLAG = 'known_abuse_image' as const;
+
+/**
+ * Open the review a hash match raises.
+ *
+ * The same row, the same ninety-day preserve and the same one operator line as
+ * a flagged message, with two differences. There is no ledger entry: the thing
+ * that arrived was an image, it is in quarantine rather than in the ledger, and
+ * the quarantine row is what points at it. And the matching service's tracking
+ * id rides along, because that is what a referral to the ACCCE or the NCMEC
+ * quotes.
+ *
+ * Nothing about the picture is here. Not the key, not the hash, not the
+ * caption, not the name of the file it arrived as.
+ */
+export async function openKnownImageReview(
+  args: {
+    match_id?: string;
+    sender_account?: string;
+    tracking_id?: string;
+  },
+  opts: { warn?: (line: string) => void } = {},
+): Promise<ReviewOutcome> {
+  const pool = getPool();
+  const inserted = await pool.query(
+    `INSERT INTO safety_reviews (match_id, sender_account, flags, tracking_id)
+     VALUES ($1, $2, $3::text[], $4)
+     RETURNING id`,
+    [
+      uuidOrNull(args.match_id),
+      uuidOrNull(args.sender_account),
+      [KNOWN_ABUSE_IMAGE_FLAG],
+      args.tracking_id ?? null,
+    ],
+  );
+  const reviewId = inserted.rows[0].id as string;
+
+  let preserved = 0;
+  if (args.match_id) {
+    const until = new Date(Date.now() + REVIEW_PRESERVE_DAYS * 24 * 60 * 60 * 1000);
+    ({ preserved } = await preserveEntriesForMatch(args.match_id, until));
+  }
+
+  (opts.warn ?? ((line: string) => console.warn(line)))(
+    safetyReviewLogLine(reviewId, args.match_id ?? null),
+  );
+
+  return { review_id: reviewId, flags: [KNOWN_ABUSE_IMAGE_FLAG], preserved };
 }
 
 // ---------------------------------------------------------------------------

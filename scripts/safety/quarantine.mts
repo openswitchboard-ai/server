@@ -90,6 +90,13 @@ console.error(`${rows.length} held:`);
 console.error('');
 for (const r of rows) {
   console.error(`  ${r.id}`);
+  // The one row in this list that is not a person's judgement call. It is
+  // printed first and said plainly, because the next act is a referral rather
+  // than a decision (docs/trust-and-safety.md, "A known-image match").
+  if (r.hash_match) {
+    console.error('    KNOWN IMAGE  matched a known abuse-image hash. REFER THIS. Sources: ' +
+      ((r.hash_sources ?? []).join(', ') || '(none recorded)'));
+  }
   console.error(`    labels       ${(r.labels ?? []).join(', ') || '(none recorded)'}`);
   console.error(`    introduction ${r.match_id ?? '(none)'}`);
   console.error(`    sender       ${r.sender_account ?? '(none)'}`);

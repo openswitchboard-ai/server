@@ -1,4 +1,8 @@
 /** Environment-driven configuration. Fails fast when a required value is missing. */
+// The one real PhotoDNA endpoint, from the module that talks to it. That
+// module takes nothing but a type from this one, so the two do not form a
+// runtime cycle.
+import { PHOTODNA_ENDPOINT } from './safety/photodna.js';
 
 function required(name: string): string {
   const v = process.env[name];
@@ -166,6 +170,19 @@ export interface Config {
    *  was, but nothing that passes is kept, so a report has no evidence behind
    *  it. The service says so once at startup rather than failing to boot. */
   safetyPublicKey?: string;
+  /** Secrets Manager secret holding {api_key} for PhotoDNA's MatchHash
+   *  service (src/safety/photodna.ts). Unset = known-image hash matching is
+   *  off for this deployment: the server says so once at boot, and a photo
+   *  still goes through every other check before it is delivered. Prod stays
+   *  unset until prod has a secret of its own. */
+  photoDnaSecretArn?: string;
+  /** Where the licensed PhotoDNA files sit, relative to the process. They are
+   *  never in git (vendor/photodna/README.md); a deployment that does not have
+   *  them runs with the check off. */
+  photoDnaSdkDir: string;
+  /** Where the hashes are sent. A parameter only so the suite can point it at
+   *  a stand-in; there is one real value and it is the default. */
+  photoDnaEndpoint: string;
   /** HTTP Basic credential for the operator metrics page, as `user:password`.
    *  Unset = the /ops/metrics routes are never registered and the path 404s,
    *  the same spirit as the Stripe webhook on a deployment without Stripe. */
@@ -241,6 +258,9 @@ export function loadConfig(): Config {
     settlementReturnSilenceDays: Number(process.env.SETTLEMENT_RETURN_SILENCE_DAYS ?? 7),
     settlementTrackingGraceDays: Number(process.env.SETTLEMENT_TRACKING_GRACE_DAYS ?? 7),
     safetyPublicKey: safetyPublicKeyFrom(process.env.SAFETY_PUBLIC_KEY),
+    photoDnaSecretArn: process.env.PHOTODNA_SECRET_ARN || undefined,
+    photoDnaSdkDir: process.env.PHOTODNA_SDK_DIR || 'vendor/photodna',
+    photoDnaEndpoint: process.env.PHOTODNA_ENDPOINT || PHOTODNA_ENDPOINT,
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
   };
 }
