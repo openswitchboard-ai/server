@@ -11,6 +11,7 @@ import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 import { warmCategoryCorpus } from './domain/categorySuggest.js';
 import { warnIfLedgerDisabled } from './safety/ledger.js';
 import { initPhotoDna, warnIfPhotoDnaDisabled } from './safety/photodna.js';
+import { initJev } from './shadow/jev.js';
 
 async function main() {
   const cfg = loadConfig();
@@ -66,6 +67,12 @@ async function main() {
   // key. Nothing waits on it: loading the module means reading two files, and
   // a photo arriving before that finishes simply asks again.
   void warnIfPhotoDnaDisabled(cfg, (msg) => app.log.warn(msg));
+
+  // And one line for the outside model this deployment may be quietly asking
+  // for a second opinion. It says which of the two reasons it is off for,
+  // because "nobody switched it on" and "a prod task somehow has the variable"
+  // are very different things to find in a log (src/shadow/jev.ts).
+  initJev(cfg, (msg) => app.log.info(msg));
 
   // Embed the taxonomy's open nodes once per process so a refused category
   // can name the closest open ones. Nothing waits on this: until it finishes,

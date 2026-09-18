@@ -3,6 +3,7 @@
 // module takes nothing but a type from this one, so the two do not form a
 // runtime cycle.
 import { PHOTODNA_ENDPOINT } from './safety/photodna.js';
+import { JEV_ENDPOINT, JEV_MODEL } from './shadow/jev.js';
 
 function required(name: string): string {
   const v = process.env[name];
@@ -183,6 +184,20 @@ export interface Config {
   /** Where the hashes are sent. A parameter only so the suite can point it at
    *  a stand-in; there is one real value and it is the default. */
   photoDnaEndpoint: string;
+  /** Secrets Manager secret holding {apiKey} for TypeSafe AI's System One
+   *  model (src/shadow/jev.ts). Unset = the shadow is off, which is every
+   *  deployment except dev. IT IS NEVER SET ON PROD: infra hands it to dev
+   *  tasks only, there is no prod secret, and the client refuses to start in
+   *  prod even if the variable reaches it anyway. Nothing the switchboard
+   *  does changes when this is on — Jev is asked, the answer is written down
+   *  beside ours, and that is the whole of it (docs/jev-shadow.md). */
+  jevSecretArn?: string;
+  /** Where the shadow's questions are sent. A parameter only so the suite can
+   *  point it at a stand-in; there is one real value and it is the default. */
+  jevEndpoint: string;
+  /** Which model answers them. Pinned by name rather than by version: this is
+   *  a shadow, and a newer System One is what we would want to read about. */
+  jevModel: string;
   /** HTTP Basic credential for the operator metrics page, as `user:password`.
    *  Unset = the /ops/metrics routes are never registered and the path 404s,
    *  the same spirit as the Stripe webhook on a deployment without Stripe. */
@@ -261,6 +276,9 @@ export function loadConfig(): Config {
     photoDnaSecretArn: process.env.PHOTODNA_SECRET_ARN || undefined,
     photoDnaSdkDir: process.env.PHOTODNA_SDK_DIR || 'vendor/photodna',
     photoDnaEndpoint: process.env.PHOTODNA_ENDPOINT || PHOTODNA_ENDPOINT,
+    jevSecretArn: process.env.JEV_SECRET_ARN || undefined,
+    jevEndpoint: process.env.JEV_ENDPOINT || JEV_ENDPOINT,
+    jevModel: process.env.JEV_MODEL || JEV_MODEL,
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
   };
 }
