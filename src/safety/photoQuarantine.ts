@@ -85,8 +85,16 @@ export async function quarantinePhoto(args: {
   match_id?: string;
   sender_account?: string;
   labels: string[];
+  /** True where a known abuse-image hash matched (src/safety/photodna.ts).
+   *  A different kind of row entirely: nothing was guessed at, and what is in
+   *  front of the operator is a referral rather than a decision. */
+  hash_match?: boolean;
+  /** The names of the lists that held the matching hash. Never the hash. */
+  hash_sources?: string[];
 }): Promise<QuarantineOutcome> {
   const { bucket, key, match_id, sender_account, labels } = args;
+  const hashMatch = args.hash_match === true;
+  const hashSources = args.hash_sources ?? [];
   const destination = quarantineKey(key, match_id);
 
   try {
@@ -120,8 +128,8 @@ export async function quarantinePhoto(args: {
   try {
     await getPool().query(
       `INSERT INTO photo_quarantine
-         (id, match_id, sender_account, bucket, key, labels, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6::text[], now() + ($7 || ' days')::interval)`,
+         (id, match_id, sender_account, bucket, key, labels, hash_match, hash_sources, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8::text[], now() + ($9 || ' days')::interval)`,
       [
         id,
         uuidOrNull(match_id),
@@ -129,6 +137,8 @@ export async function quarantinePhoto(args: {
         bucket,
         destination,
         labels,
+        hashMatch,
+        hashSources,
         String(QUARANTINE_WINDOW_DAYS),
       ],
     );
@@ -141,7 +151,12 @@ export async function quarantinePhoto(args: {
   }
 
   // THE ONE OPERATOR LINE. Two ids: no key, no label, nothing about a picture.
-  quarantineLog('photo-quarantined', { quarantine_id: id, match_id: match_id ?? 'unknown' });
+  quarantineLog('photo-quarantined', {
+    quarantine_id: id,
+    match_id: match_id ?? 'unknown',
+    // Which kind of row this is, and nothing about the picture either way.
+    ...(hashMatch ? { hash_match: 'true' } : {}),
+  });
   return { held: true, quarantine_id: id, key: destination };
 }
 
@@ -225,16 +240,23 @@ export interface HeldQuarantineRow {
   match_id: string | null;
   sender_account: string | null;
   labels: string[];
+  hash_match: boolean;
+  hash_sources: string[];
   created_at: Date;
   expires_at: Date;
 }
 
-/** Oldest first: what has been waiting longest for a person is what matters. */
+/**
+ * A HASH MATCH COMES FIRST, then oldest first inside each group. Everything
+ * else in this queue is a person deciding whether there is anything here at
+ * all; a match is a picture somebody has already identified, and it should
+ * never be waiting behind a week of maybes.
+ */
 export async function listHeldQuarantine(limit = 50): Promise<HeldQuarantineRow[]> {
   const r = await getPool().query(
-    `SELECT id, match_id, sender_account, labels, created_at, expires_at
+    `SELECT id, match_id, sender_account, labels, hash_match, hash_sources, created_at, expires_at
        FROM photo_quarantine WHERE status = 'held'
-      ORDER BY created_at ASC LIMIT $1`,
+      ORDER BY hash_match DESC, created_at ASC LIMIT $1`,
     [limit],
   );
   return r.rows as HeldQuarantineRow[];

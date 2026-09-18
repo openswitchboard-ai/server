@@ -137,11 +137,15 @@ describe('only the checks that stand at this door run', () => {
       'moneyFigure',
       'messageSafety',
     ]);
-    // The metadata gate answers at presign; the look at the picture answers at
-    // the send press. Both stand at the photo door, in that order.
+    // The metadata gate answers at presign; the two machines that look at the
+    // picture answer at the send press. All three stand at the photo door, in
+    // that order — and the hash match comes BEFORE the moderation call,
+    // because an identification must not depend on an opinion being reached
+    // first (checks/photoHashMatch.ts).
     expect(checksForDoor('photo', CHECKS).map((c) => c.name)).toEqual([
       'suspended',
       'photoMetadata',
+      'photoHashMatch',
       'photoModeration',
     ]);
     // Every door, with no exception: that is the whole of what "at every door"

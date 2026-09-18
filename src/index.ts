@@ -10,6 +10,7 @@ import { startOpsWorker } from './workers/opsWorker.js';
 import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 import { warmCategoryCorpus } from './domain/categorySuggest.js';
 import { warnIfLedgerDisabled } from './safety/ledger.js';
+import { initPhotoDna, warnIfPhotoDnaDisabled } from './safety/photodna.js';
 
 async function main() {
   const cfg = loadConfig();
@@ -31,6 +32,7 @@ async function main() {
   initEnvelope(cfg);
   await initCounterKeys(cfg);
   initStripe(cfg);
+  initPhotoDna(cfg);
 
   const app = buildApp(cfg);
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
@@ -58,6 +60,12 @@ async function main() {
   // One plain line where this deployment has no safety public key: everything
   // is still checked, and nothing that passes is kept.
   warnIfLedgerDisabled(cfg, (msg) => app.log.warn(msg));
+
+  // And one where it has no known-image hash matching, which is every
+  // deployment that does not carry the licensed files or has no subscription
+  // key. Nothing waits on it: loading the module means reading two files, and
+  // a photo arriving before that finishes simply asks again.
+  void warnIfPhotoDnaDisabled(cfg, (msg) => app.log.warn(msg));
 
   // Embed the taxonomy's open nodes once per process so a refused category
   // can name the closest open ones. Nothing waits on this: until it finishes,

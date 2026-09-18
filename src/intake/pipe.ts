@@ -13,6 +13,7 @@ import { denyListPath } from './checks/denyListPath.js';
 import { messageSafety } from './checks/messageSafety.js';
 import { modelScreen } from './checks/modelScreen.js';
 import { moneyFigure } from './checks/moneyFigure.js';
+import { photoHashMatch } from './checks/photoHashMatch.js';
 import { photoMetadata } from './checks/photoMetadata.js';
 import { photoModeration } from './checks/photoModeration.js';
 import { SUSPENDED_REASON_CODE, suspended } from './checks/suspended.js';
@@ -35,6 +36,11 @@ export const CHECKS: Check[] = [
   modelScreen,
   moneyFigure,
   photoMetadata,
+  // Before the moderation call, and not to save the money. A known-image match
+  // is an identification rather than an opinion, and it must not depend on a
+  // second machine having an opinion first: a photo Rekognition refused would
+  // never have been hashed at all (checks/photoHashMatch.ts).
+  photoHashMatch,
   photoModeration,
   // Last of all, and on purpose: it is the one check that cannot refuse, so
   // nothing is ever bought by running it ahead of a check that can. A message
