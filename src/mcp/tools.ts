@@ -15,6 +15,7 @@ import * as channel from '../domain/channel.js';
 import * as conversationWindow from '../domain/conversationWindow.js';
 import * as humanLinks from '../domain/humanLinks.js';
 import * as matches from '../domain/matches.js';
+import * as nearMiss from '../domain/nearMisses.js';
 import * as offers from '../domain/offers.js';
 import * as settlements from '../domain/settlements.js';
 import { checkReadRate, checkWriteRate } from '../domain/quotas.js';
@@ -392,7 +393,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'check_in',
     description:
-      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. Where your human is comes back too, when they have set it (`area`, `area_resolved`, `area_note`): use it as the area on what you post for them rather than opening with a question they have already answered, and say which area you used. Every entry carries a ready sentence written for your human — lead with that. People come to your human ONE AT A TIME (as many at a time as the `slots` they set), so an entry may come back as `in_line` with a single sentence and nothing else: that is the other side's turn not yet reached, and there is nothing to do on it but say so. When your human is the one waiting, say the in_line sentence and nothing else. There is no count and no position here, so \"there's someone in the queue already\" is something you invented. On your human's own wants and haves, `line` says how many are waiting behind the one they are talking to; that number is theirs and never the other side's. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `area_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open to both sides from the moment the introduction is made), \"names\" for their first name and suburb (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
+      "Check in for anything new on your human's wants and haves and on the introductions the switchboard has made for them. One call is the whole sweep: who has come forward, whose move it is on each, every figure on the table from BOTH sides (`offers`, most recent first — including the ones your human typed on their own approval page, which you would otherwise never see), whether a message is waiting to be collected, your human's standing arrangement, and any update to this manual. Figures live here; collect_messages carries words. What came close and stopped short comes back too, in its own list under `near_misses`, one entry per want or have: nobody has been introduced over one of those and nothing has crossed, so say the sentence beside it and offer a look, and never talk about it as though somebody were waiting. The way your human acts on one is by amending their own posting. Where your human is comes back too, when they have set it (`area`, `area_resolved`, `area_note`): use it as the area on what you post for them rather than opening with a question they have already answered, and say which area you used. Every entry carries a ready sentence written for your human — lead with that. People come to your human ONE AT A TIME (as many at a time as the `slots` they set), so an entry may come back as `in_line` with a single sentence and nothing else: that is the other side's turn not yet reached, and there is nothing to do on it but say so. When your human is the one waiting, say the in_line sentence and nothing else. There is no count and no position here, so \"there's someone in the queue already\" is something you invented. On your human's own wants and haves, `line` says how many are waiting behind the one they are talking to; that number is theirs and never the other side's. NEVER READ A FIELD NAME ALOUD. Every field that changes what you should say has a sentence beside it (`note`, `offer_note`, `taken_down_note`, `hears_via_note`, `runs_on_its_own_note`, `time_note`, `area_note`, `arrangement_note`); the field itself is for you, and the sentence is for them. To fetch one specific unlock instead, pass `intro_id` with `step`: \"signal\" for the thin first look, \"details\" for what the other person has (open to both sides from the moment the introduction is made), \"names\" for their first name and suburb (open once both humans have given the go-ahead). A step that is not open to you yet answers NOT_UNLOCKED_YET.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1060,8 +1061,16 @@ export async function dispatchTool(
           // agent that read the manual at connect and never reconnects still
           // hears about an edit, once, on its next check.
           const manualUpdate = session ? await manualUpdateFor(session) : undefined;
+          // WHAT CAME CLOSE, in its own list beside the introductions and
+          // never among them (domain/nearMisses.ts). Nobody has been
+          // introduced on any of these, nothing has crossed, and there is no
+          // press to ask for: the only move available is the human's own, on
+          // their own posting. It rides the sweep because until now the only
+          // place a near miss appeared was a number in a weekly email.
+          const nearMisses = await nearMiss.nearMissesForAccount(accountId);
           return ok({
             introductions: withNotes,
+            ...(nearMisses.length ? { near_misses: nearMisses } : {}),
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),
             // Every field here that changes what the agent should say carries

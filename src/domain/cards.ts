@@ -18,7 +18,10 @@ import { categoryDenied, categoryGate } from '../denylist.js';
 import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
+import { snapCategory } from './categoryBackfill.js';
+import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
+import { nearMissesForCards } from './nearMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
@@ -37,6 +40,40 @@ export interface PublishResult {
   intent_id: string;
   state: string;
   location_resolved?: { display: string; radius_km: number };
+  /** The node the posting is actually filed under (see filedUnder below). */
+  filed_under?: string;
+  /** Said out loud, and only where that is somewhere other than what was sent. */
+  filed_under_note?: { text: string; provenance: 'switchboard-system' };
+}
+
+/**
+ * WHERE THE POSTING WAS FILED, said out loud.
+ *
+ * Run 9 on dev: a have went up under 'goods.gaming.sim-racing' and a want for
+ * the same object under 'goods.electronics'. Neither assistant was told
+ * anything was wrong, because nothing was refused — the catalogue is a deny
+ * list and an unwritten leaf goes up. But the matcher reads the category as a
+ * hard gate, there is no goods.gaming node for a sibling rule to reach, and
+ * both candidate pools came out empty. Two people wanting the same thing, on
+ * the same switchboard, in silence.
+ *
+ * So an unknown path is snapped onto the nearest node the catalogue knows
+ * (domain/categoryBackfill.ts snapCategory), and the answer says where that
+ * was. The assistant's own path is kept on the row and is never lost. The
+ * sentence is a protocol answer for the assistant to fold into what it tells
+ * its human, in the same shape as every other note on the wire.
+ */
+/**
+ * Every remap, written down the way the ops sweep writes its own: the path
+ * that was sent, the node it went to, and how that node was chosen. Nothing
+ * about the person, and nothing from the posting itself.
+ */
+function logSnap(event: string, fields: Record<string, unknown>): void {
+  console.log(JSON.stringify({ event, ...fields }));
+}
+
+function filedUnderNote(decision: { changed: boolean; category: string }): string {
+  return `Filed under ${categoryLabelPath(decision.category)}, which is the nearest thing the catalogue knows. Your own words for it are kept as they were. Say where it went, and if that is the wrong shelf, take it down and put it up again somewhere better.`;
 }
 
 function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
@@ -51,6 +88,8 @@ export interface CardRow {
   schema_version: string;
   type: 'WANT' | 'HAVE';
   category: string;
+  /** The path the posting assistant sent, before any snap. Never a matching key. */
+  category_as_posted?: string | null;
   /** The poster's own plain words for the thing, where they gave any. */
   kind: string | null;
   geo: any;
@@ -275,11 +314,37 @@ export async function publishIntent(
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
 
+  // SNAP AT THE DOOR. The gate above decided whether this may go up at all,
+  // on the path the assistant wrote; this decides where it goes. A path the
+  // catalogue has never heard of is moved onto the nearest node it does know,
+  // because the matcher reads the category as a hard gate and an invented
+  // branch has no neighbours — see filedUnderNote above for the run that
+  // bought this. The assistant's own path is kept on the row.
+  //
+  // The snapped node is what the row carries, so the screening worker embeds
+  // from it without being told: the projection text starts with the category
+  // and its label path (domain/matchRules.ts projectionText). `kind` is left
+  // exactly as the assistant wrote it — the switchboard is moving the shelf,
+  // never the words.
+  const filed = await snapCategory(cfg, card.category, undefined, { fallbackToAncestor: true });
+  if (filed.changed) {
+    logSnap('publish: posting filed under a node the catalogue knows', {
+      account_id: accountId,
+      as_posted: filed.from,
+      filed_under: filed.category,
+      how: filed.how,
+      source: filed.source,
+      score: filed.score,
+      runners_up: filed.runners_up,
+    });
+  }
+
   // One agreed spelling before the row is written, so two people who meant
   // the same thing embed the same text (domain/attributeCanon.ts). This runs
   // after validation and its output is what is stored, read back, and
-  // embedded.
-  const attributes = canonicaliseAttributes(card.category, card.attributes ?? {});
+  // embedded. Canonicalisation is per category, so it reads the one the
+  // posting is actually filed under.
+  const attributes = canonicaliseAttributes(filed.category, card.attributes ?? {});
 
   // Location resolution: a named place becomes a centre point and a
   // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
@@ -311,10 +376,11 @@ export async function publishIntent(
   const r = await getPool().query(
     `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
-                        protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind)
+                        protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind,
+                        category_as_posted)
      SELECT $1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
-             $18::int, $19, $20
+             $18::int, $19, $20, $22
       WHERE ${OPEN_CARDS_GUARD_SQL('$21::int')}
      RETURNING id`,
     [
@@ -322,7 +388,9 @@ export async function publishIntent(
       card.schema_version,
       // The wire says looking_for/offering; the column keeps WANT/HAVE.
       card.type === 'looking_for' ? 'WANT' : 'HAVE',
-      card.category,
+      // The matching key is the node the switchboard filed it under; the
+      // assistant's own path rides along as $22 and is never a matching key.
+      filed.category,
       JSON.stringify(geo.geo),
       JSON.stringify(attributes),
       card.ask ? JSON.stringify(card.ask) : null,
@@ -343,6 +411,7 @@ export async function publishIntent(
       saleOf(card),
       kind,
       cfg.quotas.maxOpenCards,
+      filed.from,
     ],
   );
   if (!r.rows[0]) {
@@ -376,7 +445,18 @@ export async function publishIntent(
       MessageBody: JSON.stringify({ kind: 'screen-card', card_id: id }),
     }),
   );
-  return { intent_id: id, state: 'PENDING_SCREENING', ...locationEcho(geo) };
+  return {
+    intent_id: id,
+    state: 'PENDING_SCREENING',
+    ...locationEcho(geo),
+    // Where it actually went, every time, so an assistant never has to guess
+    // whether the switchboard took its path as given. The sentence rides only
+    // on a move: there is nothing to say about a shelf somebody asked for.
+    filed_under: filed.category,
+    ...(filed.changed
+      ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
+      : {}),
+  };
 }
 
 export async function getCard(id: string): Promise<CardRow | undefined> {
@@ -471,6 +551,14 @@ export async function listIntents(accountId: string): Promise<any[]> {
   // screening-rejected one is left alone rather than told "nothing yet".
   const stillUp = r.rows.filter((row) => row.lifecycle_state === 'PUBLISHED');
   const people = await peopleOnCards(stillUp.map((row) => row.id));
+  // What came close and did not make it, for each posting still up
+  // (domain/nearMisses.ts). Its own list, never folded in among the people who
+  // have actually come forward: a near miss is information and nobody has been
+  // introduced to anybody.
+  const near = await nearMissesForCards(
+    accountId,
+    stillUp.map((row) => row.id),
+  );
   // Own-card view for the owning agent. The private price band is not stored
   // in plaintext and is not echoed back; agents keep their own record of it.
   //
@@ -501,6 +589,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
             },
           }
         : {}),
+      ...(near.has(row.id) ? { near_misses: near.get(row.id) } : {}),
       ...(row.lifecycle_state === 'SCREENING_REJECTED'
         ? (() => {
             const rej = rejectionInPlainWords(row.screening);
@@ -633,12 +722,31 @@ export async function amendIntent(
   // whose category left the taxonomy since it was posted cannot be renewed
   // under it; the error names where to go instead.
   await assertCategoryOpen(cfg, next.category, accountId, next.kind);
+  // And it faces the snap again, for the same reason. The category is not
+  // amendable, so on anything posted since the door started snapping this is
+  // a no-op — it is already a node the catalogue knows. What it is really for
+  // is the postings that went up before, under a branch nobody has written
+  // down: amending one is the moment it can be put somewhere it will actually
+  // meet things, and the human amending it is the one who hears where.
+  const filed = await snapCategory(cfg, next.category, undefined, { fallbackToAncestor: true });
+  if (filed.changed) {
+    logSnap('amend: posting filed under a node the catalogue knows', {
+      account_id: accountId,
+      intent_id: intentId,
+      as_posted: filed.from,
+      filed_under: filed.category,
+      how: filed.how,
+      source: filed.source,
+      score: filed.score,
+      runners_up: filed.runners_up,
+    });
+  }
   // Same canonicalisation as publish, on the same terms: an amend is a
   // re-publish, and the re-screen that follows re-embeds from this row, so
   // the amended card's vector is built from the canonical form as well.
   // Canonicalisation is idempotent, so rebuilding `current` from attributes
   // that already went through it changes nothing.
-  const attributes = canonicaliseAttributes(next.category, next.attributes ?? {});
+  const attributes = canonicaliseAttributes(filed.category, next.attributes ?? {});
   const geo = normaliseGeo(next.geo);
 
   await checkPublishQuota(accountId, cfg.quotas);
@@ -651,10 +759,14 @@ export async function amendIntent(
       : card.price_enc;
 
   await getPool().query(
+    // category_as_posted is only ever written where it is empty: the original
+    // path is the one thing here that must never be overwritten, and on a row
+    // that predates the column the pre-amend category IS the original.
     `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
         attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
         renewal_notified_at = NULL, slots=$13::int, sale=$14,
+        category=$15, category_as_posted = COALESCE(category_as_posted, $16),
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
      WHERE id=$1`,
     [
@@ -672,6 +784,8 @@ export async function amendIntent(
       geo.country,
       slotsOf(next),
       saleOf(next),
+      filed.category,
+      filed.from,
     ],
   );
   await recordPublishWithinQuota(accountId, intentId, cfg.quotas);
@@ -687,6 +801,10 @@ export async function amendIntent(
     intent_id: intentId,
     state: 'PENDING_SCREENING',
     ...('geo' in (patch ?? {}) ? locationEcho(geo) : {}),
+    filed_under: filed.category,
+    ...(filed.changed
+      ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
+      : {}),
   };
 }
 
