@@ -47,9 +47,10 @@
  * outright (intake/checks/photoModeration.ts holds the list and the reasoning).
  * Everything else about the statement stands: no person at the switchboard sees
  * it, the bytes still never pass through this process, the same two humans are
- * the only ones who can ever open it, and it deletes itself. The sender's page,
- * the description the collecting agent reads and the README still carry the
- * older sentence and have to be brought into line with this one.
+ * the only ones who can ever open it, and it deletes itself. The manual (versions
+ * 49 and 50), the sender's page, the description the collecting agent reads and
+ * the link text now say the same thing; docs/manual-inventory.md and
+ * docs/release-readiness.md still describe the older sentence.
  *
  * WHAT IS CHECKED. A caption, and the filename that rides along with the
  * upload, are WORDS — so they go through carriesMoneyFigure exactly as a

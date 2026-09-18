@@ -1104,6 +1104,15 @@ describe('and the body carries the photo where a fresh session would look', () =
     expect(p).toMatch(/putting one in front of your human unasked is still a thing to think about first/i);
   });
 
+  it('says who opens it, and what a refused picture comes back with', () => {
+    // Version 50 finished the correction: the two humans are still the only
+    // people who open it, and a refusal is one plain sentence to say as it is.
+    const p = patched();
+    expect(p).toMatch(/the two humans are still the only people who ever open it/i);
+    expect(p).toMatch(/comes back to the sender's side with one plain sentence/i);
+    expect(p).toMatch(/do not guess aloud at what the machine saw/i);
+  });
+
   it('keeps the system words out of the new body copy', () => {
     for (const { label, re } of BANNED) {
       expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
