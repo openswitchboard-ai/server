@@ -128,6 +128,20 @@ reporting path below and nowhere else.
   that must be referred to police still exists to be referred. None of the
   three holds content a server can read, and nobody has looked at a quarantined
   image.
+- **Key ceremonies held.** One per environment, each on a laptop rather than
+  a server, with `scripts/safety/generate.mts`. The private half was split
+  2-of-3 and never written whole. The records below name the fingerprint and
+  who holds which share; never the shares.
+  - **dev**, 17 September 2026: fingerprint `b9:ee:f5:ce:be:f2:51:eb`. All
+    three shares held by Lachlan Taylor (a test key for a test environment).
+    Public half at SSM `/osb/dev/safety/public-key`.
+  - **prod**, 18 September 2026: fingerprint `86:e0:e6:72:48:36:93:84`.
+    Share 1 Lachlan Taylor, share 2 Mary Levy, share 3 Brett Kennedy, handed
+    over by Lachlan the same day; shares 2 and 3 were deleted from his machine
+    once handed over. Public half at SSM `/osb/prod/safety/public-key`, read
+    by the prod task from that deploy on. Nobody was present but Lachlan when
+    the key was made, so at that step the record rests on his word; the
+    design's protection is that no one share opens anything.
 - OPEN: unlike the settlement evidence bucket, a database row can be deleted
   or overwritten by an administrator (it still cannot be read). If tamper
   evidence matters, add an append-only hash chain over rows or move bodies to
