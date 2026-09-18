@@ -102,7 +102,7 @@ describe('what a near miss says', () => {
 
   it('offers a look and promises nothing', async () => {
     const e = (await forMine())!;
-    expect(e.items[0].note.text).toContain('Want me to look?');
+    expect(e.items[0].note.text).toContain('Want me to try that?');
     expect(e.note.text).toContain('Nobody has been introduced');
     expect(e.note.text).toContain('nothing has crossed');
   });
