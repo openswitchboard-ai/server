@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "allowImportingTsExtensions": false
+  },
+  "include": [
+    "./**/*.ts",
+    "../integration/helpers.ts",
+    "../realism/nagatha.ts",
+    "../duet/agentB.ts",
+    "../../scripts/eval/transcriptScore.mts",
+    "../../src/shadow/jev.ts"
+  ],
+  "exclude": []
+}

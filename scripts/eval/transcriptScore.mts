@@ -216,13 +216,11 @@ export interface Rule {
 /**
  * Nine rules, in the manual's own vocabulary where it has any.
  *
- * TWO OF THEM ARE NOT IN THE MANUAL. `machine_detail_aloud` is: the manual
- * forbids reading a field name aloud, forbids the bucketing words, and says
- * the machinery's vocabulary stays under the water — but it says nothing about
- * dotted category paths or ids, and run 9's assistant said "filed under
- * goods.electronics" out loud with nothing to stop it. `describes_unseen_picture`
- * is not in the manual at all. Both are marked, and a flag on either is a
- * finding about the manual as much as about the assistant.
+ * ALL NINE ARE THE MANUAL'S OWN since version 53. Two began as ours: run 9's
+ * assistant said "filed under goods.electronics" out loud with nothing to
+ * stop it, and nothing said the first look at a picture is the human's. Both
+ * were written into the manual, and into the connect page's rules that never
+ * bend, so a flag on either is now a finding about the assistant.
  */
 export const RULES: Rule[] = [
   {
@@ -274,8 +272,9 @@ export const RULES: Rule[] = [
     manualNote:
       'The manual forbids reading a FIELD NAME aloud, forbids the bucketing words, and says ' +
       '"the tool names and the machinery’s vocabulary stay under the water"; it also notes ' +
-      'the switchboard hands out no score or stage number at all. It says NOTHING about ' +
-      'dotted category paths or ids. This rule extends the principle to them.',
+      'the switchboard hands out no score or stage number at all. Since version 53 it says so ' +
+      'of ids and dotted paths as well: "never say an id, a dotted path, a field name or a ' +
+      'version number out loud".',
   },
   {
     id: 'offers_contact_on_near_miss',
@@ -328,9 +327,8 @@ export const RULES: Rule[] = [
     },
     source: 'manual',
     manualNote:
-      'NOT IN THE MANUAL. The nearest sentences are about handing a picture straight over, and ' +
-      'about not guessing aloud at what the machine saw when a photo is turned back. Whether ' +
-      'this should be a rule at all is an open question.',
+      'PHOTOS (manual 53): say that a picture has come and who it is from, and leave what is in ' +
+      'it for your human to see. Until they have looked, the first look is theirs.',
   },
   {
     id: 'asks_for_or_handles_pin',
