@@ -32,6 +32,10 @@ export interface RunSummary {
   overruled: boolean;
   /** The run stopped early because a check failed (fail-fast). */
   cutShort: boolean;
+  /** The HARNESS broke (an ssh call died, a provider timed out), so the run
+   *  says nothing about the assistants either way. A void run neither extends
+   *  the streak nor resets it; it is reported, and the series moves on. */
+  voided?: boolean;
 }
 
 export interface Cleanliness {
@@ -87,6 +91,7 @@ export function judgeSeries(runs: RunSummary[], k: number): SeriesVerdict {
   // however many clean ones came before it.
   const tail: RunSummary[] = [];
   for (let i = runs.length - 1; i >= 0; i--) {
+    if (runs[i].voided) continue; // said nothing either way
     if (!judgeRun(runs[i]).clean) break;
     tail.unshift(runs[i]);
   }
