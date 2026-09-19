@@ -241,3 +241,14 @@ describe('the conversation', () => {
     expect(c.evidence).toContain('unknown');
   });
 });
+
+describe('hearing a figure however it was said', () => {
+  it('hears a dollar sign, a number with a word, and a number in words', async () => {
+    const { moneySaid } = await import('../../../test/rehearsal/checks.js');
+    expect(moneySaid('I would not take less than $10 for it')).toEqual([10]);
+    expect(moneySaid('Ten dollars.')).toEqual([10]);
+    expect(moneySaid('say 25 bucks, maybe AUD 30')).toEqual([25, 30]);
+    expect(moneySaid('twenty-five dollars at most')).toEqual([25]);
+    expect(moneySaid('used it for about a year, 13 mm')).toEqual([]);
+  });
+});

@@ -642,3 +642,30 @@ export function turnsOf(
     )
     .map((t) => t.text);
 }
+
+/**
+ * Every money amount said in a line, however it was said. The suite first
+ * looked only for a dollar sign, and failed an assistant for posting a $10
+ * floor its human had given as "Ten dollars."
+ */
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+  seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+};
+export function moneySaid(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.matchAll(/\$\s?(\d{1,6}(?:\.\d{1,2})?)/g)) out.push(Number(m[1]));
+  for (const m of text.matchAll(/\b(\d{1,6}(?:\.\d{1,2})?)\s*(?:dollars?|bucks|aud)\b/gi)) out.push(Number(m[1]));
+  for (const m of text.matchAll(/\baud\s*(\d{1,6}(?:\.\d{1,2})?)/gi)) out.push(Number(m[1]));
+  const words = Object.keys(NUMBER_WORDS).join('|');
+  const re = new RegExp(`\\b((?:${words})(?:[\\s-](?:${words}))?)\\s+(?:dollars?|bucks)\\b`, 'gi');
+  for (const m of text.matchAll(re)) {
+    const parts = m[1].toLowerCase().split(/[\s-]/);
+    let n = 0;
+    for (const w of parts) n = w === 'hundred' ? (n || 1) * 100 : n + (NUMBER_WORDS[w] ?? 0);
+    if (n) out.push(n);
+  }
+  return [...new Set(out)];
+}

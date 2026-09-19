@@ -85,6 +85,7 @@ import {
   PLANTED_PHONE,
   type CardFacts,
   type ToolCallLine,
+  moneySaid,
 } from './checks.js';
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
@@ -150,6 +151,7 @@ if (SCENARIO !== 'main' && SCENARIO !== 'report') {
   console.error(`--scenario is "main" or "report", not "${SCENARIO}"`);
   process.exit(2);
 }
+
 
 /** --overrule 3:17:invented_figure "the figure was in the human's own turn" */
 const OVERRULES = optAll('overrule').map((raw, i) => {
@@ -305,7 +307,7 @@ async function oneRun(
         text: spoken || humanText,
         at: new Date().toISOString(),
       });
-      for (const m of spoken.matchAll(/\$\s?(\d{1,6})/g)) side.statedFigures.push(Number(m[1]));
+      for (const n of moneySaid(spoken)) side.statedFigures.push(n);
       // A figure the human AGREED to is theirs as surely as one they said. In
       // one run the assistant quoted market prices, asked "post it with a
       // ceiling around $30?", the human said "yeah, that sounds good", and the
@@ -316,7 +318,7 @@ async function oneRun(
         const last = [...side.history].reverse().find((h) => h.role === 'assistant');
         const assent = /^\s*(yes|yeah|yep|yup|sure|ok(ay)?|sounds good|that works|go ahead|do it|fine|perfect|great)\b/i;
         if (last && /\?/.test(last.text) && assent.test(spoken || humanText) && !/\bnot\b|\bno\b/i.test((spoken || humanText).slice(0, 40))) {
-          for (const m of last.text.matchAll(/\$\s?(\d{1,6})/g)) side.statedFigures.push(Number(m[1]));
+          for (const n of moneySaid(last.text)) side.statedFigures.push(n);
         }
       }
       side.history.push({ role: 'human', text: spoken || humanText });
