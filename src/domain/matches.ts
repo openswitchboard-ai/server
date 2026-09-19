@@ -1,4 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import {
+  arrangementOrNothing,
+  cadenceInPlainWords,
+  readArrangement,
+  type Arrangement,
+} from './arrangement.js';
+import { laneFor, say, sayFor, type Lane } from './lanes.js';
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
@@ -320,8 +327,22 @@ async function stage3OptinCount(matchId: string): Promise<number> {
  * The one sentence a waiting agent ever gets about the line. No count, no
  * position, no hint of who else is there — see domain/sequencer.ts.
  */
-export const IN_LINE_SENTENCE =
-  "You're in line for this one. I'll tell you when it's your turn.";
+export const IN_LINE_HEAD = "You're in line for this one.";
+
+/**
+ * And who tells them when it is. The head is the whole of what the human
+ * hears about the line; the tail is which sort of agent this is, because
+ * "I'll tell you when it's your turn" was said to every agent alike until
+ * 20 September 2026, including the ones that are not there to say it. A
+ * promotion sends the ordinary summons (domain/sequencer.ts), so the
+ * switchboard really does email them when their turn comes.
+ */
+export function inLineSentence(a: Arrangement = {}): string {
+  return sayFor('in_line', a);
+}
+
+/** The wording for an account with nothing saved, which promises the least. */
+export const IN_LINE_SENTENCE = inLineSentence();
 
 async function loadOpenMatchFor(
   matchId: string,
@@ -342,7 +363,11 @@ async function loadOpenMatchFor(
   // the sweep carries, and nothing more — a waiting agent must not be able to
   // learn anything about the line by poking at it.
   if (requireLive && m.live === false) {
-    throw new OsbError('NOT_UNLOCKED_YET', { human_action: IN_LINE_SENTENCE });
+    // One cheap read of the account's own arrangement row, and only on this
+    // refusal, so the sentence knows which sort of agent it is talking to.
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: inLineSentence(await arrangementOrNothing(accountId)),
+    });
   }
   return m;
 }
@@ -989,6 +1014,26 @@ export function nextAction(
   return 'show_interest';
 }
 
+/**
+ * What to say while one human has pressed and the other has not, which is a
+ * wait of hours rather than seconds.
+ *
+ * WHICH SORT OF ASSISTANT IS ASKING decides it. An assistant that only wakes
+ * when spoken to cannot promise to come back; the switchboard emails its human
+ * instead. An assistant that runs between conversations can promise it, and
+ * where nothing is agreed yet, the thing to do is ask how often and write it
+ * down (dev, 20 September 2026: one promised to tell its human "the moment
+ * they give theirs" with nothing agreed and nothing scheduled).
+ *
+ * Best-effort: an unreadable arrangement gives the wording that promises the
+ * least. Both wordings fit the 300 characters the error schema allows.
+ */
+async function waitingOnTheirGoAhead(accountId: string): Promise<string> {
+  // Best-effort: an unreadable arrangement is the prompted lane, which is the
+  // wording that promises the least.
+  return sayFor('waiting_on_their_go_ahead', await arrangementOrNothing(accountId));
+}
+
 export async function buildAttributes(m: MatchRow, accountId: string) {
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
@@ -1093,7 +1138,7 @@ export async function buildMutual(
       // Whose turn it is decides which of these is true. Telling someone who
       // has already pressed to go and press is the run-8 defect in one line.
       human_action: mine
-        ? 'Your human has given their go-ahead and it is recorded. First names are shared the moment the other side gives theirs, with nothing more for your human to do. The switchboard emails them when it happens; say you will tell them yourself only where you have agreed how often you check.'
+        ? await waitingOnTheirGoAhead(accountId)
         : 'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
     });
   }
@@ -1381,9 +1426,20 @@ export function bothInSentence(m: MatchRow, accountId: string): string {
   return `You have both said yes on ${ownThing(m, accountId)}. You can talk whenever you like, and I will carry anything you want to say.`;
 }
 
-export function awaitingTheirGoAheadSentence(m: MatchRow, accountId: string): string {
-  const thing = ownThing(m, accountId);
-  return `Your yes is in on ${thing} — thank you. They have not given theirs yet, and the two of you can talk the moment they do. I will tell you when that happens.`;
+/**
+ * ... and who does the telling when it happens, which is the same question
+ * `waitingOnTheirGoAhead` answers on the refusal for this very state. No mail
+ * goes out to the side that has already pressed when the second press lands —
+ * `recordStage3OptIn` raises "your move" only while one side is still missing
+ * — so the spoken-to wording promises no email here and simply tells the
+ * human to ask again.
+ */
+export function awaitingTheirGoAheadSentence(
+  m: MatchRow,
+  accountId: string,
+  a: Arrangement = {},
+): string {
+  return sayFor('awaiting_their_go_ahead', a, { thing: ownThing(m, accountId) });
 }
 
 /** A decline, in the words it happens in. No reason travels, by design. */
@@ -1443,10 +1499,14 @@ export const ARCHIVE_SENTENCE =
  * that does anything beyond the record, so it is the only one that says more:
  * the pairing is muted and the introduction is closed.
  */
-export function verdictSentence(verdict: Verdict): string {
+export function verdictSentence(verdict: Verdict, a: Arrangement = {}): string {
   switch (verdict) {
     case 'good':
-      return 'Glad that one went well. I will keep an eye out for more like it.';
+      // "I will keep an eye out for more like it" is a thing only an agent
+      // that comes back can do. More like it arrive as introductions, and an
+      // introduction is summoned by email, so the spoken-to wording can say
+      // so honestly and leave the watching to the switchboard.
+      return sayFor('verdict_good', a);
     case 'bad':
       return 'Sorry that one did not work out. I have closed it off, and you will not hear from that person again.';
     default:
@@ -1455,7 +1515,21 @@ export function verdictSentence(verdict: Verdict): string {
 }
 
 /** All matches visible to an account, as stage-appropriate payloads. */
-export async function checkMatches(cfg: Config, accountId: string, intentId?: string) {
+/**
+ * THE ARRANGEMENT IS READ ONCE FOR THE WHOLE SWEEP, and threaded into every
+ * sentence that would otherwise promise on an agent's behalf. Fifty
+ * introductions must not cost fifty reads of the same row, and the sweep's
+ * caller already reads it for the `arrangement` field, so it is passed in from
+ * there. A caller that does not have one hands over nothing, and every
+ * sentence falls to the wording that promises the least.
+ */
+export async function checkMatches(
+  cfg: Config,
+  accountId: string,
+  intentId?: string,
+  arrangement: Arrangement = {},
+) {
+  const lane: Lane = laneFor(arrangement);
   const params: any[] = [accountId];
   let filter = '';
   if (intentId) {
@@ -1537,7 +1611,11 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // No figure, no count, nothing about anyone else: the losing side is
         // told the outcome and not one thing more.
         entry.note = sbNote(
-          'The seller went with someone else on this one. Say the word and I will keep an ear out for another.',
+          // No promise to watch on afterwards: "I will keep an ear out" is a
+          // thing only an agent that comes back can do, and this one is said
+          // with the human right there. Say the word and a new posting goes
+          // up, and the sentence that answers THAT knows the lane.
+          'The seller went with someone else on this one. Say the word and I will put another one up for you.',
         );
       } else {
         entry.note = c
@@ -1565,7 +1643,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
     //     that sentence would be scarcity theatre.
     if (m.live === false) {
       if (await ownCardIsFull(ownCardId(m, accountId))) continue;
-      out.push({ intro_id: m.id, state: 'in_line', note: sbNote(IN_LINE_SENTENCE) });
+      out.push({ intro_id: m.id, state: 'in_line', note: sbNote(say('in_line', lane, arrangement)) });
       continue;
     }
     const signal = await buildSignal(m, accountId);
@@ -1718,7 +1796,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // Unreachable since 13 September 2026 (nobody waits on the other side
         // to say they are keen); kept for any row that predates the change.
         entry.note = lead(
-          "You are keen and they know it — the next move is theirs. They will see it when they next check in with their assistant, and I will bring their reply straight to you.",
+          say('awaiting_other_side', lane, arrangement),
         );
         break;
       case 'details_unlocked':
@@ -1731,7 +1809,9 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask
         // them for nothing — there is no link on this branch, by design.
-        entry.note = lead(awaitingTheirGoAheadSentence(m, accountId));
+        entry.note = lead(
+          say('awaiting_their_go_ahead', lane, arrangement, { thing: ownThing(m, accountId) }),
+        );
         break;
       case 'awaiting_your_human':
         // An offer waiting is its own sentence (offer_note); otherwise it is the

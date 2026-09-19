@@ -399,8 +399,11 @@ export async function autoNegotiateLink(
   if ((await getHearsVia(accountId)) === 'email') {
     throw new OsbError('CONSENT_REQUIRED', { human_action: AUTO_NEGOTIATE_NEEDS_ASSISTANT });
   }
+  // Which lane this agent is in is decided in exactly one place
+  // (domain/lanes.ts), so nothing here reads the flag itself.
   const { readArrangement } = await import('./arrangement.js');
-  if ((await readArrangement(accountId)).runs_on_its_own !== true) {
+  const { laneFor } = await import('./lanes.js');
+  if (laneFor(await readArrangement(accountId)) !== 'autonomous') {
     throw new OsbError('CONSENT_REQUIRED', {
       human_action: AUTO_NEGOTIATE_NEEDS_RUNS_ON_ITS_OWN,
     });

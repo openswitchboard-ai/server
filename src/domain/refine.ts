@@ -32,6 +32,8 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { getCard } from './cards.js';
 import { OsbError } from '../protocol.js';
+import { arrangementOrNothing, type Arrangement } from './arrangement.js';
+import { sayFor } from './lanes.js';
 import type { Config } from '../config.js';
 
 /** How many phrases either list takes, and how long one may be. */
@@ -102,7 +104,11 @@ export interface RefineResult {
  * board. An assistant reading this must not be able to tell its human anything
  * about what is out there, because it has been told nothing.
  */
-export function refinedSentence(alsoCalled: string[], notThese: string[]): string {
+export function refinedSentence(
+  alsoCalled: string[],
+  notThese: string[],
+  a: Arrangement = {},
+): string {
   const bits: string[] = [];
   if (alsoCalled.length) {
     bits.push(
@@ -113,7 +119,7 @@ export function refinedSentence(alsoCalled: string[], notThese: string[]): strin
   }
   if (notThese.length) bits.push('I have written down what it is not, so close things count for less.');
   const added = bits.length ? bits.join(' ') : 'Nothing was added to it.';
-  return `${added} I am looking again now with those words, and I will bring you anyone who comes forward.`;
+  return sayFor('refined', a, { added });
 }
 
 /**
@@ -179,7 +185,10 @@ export async function refineIntent(
     also_called: also.phrases,
     not_these: nots.phrases,
     say_note: {
-      text: refinedSentence(also.phrases, nots.phrases),
+      // One cheap read of this account's own arrangement row, so the sentence
+      // knows which lane it is speaking into. Best-effort: unreadable is
+      // prompted, the lane that promises the least.
+      text: refinedSentence(also.phrases, nots.phrases, await arrangementOrNothing(accountId)),
       provenance: 'switchboard-system' as const,
     },
   };

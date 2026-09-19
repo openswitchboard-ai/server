@@ -12,6 +12,7 @@ import { clockNote, localTimeText } from '../domain/localTime.js';
 import { readOwnArea } from '../domain/profile.js';
 import { countryOfTimeZone } from '../geo/homeCountry.js';
 import * as arrangement from '../domain/arrangement.js';
+import * as lanes from '../domain/lanes.js';
 import * as cards from '../domain/cards.js';
 import * as channel from '../domain/channel.js';
 import * as conversationWindow from '../domain/conversationWindow.js';
@@ -379,7 +380,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'read_manual',
     description:
-      'Read the switchboard\'s operating manual, one section at a time. Call it with section "start" before your first use of any other tool here AND BEFORE YOU ASK YOUR HUMAN WHERE THEY ARE: the start page comes with what the switchboard already holds about them, their area and their clock, so you never ask for what they have already given. Fetch a section whenever you meet something you do not know — how a posting is filed, what crosses at the names step, what to do with a near miss, what a frozen payment means. Every answer carries `text` for the section you asked for and `sections`, the whole list with a line saying what each one holds, so one call is enough to find the next. Ask for a name nobody here knows and you are handed the first page and that list rather than an error. "whats_new" is the changelog, newest first, and takes an optional `since` version. Reading costs nothing: it changes nothing, it spends no quota, and it works on a stopped account.',
+      'Read the switchboard\'s operating manual, one section at a time. Call it with section "start" before your first use of any other tool here AND BEFORE YOU ASK YOUR HUMAN WHERE THEY ARE: the start page comes with what the switchboard already holds about them, their area and their clock, so you never ask for what they have already given. Fetch a section whenever you meet something you do not know — how a posting is filed, what crosses at the names step, what to do with a near miss, what a frozen payment means. Every answer carries `text` for the section you asked for and `sections`, the whole list with a line saying what each one holds, so one call is enough to find the next. Ask for a name nobody here knows and you are handed the first page and that list rather than an error. "whats_new" is the changelog, newest first, and takes an optional `since` version. A section whose advice differs by which sort of agent you are carries `lane_note` beside its text, written for the sort this account says you are. Reading costs nothing: it changes nothing, it spends no quota, and it works on a stopped account.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -622,7 +623,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'standing_arrangement',
     description:
-      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns it; `set` replaces the whole of it, so re-send every field you want kept. SAY `runs_on_its_own` TRUE ONLY IF YOU GENUINELY RUN BETWEEN CONVERSATIONS — you can wake yourself and reach your human without being spoken to first. If you only exist while they are typing to you, leave it out: that is the true answer, and the switchboard emails them instead. `check_every_minutes` goes only alongside it: propose about once an hour (60), take their answer, never assume it, and the floor is 30. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on nothing. Set it only from what your human has told you — what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be. Preferences only: no names, contact details, addresses or the content of a want or have. It rides every check_in sweep, so it survives a restart, a change of model and any other client they connect, and your human can change it on their own page. An arrangement never pre-approves a gate: sharing their details, accepting an offer and confirming a payment go to them every time. read_manual(\"checking_rhythm\").",
+      "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns it; `set` replaces the whole of it, so re-send every field you want kept. SAY `runs_on_its_own` TRUE ONLY IF YOU GENUINELY RUN BETWEEN CONVERSATIONS — you can wake yourself and reach your human without being spoken to first. If you only exist while they are typing to you, leave it out: that is the true answer, and the switchboard emails them instead. `check_every_minutes` goes only alongside it: propose about once an hour (60), take their answer, never assume it, and the floor is 30. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on nothing. The sentences you are handed already know which sort you are: say them as given. Set it only from what your human has told you — what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be. Preferences only: no names, contact details, addresses or the content of a want or have. It rides every check_in sweep, so it survives a restart, a change of model and any other client they connect, and your human can change it on their own page. An arrangement never pre-approves a gate: sharing their details, accepting an offer and confirming a payment go to them every time. read_manual(\"checking_rhythm\").",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1111,15 +1112,22 @@ async function dispatchToolInner(
 ): Promise<ToolResult> {
   try {
     // THE MANUAL IS ALWAYS READABLE, and it is answered before anything else
-    // runs. It changes nothing, it reads no account, and it is the one call
-    // whose whole purpose is telling an agent what the rules are — including
-    // the rules about a stopped account. Refusing it would be refusing to
-    // explain the refusal.
+    // runs. It changes nothing and it is the one call whose whole purpose is
+    // telling an agent what the rules are — including the rules about a
+    // stopped account. Refusing it would be refusing to explain the refusal.
+    //
+    // It reads one thing about the account now: the standing arrangement, one
+    // cheap plaintext column, so a section whose advice depends on which lane
+    // this agent is in is served in that lane (domain/lanes.ts). Best-effort,
+    // so a suspended or unreadable account still gets the whole manual and
+    // reads the lane that promises the least.
     if (name === 'read_manual') {
+      const standing = await arrangement.arrangementOrNothing(accountId);
       return ok(
         readManual({
           ...(typeof args?.section === 'string' ? { section: args.section } : {}),
           ...(Number.isInteger(args?.since) ? { since: args.since as number } : {}),
+          laneNote: lanes.sayFor('manual_lane', standing),
         }),
       );
     }
@@ -1159,20 +1167,17 @@ async function dispatchToolInner(
           args?.detail_unknown === true || (listing as any)?.detail_unknown === true;
         if (listing && typeof listing === 'object') delete (listing as any).detail_unknown;
         const posted = await cards.publishIntent(cfg, accountId, listing, { detailUnknown });
-        // Matching runs in seconds, so the useful thing to say right after
-        // posting is "check again in a minute" — and what comes after that
-        // depends on how this human hears about the switchboard. An agent that
-        // only wakes when spoken to leaves the email to do the work; an agent
-        // that runs between conversations looks again itself.
-        const hearsVia = await getHearsVia(accountId);
+        // Screening runs in seconds, so the useful thing to say right after
+        // posting is how soon there is anything to look for — and what comes
+        // after that depends on which lane this agent is in (domain/lanes.ts).
+        // One read of the arrangement row serves both this sentence and the
+        // what_happens_next_note already riding on the answer.
+        const standing = await arrangement.arrangementOrNothing(accountId);
         return ok({
           ...posted,
           say_note: SAY_NOTE,
           note: {
-            text:
-              hearsVia === 'email'
-                ? 'It takes a minute or two to be matched. Ask me again then, or I will email you.'
-                : 'It takes a minute or two to be matched; look again after that.',
+            text: lanes.sayFor('just_posted', standing),
             provenance: 'switchboard-system',
           },
         });
@@ -1190,7 +1195,17 @@ async function dispatchToolInner(
           // checkMatches now builds each entry's ready human sentence itself, in
           // one plain register per surfaced state, so nothing more is folded on
           // here — the sweep is handed back as it comes.
-          const withNotes = await matches.checkMatches(cfg, accountId, args?.intent_id);
+          // THE ARRANGEMENT IS READ ONCE FOR THE WHOLE ANSWER, before the
+          // sweep rather than after it, because every sentence the sweep
+          // builds about waiting depends on which lane this agent is in
+          // (domain/lanes.ts). It rides the answer as well, as it always has.
+          const standing = await arrangement.readArrangement(accountId);
+          const withNotes = await matches.checkMatches(
+            cfg,
+            accountId,
+            args?.intent_id,
+            standing,
+          );
           // One count for the whole sweep tells a polling agent where there is
           // something to collect, so noticing a waiting message never depends
           // on remembering a second tool.
@@ -1253,11 +1268,11 @@ async function dispatchToolInner(
               if (s) m.settlement = s;
             }
           }
-          // The standing arrangement rides on every sweep. This is the whole
-          // persistence guarantee: an agent that has never spoken to this
-          // human before, on a client that has just been installed, still
-          // learns how they want to be treated on its first call.
-          const standing = await arrangement.readArrangement(accountId);
+          // The standing arrangement rides on every sweep (read above, once).
+          // This is the whole persistence guarantee: an agent that has never
+          // spoken to this human before, on a client that has just been
+          // installed, still learns how they want to be treated on its first
+          // call.
           // The two facts that decide whether you may offer to negotiate at
           // all: how this human hears about the switchboard, and whether the
           // agent on this account has said it runs between conversations.
@@ -1297,8 +1312,10 @@ async function dispatchToolInner(
             // out, and in run 7 one did.
             hears_via: hearsVia,
             hears_via_note: hearsViaNote(hearsVia),
-            runs_on_its_own: standing.runs_on_its_own === true,
-            runs_on_its_own_note: arrangement.runsOnItsOwnNote(standing.runs_on_its_own === true),
+            runs_on_its_own: lanes.laneFor(standing) === 'autonomous',
+            runs_on_its_own_note: arrangement.runsOnItsOwnNote(
+              lanes.laneFor(standing) === 'autonomous',
+            ),
             timezone: tz,
             local_time_now: tz ? localTimeText(now, tz) : null,
             ...(tz ? { time_note: { text: clockNote(now, tz), provenance: 'switchboard-system' } } : {}),
@@ -1498,7 +1515,12 @@ async function dispatchToolInner(
             });
             return ok({
               ...placed,
-              note: matches.sbNote(offers.offerActionSentence('propose_offer')),
+              note: matches.sbNote(
+                offers.offerActionSentence(
+                  'propose_offer',
+                  await arrangement.arrangementOrNothing(accountId),
+                ),
+              ),
             });
           }
           case 'send_to_human':
@@ -1506,7 +1528,12 @@ async function dispatchToolInner(
           case 'withdraw_offer': {
             if (!offer_id) return invalidInput(`${action} requires offer_id`);
             const done = await offers.agentOfferAction(cfg, accountId, offer_id, action);
-            return ok({ ...done, note: matches.sbNote(offers.offerActionSentence(action)) });
+            return ok({
+              ...done,
+              note: matches.sbNote(
+                offers.offerActionSentence(action, await arrangement.arrangementOrNothing(accountId)),
+              ),
+            });
           }
           case 'list_offers':
             return ok({ offers: await offers.listOffers(accountId, intro_id) });
@@ -1529,7 +1556,12 @@ async function dispatchToolInner(
             return ok({
               ...recorded,
               ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
-              note: matches.sbNote(matches.withCameForward(matches.verdictSentence(said), promoted)),
+              note: matches.sbNote(
+                matches.withCameForward(
+                  matches.verdictSentence(said, await arrangement.arrangementOrNothing(accountId)),
+                  promoted,
+                ),
+              ),
             });
           }
           // The short window on a contested want or have is gone (migration

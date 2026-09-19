@@ -319,6 +319,19 @@ export async function readArrangement(accountId: string): Promise<Arrangement> {
   return checked.ok ? checked.value : {};
 }
 
+/**
+ * The arrangement, best-effort: an account that cannot be read reads as one
+ * with nothing saved. Every sentence built on it then falls to the wording
+ * that promises the human the least, which is the only safe way to fail.
+ */
+export async function arrangementOrNothing(accountId: string): Promise<Arrangement> {
+  try {
+    return await readArrangement(accountId);
+  } catch {
+    return {};
+  }
+}
+
 export async function readArrangementUpdatedAt(accountId: string): Promise<Date | undefined> {
   const r = await getPool().query(
     'SELECT arrangement_updated_at FROM accounts WHERE id = $1',

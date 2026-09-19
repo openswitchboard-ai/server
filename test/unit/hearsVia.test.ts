@@ -59,6 +59,7 @@ import { sendDealAgreedEmail, sendOfferOnTheTableEmail } from '../../src/counter
 import * as db from '../../src/db.js';
 import * as accounts from '../../src/domain/accounts.js';
 import * as arrangement from '../../src/domain/arrangement.js';
+import { say } from '../../src/domain/lanes.js';
 import * as offers from '../../src/domain/offers.js';
 import {
   NUDGE_COALESCE_MINUTES,
@@ -664,12 +665,13 @@ describe('what an agent is told right after posting', () => {
       },
     });
 
-  it('tells an email-hearing human to ask again in a minute, and that mail will come', async () => {
+  it('tells a prompted agent to leave the telling to the switchboard', async () => {
+    // Nothing saved, so this is the prompted lane (domain/lanes.ts): the
+    // sentence says how soon there is anything to see and promises nothing.
     const r: any = await publish();
     expect(r.isError, JSON.stringify(r.content?.[0]?.text)).toBeUndefined();
-    expect(r.structuredContent.note.text).toBe(
-      'It takes a minute or two to be matched. Ask me again then, or I will email you.',
-    );
+    expect(r.structuredContent.note.text).toBe(say('just_posted', 'prompted', {}));
+    expect(r.structuredContent.note.text).toMatch(/emails them when somebody comes forward/);
   });
 
   it('says what to say and what to keep to itself', async () => {
@@ -683,12 +685,26 @@ describe('what an agent is told right after posting', () => {
     expect(r.structuredContent.what_happens_next_note).toBeDefined();
   });
 
-  it('tells an always-on agent to look again itself', async () => {
-    world.hearsVia[ANA] = 'assistant';
+  it('tells an agent that runs on its own to look again itself', async () => {
+    world.arrangementStored = { runs_on_its_own: true, check_every_minutes: 60 };
     const r: any = await publish();
     expect(r.isError, JSON.stringify(r.content?.[0]?.text)).toBeUndefined();
     expect(r.structuredContent.note.text).toBe(
-      'It takes a minute or two to be matched; look again after that.',
+      say('just_posted', 'autonomous', { runs_on_its_own: true, check_every_minutes: 60 }),
     );
+    expect(r.structuredContent.note.text).toMatch(/look again a few minutes from now/);
+    expect(r.structuredContent.note.text).toMatch(/every hour/);
+  });
+
+  it('and the same call answers the other way the moment the setting changes', async () => {
+    // The lane is read per answer, so a human turning autonomy off on their
+    // own page flips every sentence at once, with nothing else to do.
+    world.arrangementStored = { runs_on_its_own: true, check_every_minutes: 60 };
+    const on: any = await publish();
+    world.arrangementStored = null;
+    const off: any = await publish();
+    expect(on.structuredContent.note.text).not.toBe(off.structuredContent.note.text);
+    expect(on.structuredContent.note.text).toMatch(/look again a few minutes from now/);
+    expect(off.structuredContent.note.text).toMatch(/check with you/);
   });
 });

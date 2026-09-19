@@ -840,7 +840,7 @@ describe('best offer: one sealed number each', () => {
     expect(world.intros[0].archived_via).toBe('not-chosen');
     const loser = await matches.checkMatches(cfg, buyer(1));
     expect(loser[0].note.text).toBe(
-      'The seller went with someone else on this one. Say the word and I will keep an ear out for another.',
+      'The seller went with someone else on this one. Say the word and I will put another one up for you.',
     );
     // No figure, no count, nothing about the winner.
     expect(JSON.stringify(loser)).not.toContain('700');

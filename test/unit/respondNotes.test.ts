@@ -253,7 +253,10 @@ describe('closing, filing away, and saying how it went', () => {
     const good = await respond({ action: 'verdict', verdict: 'good' });
     expect(good.note.text).toBe(verdictSentence('good'));
     expect(good.note.text).toMatch(/went well/);
-    expect(good.note.text).toMatch(/more like it/);
+    // Nothing is saved on this account, so the prompted wording stands: the
+    // switchboard does the watching and the agent promises nothing.
+    expect(good.note.text).toMatch(/emails them when somebody comes forward/);
+    expect(good.note.text).not.toMatch(/I will keep an eye out/);
 
     const fine = await respond({ action: 'verdict', verdict: 'fine' });
     expect(fine.note.text).toBe(verdictSentence('fine'));
@@ -390,7 +393,12 @@ describe('the offer actions answer with words too', () => {
 
   it('a figure sent says it is on the table and their answer will be brought over', () => {
     expect(offerActionSentence('propose_offer')).toMatch(/on the table/);
-    expect(offerActionSentence('propose_offer')).toMatch(/bring their answer/);
+    // Prompted by default; an agent that runs on its own and has agreed a
+    // rhythm is the one allowed to say it will bring the answer over.
+    expect(offerActionSentence('propose_offer')).toMatch(/check with you whenever they like/);
+    expect(
+      offerActionSentence('propose_offer', { runs_on_its_own: true, check_every_minutes: 60 }),
+    ).toMatch(/bring them their answer/);
   });
 });
 

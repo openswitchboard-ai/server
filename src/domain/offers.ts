@@ -3,6 +3,8 @@ import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
+import { type Arrangement } from './arrangement.js';
+import { sayFor } from './lanes.js';
 import {
   checkAgainstMandate,
   noMandateRefusal,
@@ -1007,10 +1009,14 @@ export function counterpartyNoteOnTable(lines: OfferLine[]): LabeledText | undef
  */
 export function offerActionSentence(
   action: 'propose_offer' | 'send_to_human' | 'decline_offer' | 'withdraw_offer',
+  a: Arrangement = {},
 ): string {
   switch (action) {
     case 'propose_offer':
-      return 'Your figure is on the table. They will see it when they next hear from their assistant, and I will bring their answer straight to you.';
+      // Who brings the answer back depends on the lane (domain/lanes.ts). A
+      // figure the other HUMAN types on their own page raises mail; one their
+      // agent sends does not, so the prompted wording promises no email.
+      return sayFor('offer_on_the_table', a);
     case 'send_to_human':
       return 'I have put that figure in front of you. Nothing is agreed until you say yes on your own page, and I can hand you the link whenever you are ready.';
     case 'decline_offer':

@@ -34,6 +34,7 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 
 import * as db from '../../src/db.js';
 import { amendIntent, publishIntent, whatHappensNextNote } from '../../src/domain/cards.js';
+import { SENTENCES } from '../../src/domain/lanes.js';
 import {
   figureAskKey,
   figureQuestions,
@@ -356,11 +357,13 @@ describe('what happens next, read off this account', () => {
     for (const minutes of [30, 60, 120, 720, 1440, 10080, 45]) {
       const note = whatHappensNextNote({ runs_on_its_own: true, check_every_minutes: minutes });
       expect(lintHumanCopy(note.text), String(minutes)).toEqual([]);
-      expect(note.text.length, String(minutes)).toBeLessThanOrEqual(420);
+      expect(note.text.length, String(minutes)).toBeLessThanOrEqual(
+        SENTENCES.after_posting.budget,
+      );
     }
     const none = whatHappensNextNote({});
     expect(lintHumanCopy(none.text)).toEqual([]);
-    expect(none.text.length).toBeLessThanOrEqual(420);
+    expect(none.text.length).toBeLessThanOrEqual(SENTENCES.after_posting.budget);
     // An agent that runs on its own with no cadence agreed has agreed nothing.
     expect(whatHappensNextNote({ runs_on_its_own: true }).text).toContain(
       'have not agreed how often you check',
