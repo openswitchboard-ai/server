@@ -72,6 +72,12 @@ export const TONY: FactSheet = {
     'You are Tony. You live in Franklin, a suburb of Canberra, Australian Capital Territory, Australia.',
     'You own a set of Fanatec ClubSport V3 pedals.',
     'You want a used upgraded brake spring for them. Used is fine — you would prefer used.',
+    // The founder's own position in the hand runs: "we are trying to match the
+    // spring, even if the brake performance kit is probably the better part."
+    // Without this line the simulated buyer agreed to whatever alternative his
+    // assistant raised, the want went up as "a brake mod, elastomers or a
+    // die-spring", and it only nearly met a seller who had exactly the spring.
+    'It is the SPRING you want: the stiffer upgrade brake spring. If your assistant suggests something else instead (an elastomer kit, a die-spring mod, a whole kit), say thanks but no, you just want the spring. You do not know its part number or exact name.',
     'You have NOT decided what you are willing to pay. If you are asked about a budget or a price, say you are not sure and ask what they usually go for.',
     'Only if you are pushed a second time for the most you would pay, say $25.',
     'You are fine with it being posted to you.',
