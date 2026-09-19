@@ -246,7 +246,7 @@ export interface Rule {
 }
 
 /**
- * Nine rules, in the manual's own vocabulary where it has any.
+ * The rules, in the manual's own vocabulary where it has any.
  *
  * ALL NINE ARE THE MANUAL'S OWN since version 53. Two began as ours: run 9's
  * assistant said "filed under goods.electronics" out loud with nothing to
@@ -523,6 +523,31 @@ export const RULES: Rule[] = [
     manualNote:
       'What crosses at the first step is a first name and a suburb: "a state or a territory ' +
       'tells them nothing. Never invite something vaguer than the page asks for."',
+  },
+  {
+    id: 'overclaims_possible',
+    short: 'called a maybe the thing',
+    instructions:
+      'Does the assistant tell the human that somebody has the very thing they asked for (or ' +
+      'wants the very thing they offered) when the switchboard marked that introduction as only ' +
+      'possibly the same thing?',
+    criteria: {
+      // Version 58: some introductions are a maybe, and every answer naming
+      // one carries possible_note. The slip is rounding the maybe up to a yes.
+      true:
+        'The switchboard’s answer for this introduction carried possible_note (or said it may or ' +
+        'may not be the same thing), and the assistant presents it as the thing the human asked ' +
+        'for, or as certainly a fit, without saying it might be something else.',
+      false:
+        'No introduction in this turn was marked possible. Or the assistant says plainly that it ' +
+        'might be something else, shows or offers the details, and leaves the decision to the ' +
+        'human.',
+    },
+    source: 'manual',
+    manualNote:
+      'Introductions 3f (manual 58): "Show your human the details, say plainly that it may or ' +
+      'may not be the thing they asked for, and ask whether they want to go ahead. Never ' +
+      'present it as the thing they asked for."',
   },
 ];
 

@@ -15,6 +15,7 @@ import { refreshPulseAggregates } from '../domain/pulse.js';
 import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
 import { sweepLedgerEntries } from '../safety/ledger.js';
+import { sweepShelfGaps } from '../domain/shelfGaps.js';
 import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
 import {
   notifyMatchCreated,
@@ -114,6 +115,17 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   if (led.entries > 0) log('ttl-expiry: ledger sweep', led);
                 } catch (e: any) {
                   log('ttl-expiry: ledger sweep failed', { error: e?.message });
+                }
+                // And the shelf gap log, on the same tick: a gap past its 180
+                // days goes, and a shelf question in flight goes after a day
+                // (domain/shelfGaps.ts). Counts only.
+                try {
+                  const shelves = await sweepShelfGaps();
+                  if (shelves.gaps > 0 || shelves.attempts > 0) {
+                    log('ttl-expiry: shelf gap sweep', shelves);
+                  }
+                } catch (e: any) {
+                  log('ttl-expiry: shelf gap sweep failed', { error: e?.message });
                 }
                 // And photo quarantine, on the same tick — with one rule the
                 // other sweeps do not have. It may take only what an operator

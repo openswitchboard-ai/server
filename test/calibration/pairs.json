@@ -1,0 +1,3262 @@
+[
+ {
+  "id": "s01",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Fanatec part, worded differently, same shelf",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport V3 brake spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport Pedals V3",
+    "part": "brake performance spring"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "brake pedal spring for CSP V3",
+   "attributes": {
+    "brand": "fanatec",
+    "fits": "ClubSport V3 pedals",
+    "part": "spring",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s02",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Fanatec part, have filed on the console accessories shelf",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport V3 brake spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport Pedals V3",
+    "part": "brake performance spring"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.accessories",
+   "kind": "ClubSport V3 brake performance kit spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "part": "spring",
+    "condition": "like new"
+   }
+  }
+ },
+ {
+  "id": "s03",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Fanatec part, have snapped to bare goods by an unsure door",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport V3 brake spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport Pedals V3",
+    "part": "brake performance spring"
+   }
+  },
+  "have": {
+   "category": "goods",
+   "kind": "Fanatec CSP V3 brake spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "fits": "ClubSport Pedals V3",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s04",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Minimoog pitch wheel, instrument shelf vs accessories shelf",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Minimoog Model D pitch wheel",
+   "attributes": {
+    "brand": "Moog",
+    "model": "Minimoog Model D",
+    "part": "pitch bend wheel"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "replacement pitch wheel for Minimoog",
+   "attributes": {
+    "brand": "Moog",
+    "fits": "Minimoog Model D",
+    "condition": "original, used"
+   }
+  }
+ },
+ {
+  "id": "s05",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Estes C6-5 motors, invented hobby leaf vs model kits",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Estes C6-5 model rocket motors",
+   "attributes": {
+    "brand": "Estes",
+    "model": "C6-5",
+    "quantity": "3 pack"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.model-rocketry",
+   "kind": "model rocket engines C6-5",
+   "attributes": {
+    "brand": "Estes",
+    "impulse_class": "C",
+    "delay": "5 seconds",
+    "quantity": "3"
+   }
+  }
+ },
+ {
+  "id": "s06",
+  "label": "sure",
+  "obscure": true,
+  "why": "Sourdough starter, pantry shelf vs bare goods",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "sourdough starter",
+   "attributes": {
+    "type": "live culture",
+    "flour": "rye"
+   }
+  },
+  "have": {
+   "category": "goods",
+   "kind": "live sourdough starter culture",
+   "attributes": {
+    "flour": "rye",
+    "age": "6 years",
+    "portion": "jar"
+   }
+  }
+ },
+ {
+  "id": "s07",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same left-hand Orvis fly reel",
+  "want": {
+   "category": "goods.sports.fishing",
+   "kind": "left-handed fly reel",
+   "attributes": {
+    "brand": "Orvis",
+    "model": "Battenkill III",
+    "retrieve": "left hand",
+    "line_weight": "5-6 wt"
+   }
+  },
+  "have": {
+   "category": "goods.sports.fishing",
+   "kind": "Orvis Battenkill III fly reel",
+   "attributes": {
+    "brand": "Orvis",
+    "model": "Battenkill III",
+    "retrieve": "set up left hand",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "s08",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same MF35 water pump, invented tractor leaf vs parts",
+  "want": {
+   "category": "goods.motoring.parts.tractor",
+   "kind": "Massey Ferguson 35 water pump",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "model": "35",
+    "part": "water pump",
+    "engine": "Perkins 3.152"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.parts",
+   "kind": "water pump for MF35 tractor",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "fits": "MF 35 Perkins 3.152 diesel",
+    "condition": "reconditioned"
+   }
+  }
+ },
+ {
+  "id": "s09",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Chef 1970s oven thermostat dial",
+  "want": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "Chef oven temperature dial",
+   "attributes": {
+    "brand": "Chef",
+    "era": "1970s",
+    "part": "thermostat knob",
+    "colour": "chrome and black"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "replacement thermostat knob for 70s Chef wall oven",
+   "attributes": {
+    "brand": "Chef",
+    "part": "temperature dial",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s10",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Twilight Imperium 3e expansion",
+  "want": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Twilight Imperium Shattered Empire expansion",
+   "attributes": {
+    "game": "Twilight Imperium",
+    "edition": "3rd",
+    "expansion": "Shattered Empire"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.board-games",
+   "kind": "TI3 Shattered Empire",
+   "attributes": {
+    "game": "Twilight Imperium 3rd edition",
+    "expansion": "Shattered Empire",
+    "condition": "unpunched"
+   }
+  }
+ },
+ {
+  "id": "s11",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Black Diamond Mondo crash pad, climbing vs camping shelf",
+  "want": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "bouldering crash pad",
+   "attributes": {
+    "brand": "Black Diamond",
+    "model": "Mondo"
+   }
+  },
+  "have": {
+   "category": "goods.sports.outdoor",
+   "kind": "Black Diamond Mondo crash pad",
+   "attributes": {
+    "brand": "Black Diamond",
+    "model": "Mondo",
+    "condition": "used, foam firm"
+   }
+  }
+ },
+ {
+  "id": "s12",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Vandoren clarinet reeds, woodwind vs accessories",
+  "want": {
+   "category": "goods.music.woodwind",
+   "kind": "Vandoren clarinet reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "line": "Traditional",
+    "instrument": "B-flat clarinet",
+    "strength": "3"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "B flat clarinet reeds, Vandoren Traditional 3",
+   "attributes": {
+    "brand": "Vandoren",
+    "strength": "3",
+    "quantity": "box of 10"
+   }
+  }
+ },
+ {
+  "id": "s13",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same phone",
+  "want": {
+   "category": "goods.electronics.phone",
+   "kind": "iPhone 13",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13",
+    "storage": "128GB"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.phone",
+   "kind": "Apple iPhone 13 128 GB",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13",
+    "colour": "midnight",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "s14",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same bike",
+  "want": {
+   "category": "goods.bicycle.mountain",
+   "kind": "Specialized Stumpjumper",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Stumpjumper",
+    "year": "2019",
+    "frame_size": "M"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.mountain",
+   "kind": "2019 Specialized Stumpjumper Comp",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Stumpjumper Comp",
+    "frame_size": "medium",
+    "wheel_size": "29"
+   }
+  }
+ },
+ {
+  "id": "s15",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same derailleur, parts vs accessories shelf",
+  "want": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano XT rear derailleur",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "Deore XT RD-M8100",
+    "speeds": "12"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.accessories",
+   "kind": "Deore XT M8100 12 speed rear mech",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "RD-M8100-SGS",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s16",
+  "label": "sure",
+  "obscure": false,
+  "why": "Guitar lessons, guitar vs music lessons shelf",
+  "want": {
+   "category": "services.lessons.guitar",
+   "kind": "beginner guitar lessons",
+   "attributes": {
+    "level": "beginner",
+    "style": "acoustic"
+   }
+  },
+  "have": {
+   "category": "services.lessons.music",
+   "kind": "guitar lessons for beginners",
+   "attributes": {
+    "instrument": "acoustic guitar",
+    "level": "beginner"
+   }
+  }
+ },
+ {
+  "id": "s17",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Roland TB-303, keyboard vs DJ shelf",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland TB-303 bass line",
+   "attributes": {
+    "brand": "Roland",
+    "model": "TB-303",
+    "era": "1982"
+   }
+  },
+  "have": {
+   "category": "goods.music.dj",
+   "kind": "original Roland TB303 Bassline synth",
+   "attributes": {
+    "brand": "Roland",
+    "model": "TB303",
+    "condition": "working, serviced"
+   }
+  }
+ },
+ {
+  "id": "s18",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Juno-106 voice chip across very different shelves but named exactly",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-106 voice chip",
+   "attributes": {
+    "brand": "Roland",
+    "fits": "Juno-106",
+    "part": "80017A voice chip"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.components",
+   "kind": "80017A voice chip for Juno 106",
+   "attributes": {
+    "brand": "Roland",
+    "part_number": "80017A",
+    "condition": "tested working"
+   }
+  }
+ },
+ {
+  "id": "s19",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same UCS Falcon set, construction vs collectables",
+  "want": {
+   "category": "goods.toys-games.construction",
+   "kind": "Lego UCS Millennium Falcon 10179",
+   "attributes": {
+    "brand": "Lego",
+    "set_number": "10179",
+    "theme": "Star Wars UCS"
+   }
+  },
+  "have": {
+   "category": "goods.art.collectables",
+   "kind": "LEGO 10179 Ultimate Collector Millennium Falcon",
+   "attributes": {
+    "brand": "Lego",
+    "set_number": "10179",
+    "completeness": "complete with box"
+   }
+  }
+ },
+ {
+  "id": "s20",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Kindle",
+  "want": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Kindle Paperwhite",
+   "attributes": {
+    "brand": "Amazon",
+    "model": "Kindle Paperwhite 11th generation"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Amazon Kindle Paperwhite 11th gen",
+   "attributes": {
+    "brand": "Amazon",
+    "storage": "8GB",
+    "condition": "excellent"
+   }
+  }
+ },
+ {
+  "id": "s21",
+  "label": "sure",
+  "obscure": false,
+  "why": "Dog walking, same service",
+  "want": {
+   "category": "services.pet-care.dog-walking",
+   "kind": "dog walker",
+   "attributes": {
+    "dog_size": "medium",
+    "frequency": "weekdays"
+   }
+  },
+  "have": {
+   "category": "services.pet-care.dog-walking",
+   "kind": "dog walking",
+   "attributes": {
+    "availability": "weekday mornings",
+    "dog_size": "small to large"
+   }
+  }
+ },
+ {
+  "id": "s22",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Bosch drill",
+  "want": {
+   "category": "goods.tools.power",
+   "kind": "Bosch 18V hammer drill",
+   "attributes": {
+    "brand": "Bosch",
+    "model": "GSB 18V-55",
+    "voltage": "18V"
+   }
+  },
+  "have": {
+   "category": "goods.tools.power",
+   "kind": "Bosch Professional GSB 18V-55 combi drill",
+   "attributes": {
+    "brand": "Bosch",
+    "model": "GSB 18V-55",
+    "battery": "included"
+   }
+  }
+ },
+ {
+  "id": "s23",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Weber BBQ",
+  "want": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Baby Q",
+   "attributes": {
+    "brand": "Weber",
+    "model": "Baby Q 1000",
+    "fuel": "gas"
+   }
+  },
+  "have": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Baby Q1000 portable gas barbecue",
+   "attributes": {
+    "brand": "Weber",
+    "model": "Q1000",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s24",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Dometic fridge, camping fit-out vs kitchen fridge shelf",
+  "want": {
+   "category": "goods.motoring.camping",
+   "kind": "Dometic CFX3 45 fridge",
+   "attributes": {
+    "brand": "Dometic",
+    "model": "CFX3 45",
+    "power": "12V"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.fridge",
+   "kind": "Dometic CFX3 45L portable fridge freezer",
+   "attributes": {
+    "brand": "Dometic",
+    "model": "CFX3 45",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "s25",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Nikon lens",
+  "want": {
+   "category": "goods.electronics.camera.lens",
+   "kind": "Nikon 50mm f/1.8G",
+   "attributes": {
+    "brand": "Nikon",
+    "model": "AF-S 50mm f/1.8G",
+    "mount": "F"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.camera",
+   "kind": "Nikkor AF-S 50mm 1.8G lens",
+   "attributes": {
+    "brand": "Nikon",
+    "mount": "Nikon F",
+    "condition": "excellent"
+   }
+  }
+ },
+ {
+  "id": "s26",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Thermomix",
+  "want": {
+   "category": "goods.appliances.kitchen.small",
+   "kind": "Thermomix TM6",
+   "attributes": {
+    "brand": "Vorwerk",
+    "model": "TM6"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.small",
+   "kind": "Thermomix TM6 with extra bowl",
+   "attributes": {
+    "brand": "Thermomix",
+    "model": "TM6",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "s27",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same original Tamiya Hornet, RC vs collectables",
+  "want": {
+   "category": "goods.toys-games.rc",
+   "kind": "Tamiya Hornet 1984 original",
+   "attributes": {
+    "brand": "Tamiya",
+    "model": "Hornet 58055",
+    "release": "original 1984"
+   }
+  },
+  "have": {
+   "category": "goods.art.collectables",
+   "kind": "vintage Tamiya Hornet 58055 buggy, first release",
+   "attributes": {
+    "brand": "Tamiya",
+    "year": "1984",
+    "condition": "runner"
+   }
+  }
+ },
+ {
+  "id": "s28",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Pokemon card",
+  "want": {
+   "category": "goods.toys-games.trading-cards",
+   "kind": "Base Set Charizard holo",
+   "attributes": {
+    "game": "Pokemon",
+    "set": "Base Set",
+    "card": "Charizard 4/102",
+    "finish": "holo"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.trading-cards",
+   "kind": "Charizard 4/102 holo Base Set",
+   "attributes": {
+    "game": "Pokemon",
+    "edition": "unlimited",
+    "grade": "raw, played"
+   }
+  }
+ },
+ {
+  "id": "s29",
+  "label": "sure",
+  "obscure": false,
+  "why": "Italian conversation practice, conversation vs tandem shelf",
+  "want": {
+   "category": "social.language-exchange.conversation-practice",
+   "kind": "Italian conversation practice",
+   "attributes": {
+    "language": "Italian",
+    "level": "intermediate"
+   }
+  },
+  "have": {
+   "category": "social.language-exchange.tandem",
+   "kind": "Italian speaker for conversation swap",
+   "attributes": {
+    "language": "Italian",
+    "offers": "native Italian",
+    "wants": "English"
+   }
+  }
+ },
+ {
+  "id": "s30",
+  "label": "sure",
+  "obscure": false,
+  "why": "Same Technics turntable, hifi vs DJ shelf",
+  "want": {
+   "category": "goods.electronics.audio.turntable",
+   "kind": "Technics SL-1200 MK2",
+   "attributes": {
+    "brand": "Technics",
+    "model": "SL-1200MK2"
+   }
+  },
+  "have": {
+   "category": "goods.music.dj",
+   "kind": "Technics 1200 mk2 turntable",
+   "attributes": {
+    "brand": "Technics",
+    "model": "SL1200 MK2",
+    "condition": "serviced"
+   }
+  }
+ },
+ {
+  "id": "s31",
+  "label": "sure",
+  "obscure": true,
+  "why": "Kombucha SCOBY, pantry vs brewing shelf",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "kombucha SCOBY",
+   "attributes": {
+    "type": "kombucha scoby with starter liquid"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.brewing",
+   "kind": "kombucha scoby and starter tea",
+   "attributes": {
+    "quantity": "1 scoby",
+    "condition": "fresh"
+   }
+  }
+ },
+ {
+  "id": "s32",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Stihl chain, garden tools vs power tools",
+  "want": {
+   "category": "goods.tools.garden",
+   "kind": "Stihl chainsaw chain for MS 250",
+   "attributes": {
+    "brand": "Stihl",
+    "fits": "MS 250",
+    "pitch": ".325",
+    "bar_length": "16 inch"
+   }
+  },
+  "have": {
+   "category": "goods.tools.power",
+   "kind": "Stihl .325 16\" chain, fits MS250",
+   "attributes": {
+    "brand": "Stihl",
+    "part": "saw chain",
+    "condition": "new"
+   }
+  }
+ },
+ {
+  "id": "s33",
+  "label": "sure",
+  "obscure": true,
+  "why": "Same Seiko bezel insert, invented watch-parts leaf",
+  "want": {
+   "category": "goods.clothing.watches",
+   "kind": "Seiko SKX007 bezel insert",
+   "attributes": {
+    "brand": "Seiko",
+    "fits": "SKX007",
+    "part": "bezel insert",
+    "colour": "black"
+   }
+  },
+  "have": {
+   "category": "goods.clothing.watches.parts",
+   "kind": "black bezel insert for SKX007",
+   "attributes": {
+    "brand": "Seiko",
+    "part": "bezel insert",
+    "condition": "original"
+   }
+  }
+ },
+ {
+  "id": "s34",
+  "label": "sure",
+  "obscure": false,
+  "why": "Tennis partner",
+  "want": {
+   "category": "social.activity-partner.tennis",
+   "kind": "tennis hitting partner",
+   "attributes": {
+    "level": "intermediate",
+    "when": "Saturday mornings"
+   }
+  },
+  "have": {
+   "category": "social.activity-partner.tennis",
+   "kind": "someone to play tennis with",
+   "attributes": {
+    "level": "intermediate",
+    "when": "weekend mornings"
+   }
+  }
+ },
+ {
+  "id": "p01",
+  "label": "possible",
+  "obscure": true,
+  "why": "Vague \"fanatec spring\" vs a specific ClubSport spring kit",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "fanatec spring",
+   "attributes": {
+    "brand": "Fanatec"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "ClubSport pedal spring kit",
+   "attributes": {
+    "brand": "Fanatec",
+    "fits": "ClubSport Pedals V3",
+    "part": "spring kit"
+   }
+  }
+ },
+ {
+  "id": "p02",
+  "label": "possible",
+  "obscure": true,
+  "why": "Vague load cell vs CSL load cell kit; could be ClubSport",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "fanatec load cell",
+   "attributes": {
+    "brand": "Fanatec",
+    "part": "load cell"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "CSL Pedals Load Cell Kit",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "CSL Pedals Load Cell Kit",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "p03",
+  "label": "possible",
+  "obscure": true,
+  "why": "Specific Juno chip vs assorted Roland voice chips",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-106 voice chip",
+   "attributes": {
+    "brand": "Roland",
+    "fits": "Juno-106",
+    "part": "80017A voice chip"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.components",
+   "kind": "assorted Roland synth voice chips",
+   "attributes": {
+    "brand": "Roland",
+    "condition": "untested"
+   }
+  }
+ },
+ {
+  "id": "p04",
+  "label": "possible",
+  "obscure": true,
+  "why": "C6-5 wanted; C engines with mixed delays on offer",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Estes C6-5 model rocket motors",
+   "attributes": {
+    "brand": "Estes",
+    "model": "C6-5"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Estes C engines, assorted delays",
+   "attributes": {
+    "brand": "Estes",
+    "impulse_class": "C",
+    "quantity": "mixed pack"
+   }
+  }
+ },
+ {
+  "id": "p05",
+  "label": "possible",
+  "obscure": true,
+  "why": "Live starter wanted; dried flakes offered",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "sourdough starter",
+   "attributes": {
+    "type": "live culture"
+   }
+  },
+  "have": {
+   "category": "goods",
+   "kind": "dried sourdough culture flakes",
+   "attributes": {
+    "form": "dehydrated",
+    "portion": "sachet"
+   }
+  }
+ },
+ {
+  "id": "p06",
+  "label": "possible",
+  "obscure": true,
+  "why": "Left-hand fly reel wanted; reel convertible either hand",
+  "want": {
+   "category": "goods.sports.fishing",
+   "kind": "left-handed fly reel",
+   "attributes": {
+    "retrieve": "left hand",
+    "line_weight": "5 wt"
+   }
+  },
+  "have": {
+   "category": "goods.sports.fishing",
+   "kind": "Orvis Battenkill fly reel",
+   "attributes": {
+    "brand": "Orvis",
+    "retrieve": "convertible",
+    "line_weight": "4-5 wt"
+   }
+  }
+ },
+ {
+  "id": "p07",
+  "label": "possible",
+  "obscure": true,
+  "why": "MF35 pump vs a pump said to fit TE20 and 35; may differ by engine",
+  "want": {
+   "category": "goods.motoring.parts",
+   "kind": "Massey Ferguson 35 water pump",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "model": "35",
+    "engine": "Perkins 3.152"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.parts",
+   "kind": "Ferguson tractor water pump",
+   "attributes": {
+    "fits": "TE20 / FE35 petrol",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "p08",
+  "label": "possible",
+  "obscure": true,
+  "why": "Specific Chef dial vs assorted vintage oven knobs",
+  "want": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "Chef oven temperature dial",
+   "attributes": {
+    "brand": "Chef",
+    "era": "1970s",
+    "part": "thermostat knob"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "vintage oven knobs, assorted",
+   "attributes": {
+    "era": "1960s-70s",
+    "brands": "Chef, Kelvinator, Early Kooka"
+   }
+  }
+ },
+ {
+  "id": "p09",
+  "label": "possible",
+  "obscure": true,
+  "why": "Expansion wanted; base game with expansion bundled offered",
+  "want": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Twilight Imperium Shattered Empire expansion",
+   "attributes": {
+    "game": "Twilight Imperium",
+    "edition": "3rd",
+    "expansion": "Shattered Empire"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Twilight Imperium 3rd edition plus expansions",
+   "attributes": {
+    "game": "Twilight Imperium",
+    "edition": "3rd",
+    "includes": "base game and expansions"
+   }
+  }
+ },
+ {
+  "id": "p10",
+  "label": "possible",
+  "obscure": true,
+  "why": "Vague bouldering pad vs a specific pad",
+  "want": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "bouldering pad",
+   "attributes": {}
+  },
+  "have": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "Black Diamond Mondo crash pad",
+   "attributes": {
+    "brand": "Black Diamond",
+    "model": "Mondo"
+   }
+  }
+ },
+ {
+  "id": "p11",
+  "label": "possible",
+  "obscure": true,
+  "why": "Vandoren V12 3.5 wanted, Traditional 3 offered",
+  "want": {
+   "category": "goods.music.woodwind",
+   "kind": "Vandoren V12 clarinet reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "line": "V12",
+    "strength": "3.5"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "Vandoren clarinet reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "line": "Traditional",
+    "strength": "3"
+   }
+  }
+ },
+ {
+  "id": "p12",
+  "label": "possible",
+  "obscure": false,
+  "why": "iPhone 13 vs iPhone 13 mini: variant may or may not suit",
+  "want": {
+   "category": "goods.electronics.phone",
+   "kind": "iPhone 13",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.phone",
+   "kind": "iPhone 13 mini",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13 mini",
+    "storage": "128GB"
+   }
+  }
+ },
+ {
+  "id": "p13",
+  "label": "possible",
+  "obscure": false,
+  "why": "Stumpjumper wanted, vague Specialized MTB offered",
+  "want": {
+   "category": "goods.bicycle.mountain",
+   "kind": "Specialized Stumpjumper",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Stumpjumper",
+    "frame_size": "M"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.mountain",
+   "kind": "Specialized mountain bike",
+   "attributes": {
+    "brand": "Specialized",
+    "frame_size": "medium"
+   }
+  }
+ },
+ {
+  "id": "p14",
+  "label": "possible",
+  "obscure": false,
+  "why": "XT M8100 wanted, unnamed Shimano 12 speed mech offered",
+  "want": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano XT rear derailleur",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "Deore XT RD-M8100",
+    "speeds": "12"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano 12 speed rear derailleur",
+   "attributes": {
+    "brand": "Shimano",
+    "speeds": "12"
+   }
+  }
+ },
+ {
+  "id": "p15",
+  "label": "possible",
+  "obscure": false,
+  "why": "Guitar lessons vs generic music lessons",
+  "want": {
+   "category": "services.lessons.guitar",
+   "kind": "beginner guitar lessons",
+   "attributes": {
+    "level": "beginner"
+   }
+  },
+  "have": {
+   "category": "services.lessons.music",
+   "kind": "music lessons",
+   "attributes": {
+    "level": "all levels"
+   }
+  }
+ },
+ {
+  "id": "p16",
+  "label": "possible",
+  "obscure": true,
+  "why": "UCS Falcon 10179 vs UCS Falcon unnamed (could be 75192)",
+  "want": {
+   "category": "goods.toys-games.construction",
+   "kind": "Lego UCS Millennium Falcon 10179",
+   "attributes": {
+    "brand": "Lego",
+    "set_number": "10179"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.construction",
+   "kind": "Lego UCS Millennium Falcon",
+   "attributes": {
+    "brand": "Lego",
+    "theme": "Star Wars"
+   }
+  }
+ },
+ {
+  "id": "p17",
+  "label": "possible",
+  "obscure": false,
+  "why": "Paperwhite wanted, vague Kindle offered",
+  "want": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Kindle Paperwhite",
+   "attributes": {
+    "brand": "Amazon",
+    "model": "Kindle Paperwhite 11th generation"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Kindle e-reader",
+   "attributes": {
+    "brand": "Amazon"
+   }
+  }
+ },
+ {
+  "id": "p18",
+  "label": "possible",
+  "obscure": false,
+  "why": "Bosch drill wanted, skin-only 18V Bosch drill offered",
+  "want": {
+   "category": "goods.tools.power",
+   "kind": "Bosch 18V hammer drill",
+   "attributes": {
+    "brand": "Bosch",
+    "model": "GSB 18V-55"
+   }
+  },
+  "have": {
+   "category": "goods.tools.power",
+   "kind": "Bosch 18V cordless drill, skin only",
+   "attributes": {
+    "brand": "Bosch",
+    "voltage": "18V",
+    "battery": "not included"
+   }
+  }
+ },
+ {
+  "id": "p19",
+  "label": "possible",
+  "obscure": false,
+  "why": "Baby Q wanted, Weber Q (size unknown) offered",
+  "want": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Baby Q",
+   "attributes": {
+    "brand": "Weber",
+    "model": "Baby Q 1000"
+   }
+  },
+  "have": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Q portable BBQ",
+   "attributes": {
+    "brand": "Weber",
+    "fuel": "gas"
+   }
+  }
+ },
+ {
+  "id": "p20",
+  "label": "possible",
+  "obscure": false,
+  "why": "Dometic 45 wanted, unbranded 45L 12V fridge offered",
+  "want": {
+   "category": "goods.motoring.camping",
+   "kind": "Dometic CFX3 45 fridge",
+   "attributes": {
+    "brand": "Dometic",
+    "model": "CFX3 45",
+    "power": "12V"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.camping",
+   "kind": "45L portable 12V fridge",
+   "attributes": {
+    "capacity": "45L",
+    "power": "12V/240V"
+   }
+  }
+ },
+ {
+  "id": "p21",
+  "label": "possible",
+  "obscure": false,
+  "why": "Nikon 50 1.8G wanted, unspecified Nikon 50mm prime",
+  "want": {
+   "category": "goods.electronics.camera.lens",
+   "kind": "Nikon 50mm f/1.8G",
+   "attributes": {
+    "brand": "Nikon",
+    "model": "AF-S 50mm f/1.8G"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.camera.lens",
+   "kind": "Nikon 50mm prime lens",
+   "attributes": {
+    "brand": "Nikon",
+    "mount": "F"
+   }
+  }
+ },
+ {
+  "id": "p22",
+  "label": "possible",
+  "obscure": true,
+  "why": "Original Hornet wanted, 2004 re-release offered",
+  "want": {
+   "category": "goods.toys-games.rc",
+   "kind": "Tamiya Hornet 1984 original",
+   "attributes": {
+    "brand": "Tamiya",
+    "model": "Hornet 58055",
+    "release": "original 1984"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.rc",
+   "kind": "Tamiya Hornet re-release",
+   "attributes": {
+    "brand": "Tamiya",
+    "model": "Hornet 58336",
+    "year": "2004"
+   }
+  }
+ },
+ {
+  "id": "p23",
+  "label": "possible",
+  "obscure": true,
+  "why": "Same brand of sim pedals on a very different shelf, vaguely worded",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Heusinkveld Sprint pedals",
+   "attributes": {
+    "brand": "Heusinkveld",
+    "model": "Sprint",
+    "pedals": "3 pedal set"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.parts",
+   "kind": "Heusinkveld pedals",
+   "attributes": {
+    "brand": "Heusinkveld"
+   }
+  }
+ },
+ {
+  "id": "p24",
+  "label": "possible",
+  "obscure": true,
+  "why": "Kefir grains (unspecified) vs milk kefir grains",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "kefir grains",
+   "attributes": {}
+  },
+  "have": {
+   "category": "goods.hobby.brewing",
+   "kind": "milk kefir grains",
+   "attributes": {
+    "type": "milk kefir",
+    "quantity": "1 tablespoon"
+   }
+  }
+ },
+ {
+  "id": "p25",
+  "label": "possible",
+  "obscure": true,
+  "why": "SKX007 black insert wanted, generic Seiko diver Pepsi insert offered",
+  "want": {
+   "category": "goods.clothing.watches",
+   "kind": "Seiko SKX007 bezel insert",
+   "attributes": {
+    "brand": "Seiko",
+    "fits": "SKX007",
+    "colour": "black"
+   }
+  },
+  "have": {
+   "category": "goods.clothing.watches",
+   "kind": "Seiko diver bezel insert",
+   "attributes": {
+    "brand": "Seiko",
+    "colour": "Pepsi red and blue"
+   }
+  }
+ },
+ {
+  "id": "p26",
+  "label": "possible",
+  "obscure": true,
+  "why": "Singer 15-91 bobbin case vs class 15 bobbin case (usually fits)",
+  "want": {
+   "category": "goods.hobby.sewing",
+   "kind": "Singer 15-91 bobbin case",
+   "attributes": {
+    "brand": "Singer",
+    "fits": "15-91",
+    "part": "bobbin case"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.sewing",
+   "kind": "class 15 bobbin case",
+   "attributes": {
+    "fits": "Singer class 15 machines",
+    "condition": "new old stock"
+   }
+  }
+ },
+ {
+  "id": "p27",
+  "label": "possible",
+  "obscure": true,
+  "why": "MS-20 key contacts vs MS-20 parts lot",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Korg MS-20 key contacts",
+   "attributes": {
+    "brand": "Korg",
+    "fits": "MS-20",
+    "part": "key contact strips"
+   }
+  },
+  "have": {
+   "category": "goods.music.keyboard",
+   "kind": "Korg MS-20 parts",
+   "attributes": {
+    "brand": "Korg",
+    "model": "MS-20",
+    "condition": "spares or repair"
+   }
+  }
+ },
+ {
+  "id": "p28",
+  "label": "possible",
+  "obscure": true,
+  "why": "Space Marines generally vs a specific Leviathan half box",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Warhammer 40k Space Marines",
+   "attributes": {
+    "brand": "Games Workshop",
+    "faction": "Space Marines"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Leviathan Space Marine half, unbuilt",
+   "attributes": {
+    "brand": "Games Workshop",
+    "set": "Leviathan",
+    "condition": "on sprue"
+   }
+  }
+ },
+ {
+  "id": "p29",
+  "label": "possible",
+  "obscure": true,
+  "why": "Gaggia steam wand vs one for the Classic Pro only",
+  "want": {
+   "category": "goods.appliances.kitchen.coffee",
+   "kind": "Gaggia steam wand",
+   "attributes": {
+    "brand": "Gaggia"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.coffee",
+   "kind": "Gaggia Classic Pro steam wand",
+   "attributes": {
+    "brand": "Gaggia",
+    "fits": "Classic Pro 2019+",
+    "part": "steam wand"
+   }
+  }
+ },
+ {
+  "id": "p30",
+  "label": "possible",
+  "obscure": false,
+  "why": "Piano lessons vs keyboard lessons for adults",
+  "want": {
+   "category": "services.lessons.piano",
+   "kind": "piano lessons",
+   "attributes": {
+    "level": "adult beginner"
+   }
+  },
+  "have": {
+   "category": "services.lessons.music",
+   "kind": "keyboard lessons for adults",
+   "attributes": {
+    "instrument": "electronic keyboard"
+   }
+  }
+ },
+ {
+  "id": "p31",
+  "label": "possible",
+  "obscure": true,
+  "why": "JD 4020 seat vs generic older John Deere seat",
+  "want": {
+   "category": "goods.motoring.parts",
+   "kind": "John Deere 4020 seat",
+   "attributes": {
+    "brand": "John Deere",
+    "fits": "4020",
+    "part": "seat"
+   }
+  },
+  "have": {
+   "category": "goods",
+   "kind": "John Deere tractor seat",
+   "attributes": {
+    "brand": "John Deere",
+    "fits": "older models",
+    "condition": "worn"
+   }
+  }
+ },
+ {
+  "id": "p32",
+  "label": "possible",
+  "obscure": false,
+  "why": "Vague ukulele vs specific soprano",
+  "want": {
+   "category": "goods.music.strings",
+   "kind": "ukulele",
+   "attributes": {}
+  },
+  "have": {
+   "category": "goods.music.guitar",
+   "kind": "Kala KA-15S soprano ukulele",
+   "attributes": {
+    "brand": "Kala",
+    "model": "KA-15S",
+    "size": "soprano"
+   }
+  }
+ },
+ {
+  "id": "p33",
+  "label": "possible",
+  "obscure": false,
+  "why": "Generic 29 MTB tyres vs specific Maxxis",
+  "want": {
+   "category": "goods.bicycle.parts",
+   "kind": "mountain bike tyres 29",
+   "attributes": {
+    "size": "29 inch"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "Maxxis Minion DHF 29x2.5",
+   "attributes": {
+    "brand": "Maxxis",
+    "model": "Minion DHF",
+    "size": "29 x 2.5"
+   }
+  }
+ },
+ {
+  "id": "p34",
+  "label": "possible",
+  "obscure": false,
+  "why": "Dutch oven on kitchen shelf vs camp oven on camping shelf",
+  "want": {
+   "category": "goods.home.kitchenware",
+   "kind": "cast iron dutch oven",
+   "attributes": {
+    "material": "cast iron",
+    "size": "5 quart"
+   }
+  },
+  "have": {
+   "category": "goods.sports.outdoor.cooking",
+   "kind": "cast iron camp oven",
+   "attributes": {
+    "material": "cast iron",
+    "size": "9 quart",
+    "feet": "yes"
+   }
+  }
+ },
+ {
+  "id": "p35",
+  "label": "possible",
+  "obscure": false,
+  "why": "Seafarers alone wanted; expansion bundle offered",
+  "want": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Catan Seafarers expansion",
+   "attributes": {
+    "game": "Catan",
+    "expansion": "Seafarers"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Catan expansions bundle",
+   "attributes": {
+    "game": "Catan",
+    "includes": "Seafarers, Cities & Knights"
+   }
+  }
+ },
+ {
+  "id": "p36",
+  "label": "possible",
+  "obscure": true,
+  "why": "Crash pad wanted vague vs Organic pad snapped to goods",
+  "want": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "crash pad",
+   "attributes": {
+    "use": "bouldering"
+   }
+  },
+  "have": {
+   "category": "goods",
+   "kind": "Organic Climbing big pad",
+   "attributes": {
+    "brand": "Organic Climbing",
+    "model": "Big Pad"
+   }
+  }
+ },
+ {
+  "id": "p37",
+  "label": "possible",
+  "obscure": true,
+  "why": "Prusa 0.4 nozzle vs E3D V6 0.4 nozzles (fits MK3, not MK4)",
+  "want": {
+   "category": "goods.hobby.3d-printing",
+   "kind": "Prusa 0.4mm nozzle",
+   "attributes": {
+    "fits": "Prusa",
+    "size": "0.4mm"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.3d-printing",
+   "kind": "E3D V6 brass nozzles 0.4",
+   "attributes": {
+    "brand": "E3D",
+    "model": "V6",
+    "size": "0.4mm",
+    "quantity": "5"
+   }
+  }
+ },
+ {
+  "id": "p38",
+  "label": "possible",
+  "obscure": true,
+  "why": "Hasselblad 500 film back vs A12 back (likely fits)",
+  "want": {
+   "category": "goods.electronics.camera.film",
+   "kind": "Hasselblad 500C/M film back",
+   "attributes": {
+    "brand": "Hasselblad",
+    "fits": "500C/M",
+    "format": "6x6"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.camera.accessories",
+   "kind": "Hasselblad A12 magazine",
+   "attributes": {
+    "brand": "Hasselblad",
+    "model": "A12",
+    "format": "120 film"
+   }
+  }
+ },
+ {
+  "id": "p39",
+  "label": "possible",
+  "obscure": false,
+  "why": "Chess coaching for a kid vs chess coaching at club level",
+  "want": {
+   "category": "services.lessons.chess",
+   "kind": "chess coaching for my 9 year old",
+   "attributes": {
+    "level": "beginner",
+    "student": "child"
+   }
+  },
+  "have": {
+   "category": "services.lessons.chess",
+   "kind": "chess coaching",
+   "attributes": {
+    "level": "club players, 1500+ rating"
+   }
+  }
+ },
+ {
+  "id": "p40",
+  "label": "possible",
+  "obscure": true,
+  "why": "TR-808 wanted, a \"Roland drum machine\" offered",
+  "want": {
+   "category": "goods.music.drums",
+   "kind": "Roland TR-808",
+   "attributes": {
+    "brand": "Roland",
+    "model": "TR-808"
+   }
+  },
+  "have": {
+   "category": "goods.music.drums",
+   "kind": "vintage Roland drum machine",
+   "attributes": {
+    "brand": "Roland",
+    "era": "1980s"
+   }
+  }
+ },
+ {
+  "id": "n01",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Device vs its case",
+  "want": {
+   "category": "goods.electronics.phone",
+   "kind": "iPhone 13",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13",
+    "storage": "128GB"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.phone-accessories",
+   "kind": "iPhone 13 case",
+   "attributes": {
+    "brand": "OtterBox",
+    "fits": "iPhone 13",
+    "colour": "black"
+   }
+  }
+ },
+ {
+  "id": "n02",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Lessons vs goods",
+  "want": {
+   "category": "services.lessons.guitar",
+   "kind": "guitar lessons",
+   "attributes": {
+    "level": "beginner"
+   }
+  },
+  "have": {
+   "category": "goods.music.guitar",
+   "kind": "acoustic guitar",
+   "attributes": {
+    "brand": "Yamaha",
+    "model": "FG800"
+   }
+  }
+ },
+ {
+  "id": "n03",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Bike pedal vs sim racing pedal",
+  "want": {
+   "category": "goods.bicycle.parts",
+   "kind": "clipless pedals",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "XT PD-M8100",
+    "type": "SPD"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "sim racing pedals",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "CSL Pedals"
+   }
+  }
+ },
+ {
+  "id": "n04",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Same brand/line, different product (spring vs wheel base)",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport V3 brake spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport Pedals V3",
+    "part": "brake spring"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport wheel base",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport DD+"
+   }
+  }
+ },
+ {
+  "id": "n05",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"spring\": sim pedal spring vs MTB shock spring",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec pedal spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "part": "spring"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "rear shock spring",
+   "attributes": {
+    "brand": "Fox",
+    "rate": "450 lb",
+    "part": "coil spring"
+   }
+  }
+ },
+ {
+  "id": "n06",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Part vs a different whole instrument of same brand",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Minimoog Model D pitch wheel",
+   "attributes": {
+    "brand": "Moog",
+    "fits": "Minimoog Model D",
+    "part": "pitch wheel"
+   }
+  },
+  "have": {
+   "category": "goods.music.keyboard",
+   "kind": "Moog Grandmother synthesizer",
+   "attributes": {
+    "brand": "Moog",
+    "model": "Grandmother"
+   }
+  }
+ },
+ {
+  "id": "n07",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Rocket motors vs rocket kit, same brand",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Estes C6-5 rocket motors",
+   "attributes": {
+    "brand": "Estes",
+    "model": "C6-5"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Estes Alpha III rocket kit",
+   "attributes": {
+    "brand": "Estes",
+    "model": "Alpha III",
+    "motors": "not included"
+   }
+  }
+ },
+ {
+  "id": "n08",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Goods vs a class about it",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "sourdough starter",
+   "attributes": {
+    "type": "live culture"
+   }
+  },
+  "have": {
+   "category": "services.lessons.cooking",
+   "kind": "sourdough baking class",
+   "attributes": {
+    "format": "half day workshop"
+   }
+  }
+ },
+ {
+  "id": "n09",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Left-handed, but golf clubs vs fly reel",
+  "want": {
+   "category": "goods.sports.fishing",
+   "kind": "left-handed fly reel",
+   "attributes": {
+    "retrieve": "left hand",
+    "line_weight": "5 wt"
+   }
+  },
+  "have": {
+   "category": "goods.sports.golf",
+   "kind": "left-handed golf clubs",
+   "attributes": {
+    "brand": "Callaway",
+    "set": "irons 5-PW",
+    "hand": "left"
+   }
+  }
+ },
+ {
+  "id": "n10",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Part vs the whole tractor",
+  "want": {
+   "category": "goods.motoring.parts",
+   "kind": "Massey Ferguson 35 water pump",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "fits": "35",
+    "part": "water pump"
+   }
+  },
+  "have": {
+   "category": "goods.vehicles",
+   "kind": "Massey Ferguson 35 tractor",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "model": "35",
+    "year": "1960",
+    "condition": "running"
+   }
+  }
+ },
+ {
+  "id": "n11",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Oven dial vs the whole 1970s oven",
+  "want": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "Chef oven temperature dial",
+   "attributes": {
+    "brand": "Chef",
+    "era": "1970s",
+    "part": "thermostat knob"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "1970s Chef wall oven",
+   "attributes": {
+    "brand": "Chef",
+    "era": "1970s",
+    "condition": "working"
+   }
+  }
+ },
+ {
+  "id": "n12",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Expansion vs a base game of another edition",
+  "want": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Twilight Imperium Shattered Empire expansion",
+   "attributes": {
+    "game": "Twilight Imperium",
+    "edition": "3rd",
+    "expansion": "Shattered Empire"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Twilight Imperium 4th edition",
+   "attributes": {
+    "game": "Twilight Imperium",
+    "edition": "4th",
+    "contents": "base game only"
+   }
+  }
+ },
+ {
+  "id": "n13",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Climbing gear, different item",
+  "want": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "bouldering crash pad",
+   "attributes": {
+    "brand": "Black Diamond",
+    "model": "Mondo"
+   }
+  },
+  "have": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "climbing harness",
+   "attributes": {
+    "brand": "Black Diamond",
+    "model": "Momentum",
+    "size": "M"
+   }
+  }
+ },
+ {
+  "id": "n14",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Same brand reeds for a different instrument",
+  "want": {
+   "category": "goods.music.woodwind",
+   "kind": "Vandoren clarinet reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "instrument": "B-flat clarinet",
+    "strength": "3"
+   }
+  },
+  "have": {
+   "category": "goods.music.woodwind",
+   "kind": "Vandoren alto sax reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "instrument": "alto saxophone",
+    "strength": "3"
+   }
+  }
+ },
+ {
+  "id": "n15",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Complete bike vs frame only",
+  "want": {
+   "category": "goods.bicycle.mountain",
+   "kind": "Specialized Stumpjumper",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Stumpjumper",
+    "frame_size": "M"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "Stumpjumper frame only",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Stumpjumper",
+    "frame_size": "M",
+    "part": "frame"
+   }
+  }
+ },
+ {
+  "id": "n16",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"stand\": phone stand vs music stand",
+  "want": {
+   "category": "goods.electronics.phone-accessories",
+   "kind": "phone stand",
+   "attributes": {
+    "material": "aluminium"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "music stand",
+   "attributes": {
+    "brand": "Hercules",
+    "type": "folding"
+   }
+  }
+ },
+ {
+  "id": "n17",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"board\": skateboard deck vs chopping board",
+  "want": {
+   "category": "goods.sports.skate",
+   "kind": "skateboard deck",
+   "attributes": {
+    "size": "8.25 inch"
+   }
+  },
+  "have": {
+   "category": "goods.home.kitchenware",
+   "kind": "chopping board",
+   "attributes": {
+    "material": "end grain wood"
+   }
+  }
+ },
+ {
+  "id": "n18",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Accessory vs device: bindings vs snowboard",
+  "want": {
+   "category": "goods.sports.winter.snowboard",
+   "kind": "snowboard bindings",
+   "attributes": {
+    "brand": "Burton",
+    "model": "Cartel",
+    "size": "M"
+   }
+  },
+  "have": {
+   "category": "goods.sports.winter.snowboard",
+   "kind": "snowboard",
+   "attributes": {
+    "brand": "Burton",
+    "model": "Custom",
+    "length": "158"
+   }
+  }
+ },
+ {
+  "id": "n19",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"case\": iPad case vs pencil case",
+  "want": {
+   "category": "goods.electronics.tablet",
+   "kind": "iPad case",
+   "attributes": {
+    "fits": "iPad Air 5"
+   }
+  },
+  "have": {
+   "category": "goods.office.stationery",
+   "kind": "pencil case",
+   "attributes": {
+    "colour": "blue"
+   }
+  }
+ },
+ {
+  "id": "n20",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"case\": camera case vs guitar case",
+  "want": {
+   "category": "goods.electronics.camera.accessories",
+   "kind": "camera case",
+   "attributes": {
+    "fits": "Fujifilm X-T4"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "hard guitar case",
+   "attributes": {
+    "fits": "dreadnought acoustic"
+   }
+  }
+ },
+ {
+  "id": "n21",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Charger vs the laptop",
+  "want": {
+   "category": "goods.electronics.laptop",
+   "kind": "MacBook Pro charger",
+   "attributes": {
+    "brand": "Apple",
+    "fits": "MacBook Pro 14",
+    "wattage": "96W USB-C"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.laptop",
+   "kind": "MacBook Pro 14",
+   "attributes": {
+    "brand": "Apple",
+    "model": "MacBook Pro 14 M1 Pro",
+    "storage": "512GB"
+   }
+  }
+ },
+ {
+  "id": "n22",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Console vs a game for it",
+  "want": {
+   "category": "goods.electronics.console.nintendo",
+   "kind": "Nintendo Switch",
+   "attributes": {
+    "brand": "Nintendo",
+    "model": "Switch OLED"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.games",
+   "kind": "Zelda Tears of the Kingdom",
+   "attributes": {
+    "platform": "Nintendo Switch"
+   }
+  }
+ },
+ {
+  "id": "n23",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Controller vs console",
+  "want": {
+   "category": "goods.electronics.console.accessories",
+   "kind": "PS5 controller",
+   "attributes": {
+    "brand": "Sony",
+    "model": "DualSense"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.playstation",
+   "kind": "PS5 console",
+   "attributes": {
+    "brand": "Sony",
+    "model": "PlayStation 5 disc"
+   }
+  }
+ },
+ {
+  "id": "n24",
+  "label": "nothing",
+  "obscure": false,
+  "why": "E-reader vs its cover",
+  "want": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Kindle Paperwhite",
+   "attributes": {
+    "brand": "Amazon",
+    "model": "Kindle Paperwhite 11th generation"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.e-reader",
+   "kind": "Kindle Paperwhite cover",
+   "attributes": {
+    "fits": "Paperwhite 11th gen",
+    "material": "leather"
+   }
+  }
+ },
+ {
+  "id": "n25",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Service vs goods: dog walking vs dog lead",
+  "want": {
+   "category": "services.pet-care.dog-walking",
+   "kind": "dog walker",
+   "attributes": {
+    "dog_size": "medium"
+   }
+  },
+  "have": {
+   "category": "goods.pet.walking",
+   "kind": "dog lead",
+   "attributes": {
+    "length": "1.5m",
+    "material": "rope"
+   }
+  }
+ },
+ {
+  "id": "n26",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Bike repair service vs a bike",
+  "want": {
+   "category": "services.repairs.bicycle",
+   "kind": "bike service and tune",
+   "attributes": {
+    "bike_type": "road"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "road bike",
+   "attributes": {
+    "brand": "Trek",
+    "model": "Domane AL2",
+    "size": "56"
+   }
+  }
+ },
+ {
+  "id": "n27",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Piano lessons vs a piano",
+  "want": {
+   "category": "services.lessons.piano",
+   "kind": "piano lessons",
+   "attributes": {
+    "level": "beginner"
+   }
+  },
+  "have": {
+   "category": "goods.music.keyboard",
+   "kind": "upright piano",
+   "attributes": {
+    "brand": "Yamaha",
+    "model": "U1"
+   }
+  }
+ },
+ {
+  "id": "n28",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Tennis partner vs tennis racquet",
+  "want": {
+   "category": "social.activity-partner.tennis",
+   "kind": "tennis partner",
+   "attributes": {
+    "level": "intermediate"
+   }
+  },
+  "have": {
+   "category": "goods.sports.racquet.tennis",
+   "kind": "tennis racquet",
+   "attributes": {
+    "brand": "Wilson",
+    "model": "Blade 98"
+   }
+  }
+ },
+ {
+  "id": "n29",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Chess coaching vs chess set",
+  "want": {
+   "category": "services.lessons.chess",
+   "kind": "chess coaching",
+   "attributes": {
+    "level": "beginner"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.board-games",
+   "kind": "wooden chess set",
+   "attributes": {
+    "size": "tournament",
+    "material": "wood"
+   }
+  }
+ },
+ {
+  "id": "n30",
+  "label": "nothing",
+  "obscure": true,
+  "why": "SCOBY vs brewing jar",
+  "want": {
+   "category": "goods.hobby.brewing",
+   "kind": "kombucha SCOBY",
+   "attributes": {
+    "type": "scoby with starter liquid"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.brewing",
+   "kind": "kombucha brewing jar with tap",
+   "attributes": {
+    "capacity": "5L",
+    "material": "glass"
+   }
+  }
+ },
+ {
+  "id": "n31",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Voice chip vs the whole synth",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-106 voice chip",
+   "attributes": {
+    "brand": "Roland",
+    "fits": "Juno-106",
+    "part": "80017A voice chip"
+   }
+  },
+  "have": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-106",
+   "attributes": {
+    "brand": "Roland",
+    "model": "Juno-106",
+    "condition": "working, all voices good"
+   }
+  }
+ },
+ {
+  "id": "n32",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Same brand, neighbouring model synth",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-106",
+   "attributes": {
+    "brand": "Roland",
+    "model": "Juno-106"
+   }
+  },
+  "have": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland Juno-60",
+   "attributes": {
+    "brand": "Roland",
+    "model": "Juno-60"
+   }
+  }
+ },
+ {
+  "id": "n33",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Same brand, different vintage instrument",
+  "want": {
+   "category": "goods.music.keyboard",
+   "kind": "Roland TB-303",
+   "attributes": {
+    "brand": "Roland",
+    "model": "TB-303"
+   }
+  },
+  "have": {
+   "category": "goods.music.drums",
+   "kind": "Roland TR-808",
+   "attributes": {
+    "brand": "Roland",
+    "model": "TR-808"
+   }
+  }
+ },
+ {
+  "id": "n34",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Turntable vs its dust cover",
+  "want": {
+   "category": "goods.electronics.audio.turntable",
+   "kind": "Technics SL-1200 MK2",
+   "attributes": {
+    "brand": "Technics",
+    "model": "SL-1200MK2"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.audio.turntable",
+   "kind": "Technics SL-1200 dust cover",
+   "attributes": {
+    "brand": "Technics",
+    "fits": "SL-1200 MK2",
+    "part": "dust cover"
+   }
+  }
+ },
+ {
+  "id": "n35",
+  "label": "nothing",
+  "obscure": false,
+  "why": "BBQ vs its cover",
+  "want": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Baby Q",
+   "attributes": {
+    "brand": "Weber",
+    "model": "Baby Q 1000"
+   }
+  },
+  "have": {
+   "category": "goods.garden.bbq",
+   "kind": "Weber Baby Q cover",
+   "attributes": {
+    "brand": "Weber",
+    "fits": "Baby Q",
+    "part": "cover"
+   }
+  }
+ },
+ {
+  "id": "n36",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Drill vs batteries for it",
+  "want": {
+   "category": "goods.tools.power",
+   "kind": "Bosch 18V hammer drill",
+   "attributes": {
+    "brand": "Bosch",
+    "model": "GSB 18V-55"
+   }
+  },
+  "have": {
+   "category": "goods.tools.power",
+   "kind": "Bosch 18V batteries",
+   "attributes": {
+    "brand": "Bosch",
+    "capacity": "4.0Ah",
+    "quantity": "2"
+   }
+  }
+ },
+ {
+  "id": "n37",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Chain vs the chainsaw",
+  "want": {
+   "category": "goods.tools.garden",
+   "kind": "Stihl chainsaw chain for MS 250",
+   "attributes": {
+    "brand": "Stihl",
+    "fits": "MS 250",
+    "part": "chain"
+   }
+  },
+  "have": {
+   "category": "goods.tools.power",
+   "kind": "Stihl MS 250 chainsaw",
+   "attributes": {
+    "brand": "Stihl",
+    "model": "MS 250",
+    "bar_length": "16 inch"
+   }
+  }
+ },
+ {
+  "id": "n38",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Bezel insert vs the watch",
+  "want": {
+   "category": "goods.clothing.watches",
+   "kind": "Seiko SKX007 bezel insert",
+   "attributes": {
+    "brand": "Seiko",
+    "fits": "SKX007",
+    "part": "bezel insert"
+   }
+  },
+  "have": {
+   "category": "goods.clothing.watches",
+   "kind": "Seiko SKX007 watch",
+   "attributes": {
+    "brand": "Seiko",
+    "model": "SKX007",
+    "condition": "worn"
+   }
+  }
+ },
+ {
+  "id": "n39",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Lego UCS set vs Hasbro toy of the same ship",
+  "want": {
+   "category": "goods.toys-games.construction",
+   "kind": "Lego UCS Millennium Falcon 10179",
+   "attributes": {
+    "brand": "Lego",
+    "set_number": "10179"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.dolls",
+   "kind": "Millennium Falcon toy",
+   "attributes": {
+    "brand": "Hasbro",
+    "line": "Star Wars",
+    "scale": "3.75 inch"
+   }
+  }
+ },
+ {
+  "id": "n40",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Card vs plush of same character",
+  "want": {
+   "category": "goods.toys-games.trading-cards",
+   "kind": "Base Set Charizard holo",
+   "attributes": {
+    "game": "Pokemon",
+    "card": "Charizard 4/102"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.dolls",
+   "kind": "Charizard plush",
+   "attributes": {
+    "brand": "Pokemon Center",
+    "size": "30cm"
+   }
+  }
+ },
+ {
+  "id": "n41",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Whole RC buggy vs body shell",
+  "want": {
+   "category": "goods.toys-games.rc",
+   "kind": "Tamiya Hornet 1984 original",
+   "attributes": {
+    "brand": "Tamiya",
+    "model": "Hornet 58055"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.rc",
+   "kind": "Tamiya Hornet body shell",
+   "attributes": {
+    "brand": "Tamiya",
+    "fits": "Hornet",
+    "part": "body shell",
+    "condition": "painted"
+   }
+  }
+ },
+ {
+  "id": "n42",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Sim pedals vs real car brake pads",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Heusinkveld Sprint pedals",
+   "attributes": {
+    "brand": "Heusinkveld",
+    "model": "Sprint"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.parts",
+   "kind": "brake pads",
+   "attributes": {
+    "fits": "Toyota Corolla 2015",
+    "position": "front"
+   }
+  }
+ },
+ {
+  "id": "n43",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"motor\": rocket motor vs RC motor",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "model rocket motor",
+   "attributes": {
+    "brand": "Estes",
+    "model": "C6-5"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.rc",
+   "kind": "brushless RC motor",
+   "attributes": {
+    "size": "540",
+    "kv": "3300"
+   }
+  }
+ },
+ {
+  "id": "n44",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"reed\": clarinet reed vs reed diffuser",
+  "want": {
+   "category": "goods.music.woodwind",
+   "kind": "clarinet reeds",
+   "attributes": {
+    "brand": "Vandoren",
+    "strength": "3"
+   }
+  },
+  "have": {
+   "category": "goods.home.decor",
+   "kind": "reed diffuser",
+   "attributes": {
+    "scent": "sandalwood"
+   }
+  }
+ },
+ {
+  "id": "n45",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"crash\": crash pad vs crash helmet",
+  "want": {
+   "category": "goods.sports.outdoor.climbing",
+   "kind": "bouldering crash pad",
+   "attributes": {
+    "brand": "Black Diamond"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.accessories",
+   "kind": "motorcycle crash helmet",
+   "attributes": {
+    "brand": "Shoei",
+    "size": "L"
+   }
+  }
+ },
+ {
+  "id": "n46",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"water pump\": tractor part vs garden pump",
+  "want": {
+   "category": "goods.motoring.parts",
+   "kind": "Massey Ferguson 35 water pump",
+   "attributes": {
+    "brand": "Massey Ferguson",
+    "fits": "35"
+   }
+  },
+  "have": {
+   "category": "goods.garden.irrigation",
+   "kind": "submersible water pump",
+   "attributes": {
+    "brand": "Davey",
+    "use": "rainwater tank"
+   }
+  }
+ },
+ {
+  "id": "n47",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"dial\": oven dial vs dial indicator gauge",
+  "want": {
+   "category": "goods.appliances.kitchen.oven",
+   "kind": "oven dial",
+   "attributes": {
+    "brand": "Chef",
+    "era": "1970s"
+   }
+  },
+  "have": {
+   "category": "goods.tools.measuring",
+   "kind": "dial indicator",
+   "attributes": {
+    "brand": "Mitutoyo",
+    "range": "10mm"
+   }
+  }
+ },
+ {
+  "id": "n48",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Board game expansion vs video game of the same name",
+  "want": {
+   "category": "goods.toys-games.board-games",
+   "kind": "Catan Seafarers expansion",
+   "attributes": {
+    "game": "Catan",
+    "expansion": "Seafarers"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.games",
+   "kind": "Catan video game",
+   "attributes": {
+    "platform": "Nintendo Switch"
+   }
+  }
+ },
+ {
+  "id": "n49",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"reel\": fly reel vs film reel",
+  "want": {
+   "category": "goods.sports.fishing",
+   "kind": "fly reel",
+   "attributes": {
+    "retrieve": "left hand"
+   }
+  },
+  "have": {
+   "category": "goods.art.collectables",
+   "kind": "16mm film reel",
+   "attributes": {
+    "content": "home movies 1960s"
+   }
+  }
+ },
+ {
+  "id": "n50",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"starter\": sourdough starter vs starter motor",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "sourdough starter",
+   "attributes": {
+    "type": "live culture"
+   }
+  },
+  "have": {
+   "category": "goods.motoring.parts",
+   "kind": "starter motor",
+   "attributes": {
+    "fits": "Holden Commodore VT"
+   }
+  }
+ },
+ {
+  "id": "n51",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Sim racing cockpit vs gaming chair",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "sim racing cockpit",
+   "attributes": {
+    "brand": "Trak Racer",
+    "model": "TR8"
+   }
+  },
+  "have": {
+   "category": "goods.furniture.office-chair",
+   "kind": "gaming chair",
+   "attributes": {
+    "brand": "Secretlab",
+    "model": "Titan"
+   }
+  }
+ },
+ {
+  "id": "n52",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"spring\": pedal spring vs trampoline springs",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "brake pedal spring",
+   "attributes": {
+    "brand": "Fanatec",
+    "fits": "ClubSport V3"
+   }
+  },
+  "have": {
+   "category": "goods.toys-games.outdoor-play",
+   "kind": "trampoline springs",
+   "attributes": {
+    "quantity": "72",
+    "length": "165mm"
+   }
+  }
+ },
+ {
+  "id": "n53",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Strings vs guitar",
+  "want": {
+   "category": "goods.music.accessories",
+   "kind": "guitar strings",
+   "attributes": {
+    "brand": "D'Addario",
+    "gauge": "10-46"
+   }
+  },
+  "have": {
+   "category": "goods.music.guitar",
+   "kind": "electric guitar",
+   "attributes": {
+    "brand": "Fender",
+    "model": "Player Stratocaster"
+   }
+  }
+ },
+ {
+  "id": "n54",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Amp vs guitar",
+  "want": {
+   "category": "goods.music.amps",
+   "kind": "guitar amp",
+   "attributes": {
+    "brand": "Fender",
+    "model": "Blues Junior"
+   }
+  },
+  "have": {
+   "category": "goods.music.guitar",
+   "kind": "Fender guitar",
+   "attributes": {
+    "brand": "Fender",
+    "model": "Telecaster"
+   }
+  }
+ },
+ {
+  "id": "n55",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Italian language swap vs Italian cooking lessons",
+  "want": {
+   "category": "social.language-exchange.tandem",
+   "kind": "Italian language exchange",
+   "attributes": {
+    "language": "Italian"
+   }
+  },
+  "have": {
+   "category": "services.lessons.cooking",
+   "kind": "Italian cooking lessons",
+   "attributes": {
+    "cuisine": "Italian"
+   }
+  }
+ },
+ {
+  "id": "n56",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Hiking partner vs hiking boots",
+  "want": {
+   "category": "social.activity-partner.hiking",
+   "kind": "hiking buddy",
+   "attributes": {
+    "pace": "moderate"
+   }
+  },
+  "have": {
+   "category": "goods.clothing.shoes",
+   "kind": "hiking boots",
+   "attributes": {
+    "brand": "Salomon",
+    "size": "US 10"
+   }
+  }
+ },
+ {
+  "id": "n57",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Babysitting vs baby monitor",
+  "want": {
+   "category": "services.childcare.babysitting",
+   "kind": "babysitter",
+   "attributes": {
+    "kids": "2",
+    "when": "Friday nights"
+   }
+  },
+  "have": {
+   "category": "goods.baby.monitor",
+   "kind": "baby monitor",
+   "attributes": {
+    "brand": "Owlet"
+   }
+  }
+ },
+ {
+  "id": "n58",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Nozzle vs the printer",
+  "want": {
+   "category": "goods.hobby.3d-printing",
+   "kind": "Prusa 0.4mm nozzle",
+   "attributes": {
+    "fits": "Prusa MK4",
+    "size": "0.4mm"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.3d-printing",
+   "kind": "Prusa MK4 3D printer",
+   "attributes": {
+    "brand": "Prusa",
+    "model": "MK4"
+   }
+  }
+ },
+ {
+  "id": "n59",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Film back vs a digital Hasselblad body",
+  "want": {
+   "category": "goods.electronics.camera.film",
+   "kind": "Hasselblad A12 film back",
+   "attributes": {
+    "brand": "Hasselblad",
+    "model": "A12"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.camera.mirrorless",
+   "kind": "Hasselblad X2D",
+   "attributes": {
+    "brand": "Hasselblad",
+    "model": "X2D 100C"
+   }
+  }
+ },
+ {
+  "id": "n60",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Generic noun \"grain\": kefir grains vs grain mill",
+  "want": {
+   "category": "goods.home.pantry",
+   "kind": "kefir grains",
+   "attributes": {
+    "type": "milk kefir"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.brewing",
+   "kind": "grain mill",
+   "attributes": {
+    "use": "malt crushing",
+    "rollers": "2"
+   }
+  }
+ },
+ {
+  "id": "n61",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Same groupset, different part",
+  "want": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano XT rear derailleur",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "Deore XT RD-M8100"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano XT shifter",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "Deore XT SL-M8100",
+    "part": "shifter"
+   }
+  }
+ },
+ {
+  "id": "n62",
+  "label": "nothing",
+  "obscure": false,
+  "why": "12V camping fridge vs household fridge",
+  "want": {
+   "category": "goods.motoring.camping",
+   "kind": "Dometic CFX3 45 fridge",
+   "attributes": {
+    "brand": "Dometic",
+    "model": "CFX3 45",
+    "power": "12V"
+   }
+  },
+  "have": {
+   "category": "goods.appliances.kitchen.fridge",
+   "kind": "fridge freezer",
+   "attributes": {
+    "brand": "Fisher & Paykel",
+    "capacity": "420L"
+   }
+  }
+ },
+ {
+  "id": "n63",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Same focal length, wrong mount and brand",
+  "want": {
+   "category": "goods.electronics.camera.lens",
+   "kind": "Nikon 50mm f/1.8G",
+   "attributes": {
+    "brand": "Nikon",
+    "model": "AF-S 50mm f/1.8G",
+    "mount": "F"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.camera.lens",
+   "kind": "Canon 50mm f/1.8",
+   "attributes": {
+    "brand": "Canon",
+    "model": "EF 50mm f/1.8 STM",
+    "mount": "EF"
+   }
+  }
+ },
+ {
+  "id": "n64",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Phone vs a phone repair service",
+  "want": {
+   "category": "goods.electronics.phone",
+   "kind": "iPhone 13",
+   "attributes": {
+    "brand": "Apple",
+    "model": "iPhone 13"
+   }
+  },
+  "have": {
+   "category": "services.repairs.phone",
+   "kind": "iPhone screen replacement",
+   "attributes": {
+    "models": "iPhone 11 to 15"
+   }
+  }
+ },
+ {
+  "id": "n65",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"stand\": guitar stand vs plant stand",
+  "want": {
+   "category": "goods.music.accessories",
+   "kind": "guitar stand",
+   "attributes": {
+    "type": "tripod"
+   }
+  },
+  "have": {
+   "category": "goods.garden.pots",
+   "kind": "plant stand",
+   "attributes": {
+    "material": "bamboo",
+    "tiers": "3"
+   }
+  }
+ },
+ {
+  "id": "n66",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Generic noun \"board\": ironing board vs keyboard",
+  "want": {
+   "category": "goods.appliances.laundry.iron",
+   "kind": "ironing board",
+   "attributes": {
+    "size": "large"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.peripherals",
+   "kind": "mechanical keyboard",
+   "attributes": {
+    "brand": "Keychron",
+    "model": "K2"
+   }
+  }
+ },
+ {
+  "id": "n67",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Same sim brand, pedals vs shifter",
+  "want": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec CSL pedals",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "CSL Pedals"
+   }
+  },
+  "have": {
+   "category": "goods.electronics.console.sim-racing",
+   "kind": "Fanatec ClubSport shifter",
+   "attributes": {
+    "brand": "Fanatec",
+    "model": "ClubSport Shifter SQ V1.5"
+   }
+  }
+ },
+ {
+  "id": "n68",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Singer bobbin case vs Singer sewing machine",
+  "want": {
+   "category": "goods.hobby.sewing",
+   "kind": "Singer 15-91 bobbin case",
+   "attributes": {
+    "brand": "Singer",
+    "fits": "15-91",
+    "part": "bobbin case"
+   }
+  },
+  "have": {
+   "category": "goods.hobby.sewing",
+   "kind": "Singer 15-91 sewing machine",
+   "attributes": {
+    "brand": "Singer",
+    "model": "15-91",
+    "year": "1950"
+   }
+  }
+ },
+ {
+  "id": "n69",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Tractor seat vs ride-on mower (both bare goods / garden)",
+  "want": {
+   "category": "goods",
+   "kind": "John Deere 4020 seat",
+   "attributes": {
+    "brand": "John Deere",
+    "fits": "4020",
+    "part": "seat"
+   }
+  },
+  "have": {
+   "category": "goods.tools.garden",
+   "kind": "John Deere ride-on mower",
+   "attributes": {
+    "brand": "John Deere",
+    "model": "X350"
+   }
+  }
+ },
+ {
+  "id": "n70",
+  "label": "nothing",
+  "obscure": true,
+  "why": "Warhammer models vs Warhammer paints",
+  "want": {
+   "category": "goods.toys-games.model-kits",
+   "kind": "Space Marine models",
+   "attributes": {
+    "brand": "Games Workshop",
+    "faction": "Space Marines"
+   }
+  },
+  "have": {
+   "category": "goods.art.craft-supplies",
+   "kind": "Citadel paints",
+   "attributes": {
+    "brand": "Games Workshop",
+    "quantity": "30 pots"
+   }
+  }
+ }
+]

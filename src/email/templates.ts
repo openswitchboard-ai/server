@@ -314,6 +314,9 @@ export function renderApproval(
 // category (category-level only). Blind: pointer, nothing else.
 // ---------------------------------------------------------------------------
 const ORDINALS = ['', '', 'second', 'third', 'fourth', 'fifth'];
+/** The line a POSSIBLE introduction adds to its summons. */
+export const POSSIBLE_EMAIL_LINE =
+  'It might be the same thing or something close to it, so look at the details with your assistant before you go ahead.';
 /** "Someone" for the first arrival on a want or have, "A second person" after that. */
 function whoCameForward(ordinal: number | undefined): string {
   if (!ordinal || ordinal < 2) return 'Someone';
@@ -330,6 +333,9 @@ export function renderSummons(
      *  every want and have at once and names none of them, so it has no one
      *  side to give; without a side the sentence names nothing either. */
     side?: ReaderSide;
+    /** A POSSIBLE introduction (domain/matchTiers.ts): the email says it may
+     *  be something else, so nobody opens it expecting the very thing. */
+    possible?: boolean;
   },
   f: FooterLinks,
 ): EmailContent {
@@ -353,16 +359,19 @@ export function renderSummons(
         ? "Your assistant can already see what they're after."
         : 'Your assistant can already see more about them.';
   const arrival = named ? `${who} has come forward ${preposition} ${phrase}.` : `${who} has come forward.`;
+  // A maybe is said as one, in the same plain words, beside the arrival. It
+  // names nothing the arrival line does not already name.
+  const maybe = v.possible && !v.blind && v.count === 1 ? ` ${POSSIBLE_EMAIL_LINE}` : '';
   const textLine = v.blind
     ? v.count === 1
       ? later ? 'Something else is waiting for you.' : 'Something is waiting for you.'
       : `${v.count} things are waiting for you.`
     : v.count === 1
-      ? `${arrival} ${alreadyOpen}`
+      ? `${arrival}${maybe} ${alreadyOpen}`
       : `${v.count} people have come forward.`;
   const line =
     !v.blind && v.count === 1 && named
-      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>. ${esc(alreadyOpen)}`
+      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>.${esc(maybe)} ${esc(alreadyOpen)}`
       : esc(textLine);
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +

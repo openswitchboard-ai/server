@@ -18,7 +18,18 @@ import { categoryDenied, categoryGate } from '../denylist.js';
 import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
-import { snapCategory } from './categoryBackfill.js';
+import { SHELF_NONE_OPTION, snapCategory } from './categoryBackfill.js';
+import {
+  closeShelfAttempt,
+  markNoneOfThese,
+  openShelfAttempt,
+  readShelfAttempt,
+  recordShelfGap,
+  shortlistForGap,
+  type ShelfAttempt,
+  type ShelfGapOutcome,
+} from './shelfGaps.js';
+import { SHELF_PICK_ACTION, generalShelf, shelfInWords, shelfPickLink } from './shelfPick.js';
 import {
   DETAIL_HUMAN_ACTION,
   detailAskedRecently,
@@ -147,36 +158,17 @@ function logSnap(event: string, fields: Record<string, unknown>): void {
 
 /**
  * The one line on a SHELF_UNCLEAR refusal. It names the two moves: which of
- * these, or the top level, where the posting goes up as it stands. Nothing is
- * lost either way and nothing is being held over anybody.
+ * these, or none of them. "None of these" used to mean the top level, where
+ * the posting went up at once; since 20 September it opens the searchable
+ * shelf page instead (SHELF_PICK, domain/shelfPick.ts), so the answer is sent
+ * back as its own word and the switchboard hands over the page.
  */
-function shelfUnclearAction(from: string): string {
-  const top = String(from).split('.')[0] || 'goods';
-  return `The catalogue has nothing written down for that, and the shelves nearest it disagree. Ask your human which of these is closest to what the thing is, then post it again with that category. If they say none of these, post it under ${top} and it goes up as it stands. Put only the question to them: how the posting is filed and sent again is yours to handle quietly.`;
+function shelfUnclearAction(): string {
+  return `The catalogue has nothing written down for that, and the shelves nearest it disagree. Ask your human which of these is closest to what the thing is, then post it again with that category. If they say none of these, post it again with category ${SHELF_NONE_OPTION} and you are handed a page where they search every shelf. Put only the question to them: how the posting is filed and sent again is yours to handle quietly.`;
 }
 
-/**
- * The shelf the way a person would say it: "electronics", "mountain bikes",
- * "things in general". categoryLabelPath is the catalogue's breadcrumb
- * ("Secondhand consumer goods > Electronics"), which is right for an embedding
- * and wrong for a sentence: an assistant said it to its human exactly as
- * handed, arrow and all, and it read as machinery (rehearsal, 19 September
- * 2026). The deepest node the catalogue has a label for, in lower case; a bare
- * top level gets plain words of its own.
- */
-function shelfInWords(category: string): string {
-  const parts = category.split('.');
-  if (parts.length <= 1) {
-    return (
-      { goods: 'things in general', services: 'everyday help in general', social: 'people to do things with' }[
-        parts[0]
-      ] ?? parts[0]
-    );
-  }
-  const path = categoryLabelPath(category).split(' > ');
-  const leaf = path[path.length - 1] ?? category;
-  return leaf.replace(/\s*&\s*/g, ' and ').toLowerCase();
-}
+// shelfInWords, the shelf the way a person would say it, lives beside the
+// shelf page now (domain/shelfPick.ts), because the page says it too.
 
 function filedUnderNote(decision: { changed: boolean; category: string }): string {
   // The shelf somebody asked for still needs WORDS. The first rehearsal-suite
@@ -449,6 +441,30 @@ export async function publishIntent(
     detailUnknown?: boolean;
   } = {},
 ): Promise<PublishResult> {
+  // THE ANSWER "NONE OF THESE" (Lachlan, 20 September 2026). After
+  // SHELF_UNCLEAR an assistant whose human recognised none of the shelves sends
+  // the posting back with category 'none_of_these'. That is an answer to a
+  // question, and a word the protocol's path pattern would refuse, so it is
+  // read here, before validation, against the question this account has in
+  // flight about the same words (domain/shelfGaps.ts). The posting then carries
+  // on under the path it first came in with, and is turned into SHELF_PICK at
+  // the shelf step below; or, where the human has already chosen on the page,
+  // under the shelf they chose.
+  let shelfAttempt: ShelfAttempt | undefined;
+  const saidNone =
+    !!card && typeof card === 'object' && (card as any).category === SHELF_NONE_OPTION;
+  if (saidNone) {
+    shelfAttempt = await readShelfAttempt(accountId, (card as any).kind);
+    if (!shelfAttempt) {
+      throw Object.assign(
+        new Error(
+          `this cannot go up as it stands: ${SHELF_NONE_OPTION} answers a question about shelves, and there is none open about this thing. Post it with a category.`,
+        ),
+        { validation: ['category'] },
+      );
+    }
+    card = { ...card, category: shelfAttempt.picked ?? shelfAttempt.as_posted };
+  }
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
     // In words, because this sentence has been seen in a chat window: the
@@ -600,6 +616,45 @@ export async function publishIntent(
   // SHELF_CONFIDENT_MIN). Only publish asks — an amend below takes the answer
   // it is given, because a posting already up must never come down for being
   // what it already was.
+  //
+  // FIRST, THOUGH, THE ANSWER TO A SHELF QUESTION ALREADY ASKED. A posting that
+  // comes back after SHELF_UNCLEAR is the human's answer, and there are two
+  // kinds. A shelf the catalogue knows is the answer "this one", and it goes up
+  // there. "None of these" — sent as its own word, or as a bare top level the
+  // way the manual said to before version 58 — is answered with the searchable
+  // page rather than the top level (SHELF_PICK, domain/shelfPick.ts). Once the
+  // human has chosen on that page the choice is on the question, and the
+  // posting goes up under it.
+  if (!saidNone) shelfAttempt = await readShelfAttempt(accountId, kind);
+  const bareTopLevel = !String(card.category).includes('.');
+  if (shelfAttempt && !shelfAttempt.picked && (saidNone || bareTopLevel)) {
+    let page: Awaited<ReturnType<typeof shelfPickLink>> | undefined;
+    try {
+      page = await shelfPickLink(cfg, accountId, shelfAttempt.attempt);
+    } catch (e: any) {
+      // The page is how "none of these" is answered, and without it the old
+      // answer still stands: the top level, where it goes up as it stands.
+      logSnap('publish: shelf page could not be minted, filing under the top level', {
+        error: e?.message,
+      });
+    }
+    if (page) {
+      if (await markNoneOfThese(accountId, shelfAttempt.attempt)) {
+        await recordShelfGap({
+          attempt: shelfAttempt.attempt,
+          as_posted: shelfAttempt.as_posted,
+          kind,
+          outcome: 'none_of_these',
+        });
+      }
+      throw new OsbError('SHELF_PICK', {
+        human_action: `${SHELF_PICK_ACTION} ${page.link}`,
+        press_id: page.press_id,
+      });
+    }
+    card = { ...card, category: generalShelf(shelfAttempt.as_posted) };
+  }
+
   const filed = await snapCategory(cfg, card.category, undefined, {
     fallbackToAncestor: true,
     askWhenUnsure: true,
@@ -614,11 +669,35 @@ export async function publishIntent(
       lead: filed.lead,
       runners_up: filed.runners_up,
     });
+    // Written down for the catalogue, once per question: asking the same thing
+    // again while it is still open keeps the attempt it already has.
+    const opened = await openShelfAttempt(accountId, kind, filed.from);
+    if (opened?.fresh) {
+      await recordShelfGap({
+        attempt: opened.attempt,
+        as_posted: filed.from,
+        kind,
+        outcome: 'asked',
+        shortlist: shortlistForGap(filed.shortlist),
+      });
+    }
     throw new OsbError('SHELF_UNCLEAR', {
-      human_action: shelfUnclearAction(filed.from),
+      human_action: shelfUnclearAction(),
       candidates: filed.candidates,
     });
   }
+  // Is this posting the end of a shelf question? Only where it went up on a
+  // shelf somebody chose: an unknown path sent again is a new question.
+  const answering = shelfAttempt && filed.how === 'as-posted' ? shelfAttempt : undefined;
+  // And is it a filing the door was unsure of, made without asking?
+  const unsureFiling: ShelfGapOutcome | undefined =
+    filed.how === 'ancestor'
+      ? filed.category.includes('.')
+        ? 'snapped_low_confidence'
+        : 'top_level'
+      : filed.how === 'suggestion' && filed.confident === false
+        ? 'snapped_low_confidence'
+        : undefined;
   if (filed.changed) {
     logSnap('publish: posting filed under a node the catalogue knows', {
       account_id: accountId,
@@ -704,7 +783,10 @@ export async function publishIntent(
       saleOf(card),
       kind,
       cfg.quotas.maxOpenCards,
-      filed.from,
+      // The assistant's own path from the FIRST attempt where this posting is
+      // the answer to a shelf question: that is what was actually sent for the
+      // thing, and the shelf it went on is the human's choice.
+      answering?.as_posted ?? filed.from,
     ],
   );
   if (!r.rows[0]) {
@@ -716,6 +798,30 @@ export async function publishIntent(
     });
   }
   const id = r.rows[0].id as string;
+  // The shelf gap log (domain/shelfGaps.ts), written once the posting is up so
+  // a refused insert leaves no row claiming it went anywhere.
+  if (answering) {
+    // A pick on the page wrote its own row when it was pressed; a shelf chosen
+    // from the options in chat is written here, as the answer arrives.
+    if (!answering.picked) {
+      await recordShelfGap({
+        attempt: answering.attempt,
+        as_posted: answering.as_posted,
+        kind,
+        outcome: 'human_picked',
+        picked: filed.category,
+      });
+    }
+    await closeShelfAttempt(accountId, answering.attempt);
+  } else if (unsureFiling) {
+    await recordShelfGap({
+      as_posted: filed.from,
+      kind,
+      outcome: unsureFiling,
+      picked: filed.category,
+      shortlist: shortlistForGap(filed.shortlist),
+    });
+  }
   // The catalogue's gaps, counted from what went UP rather than from what was
   // turned away. Nothing about this reaches the agent, and nothing about it can
   // fail the publish.
@@ -1053,6 +1159,18 @@ export async function amendIntent(
     fallbackToAncestor: true,
     posting: { kind: next.kind ?? card.kind, attributes: next.attributes },
   });
+  // The same gap log as the door, for the one kind of amend that moves a
+  // posting: an old one under an unwritten branch, filed without asking.
+  if (filed.changed && (filed.how === 'ancestor' || filed.confident === false)) {
+    await recordShelfGap({
+      as_posted: filed.from,
+      kind: next.kind ?? card.kind,
+      outcome:
+        filed.how === 'ancestor' && !filed.category.includes('.') ? 'top_level' : 'snapped_low_confidence',
+      picked: filed.category,
+      shortlist: shortlistForGap(filed.shortlist),
+    });
+  }
   if (filed.changed) {
     logSnap('amend: posting filed under a node the catalogue knows', {
       account_id: accountId,

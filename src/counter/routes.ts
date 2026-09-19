@@ -1482,6 +1482,47 @@ in on this device and lets you approve what is waiting.</p>
     };
 
     // ------------------------------------------------------------------
+    // The shelf page (SHELF_PICK). Same link machinery, its own page, and no
+    // ceremony: a shelf discloses nothing and spends nothing. NOT consumed on
+    // the view, because a person searches more than once before they tap.
+    // ------------------------------------------------------------------
+    const shelfView = async (
+      accountId: string,
+      row: ApprovalLinkRow,
+      token: string,
+      q: string,
+    ): Promise<{ view: pages.ShelfPickView; asPosted: string; kind: string | null } | { error: string }> => {
+      const { readShelfAttemptById } = await import('../domain/shelfGaps.js');
+      const shelf = await import('../domain/shelfPick.js');
+      const attempt = await readShelfAttemptById(accountId, row.ref_id);
+      if (!attempt) {
+        return {
+          error:
+            'That question is over: the posting has gone up, or the question ran out. If it still needs a shelf, ask your assistant for a fresh page.',
+        };
+      }
+      if (attempt.picked) {
+        return { error: `A shelf is already chosen for this one: ${shelf.shelfInWords(attempt.picked)}.` };
+      }
+      const shelves = shelf.openLeaves();
+      const query = q.slice(0, 80);
+      const general = shelf.generalShelf(attempt.as_posted);
+      return {
+        asPosted: attempt.as_posted,
+        kind: attempt.kind,
+        view: {
+          token,
+          kind: attempt.kind,
+          q: query,
+          wordCount: shelf.searchWords(query).length,
+          shelves,
+          shown: new Set(shelf.searchShelves(query, shelves).map((x) => x.category)),
+          general: { category: general, words: shelf.shelfInWords(general) },
+        },
+      };
+    };
+
+    // ------------------------------------------------------------------
     // The photo page. Same link machinery, its own page, because a person
     // picks a file before they press — and the link is bound to ONE
     // conversation, so there is nothing on the page to choose.
@@ -1596,6 +1637,13 @@ in on this device and lets you approve what is waiting.</p>
         // burns on the press and never on the view, so it is still good.
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
+      if (row.action === 'shelf-pick') {
+        const v = await shelfView(s.accountId, row, token, String((req.query as any)?.q ?? ''));
+        if ('error' in v) {
+          return html(reply, pages.donePage('Nothing to choose', `<p>${pages.esc(v.error)}</p>`));
+        }
+        return html(reply, pages.shelfPickPage(v.view));
+      }
       if (row.action === 'conversation-photo') {
         // NOT consumed on the view: the link has to survive the person going
         // to their camera roll and back.
@@ -1637,7 +1685,11 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.linkDeadPage('invalid'), 404);
       }
       const row = check.row as ApprovalLinkRow;
-      if (!links.isOneQuestionAction(row.action) && row.action !== 'conversation-photo') {
+      if (
+        !links.isOneQuestionAction(row.action) &&
+        row.action !== 'conversation-photo' &&
+        row.action !== 'shelf-pick'
+      ) {
         return reply.code(400).send({ error: 'bad_request' });
       }
       const s = await sess.loadSession(req);
@@ -1657,6 +1709,50 @@ in on this device and lets you approve what is waiting.</p>
         );
       }
       if (await stopped(s.accountId, reply)) return;
+      // The shelf press. No ceremony, and the shelf is checked BEFORE the link
+      // is burnt, so a tampered or stale value costs a fresh look at the list
+      // rather than the link. Burnt first after that, so of two presses of one
+      // link exactly one records a shelf; the decision is written last, which
+      // is what wait_for_press waits for, so the shelf is there when it looks.
+      if (row.action === 'shelf-pick') {
+        const pb: any = req.body ?? {};
+        const v = await shelfView(s.accountId, row, token, '');
+        if ('error' in v) {
+          await consumeLink(row.id);
+          return html(reply, pages.donePage('Nothing to choose', `<p>${pages.esc(v.error)}</p>`));
+        }
+        if (String(pb.decision ?? '') === 'no') {
+          if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
+          await links.recordLinkDecision(row.id, 'declined');
+          return html(
+            reply,
+            pages.donePage('Left unposted', '<p>Nothing went up. Tell your assistant whenever you want to try again.</p>'),
+          );
+        }
+        const shelf = await import('../domain/shelfPick.js');
+        const category = String(pb.category ?? '');
+        if (!shelf.pickable(category, v.asPosted)) {
+          return html(reply, pages.shelfPickPage(v.view, 'Pick one of the shelves on this page.'), 400);
+        }
+        if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
+        const gaps = await import('../domain/shelfGaps.js');
+        await gaps.recordShelfPick(s.accountId, row.ref_id, category);
+        await gaps.recordShelfGap({
+          attempt: row.ref_id,
+          as_posted: v.asPosted,
+          kind: v.kind,
+          outcome: 'picked_from_list',
+          picked: category,
+        });
+        await links.recordLinkDecision(row.id, 'approved');
+        return html(
+          reply,
+          pages.donePage(
+            'Shelf chosen',
+            `<p>It goes under ${pages.esc(shelf.shelfInWords(category))}. Your assistant puts it up there now.</p>`,
+          ),
+        );
+      }
       // The photo press. Ordered like every other press on this page: the
       // caption is checked BEFORE the link is burnt, so a figure typed beside
       // the picture costs a rewrite rather than the link their assistant gave

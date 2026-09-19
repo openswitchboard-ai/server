@@ -38,7 +38,12 @@ export type ApprovalAction =
   /** Keep a conversation going: a fresh window for this human's own side of one
    *  introduction (domain/conversationWindow.ts). Bound to that introduction at
    *  mint time, and it grants nothing to the other side. */
-  | 'conversation-renew';
+  | 'conversation-renew'
+  /** Choose the shelf a posting goes on, from every open shelf the catalogue
+   *  has (domain/shelfPick.ts). Bound to one shelf question in flight at mint
+   *  time. Like the photo page it has a page of its own and asks for no
+   *  credential: a shelf discloses nothing and spends nothing. */
+  | 'shelf-pick';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,

@@ -164,7 +164,7 @@ describe('what one turn is scored against', () => {
 });
 
 describe('the rubric', () => {
-  it('is the twelve rules, all nouls', () => {
+  it('is the thirteen rules, all nouls', () => {
     expect(RULE_IDS).toEqual([
       'invented_figure',
       'queue_claim',
@@ -178,6 +178,7 @@ describe('the rubric', () => {
       'cadence_not_agreed',
       'substituted_the_thing',
       'vague_area',
+      'overclaims_possible',
     ]);
     const q = rubricQuestions();
     expect(Object.keys(q).sort()).toEqual([...RULE_IDS].sort());

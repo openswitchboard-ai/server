@@ -483,6 +483,12 @@ export interface PressAnswer {
   link?: string;
   /** What the agent does next, in plain words, when waiting again is wrong. */
   what_to_do?: string;
+  /**
+   * On the shelf page (SHELF_PICK): the shelf the human chose, as the path to
+   * post again with and in the words to say. The posting is still the
+   * assistant's to send: the switchboard holds the choice and nothing else.
+   */
+  picked?: { category: string; words: string };
   note: { text: string; provenance: 'switchboard-system' };
 }
 
@@ -532,6 +538,15 @@ interface PressRow {
  */
 const linkFromRow = (cfg: Config, row: PressRow): string => url(cfg, signLink(row));
 
+/** The shelf chosen on a shelf page, read off the question it was minted for. */
+async function shelfPicked(accountId: string, attempt: string): Promise<string | undefined> {
+  const r = await getPool().query(
+    'SELECT picked FROM shelf_attempts WHERE account_id = $1 AND attempt = $2',
+    [accountId, attempt],
+  );
+  return r.rows[0]?.picked ?? undefined;
+}
+
 /**
  * Hold the line until this human presses, and answer the moment they do.
  *
@@ -573,6 +588,20 @@ export async function waitForPress(
 
   for (;;) {
     const row = await read();
+    if (row.used_at && row.decision === 'approved' && row.action === 'shelf-pick') {
+      const picked = await shelfPicked(accountId, row.ref_id);
+      if (picked) {
+        const { shelfPickedNote, shelfInWords } = await import('./shelfPick.js');
+        const said = shelfPickedNote(picked);
+        return {
+          pressed: true,
+          decision: 'approved',
+          picked: { category: picked, words: shelfInWords(picked) },
+          what_to_do: said.what_to_do,
+          note: pressNote(said.say),
+        };
+      }
+    }
     if (row.used_at && (row.decision === 'approved' || row.decision === 'declined')) {
       return {
         pressed: true,

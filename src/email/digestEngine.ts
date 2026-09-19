@@ -92,7 +92,7 @@ function logAccountFailure(label: string, accountId: string, e: any): void {
 // ---------------------------------------------------------------------------
 export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<void> {
   const r = await getPool().query(
-    `SELECT account_want, account_have, card_want, card_have, category, created_at FROM matches WHERE id = $1`,
+    `SELECT account_want, account_have, card_want, card_have, category, created_at, certainty FROM matches WHERE id = $1`,
     [matchId],
   );
   const m = r.rows[0];
@@ -133,6 +133,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
             categoryLabel: ctx.blind ? undefined : ownLabel,
             blind: ctx.blind,
             side: sideOf(m, accountId),
+            possible: m.certainty === 'possible',
           },
           ctx.links,
         ),

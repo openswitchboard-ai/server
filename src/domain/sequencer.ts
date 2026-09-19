@@ -22,6 +22,7 @@
  * THREE THINGS LIVE HERE.
  *
  * 1. RANKING (rankByFit, pure). Fit, recomputed whenever the line changes:
+ *    a SURE introduction before a POSSIBLE one (domain/matchTiers.ts); then
  *    whether the two sealed limits overlap as a yes or a no and never by how
  *    much; then distance; then whether the two urgencies agree; then the
  *    account's reliability signal; then arrival time as the tiebreak. A later
@@ -86,6 +87,11 @@ export interface FitFacts {
   reliability: number;
   /** When the introduction was made. The tiebreak, and only the tiebreak. */
   arrivedAt: number;
+  /**
+   * How sure the matcher was (domain/matchTiers.ts). Absent reads as 'sure',
+   * which is what every introduction made before tiers existed is.
+   */
+  certainty?: 'sure' | 'possible';
 }
 
 /**
@@ -100,7 +106,11 @@ export interface FitFacts {
  */
 export function rankByFit<T extends FitFacts>(rows: T[]): T[] {
   const far = Number.POSITIVE_INFINITY;
+  const possible = (f: FitFacts) => f.certainty === 'possible';
   return [...rows].sort((a, b) => {
+    // SURE BEFORE POSSIBLE, before anything else about fit: somebody who has
+    // the very thing goes ahead of somebody who might.
+    if (possible(a) !== possible(b)) return possible(a) ? 1 : -1;
     if (a.limitsOverlap !== b.limitsOverlap) return a.limitsOverlap ? -1 : 1;
     const da = a.distanceKm ?? far;
     const db = b.distanceKm ?? far;
@@ -114,6 +124,7 @@ export function rankByFit<T extends FitFacts>(rows: T[]): T[] {
 interface LineRow {
   id: string;
   live: boolean;
+  certainty?: 'sure' | 'possible' | null;
   limits_overlap: boolean;
   created_at: Date | string;
   other_card: string;
@@ -132,7 +143,7 @@ interface LineRow {
 /** Every open introduction on one want or have, with what the ranking needs. */
 async function lineOf(cardId: string): Promise<LineRow[]> {
   const r = await getPool().query(
-    `SELECT m.id, m.live, m.limits_overlap, m.created_at,
+    `SELECT m.id, m.live, m.certainty, m.limits_overlap, m.created_at,
             CASE WHEN m.card_want = $1 THEN m.card_have ELSE m.card_want END AS other_card,
             own.urgency AS own_urgency, own.slots AS own_slots, own.sale AS own_sale,
             (own.sale = 'best-offer' AND own.gather_until IS NOT NULL
@@ -170,7 +181,24 @@ function factsOf(row: LineRow): FitFacts {
     urgencyMatch: row.own_urgency === 'today' && row.other_urgency === 'today',
     reliability: Number(row.reliability ?? 0.5),
     arrivedAt: new Date(row.created_at).getTime(),
+    certainty: row.certainty === 'possible' ? 'possible' : 'sure',
   };
+}
+
+/**
+ * Is a SURE introduction waiting in line on this want or have? A POSSIBLE one
+ * never takes a slot while one is: the slot is a promise of a person's
+ * attention, and it goes first to somebody who has the very thing.
+ */
+async function sureWaitingOn(cardId: string): Promise<boolean> {
+  const r = await getPool().query(
+    `SELECT 1 FROM matches
+      WHERE (card_want = $1 OR card_have = $1) AND state = 'open' AND NOT live
+        AND certainty = 'sure'
+      LIMIT 1`,
+    [cardId],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /** How many live introductions one want or have can still take. */
@@ -218,10 +246,21 @@ export async function resequenceCard(cardId: string, cfg?: Config): Promise<stri
   const waiting = rankByFit(rows.filter((r) => !r.live).map(factsOf));
   const byId = new Map(rows.map((r) => [r.id, r]));
   const promoted: string[] = [];
+  // Sure ones first (rankByFit), and a possible never goes live while a sure
+  // one is still waiting on either of its two postings — on this one, because
+  // it could not be placed above, or on the other side's.
+  let sureLeftWaiting = false;
   for (const cand of waiting) {
     if (free <= 0) break;
     const other = byId.get(cand.matchId)!.other_card;
-    if ((await freeSlots(other)) <= 0) continue;
+    if (cand.certainty === 'possible') {
+      if (sureLeftWaiting) break;
+      if (await sureWaitingOn(other)) continue;
+    }
+    if ((await freeSlots(other)) <= 0) {
+      if (cand.certainty !== 'possible') sureLeftWaiting = true;
+      continue;
+    }
     const u = await getPool().query(
       `UPDATE matches SET live = true, live_at = now(), last_movement_at = now(),
               updated_at = now()
@@ -232,6 +271,8 @@ export async function resequenceCard(cardId: string, cfg?: Config): Promise<stri
     if (u.rowCount) {
       promoted.push(cand.matchId);
       free--;
+    } else if (cand.certainty !== 'possible') {
+      sureLeftWaiting = true;
     }
   }
   if (cfg?.opsQueueUrl) for (const id of promoted) await summon(cfg, id);
