@@ -263,7 +263,7 @@ async function oneRun(
         : await bootstrapActor(sheet.firstName, sheet.locality);
       if (!DRY) {
         const { token } = await createAgentKey(actor.jar, actor.pin, `rehearsal ${runId} ${id}`);
-        log(await driver.prepare(token, runId));
+        log(await driver.prepare(token, runId, sheet.firstName));
       } else {
         log(`${driver.name}: dry run, nothing prepared`);
       }
