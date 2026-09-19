@@ -113,6 +113,13 @@ function shelfUnclearAction(from: string): string {
 }
 
 function filedUnderNote(decision: { changed: boolean; category: string }): string {
+  // The shelf somebody asked for still needs WORDS. The first rehearsal-suite
+  // run (19 September 2026): an assistant chose goods.electronics itself, so
+  // nothing had moved and no sentence came back, only the dotted path, and it
+  // read the path to its human because the path was all it had been given.
+  if (!decision.changed) {
+    return `Filed under ${categoryLabelPath(decision.category)}. Say it in those words; the dotted path is yours to work with and is never said aloud.`;
+  }
   return `Filed under ${categoryLabelPath(decision.category)}, which is the nearest thing the catalogue knows. Your own words for it are kept as they were. Say where it went, and if that is the wrong shelf, take it down and put it up again somewhere better.`;
 }
 
@@ -566,12 +573,10 @@ export async function publishIntent(
     state: 'PENDING_SCREENING',
     ...locationEcho(geo),
     // Where it actually went, every time, so an assistant never has to guess
-    // whether the switchboard took its path as given. The sentence rides only
-    // on a move: there is nothing to say about a shelf somebody asked for.
+    // whether the switchboard took its path as given, and always with a
+    // sentence in plain words beside it, moved or not.
     filed_under: filed.category,
-    ...(filed.changed
-      ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
-      : {}),
+    filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
   };
 }
@@ -928,9 +933,7 @@ export async function amendIntent(
     state: 'PENDING_SCREENING',
     ...('geo' in (patch ?? {}) ? locationEcho(geo) : {}),
     filed_under: filed.category,
-    ...(filed.changed
-      ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
-      : {}),
+    filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
   };
 }

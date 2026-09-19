@@ -37,8 +37,8 @@ export const JEV_SECRET = process.env.REHEARSAL_JEV_SECRET ?? `osb/${ENV_NAME}/j
 /** The OpenClaw box, and the deep-clean script installed on it. */
 export const DEEP_CLEAN = '~/osb-deep-clean.sh';
 export const AGENT_HOMES = {
-  nagatha: { dir: '.openclaw', unit: 'openclaw-gateway', profile: '' },
-  bilby: { dir: '.openclaw-bilby', unit: 'openclaw-gateway-bilby', profile: '--profile bilby' },
+  nagatha: { dir: '.openclaw', unit: 'openclaw-gateway', profile: '', port: 18789 },
+  bilby: { dir: '.openclaw-bilby', unit: 'openclaw-gateway-bilby', profile: '--profile bilby', port: 18790 },
 } as const;
 
 /** How long a run will wait for the screening verdict and then the matcher. */
