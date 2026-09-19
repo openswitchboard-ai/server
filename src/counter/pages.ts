@@ -280,6 +280,48 @@ const LOCAL_TIME_SCRIPT = `<script>
 })();
 </script>`;
 
+/**
+ * One press per form, on every page.
+ *
+ * A code filled in from the mail app submits the form by itself, and nothing
+ * on the page said so: the button still looked ready, so people pressed it,
+ * the second press arrived after the code had been used, and they were told
+ * their code was no good when it had just worked. The same goes for any page
+ * whose answer takes a moment.
+ *
+ * So the first submit of an ordinary form locks its buttons and says it is
+ * working, and a second submit is dropped. The buttons are locked a tick
+ * AFTER the submit, because a disabled button's name and value are left out
+ * of what the browser sends and several forms here tell their buttons apart
+ * that way. Nothing unlocks on failure because a failure is a fresh page. A
+ * page brought back from the back-forward cache is unlocked again.
+ * The one-question form is pressed in place by the script below and locks
+ * its own buttons, so it is left alone here.
+ */
+const SUBMIT_ONCE_SCRIPT = `<script>
+(function(){
+  document.addEventListener('submit',function(e){
+    var f=e.target;if(!f||f.nodeName!=='FORM'||f.id==='oneQuestion')return;
+    if(f.getAttribute('data-sent')){e.preventDefault();return;}
+    if(e.defaultPrevented)return;
+    f.setAttribute('data-sent','1');f.setAttribute('aria-busy','true');
+    var sub=e.submitter;
+    setTimeout(function(){
+      var b=f.querySelectorAll('button,input[type=submit]');
+      for(var i=0;i<b.length;i++){b[i].disabled=true;}
+      if(sub&&sub.nodeName==='BUTTON'){sub.setAttribute('data-label',sub.textContent);sub.textContent='Working\u2026';}
+    },0);
+  });
+  window.addEventListener('pageshow',function(ev){
+    if(!ev.persisted)return;
+    var fs=document.querySelectorAll('form[data-sent]');
+    for(var i=0;i<fs.length;i++){var f=fs[i];f.removeAttribute('data-sent');f.removeAttribute('aria-busy');
+      var b=f.querySelectorAll('button,input[type=submit]');
+      for(var j=0;j<b.length;j++){b[j].disabled=false;var l=b[j].getAttribute('data-label');if(l){b[j].textContent=l;b[j].removeAttribute('data-label');}}}
+  });
+})();
+</script>`;
+
 export function layout(title: string, body: string, opts: { head?: string } = {}): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -298,7 +340,7 @@ ${body}
 </main>
 <footer>openswitchboard.ai</footer>
 </div>
-${LOCAL_TIME_SCRIPT}${IN_PLACE_SCRIPT}</body></html>`;
+${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}</body></html>`;
 }
 
 export const errBox = (msg?: string) => (msg ? `<div class="err">${esc(msg)}</div>` : '');
