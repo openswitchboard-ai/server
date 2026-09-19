@@ -43,7 +43,8 @@ import {
   figuresOnPosting,
   type PostingFigure,
 } from './postingFigure.js';
-import { cadenceInPlainWords, readArrangement, type Arrangement } from './arrangement.js';
+import { arrangementOrNothing, type Arrangement } from './arrangement.js';
+import { sayFor } from './lanes.js';
 import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
@@ -101,13 +102,7 @@ export function whatHappensNextNote(a: Arrangement): {
   text: string;
   provenance: 'switchboard-system';
 } {
-  const saved = a.runs_on_its_own === true && a.check_every_minutes !== undefined;
-  return {
-    text: saved
-      ? `Your human has already agreed you look ${cadenceInPlainWords(a.check_every_minutes!)}, so say that as the arrangement it is. One look a few minutes from now is a follow-up on this posting and has nothing to do with that rhythm. Say any time in their own clock.`
-      : 'You and your human have not agreed how often you check (say it in those words), so do not tell them you will let them know. Say this: the switchboard will email you when someone comes forward. If you can wake yourself, ask how often (suggest hourly), save it with standing_arrangement, and only then say you will tell them. One look a few minutes from now is fine either way; say times in their own clock.',
-    provenance: 'switchboard-system' as const,
-  };
+  return { text: sayFor('after_posting', a), provenance: 'switchboard-system' as const };
 }
 
 /** The note for an account with nothing saved, which is where every one starts. */
@@ -123,11 +118,7 @@ async function whatHappensNextFor(accountId: string): Promise<{
   text: string;
   provenance: 'switchboard-system';
 }> {
-  try {
-    return whatHappensNextNote(await readArrangement(accountId));
-  } catch {
-    return WHAT_HAPPENS_NEXT_NOTE;
-  }
+  return whatHappensNextNote(await arrangementOrNothing(accountId));
 }
 
 /**

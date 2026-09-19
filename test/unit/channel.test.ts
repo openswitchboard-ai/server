@@ -802,8 +802,10 @@ describe('the sentence that comes back with a collection', () => {
 
   it('says plainly that nothing is waiting, and asks the human for nothing', async () => {
     const got = await channel.receiveMessages(BEPPE, MATCH);
+    // Nothing is saved on this account, so this is the prompted lane: the
+    // switchboard carries it and the agent promises nothing (domain/lanes.ts).
     expect(got.note.text).toBe(
-      'Nothing has come through on this one, and there is nothing else here waiting on your human. I will bring you whatever arrives, whenever it arrives.',
+      'Nothing has come through on this one, and there is nothing else here waiting on your human. The switchboard emails them when something arrives. Tell them they can check with you whenever they like, and never say you will come back on your own.',
     );
     // The bug this replaces was an agent offering to send the first message off
     // the back of an empty answer. Nothing here suggests one is owed.
