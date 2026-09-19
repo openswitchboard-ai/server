@@ -440,7 +440,11 @@ export function checkIntroductionTold(side: 'seller' | 'buyer', turns: string[])
   const said = turns.join('\n');
   const toldThem = /\b(someone|somebody|a (buyer|seller)|another person|come forward|has turned up|there(’|')?s someone)\b/i.test(said);
   const counted = COUNT_CLAIM.exec(said);
-  const ids = ID_LIKE.exec(said);
+  // A LINK IS NOT AN ID SAID ALOUD. Handing over the page is the whole of the
+  // names step, and the link carries a token with an id in it. Strip the
+  // links before looking for ids (dev, 20 September 2026: a run was failed for
+  // the very sentence the manual asks for).
+  const ids = ID_LIKE.exec(said.replace(/https?:\/\/\S+/g, ' '));
   if (!toldThem) return fail(id, says, 'nothing in its turns says anybody came forward');
   if (counted) return fail(id, says, `claimed a count: "${counted[0]}"`);
   if (ids) return fail(id, says, `read an id out loud: ${ids[0].slice(0, 8)}…`);
