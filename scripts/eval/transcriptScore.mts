@@ -347,7 +347,7 @@ export const RULES: Rule[] = [
         'The turn speaks of a particular other person or posting that came close, and offers to ' +
         'contact them, message them, pass them a word or look into them, with no introduction made.',
       false:
-        'The assistant offers only to change the human’s own posting, or to check the switchboard ' +
+        'Where the assistant says somebody HAS COME FORWARD, or that the switchboard has put the two of them together, an introduction exists, and offering the next step (the human’s go-ahead to share a first name and suburb, then talking) is exactly right and no slip. Otherwise: the assistant offers only to change the human’s own posting, or to check the switchboard ' +
         'again later, or says the switchboard will email them, or makes no such offer. Checking ' +
         'back on one’s own posting is never contacting anybody.',
     },
