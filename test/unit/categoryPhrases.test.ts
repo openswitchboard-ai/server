@@ -126,7 +126,7 @@ function framesFor(path: string): { frame: string; text: string }[] {
 
 describe('every open leaf has words a person would say', () => {
   it('ships a phrase on every open leaf and on no branch above one', () => {
-    expect(LEAVES.length).toBe(462);
+    expect(LEAVES.length).toBe(463); // + goods.electronics.console.sim-racing (schema, 2026-09-20)
     const missing = LEAVES.filter((p) => !taxonomy.nodes[p].phrase);
     expect(missing, `these leaves have no phrase: ${missing.join(', ')}`).toEqual([]);
     const branchesWithPhrases = PATHS.filter((p) => hasChildren(p) && taxonomy.nodes[p].phrase);

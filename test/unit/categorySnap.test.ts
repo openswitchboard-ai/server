@@ -3,7 +3,7 @@
  *
  * Run 9 on dev put two postings for the same object on the same switchboard
  * and never showed them to each other. The have went up under
- * 'goods.gaming.sim-racing', which is a branch nobody has ever written down,
+ * 'goods.curios.flux-capacitor', which is a branch nobody has ever written down,
  * and the want went up under 'goods.electronics'. Nothing was refused —
  * the catalogue is a deny list and an unwritten leaf goes up — but the matcher
  * reads the category as a hard gate: equal, ancestor, descendant, or siblings
@@ -100,16 +100,16 @@ describe('where a posting is filed', () => {
     // The whole defect in one line. There is no goods.gaming node, and the
     // lexical fallback's nearest answer is goods.clothing on shared trigrams
     // alone — which is worse for everybody than "this is a good".
-    const d = await door('goods.gaming.sim-racing');
+    const d = await door('goods.curios.flux-capacitor');
     expect(d.category).toBe('goods');
     expect(d.how).toBe('ancestor');
     expect(d.changed).toBe(true);
-    expect(d.from).toBe('goods.gaming.sim-racing');
+    expect(d.from).toBe('goods.curios.flux-capacitor');
   });
 
   it('never leaves an invented path standing as the matching key', async () => {
     for (const c of [
-      'goods.gaming.sim-racing',
+      'goods.curios.flux-capacitor',
       'goods.pushbike',
       'services.repairs.vintage-synthesiser',
       'social.bouldering-partner',
@@ -158,10 +158,10 @@ describe('where a posting is filed', () => {
     // The sweep does NOT walk up the path: a posting already up with nothing
     // near it is left for an operator to look at.
     suggestions = { categories: [], scored: [], source: 'lexical' };
-    const d = await snapCategory(cfg, 'goods.gaming.sim-racing');
+    const d = await snapCategory(cfg, 'goods.curios.flux-capacitor');
     expect(d.how).toBe('unmatched');
     expect(d.changed).toBe(false);
-    expect(d.category).toBe('goods.gaming.sim-racing');
+    expect(d.category).toBe('goods.curios.flux-capacitor');
   });
 
   it('sets the door floor above the sweep own', async () => {
@@ -234,8 +234,8 @@ function fakePool() {
 const listing = (over: Record<string, unknown> = {}) => ({
   schema_version: SCHEMA_VERSION,
   type: 'offering',
-  category: 'goods.gaming.sim-racing',
-  kind: 'sim racing rig',
+  category: 'goods.curios.flux-capacitor',
+  kind: 'flux capacitor',
   // Enough to describe the thing to a stranger. The door asks for that before
   // it asks anything about shelves (domain/postingDetail.ts), and this suite
   // is about the shelves.
@@ -254,9 +254,9 @@ beforeEach(() => {
       account_id: ACCOUNT,
       schema_version: SCHEMA_VERSION,
       type: 'HAVE',
-      category: 'goods.gaming.sim-racing',
-      category_as_posted: 'goods.gaming.sim-racing',
-      kind: 'sim racing rig',
+      category: 'goods.curios.flux-capacitor',
+      category_as_posted: 'goods.curios.flux-capacitor',
+      kind: 'flux capacitor',
       geo: { bucket: 'r3gx', radius_km: 25, reach: 'country' },
       attributes: {},
       ask: null,
@@ -281,7 +281,7 @@ describe('what the row carries and what the assistant hears', () => {
     // The matching key is the switchboard's decision.
     expect(stored('category')).toBe('goods');
     // And the assistant's own path is on the row, untouched.
-    expect(stored('category_as_posted')).toBe('goods.gaming.sim-racing');
+    expect(stored('category_as_posted')).toBe('goods.curios.flux-capacitor');
   });
 
   it('says where the posting went, in a field and in a sentence', async () => {
@@ -304,7 +304,7 @@ describe('what the row carries and what the assistant hears', () => {
 
   it('leaves the poster own words for the thing exactly as they were sent', async () => {
     await publishIntent(cfg, ACCOUNT, listing());
-    expect(stored('kind')).toBe('sim racing rig');
+    expect(stored('kind')).toBe('flux capacitor');
   });
 
   it('faces the decision again on an amend, and never overwrites the original path', async () => {
@@ -314,7 +314,7 @@ describe('what the row carries and what the assistant hears', () => {
     const update = world.sql.find((s) => /UPDATE cards SET geo/.test(s.text))!;
     expect(update.text).toContain('category_as_posted = COALESCE(category_as_posted,');
     expect(update.params).toContain('goods');
-    expect(update.params).toContain('goods.gaming.sim-racing');
+    expect(update.params).toContain('goods.curios.flux-capacitor');
   });
 
   // Manual 52. Screening takes seconds and the first person often comes
