@@ -476,7 +476,24 @@ async function oneRun(
       record(skip('S1.manual', 'both assistants came at the manual.', toolWindow.unavailable));
     } else {
       for (const id of ['seller', 'buyer'] as SideId[]) {
-        record(checkManual(id, toolWindow.lines, manualStartSeen(sides[id])));
+        // The server writes down when it has handed a session the start page
+        // (oauth_tokens.manual_start_sent_at, set when the first answer carried
+        // it or when read_manual was called). The tool-call log carries names
+        // only, so an assistant that was HANDED the page and never asked for it
+        // looked, from the log, as if it had read nothing, and a run was failed
+        // for that.
+        const handed = DRY
+          ? manualStartSeen(sides[id])
+          : manualStartSeen(sides[id]) ||
+            Number(
+              (
+                await dbExec(
+                  `SELECT count(*) FROM oauth_tokens WHERE account_id = :id::uuid AND manual_start_sent_at IS NOT NULL`,
+                  [{ name: 'id', value: sides[id].actor.accountId }],
+                )
+              )[0]?.[0] ?? 0,
+            ) > 0;
+        record(checkManual(id, toolWindow.lines, handed));
       }
     }
 
