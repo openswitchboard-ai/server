@@ -43,7 +43,7 @@
 import { getPool } from '../db.js';
 import { categoryLabelPath } from '../domain/matchRules.js';
 import { taxonomyKnows } from '../denylist.js';
-import { postingText, suggestCategories } from '../domain/categorySuggest.js';
+import { askText, suggestCategories } from '../domain/categorySuggest.js';
 import { askJev, jevEnabled, type JevQuestion, type JevResult } from './jev.js';
 import type { Config } from '../config.js';
 
@@ -374,7 +374,9 @@ export function shadowCategoryTrial(
       // agree with us. A second opinion that can only agree is not one.
       //
       // So the shortlist is drawn from the poster's own words and stated facts
-      // with nothing about the filing in it (categorySuggest.postingText). Our
+      // with nothing about the filing in it — askText with no path, which is
+      // the same plain register the catalogue's own nodes are described in, so
+      // the ballot's scores are on the same scale as the door's. Our
       // node and the assistant's path are then added by name, because the two
       // of them are what the trial is about — jevCategoryQuestion keeps both
       // through the cap and drops a low-scored candidate instead.
@@ -383,7 +385,7 @@ export function shadowCategoryTrial(
         card.category,
         JEV_CANDIDATE_LIMIT,
         log,
-        { text: postingText(card) },
+        { text: askText('', card) },
       );
       const candidates = suggested.scored.map((s) => ({ id: s.category, score: s.score }));
       const question = jevCategoryQuestion(candidates, card.category, card.category_as_posted);

@@ -55,8 +55,11 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 import * as db from '../../src/db.js';
 import {
   SHELF_BRANCH_MARGIN,
+  SHELF_BRANCH_MARGIN_LEAD,
   SHELF_CANDIDATE_LIMIT,
+  SHELF_CONFIDENT_LEAD,
   SHELF_CONFIDENT_MIN,
+  SHELF_MIN_LEAD,
   SHELF_NONE_OPTION,
   categoryWords,
   snapCategory,
@@ -206,6 +209,164 @@ describe('the decision, and when it is not one', () => {
     expect(SHELF_CONFIDENT_MIN).toBeGreaterThan(0.625);
   });
 
+  it('says a node in the words a person would use for it', () => {
+    expect(categoryWords('goods.bicycle.mountain')).toBe('mountain bikes');
+    expect(categoryWords('goods')).not.toContain('>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * AND THE SAME DECISION ON THE RULER THAT ACTUALLY MEASURES SOMETHING.
+ *
+ * Twelve postings went up on dev on 19 September under paths the catalogue
+ * does not hold, and every one of them was filed on the bare top level, in
+ * silence, with no score in the log at all. Nothing was broken about the
+ * embedding: it was reached every time. What was broken is that the floor it
+ * was judged against — a raw cosine of 0.55 — had been set when the door asked
+ * about the path alone, and a question with the posting's words in it scores
+ * lower against everything. So nothing ever cleared the floor, no candidate was
+ * ever chosen, the unclear branch (which can only be reached once one has been)
+ * was never reached, and SHELF_UNCLEAR did not fire once in thirty live runs.
+ *
+ * The suggester now reports how far an answer leads the whole catalogue, in
+ * standard deviations, and that is what the door decides on.
+ *
+ * What is asserted here:
+ *   - the lead decides, and the raw score is carried through to the answer;
+ *   - a clear lead snaps;
+ *   - a lead that is real but short of confident ASKS;
+ *   - nothing standing out from the catalogue ends on the posting's own line;
+ *   - the assistant's path breaks a tie and never more than a tie.
+ */
+describe('the decision, on the lead over the field', () => {
+  const at = (rows: [string, number, number][]) => ({
+    categories: rows.map(([c]) => c),
+    scored: rows.map(([category, score, lead]) => ({ category, score, lead })),
+    source: 'embedding' as const,
+  });
+
+  beforeEach(() => {
+    suggestions = null;
+  });
+
+  it('snaps on a clear lead, however low the raw cosine happens to be', async () => {
+    // 0.278 was the real cosine for a PlayStation controller posted under
+    // 'goods.gaming.accessories'. The old floor threw it away; it is the right
+    // answer and it leads the catalogue by four and a half deviations.
+    suggestions = at([
+      ['goods.electronics.console.accessories', 0.278, 4.5],
+      ['goods.electronics.console.playstation', 0.26, 4.21],
+    ]);
+    const d = await door('goods.gaming.accessories');
+    expect(d.how).toBe('suggestion');
+    expect(d.category).toBe('goods.electronics.console.accessories');
+    // The real score is carried through, not lost on the way out.
+    expect(d.score).toBe(0.278);
+    expect(d.lead).toBe(4.5);
+  });
+
+  it('asks when the answer leads the field but not by enough to be a decision', async () => {
+    // The Fanatec brake spring: 3.79 deviations, and a catalogue with no shelf
+    // for sim racing on it. A person settles this in a sentence.
+    suggestions = at([
+      ['goods.bicycle.parts', 0.204, 3.79],
+      ['goods.motoring.parts', 0.19, 3.1],
+      ['goods.electronics.console.accessories', 0.17, 2.4],
+    ]);
+    const d = await door('goods.sim-racing.pedals');
+    expect(d.how).toBe('unclear');
+    expect(d.score).toBe(0.204);
+    expect(d.lead).toBe(3.79);
+    const real = d.candidates!.filter((c) => c.category !== SHELF_NONE_OPTION);
+    expect(real.length).toBeGreaterThan(1);
+    expect(d.candidates![d.candidates!.length - 1].category).toBe(SHELF_NONE_OPTION);
+  });
+
+  it('asks where another branch is level with the leader', async () => {
+    suggestions = at([
+      ['goods.bicycle.parts', 0.4, 6.0],
+      ['goods.motoring.parts', 0.39, 6.0 - SHELF_BRANCH_MARGIN_LEAD / 2],
+    ]);
+    expect((await door('goods.spares.brake-pads')).how).toBe('unclear');
+  });
+
+  it('snaps where the nearest other branch is beaten by the margin', async () => {
+    suggestions = at([
+      ['goods.bicycle.parts', 0.4, 6.0],
+      ['goods.motoring.parts', 0.3, 6.0 - SHELF_BRANCH_MARGIN_LEAD - 0.1],
+    ]);
+    const d = await door('goods.spares.brake-pads');
+    expect(d.how).toBe('suggestion');
+    expect(d.category).toBe('goods.bicycle.parts');
+  });
+
+  it('puts nothing to anybody when nothing stands out from the catalogue', async () => {
+    // A shortlist exists — there is always a nearest node — but none of it is
+    // a candidate, so there is no question worth asking and the posting goes
+    // up on its own line.
+    suggestions = at([
+      ['goods.bicycle.parts', 0.09, SHELF_MIN_LEAD - 0.2],
+      ['goods.sports.golf', 0.08, 1.2],
+    ]);
+    const d = await door('goods.made-up.nonsense');
+    expect(d.how).toBe('ancestor');
+    expect(d.category).toBe('goods');
+    expect(d.candidates).toBeUndefined();
+  });
+
+  it('lets the path the assistant wrote break a tie, and only a tie', async () => {
+    // Both answers are confident and in the same breath; one of them is on the
+    // line the posting was already filed on, so that one wins.
+    suggestions = at([
+      ['goods.bicycle.parts', 0.4, 6.0],
+      ['goods.motoring.parts', 0.399, 5.95],
+    ]);
+    const near = await snapCategory(cfg, 'goods.motoring.spares', undefined, {
+      fallbackToAncestor: true,
+    });
+    expect(near.category).toBe('goods.motoring.parts');
+
+    // Anything wider than a tie is left alone: the words are the evidence.
+    suggestions = at([
+      ['goods.bicycle.parts', 0.4, 6.0],
+      ['goods.motoring.parts', 0.3, 3.0],
+    ]);
+    const clear = await snapCategory(cfg, 'goods.motoring.spares', undefined, {
+      fallbackToAncestor: true,
+    });
+    expect(clear.category).toBe('goods.bicycle.parts');
+  });
+
+  /**
+   * The sweep has nobody standing there to ask and it is moving a row that is
+   * already up and already matching or not matching on its own. So it only
+   * moves one where the door would have filed it without asking.
+   */
+  it('leaves the ops sweep to act only where the door would not have asked', async () => {
+    suggestions = at([
+      ['goods.bicycle.parts', 0.204, SHELF_CONFIDENT_LEAD - 0.2],
+      ['goods.motoring.parts', 0.19, 3.1],
+    ]);
+    const sweep = await snapCategory(cfg, 'goods.sim-racing.pedals');
+    expect(sweep.how).toBe('unmatched');
+    expect(sweep.changed).toBe(false);
+    // The same answer at the door is a question, not a silence.
+    expect((await door('goods.sim-racing.pedals')).how).toBe('unclear');
+  });
+
+  it('holds the measured numbers where they can be read', () => {
+    // Twelve realistic postings through the door against dev's catalogue,
+    // 20 September: every answer that was right led the field by 4.22 or more,
+    // the one that was wrong by 3.73, and the floor sits between them.
+    expect(SHELF_CONFIDENT_LEAD).toBeGreaterThan(3.73);
+    expect(SHELF_CONFIDENT_LEAD).toBeLessThan(4.22);
+    expect(SHELF_MIN_LEAD).toBeLessThan(SHELF_CONFIDENT_LEAD);
+    expect(SHELF_BRANCH_MARGIN_LEAD).toBeLessThan(1.29);
+  });
+});
+
+describe('the words a shelf is offered in', () => {
   it('says a node in the words a person would use for it', () => {
     expect(categoryWords('goods.bicycle.mountain')).toBe('mountain bikes');
     expect(categoryWords('goods')).not.toContain('>');

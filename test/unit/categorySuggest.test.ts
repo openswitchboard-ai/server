@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../src/aws.js', () => ({ bedrock: { send: vi.fn() }, sqs: { send: vi.fn() } }));
 
 import {
+  askText,
   cosine,
   lexicalScore,
   lexicalSuggestions,
@@ -124,6 +125,63 @@ describe('embedding closeness', () => {
     expect((r as any).source).toBe('lexical');
   });
 
+  /**
+   * HOW FAR IN FRONT OF THE FIELD, and why anybody needs it.
+   *
+   * A raw cosine moves with the shape of the question — the same path asked
+   * alone and asked with the posting's words scored 0.52 and 0.24 against the
+   * same node on dev, with nothing about the right answer changed. So the
+   * suggester reports the raw score AND how far the answer stands out from the
+   * whole catalogue, and the door decides on the second.
+   */
+  it('says how far each answer leads the field, as well as what it scored', async () => {
+    vi.spyOn(embeddings, 'embedText').mockImplementation(async (_c, t) => fakeEmbed(t));
+    await warmCategoryCorpus(cfg);
+    const r = await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(r.source).toBe('embedding');
+    expect(r.scored[0].score).toBeGreaterThan(0);
+    // One node points the same way as the query and hundreds do not, so the
+    // top answer is a long way out in front.
+    expect(r.scored[0].lead!).toBeGreaterThan(3);
+    for (let i = 1; i < r.scored.length; i++) {
+      expect(r.scored[i].lead!).toBeLessThanOrEqual(r.scored[i - 1].lead!);
+    }
+  });
+
+  it('gives the lexical answer no lead, because it is not on that scale', async () => {
+    vi.spyOn(embeddings, 'embedText').mockRejectedValue(new Error('bedrock unavailable'));
+    const r = await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    expect(r.source).toBe('lexical');
+    expect(r.scored[0].lead).toBeUndefined();
+  });
+
+  /** The lexical scorer is a last resort, and a last resort says so. */
+  it('never answers lexically in silence', async () => {
+    const said: { msg: string; extra?: any }[] = [];
+    const log = (msg: string, extra?: any) => said.push({ msg, extra });
+    vi.spyOn(embeddings, 'embedText').mockRejectedValue(new Error('bedrock unavailable'));
+    await suggestCategories(cfg, 'goods.laptop.macbook-air', 3, log);
+    const line = said.find((s) => s.msg.includes('answering lexically'));
+    expect(line, JSON.stringify(said)).toBeTruthy();
+    expect(line!.extra.why).toBeTruthy();
+  });
+
+  /**
+   * A WARM-UP THAT FAILED IS NOT AN ANSWER. Holding on to the failure left a
+   * process that started while Bedrock was unhappy answering lexically for as
+   * long as it lived, with one line in the log at boot and nothing after it.
+   */
+  it('tries the corpus again after a warm-up that failed', async () => {
+    vi.spyOn(embeddings, 'embedText').mockRejectedValue(new Error('bedrock unavailable'));
+    expect((await suggestCategories(cfg, 'goods.laptop.macbook-air')).source).toBe('lexical');
+    // The warm-up the refused call started has to settle before its failure
+    // can be let go of; the one after it is the retry.
+    await warmCategoryCorpus(cfg);
+    vi.spyOn(embeddings, 'embedText').mockImplementation(async (_c, t) => fakeEmbed(t));
+    await warmCategoryCorpus(cfg);
+    expect((await suggestCategories(cfg, 'goods.laptop.macbook-air')).source).toBe('embedding');
+  });
+
   it('cosine behaves', () => {
     expect(cosine([1, 0], [1, 0])).toBeCloseTo(1);
     expect(cosine([1, 0], [0, 1])).toBeCloseTo(0);
@@ -139,9 +197,46 @@ describe('embedding closeness', () => {
     expect(far.scored[0]?.score ?? 0).toBeLessThan(r.scored[0].score);
   });
 
-  it('embeds the path together with its human label path', () => {
-    expect(nodeText('goods.electronics.laptop')).toContain('goods.electronics.laptop');
-    expect(nodeText('goods.electronics.laptop')).toContain('Laptops');
+  /**
+   * A node is embedded as what it IS, in the words a person would use, not as
+   * the breadcrumb a database would print. The breadcrumb framing put most of
+   * its characters into punctuation, the word "category" and the same formal
+   * top-level name every node in the branch carries, and a posting's own words
+   * matched none of it.
+   */
+  it('describes a node in words, with no dotted path and no top level in it', () => {
+    const t = nodeText('goods.electronics.laptop');
+    expect(t).toContain('Laptops');
+    expect(t).toContain('Electronics');
+    expect(t).not.toContain('goods.electronics.laptop');
+    expect(t).not.toContain('Secondhand consumer goods');
+  });
+
+  it('uses the phrase the catalogue already holds for a node', () => {
+    // 'Mountain bikes' and 'mountain bike' are not the same string, and the
+    // second is the one somebody would type.
+    expect(nodeText('goods.bicycle.mountain')).toContain('mountain bike');
+    // Where the phrase only restates the label, it is not said twice.
+    expect(nodeText('goods.electronics.console.accessories')).toBe(
+      'Console accessories. Electronics, Game consoles, Console accessories.',
+    );
+  });
+
+  /** The question is put in the same register the nodes are described in. */
+  it('asks in plain words: the posting first, the assistant’s path last', () => {
+    const t = askText('goods.sim-racing.pedals', {
+      kind: 'Fanatec ClubSport brake performance spring',
+      attributes: { brand: 'fanatec', model: 'clubsport v3' },
+    });
+    expect(t).toContain('fanatec clubsport brake performance spring');
+    expect(t).toContain('clubsport v3');
+    // The path is named as a filing, not as a fact, and it reads as words.
+    expect(t).toContain('filed as sim racing pedals');
+    expect(t).not.toContain('goods.sim-racing.pedals');
+    // No schema keys: the corpus has no schema in it.
+    expect(t).not.toContain('brand:');
+    // With nothing but a path, the path's own words are the whole question.
+    expect(askText('goods.sim-racing.pedals')).toBe('sim racing pedals');
   });
 });
 
@@ -190,6 +285,29 @@ describe('the same wrong category is embedded once', () => {
     const spy = await warm();
     await suggestCategories(cfg, 'goods.laptop.macbook-air');
     await suggestCategories(cfg, 'social.conversation.language-exchange');
+    expect(spy.mock.calls.length).toBe(2);
+  });
+
+  /**
+   * THE KEY IS THE TEXT THAT WAS SENT, and nothing else.
+   *
+   * Keyed on what the caller asked ABOUT, the same path asked two ways shared
+   * one entry, and the second caller was handed the first caller's vector for
+   * a string it never sent. The rule that stops that class of bug coming back
+   * is that one string is keyed, embedded, and remembered.
+   */
+  it('keys on what was embedded, so two framings of one path are two entries', async () => {
+    const spy = await warm();
+    await suggestCategories(cfg, 'goods.laptop.macbook-air');
+    await suggestCategories(cfg, 'goods.laptop.macbook-air', 3, undefined, {
+      posting: { kind: 'MacBook Air M1', attributes: { brand: 'apple' } },
+    });
+    expect(spy.mock.calls.length).toBe(2);
+    expect(suggestCacheSize()).toBe(2);
+    // The two calls sent two different strings; neither was handed the other's.
+    expect(spy.mock.calls[0][1]).not.toBe(spy.mock.calls[1][1]);
+    // Asking either of them again is free.
+    await suggestCategories(cfg, 'goods.laptop.macbook-air');
     expect(spy.mock.calls.length).toBe(2);
   });
 
