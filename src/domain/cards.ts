@@ -56,7 +56,10 @@ export interface PublishResult {
   state: string;
   location_resolved?: { display: string; radius_km: number };
   /** The node the posting is actually filed under (see filedUnder below). */
+  /** The shelf in plain words, for saying aloud. */
   filed_under?: string;
+  /** The dotted path the posting is filed under, under the name it was sent in by. */
+  category?: string;
   /** Said out loud, and only where that is somewhere other than what was sent. */
   filed_under_note?: { text: string; provenance: 'switchboard-system' };
   /** The sentence to say once it is up (see WHAT_HAPPENS_NEXT_NOTE). */
@@ -740,7 +743,13 @@ export async function publishIntent(
     // Where it actually went, every time, so an assistant never has to guess
     // whether the switchboard took its path as given, and always with a
     // sentence in plain words beside it, moved or not.
-    filed_under: filed.category,
+    // The shelf in WORDS, because this is the field an assistant reaches for
+    // when it tells its human where the posting went: handed the dotted path
+    // here, with the sentence right beside it, one still said "filed under
+    // goods.electronics" (rehearsal, 19 September 2026). The path itself is
+    // the posting's `category`, under the name it was sent in by.
+    filed_under: shelfInWords(filed.category),
+    category: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: await whatHappensNextFor(accountId),
   };
@@ -1116,7 +1125,13 @@ export async function amendIntent(
     intent_id: intentId,
     state: 'PENDING_SCREENING',
     ...('geo' in (patch ?? {}) ? locationEcho(geo) : {}),
-    filed_under: filed.category,
+    // The shelf in WORDS, because this is the field an assistant reaches for
+    // when it tells its human where the posting went: handed the dotted path
+    // here, with the sentence right beside it, one still said "filed under
+    // goods.electronics" (rehearsal, 19 September 2026). The path itself is
+    // the posting's `category`, under the name it was sent in by.
+    filed_under: shelfInWords(filed.category),
+    category: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: await whatHappensNextFor(accountId),
   };

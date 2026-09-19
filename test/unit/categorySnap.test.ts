@@ -286,7 +286,7 @@ describe('what the row carries and what the assistant hears', () => {
 
   it('says where the posting went, in a field and in a sentence', async () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing());
-    expect(r.filed_under).toBe('goods');
+    expect(r.category).toBe('goods');
     expect(r.filed_under_note.provenance).toBe('switchboard-system');
     expect(r.filed_under_note.text).toContain('Filed under');
     expect(lintHumanCopy(r.filed_under_note.text)).toEqual([]);
@@ -296,7 +296,7 @@ describe('what the row carries and what the assistant hears', () => {
     // An assistant handed only a dotted path reads the dotted path aloud, and
     // one did (first rehearsal-suite run, 19 September 2026).
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods.bicycle.mountain' }));
-    expect(r.filed_under).toBe('goods.bicycle.mountain');
+    expect(r.category).toBe('goods.bicycle.mountain');
     expect(r.filed_under_note.text).toMatch(/^Filed under /);
     expect(r.filed_under_note.text).not.toContain('goods.bicycle');
     expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
@@ -309,7 +309,7 @@ describe('what the row carries and what the assistant hears', () => {
 
   it('faces the decision again on an amend, and never overwrites the original path', async () => {
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
-    expect(r.filed_under).toBe('goods');
+    expect(r.category).toBe('goods');
     expect(r.filed_under_note.text).toContain('Filed under');
     const update = world.sql.find((s) => /UPDATE cards SET geo/.test(s.text))!;
     expect(update.text).toContain('category_as_posted = COALESCE(category_as_posted,');
@@ -344,7 +344,7 @@ describe('what the row carries and what the assistant hears', () => {
     world.card.category = 'goods.bicycle.mountain';
     world.card.category_as_posted = 'goods.bicycle.mountain';
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
-    expect(r.filed_under).toBe('goods.bicycle.mountain');
+    expect(r.category).toBe('goods.bicycle.mountain');
     expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 });
@@ -360,5 +360,16 @@ describe('the shelf in the sentence an assistant is handed', () => {
     expect(r.filed_under_note.text).not.toContain('>');
     expect(r.filed_under_note.text).not.toMatch(/Secondhand consumer goods/);
     expect(r.filed_under_note.text).toMatch(/^Filed under [a-z]/);
+  });
+});
+
+describe('the field an assistant reads aloud', () => {
+  it('holds words, and the dotted path rides under its own name', async () => {
+    // "filed under **goods.electronics**" was said to a human with the plain
+    // sentence sitting right beside the path (rehearsal, 19 September 2026).
+    const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods.bicycle.mountain' }));
+    expect(r.filed_under).not.toContain('.');
+    expect(r.filed_under).toMatch(/^[a-z]/);
+    expect(r.category).toBe('goods.bicycle.mountain');
   });
 });
