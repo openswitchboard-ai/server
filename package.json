@@ -36,7 +36,9 @@
     "rehearsal": "tsx test/rehearsal/run.ts",
     "rehash-emails": "tsx scripts/ops/rehash-emails.mts",
     "jev-report": "tsx scripts/ops/jev-shadow-report.mts",
-    "jev-transcript": "tsx scripts/eval/jev-transcript-score.mts"
+    "jev-transcript": "tsx scripts/eval/jev-transcript-score.mts",
+    "shelf-gaps": "tsx scripts/ops/shelf-gaps.mts",
+    "calibrate-tiers": "tsx test/calibration/run.mts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.700.0",

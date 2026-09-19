@@ -255,6 +255,20 @@ export interface SnapDecision {
   runners_up?: string[];
   /** On 'unclear': the shelves to put to the human, one per branch. */
   candidates?: ShelfChoice[];
+  /**
+   * The nodes that were weighed, nearest first, each with its lead where the
+   * embedding gave one. Kept for the shelf gap log (domain/shelfGaps.ts),
+   * which records up to five of them beside every decision the door was
+   * unsure of.
+   */
+  shortlist?: { category: string; lead?: number }[];
+  /**
+   * On 'suggestion': whether the field agreed about the branch (confidentIn).
+   * Always true at the publish door, which asks instead of filing an
+   * unconfident answer; an amend or the sweep can file one, and the gap log
+   * wants to know when it did.
+   */
+  confident?: boolean;
 }
 
 /**
@@ -346,9 +360,9 @@ function preferAncestorLine(offerable: Suggestion[], from: string): Suggestion |
  * same wrong branch is not a choice; the disagreement between branches is the
  * whole reason anybody is being asked.
  *
- * `none_of_these` is what makes the list answerable rather than a trap. The
- * sentence beside it says what to do on that answer — post it under the top
- * level, where it goes up as it stands.
+ * `none_of_these` is what makes the list answerable rather than a trap. Sent
+ * back as the category, it is answered with the searchable shelf page
+ * (SHELF_PICK, domain/shelfPick.ts; cards.ts publishIntent).
  */
 function shelfChoices(ranked: { category: string; score: number }[]): ShelfChoice[] {
   const chosen: ShelfChoice[] = [];
@@ -364,6 +378,13 @@ function shelfChoices(ranked: { category: string; score: number }[]): ShelfChoic
   chosen.push({ category: SHELF_NONE_OPTION, words: 'none of these' });
   return chosen;
 }
+
+/** The weighed nodes as the gap log keeps them: a path and a lead, no more. */
+const shortlistOf = (ranked: Suggestion[]): { category: string; lead?: number }[] =>
+  ranked.slice(0, 5).map((s) => ({
+    category: s.category,
+    ...(typeof s.lead === 'number' ? { lead: s.lead } : {}),
+  }));
 
 /**
  * Where a posting under `category` really belongs.
@@ -457,6 +478,7 @@ export async function snapCategory(
       // put to them are the ones that stood out from the catalogue, best
       // first, one per branch.
       candidates: shelfChoices(offerable.length ? offerable : ranked),
+      shortlist: shortlistOf(ranked),
     };
   }
   if (best) {
@@ -469,6 +491,8 @@ export async function snapCategory(
       score: best.score,
       lead: best.lead,
       runners_up: runnersUp.filter((c) => c !== best!.category),
+      shortlist: shortlistOf(ranked),
+      confident: confidentIn(best, ranked),
     };
   }
   if (!opts.fallbackToAncestor) {
@@ -488,6 +512,7 @@ export async function snapCategory(
         how: 'ancestor',
         source,
         runners_up: runnersUp,
+        shortlist: shortlistOf(ranked),
       };
     }
   }

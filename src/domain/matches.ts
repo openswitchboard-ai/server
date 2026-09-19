@@ -55,6 +55,10 @@ export interface MatchRow {
    *  it on its own. It decides which of the two sentences each side reads, and
    *  it never crosses to the other party in any form. */
   severed_by?: string | null;
+  /** How sure the matcher was (migration 049, domain/matchTiers.ts). Absent
+   *  or 'sure' is an introduction as ever; 'possible' carries POSSIBLE_NOTE
+   *  on every answer that names it. */
+  certainty?: 'sure' | 'possible';
   /** In a slot right now. An introduction that is not live is in line. */
   live?: boolean;
   live_at?: Date | null;
@@ -940,6 +944,10 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   if (typeof card.kind === 'string' && card.kind.trim()) {
     notes.push({ text: promptSafe(card.kind.trim(), KIND_MAX_CHARS), provenance: 'counterparty-untrusted' });
   }
+  // And on a POSSIBLE one, the switchboard's own word that it may be
+  // something else: the details are exactly where a human decides that.
+  const maybe = possibleNote(m);
+  if (maybe) notes.push(maybe);
   payload.notes = notes;
   return assertOutbound('intro.attributes', payload);
 }
@@ -1104,14 +1112,18 @@ export async function getStagePayload(
       human_action: severedSentence(m.severed_by === accountId),
     });
   }
+  // A POSSIBLE one says so on every step it is asked about, beside the
+  // payload: the payloads themselves are closed documents.
+  const maybe = possibleNote(m);
+  const withMaybe = <T extends object>(p: T) => (maybe ? { ...p, possible_note: maybe } : p);
   switch (stage) {
     case 1:
       if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
-      return buildSignal(m, accountId);
+      return withMaybe(await buildSignal(m, accountId));
     case 2:
-      return buildAttributes(m, accountId);
+      return withMaybe(await buildAttributes(m, accountId));
     case 3:
-      return buildMutual(cfg, m, accountId);
+      return withMaybe(await buildMutual(cfg, m, accountId));
     default:
       throw Object.assign(
         new Error(`step must be 'signal', 'details' or 'names' (talking is open_conversation)`),
@@ -1124,6 +1136,20 @@ export async function getStagePayload(
  *  entry. The agent leads with this verbatim rather than inventing a noun for
  *  the machinery — every one is written plain, warm and jargon-free. */
 export const sbNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
+
+/**
+ * THE SENTENCE A POSSIBLE INTRODUCTION CARRIES, everywhere it is named
+ * (domain/matchTiers.ts). The matcher found something that might be the same
+ * thing and might not: the words or the shelves only partly agree. So the
+ * assistant is told, every time, to put the details in front of its human and
+ * let them decide, and never to present it as the thing they asked for.
+ */
+export const POSSIBLE_NOTE_SENTENCE =
+  'This one may or may not be the same thing your human asked for. Show them the details and ask whether they want to go ahead, and never tell them it is the thing they asked for.';
+
+/** The note itself, or nothing on a sure one. */
+export const possibleNote = (m: { certainty?: string | null }) =>
+  m.certainty === 'possible' ? sbNote(POSSIBLE_NOTE_SENTENCE) : undefined;
 
 /** What an agent is told about a note that came with somebody else's figure.
  *  The switchboard's own sentence about the other side's words; the words
@@ -1163,12 +1189,19 @@ function signalNote(
   category: string,
   counterpartyType: 'looking_for' | 'offering',
   kind?: string | null,
+  certainty?: string | null,
 ): { text: string; provenance: 'switchboard-system' } {
   const thing = plainLeaf(category, kind);
+  // A POSSIBLE one is said as a maybe from its first sentence, so the human
+  // hears "might be" before they hear anything else about it.
   const opening =
-    counterpartyType === 'offering'
-      ? `Someone nearby has ${thing} going that could be what you're after. Here is what they have.`
-      : `Someone nearby is looking for ${thing} like yours. Here is what they're after.`;
+    certainty === 'possible'
+      ? counterpartyType === 'offering'
+        ? `Someone nearby has something that might be ${thing}, or might be something close to it. Here is what they have.`
+        : `Someone nearby is looking for something that might be ${thing} like yours, or might be something close to it. Here is what they're after.`
+      : counterpartyType === 'offering'
+        ? `Someone nearby has ${thing} going that could be what you're after. Here is what they have.`
+        : `Someone nearby is looking for ${thing} like yours. Here is what they're after.`;
   return sbNote(
     `${opening} Take a look, and when you're ready, say the word and I'll share your first name and suburb so the two of you can talk.`,
   );
@@ -1424,8 +1457,14 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
       signal,
       // The ready human sentence for a fresh signal rides right here on the
       // entry, so the agent leads with it instead of naming the machinery.
-      note: signalNote(m.category, signal.counterparty_type, m.kind),
+      note: signalNote(m.category, signal.counterparty_type, m.kind, m.certainty),
     };
+    // A POSSIBLE one says so on every entry, beside whatever else it says.
+    const maybe = possibleNote(m);
+    if (maybe) {
+      entry.certainty = 'possible';
+      entry.possible_note = maybe;
+    }
     // THE LINE, and it is the HOLDER'S OWN. How many people are waiting behind
     // this one on the caller's own want or have: their queue, on their own
     // thing, so it is theirs to know. Nothing about it ever crosses to the
@@ -1566,7 +1605,7 @@ export async function checkMatches(cfg: Config, accountId: string, intentId?: st
         // sentence already says the whole of it — who has come forward, that
         // what they have is open to read, and that the next step is the
         // human's own go-ahead — so it is the sentence here too, side-aware.
-        entry.note = lead(signalNote(m.category, signal.counterparty_type, m.kind).text);
+        entry.note = lead(signalNote(m.category, signal.counterparty_type, m.kind, m.certainty).text);
         break;
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask

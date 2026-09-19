@@ -73,6 +73,9 @@ describe('the refusals that are the switchboard working', () => {
         'RATE_LIMITED',
         'RATE_LIMITED_OFFERS',
         'SETTLEMENT_UNAVAILABLE',
+        // None of the shelves offered fit, so the answer carries the page where
+        // the human searches every shelf. The switchboard working, again.
+        'SHELF_PICK',
         // The catalogue has nothing written down for the path and the shelves
         // near it disagree. The candidates ride the answer and the human
         // settles it in a sentence.

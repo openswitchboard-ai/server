@@ -1,8 +1,10 @@
 /**
  * The matching engine (0.F). Consumes 'card-published' messages, retrieves
- * candidates by pgvector cosine similarity over opposite-type cards, applies
- * the hard rules (matchRules.ts documents the full rule set and weights),
- * and creates matches / near-misses.
+ * candidates by pgvector cosine similarity over opposite-type cards — the
+ * nearest on compatible shelves, and the nearest anywhere on the board —
+ * applies the hard rules (matchRules.ts documents the full rule set and
+ * weights), puts each pair in a tier (matchTiers.ts), and creates sure and
+ * possible introductions and near-misses.
  *
  * Price bands are decrypted HERE and only here, per pair, with a WORM audit
  * line per decrypt operation - and nothing derived from a band ever leaves
@@ -15,7 +17,6 @@ import {
   DEFAULT_GEO_RADIUS_KM,
   categoryCompatible,
   clearsAskWithRoom,
-  decide,
   evaluatePair,
   isGeohash,
   limitsOverlap,
@@ -25,6 +26,13 @@ import {
   type PriceBand,
 } from './matchRules.js';
 import { resequenceCard } from './sequencer.js';
+import { categoryDenied, categoryGate } from '../denylist.js';
+import {
+  CROSS_SHELF_TOP_N,
+  POSSIBLE_PER_POSTING_PER_DAY,
+  tierFor,
+  type Tier,
+} from './matchTiers.js';
 import { jevEnabled } from '../shadow/jev.js';
 import {
   JEV_PAIR_MIN_SCORE,
@@ -98,11 +106,13 @@ async function loadSourceCard(cardId: string): Promise<(CardRow & {
 // the rules would accept is never filtered out. The rules themselves still
 // run afterwards, in evaluatePair, unchanged.
 //
-// CATEGORY. evaluatePair's first hard rule is categoryCompatible - equal,
+// CATEGORY. The shelf-gated retrieval's clause is categoryCompatible - equal,
 // ancestor, descendant, or siblings under a shared parent that itself sits
-// below the top level - so this clause is that rule rather than an
-// approximation of it. Nothing here is a scoring judgement: a pair the rule
-// refuses never gets a score to compare against 0.75 at all.
+// below the top level - written in SQL. Since 20 September 2026 it is no
+// longer the only way in: retrieveSearched below brings the nearest postings
+// from ANY shelf as well, and the shelf is weighed in the blend rather than
+// deciding whether a pair is looked at (matchRules.ts, SHELF IS A
+// CONTRIBUTOR; the tiers are in matchTiers.ts).
 //
 // WHAT ADMITTING SIBLINGS COSTS, honestly. Category carries 0.20 of the
 // blend for a pair where both sides asserted a few attributes (0.35 where one
@@ -216,12 +226,16 @@ export function prefilterKeeps(source: PrefilterSource, cand: PrefilterCandidate
  * by the retrieval query and the pool count so the two can never drift.
  * Parameters are $1..$13; the retrieval query appends the embedding as $14.
  */
-function candidateWhere(source: {
-  account_id: string;
-  type: string;
-  category: string;
-  geo: GeoBucket;
-}): { sql: string; params: any[] } {
+function candidateWhere(
+  source: {
+    account_id: string;
+    type: string;
+    category: string;
+    geo: GeoBucket;
+  },
+  opts: { shelf?: boolean } = {},
+): { sql: string; params: any[] } {
+  const onShelf = opts.shelf !== false;
   const opposite = source.type === 'WANT' ? 'HAVE' : 'WANT';
   const lat = typeof source.geo.lat === 'number' ? source.geo.lat : null;
   const lon = typeof source.geo.lon === 'number' ? source.geo.lon : null;
@@ -256,8 +270,10 @@ function candidateWhere(source: {
        AND NOT EXISTS (SELECT 1 FROM match_mutes mm
                        WHERE (mm.account_id = c.account_id AND mm.muted_account = $2::uuid)
                           OR (mm.account_id = $2::uuid AND mm.muted_account = c.account_id))
-       -- category: equal, ancestor, descendant, or siblings under a shared
-       -- parent below the top level (the hard rule, in SQL)
+       ${
+         onShelf
+           ? `-- category: equal, ancestor, descendant, or siblings under a shared
+       -- parent below the top level (the shelf rule, in SQL)
        AND (c.category = $3::text
             OR left(c.category, length($3::text) + 1) = $3::text || '.'
             OR left($3::text, length(c.category) + 1) = c.category || '.'
@@ -265,7 +281,12 @@ function candidateWhere(source: {
                 AND strpos($3::text, '.') > 0
                 AND regexp_replace(c.category, '\\.[^.]+$', '')
                     = regexp_replace($3::text, '\\.[^.]+$', '')
-                AND strpos(regexp_replace($3::text, '\\.[^.]+$', ''), '.') > 0))
+                AND strpos(regexp_replace($3::text, '\\.[^.]+$', ''), '.') > 0))`
+           : // SEARCHING THE WHOLE BOARD: the shelf is weighed in the blend
+             // (domain/matchTiers.ts) instead of filtered on here. $3 is still
+             // bound, so it is still referenced, harmlessly.
+             `AND $3::text IS NOT NULL`
+       }
        -- geo: keep everything the reach rule could possibly let through
        AND (
          $4::boolean
@@ -338,6 +359,81 @@ async function retrieveCandidates(source: {
     [...w.params, source.embedding_text],
   );
   return r.rows;
+}
+
+/**
+ * SEARCH: the nearest opposite-type postings ANYWHERE on the board, the top
+ * CROSS_SHELF_TOP_N of them, that the shelf-gated retrieval above did not
+ * already bring back. Every other clause of the prefilter holds exactly as it
+ * does there — own account, active account, published, unexpired, not paused,
+ * mutes both ways, the geo box — because it is the same WHERE with the shelf
+ * clause taken out. One query per processed posting, and a small limit, so the
+ * cost of searching is bounded by construction.
+ *
+ * Reserved families and anything the deny list names are dropped here as well,
+ * on the candidate's own path: a posting cannot be up under one of those, but
+ * a search reaching across shelves is exactly where a rule like that has to be
+ * said again rather than assumed.
+ */
+async function retrieveSearched(
+  source: {
+    id: string;
+    account_id: string;
+    type: string;
+    category: string;
+    geo: GeoBucket;
+    embedding_text: string;
+  },
+  alreadyHave: string[],
+): Promise<CandidateRow[]> {
+  const w = candidateWhere(source, { shelf: false });
+  const r = await getPool().query(
+    `SELECT c.*, a.data_key_enc, a.is_business AS account_is_business,
+            COALESCE(rep.threshold_bump, 0) AS threshold_bump,
+            1 - (c.embedding <=> $14::vector) AS similarity,
+            EXISTS (SELECT 1 FROM oauth_tokens t
+                    WHERE t.account_id = c.account_id AND t.kind IN ('access','api-key')
+                      AND NOT t.revoked AND NOT t.suspended AND t.expires_at > now()
+                      AND t.last_used_at > now() - interval '1 hour') AS agent_seen_recently
+     FROM cards c
+     JOIN accounts a ON a.id = c.account_id
+     LEFT JOIN reputation rep ON rep.account_id = c.account_id
+     WHERE ${w.sql}
+       AND NOT (c.id = ANY($15::uuid[]))
+     ORDER BY ${CANDIDATE_ORDER}
+     LIMIT ${CROSS_SHELF_TOP_N}`,
+    [...w.params, source.embedding_text, alreadyHave],
+  );
+  return (r.rows as CandidateRow[]).filter(
+    (c) => categoryGate(c.category).ok && !categoryDenied(c.category),
+  );
+}
+
+/** Exported for the unit tests: the search query's WHERE, for the same shape checks. */
+export function searchQueryShape(source: {
+  account_id: string;
+  type: string;
+  category: string;
+  geo: GeoBucket;
+}): { where: string; params: any[]; limit: number } {
+  const w = candidateWhere(source, { shelf: false });
+  return { where: w.sql, params: w.params, limit: CROSS_SHELF_TOP_N };
+}
+
+/**
+ * How many POSSIBLE introductions each of two postings was given in the last
+ * day. The cap is per posting, so both sides are counted.
+ */
+async function possiblesToday(a: string, b: string): Promise<{ a: number; b: number }> {
+  const r = await getPool().query(
+    `SELECT count(*) FILTER (WHERE card_want = $1 OR card_have = $1)::int AS a,
+            count(*) FILTER (WHERE card_want = $2 OR card_have = $2)::int AS b
+       FROM matches
+      WHERE certainty = 'possible' AND created_at > now() - interval '1 day'
+        AND (card_want IN ($1, $2) OR card_have IN ($1, $2))`,
+    [a, b],
+  );
+  return { a: Number(r.rows[0]?.a ?? 0), b: Number(r.rows[0]?.b ?? 0) };
 }
 
 /**
@@ -418,6 +514,10 @@ export interface MatchingOutcome {
   candidatePool: number;
   /** True when the count stopped at the cap: the pool is at least that big. */
   candidatePoolCapped: boolean;
+  /** How many candidates came from searching the whole board (CROSS_SHELF_TOP_N at most). */
+  searched: number;
+  /** The introductions made as POSSIBLE on this run: a subset of matchesCreated. */
+  possibles: string[];
   /**
    * The introductions that went LIVE on this run — a subset of matchesCreated
    * plus, sometimes, one that was already in line and has just reached the
@@ -456,10 +556,31 @@ export async function runMatchingForCard(
 
   const sourceGeo = geoOf(source);
   const prefilterSource = { ...(source as any), geo: sourceGeo } as any;
-  const [candidates, pool] = await Promise.all([
+  const [gated, pool] = await Promise.all([
     retrieveCandidates(prefilterSource),
     countCandidatePool(prefilterSource),
   ]);
+  // SEARCH AND SHELF (domain/matchTiers.ts): the shelf-gated candidates, and
+  // then the nearest postings anywhere on the board that they did not already
+  // include. A search that fails costs this run its searched candidates and
+  // nothing else: the shelf-gated pass is what matching was before today, and
+  // it must never be lost to the part that is new.
+  let searched: CandidateRow[] = [];
+  try {
+    searched = await retrieveSearched(
+      prefilterSource,
+      gated.map((c) => c.id),
+    );
+  } catch (e: any) {
+    log('matcher: search across shelves failed, shelf candidates only', {
+      card_id: cardId,
+      error: e?.message,
+    });
+  }
+  const candidates: { cand: CandidateRow; viaSearch: boolean }[] = [
+    ...gated.map((cand) => ({ cand, viaSearch: false })),
+    ...searched.map((cand) => ({ cand, viaSearch: true })),
+  ];
   const sourceIsWant = source.type === 'WANT';
 
   // Source band decrypted at most once per run.
@@ -471,6 +592,8 @@ export async function runMatchingForCard(
     evaluated: 0,
     candidatePool: pool.pool,
     candidatePoolCapped: pool.capped,
+    searched: searched.length,
+    possibles: [],
     promoted: [],
   };
   const touchedCards = new Set<string>();
@@ -480,12 +603,13 @@ export async function runMatchingForCard(
   // arrive. Empty and untouched on any deployment where the shadow is off.
   const shadowPairs: JevPairCandidate[] = [];
 
-  for (const cand of candidates) {
+  for (const { cand, viaSearch } of candidates) {
     outcome.evaluated++;
     // The SQL prefilter and prefilterKeeps are one rule written twice, once
     // for Postgres and once for us. If they ever disagree, say so: a silent
-    // divergence here is exactly the bug the prefilter exists to fix.
-    if (!prefilterKeeps({ category: source.category, geo: sourceGeo }, cand)) {
+    // divergence here is exactly the bug the prefilter exists to fix. Only for
+    // the shelf-gated candidates, which are the ones that rule selected.
+    if (!viaSearch && !prefilterKeeps({ category: source.category, geo: sourceGeo }, cand)) {
       log('matcher: prefilter drift', { card_id: cardId, candidate_id: cand.id });
     }
     // Cheap hard rules first; price bands are only decrypted for survivors.
@@ -502,10 +626,14 @@ export async function runMatchingForCard(
       geoB: geoOf(cand),
       // Counted, never compared: attributes pick the blend (matchRules.ts,
       // ASSERTION-SCALED WEIGHTS). Attribute VALUES are read only by the
-      // embedding, which happened before this loop.
+      // embedding, which happened before this loop, and by the word agreement
+      // in tierFor below.
       attributesA: source.attributes,
       attributesB: cand.attributes,
-      // bands withheld: category/geo hard rules run without any decrypt
+      // The shelf is a contributor from today, never a gate: the geo rule is
+      // the only hard rule this pre-check can fail on before a band is opened.
+      shelfGate: false,
+      // bands withheld: the geo hard rule runs without any decrypt
     });
     if (!pre.hardRulesPass) continue;
 
@@ -516,22 +644,21 @@ export async function runMatchingForCard(
     const wantBand = sourceIsWant ? (sourceBand as PriceBand | undefined) : candBand;
     const haveBand = sourceIsWant ? candBand : (sourceBand as PriceBand | undefined);
 
-    const evaled = evaluatePair({
+    const judged = tierFor({
       semantic: Number(cand.similarity),
       categoryA: source.category,
       categoryB: cand.category,
       geoA: geoOf(source),
       geoB: geoOf(cand),
-      attributesA: source.attributes,
-      attributesB: cand.attributes,
+      a: { kind: (source as any).kind ?? null, attributes: source.attributes },
+      b: { kind: (cand as any).kind ?? null, attributes: cand.attributes },
       wantBand,
       haveBand,
+      bumpWant: Number(sourceIsWant ? source.threshold_bump : cand.threshold_bump),
+      bumpHave: Number(sourceIsWant ? cand.threshold_bump : source.threshold_bump),
     });
-    if (!evaled.hardRulesPass) continue;
-
-    const bumpWant = Number(sourceIsWant ? source.threshold_bump : cand.threshold_bump);
-    const bumpHave = Number(sourceIsWant ? cand.threshold_bump : source.threshold_bump);
-    const decision = decide(evaled.score, bumpWant, bumpHave);
+    if (!judged.parts.hardRulesPass) continue;
+    let tier: Tier = judged.tier;
 
     // Noted, never acted on. The pair is recorded exactly as the engine judged
     // it, and the judging above is already complete: nothing below this line
@@ -539,7 +666,7 @@ export async function runMatchingForCard(
     // have been with the shadow off. What travels is the two postings' plain
     // words, categories and attributes — never the bands that were just
     // decrypted, never the geography, never an account id.
-    if (jevEnabled() && evaled.score >= JEV_PAIR_MIN_SCORE) {
+    if (jevEnabled() && judged.score >= JEV_PAIR_MIN_SCORE) {
       shadowPairs.push({
         want: {
           id: want.id,
@@ -553,13 +680,27 @@ export async function runMatchingForCard(
           category: have.category,
           attributes: have.attributes,
         },
-        score: evaled.score,
-        decision,
-        weights: evaled.weights,
+        score: judged.score,
+        decision: tier === 'sure' || tier === 'possible' ? 'match' : tier === 'near-miss' ? 'near-miss' : 'discard',
+        weights: judged.parts.weights!,
       });
     }
 
-    if (decision === 'match') {
+    // THE POSSIBLE CAP. A posting may be handed a few maybes a day and no
+    // more: a thin or vague posting would otherwise collect every loosely
+    // similar thing on the board, one introduction at a time.
+    if (tier === 'possible') {
+      const today = await possiblesToday(want.id, have.id);
+      if (today.a >= POSSIBLE_PER_POSTING_PER_DAY || today.b >= POSSIBLE_PER_POSTING_PER_DAY) {
+        log('matcher: possible cap reached, not introduced', {
+          card_id: cardId,
+          candidate_id: cand.id,
+        });
+        tier = judged.parts.shelvesCompatible ? 'near-miss' : 'nothing';
+      }
+    }
+
+    if (tier === 'sure' || tier === 'possible') {
       // The two facts the fit sequencer ranks a line on that only the engine
       // can know, reduced to booleans HERE, where the bands are already
       // decrypted and about to be thrown away. Neither the ceiling nor the
@@ -575,8 +716,8 @@ export async function runMatchingForCard(
         // keen and the details open to both (see createMatch in matches.ts).
         `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
                               kind, limits_overlap, clears_ask_25,
-                              stage, interest_want, interest_have)
-         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true)
+                              stage, interest_want, interest_have, certainty)
+         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
         [
@@ -584,32 +725,43 @@ export async function runMatchingForCard(
           have.id,
           want.account_id,
           have.account_id,
-          evaled.score,
+          judged.score,
           want.category,
           overlap,
           roomOverAsk,
           // The word for the thing travels with the category it was filed
           // under: the want's, so the two stay taken from one side.
           (want as any).kind ?? null,
+          tier,
         ],
       );
       if (ins.rows[0]) {
-        outcome.matchesCreated.push(ins.rows[0].id as string);
+        const id = ins.rows[0].id as string;
+        outcome.matchesCreated.push(id);
+        if (tier === 'possible') outcome.possibles.push(id);
         touchedCards.add(want.id);
         touchedCards.add(have.id);
         log('matcher: match created', {
-          match_id: ins.rows[0].id,
-          score: Number(evaled.score.toFixed(4)),
+          match_id: id,
+          score: Number(judged.score.toFixed(4)),
           category: want.category,
           // Which blend scored it: a count, never an attribute value.
-          thinness: evaled.thinness,
+          thinness: judged.parts.thinness,
+          certainty: tier,
+          // Which rule decided the tier, and whether search found it. The
+          // words themselves stay out of the log.
+          why: judged.parts.why,
+          via_search: viaSearch,
+          shelves_compatible: judged.parts.shelvesCompatible,
+          semantic: Number(judged.parts.semantic.toFixed(4)),
+          word_coverage: judged.parts.words.coverage,
         });
       }
-    } else if (decision === 'near-miss') {
+    } else if (tier === 'near-miss') {
       await getPool().query(
         `INSERT INTO near_misses (card_want, card_have, score, category)
          VALUES ($1,$2,$3,$4) ON CONFLICT (card_want, card_have) DO NOTHING`,
-        [want.id, have.id, evaled.score, want.category],
+        [want.id, have.id, judged.score, want.category],
       );
       outcome.nearMisses++;
     }

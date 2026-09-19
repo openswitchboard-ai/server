@@ -351,7 +351,12 @@ export type ErrorCode =
   // it is close enough to file the posting under without guessing
   // (domain/categoryBackfill.ts). Ahead of the document as well: its
   // `candidates` are shelves rather than places.
-  | 'SHELF_UNCLEAR';
+  | 'SHELF_UNCLEAR'
+  // The human recognised none of those shelves, so the answer carries a link to
+  // a page on their own approval site where they search every shelf and pick
+  // one (domain/shelfPick.ts). Ahead of the document too: its press_id rides
+  // on the payload.
+  | 'SHELF_PICK';
 
 /**
  * Codes this server ships that the pinned error document has not caught up
@@ -369,6 +374,7 @@ const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
   'NEEDS_DETAIL',
   'CONFIRM_FIGURE',
   'SHELF_UNCLEAR',
+  'SHELF_PICK',
 ];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */

@@ -193,10 +193,43 @@
  *   both. Where a contradiction does land in the thin set, semantic still
  *   carries 0.30 of the blend and the near-miss floor still catches it.
  *
- * DECISION (per pair that passes ALL hard rules):
- *   score >= max(0.75 + bump(want_owner), 0.75 + bump(have_owner)) -> MATCH
- *   score >= 0.55                                                  -> NEAR-MISS (stored, never sent)
- *   otherwise                                                       -> discarded
+ * SHELF IS A CONTRIBUTOR, NOT A GATE (20 September 2026).
+ *
+ *   Until today category compatibility was a hard rule: a pair on shelves the
+ *   tree calls incompatible was never scored at all. The matcher now also
+ *   searches the whole board by meaning (matcher.ts retrieveSearched), and a
+ *   pair found that way is scored with categoryCloseness 0 — which it always
+ *   was for an incompatible pair — while its category weight stays in the
+ *   blend wherever the filing said something (categorySaysSomething). So a
+ *   compatible shelf adds exactly what it always added, and an incompatible one
+ *   costs the pair that share of the blend instead of costing it the pair.
+ *   evaluatePair keeps the old gate by default (`shelfGate`), because that is
+ *   the rule every existing caller and test was written against; the matcher
+ *   passes shelfGate: false.
+ *
+ * DECISION (per pair that passes ALL hard rules): THREE TIERS, in
+ * matchTiers.ts tierFor, which reads the blend above beside a second signal,
+ * WORD AGREEMENT — the distinctive words of the two postings' `kind` and
+ * attribute values, brand and model words weighted most, with generic nouns
+ * and condition words never counting on their own, and the two head nouns
+ * checked against each other. In short:
+ *
+ *   SURE       -> an introduction as ever: close in meaning (cosine), the
+ *                 words agree (weighted Dice), and neither the head nouns nor
+ *                 the brands contradict each other. On any shelf, and never on
+ *                 the blend alone.
+ *   POSSIBLE   -> an introduction marked certainty 'possible': very close in
+ *                 meaning, or a distinctive word in common and close enough.
+ *                 Capped per posting per day, and behind every SURE in the line.
+ *   NEAR-MISS  -> score >= 0.55 on a compatible shelf (stored, never sent).
+ *   otherwise  -> discarded.
+ *
+ *   Each owner's reputation bump (PERSONAL THRESHOLD NUDGE below) raises every
+ *   one of those cosine lines, as it raised the old 0.75.
+ *   Two postings naming different brands, or head nouns the other never
+ *   mentions ("iPhone case" beside "iPhone"), are never SURE whatever else
+ *   agrees. Every line is a named constant in matchTiers.ts, fitted on the
+ *   labelled set in test/calibration and provisional until real runs agree.
  *
  * PERSONAL THRESHOLD NUDGE (simple model, no ML): each account carries
  * reputation.threshold_bump in [0, 0.10]. A 'bad' verdict adds +0.01; a 'good'
@@ -208,7 +241,11 @@
  *   - opposite types (WANT vs HAVE), different accounts, no mute either way;
  *   - both PUBLISHED, unexpired (TTL), not paused by a kill switch;
  *   - category-tree compatibility (equal, ancestor, descendant, or siblings
- *     under a shared parent that is itself below the top level);
+ *     under a shared parent that is itself below the top level) — a hard rule
+ *     for the shelf-gated retrieval and for evaluatePair's default only; in
+ *     the live matcher it is a contributor, as above;
+ *   - neither side's category is reserved or named by the deny list (said
+ *     again for searched candidates, which cross shelves);
  *   - geo: each side's reach covers where the other side is — two radius cards
  *     when their centre points are within the sum of the two radii, a
  *     'country' card over any card in the same country, an 'anywhere' card
@@ -760,6 +797,15 @@ export interface PairInputs {
   /** decrypted, engine-side only */
   wantBand?: PriceBand;
   haveBand?: PriceBand;
+  /**
+   * Whether the shelf is a GATE (true, the default, and the rule every caller
+   * before 20 September 2026 was written against) or a CONTRIBUTOR (false):
+   * a pair on incompatible shelves is still scored, with category closeness 0,
+   * where the filing said something at all. The matcher passes false since
+   * search and shelf were tiered (domain/matchTiers.ts); see SHELF IS A
+   * CONTRIBUTOR in the header.
+   */
+  shelfGate?: boolean;
 }
 
 export interface PairEval {
@@ -777,7 +823,7 @@ export interface PairEval {
 }
 
 export function evaluatePair(p: PairInputs): PairEval {
-  if (!categoryCompatible(p.categoryA, p.categoryB)) {
+  if (p.shelfGate !== false && !categoryCompatible(p.categoryA, p.categoryB)) {
     return { hardRulesPass: false, failed: 'category', score: 0 };
   }
   const geo = evaluateGeo(p.geoA, p.geoB);

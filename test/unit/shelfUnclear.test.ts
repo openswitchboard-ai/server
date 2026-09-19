@@ -486,9 +486,9 @@ describe('what the assistant is handed, and what is written', () => {
     expect(candidates.length).toBeGreaterThan(1);
     expect(candidates.some((c) => c.category === SHELF_NONE_OPTION)).toBe(true);
     expect(p.human_action).toContain('Ask your human which of these is closest');
-    // And the way out if they recognise none of them: the top level, where the
-    // posting goes up as it stands.
-    expect(p.human_action).toContain('post it under goods');
+    // And the way out if they recognise none of them: since version 58 that is
+    // its own answer, which hands over the searchable shelf page (SHELF_PICK).
+    expect(p.human_action).toContain('post it again with category none_of_these');
     expect(lintHumanCopy(p.human_action!)).toEqual([]);
     expect(world.sql.some((s) => /INSERT INTO cards/.test(s.text))).toBe(false);
   });

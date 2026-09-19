@@ -249,6 +249,19 @@ label.modeopt span { grid-column:2; }
 .modegrid label.modeopt { margin:0; }
 @media (min-width: 27rem) { .modegrid { grid-template-columns:1fr 1fr; } }
 
+/* ---- The shelf page: a search box over every shelf, rows to tap ---- */
+.searchrow { display:flex; gap:var(--s2); align-items:stretch; }
+.searchrow input { flex:1 1 auto; min-width:0; }
+.searchrow button { width:auto; flex:none; margin-top:0; padding:.7rem 1rem; }
+.shelves { list-style:none; margin:var(--s3) 0 0; padding:0; }
+.shelves li { margin:var(--s2) 0; }
+button.shelf { margin-top:0; text-align:left; background:var(--card); color:var(--ink);
+  border:1.5px solid var(--line); border-radius:var(--r); padding:var(--s3) var(--s4); }
+button.shelf:hover { opacity:1; border-color:var(--accent); }
+button.shelf .sl { display:block; font-family:var(--sans); font-weight:600; font-size:var(--t-md); }
+button.shelf .su { display:block; font-family:var(--serif); font-weight:400; font-size:var(--t-sm);
+  color:var(--muted); margin-top:2px; }
+
 /* ---- The kill switch keeps its own frame ---- */
 .kill { border:2px solid var(--danger); border-radius:var(--r); padding:var(--s4); margin:var(--s6) 0 0; }
 .kill h2 { margin-top:0; }
@@ -998,6 +1011,103 @@ ${ceremonyAlt(c, 'oneQuestion')}
 <p class="small muted">This link works once. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
 ${v.needsPin ? ceremonyNote(c) : ''}
 ${ceremonyScript(c)}`);
+}
+
+// ---------------------------------------------------------------------------
+// The shelf page (SHELF_PICK, domain/shelfPick.ts).
+//
+// The human said none of the shelves their assistant offered fit. This page is
+// a search box over every open shelf the catalogue has, with the matching ones
+// as rows to tap, and two ways out at the bottom: the general shelf, or leaving
+// it unposted for now.
+//
+// IT WORKS WITH SCRIPTS OFF. Every row is printed, and the ones the words in
+// the box do not fit carry `hidden`, so a search submitted the ordinary way
+// (GET ?q=) comes back as a filtered list from the server. With scripts on, the
+// same rule runs as the person types and the search button is never needed.
+// The two filters are one rule written twice: domain/shelfPick.ts searchShelves
+// and the fold below, held together by test/unit/shelfPick.test.ts.
+//
+// NO CEREMONY. A shelf discloses nothing and spends nothing, so the press is a
+// tap. The press is still what burns the link, so the rows are one form with
+// one button each, pressed in place like every one-question page.
+// ---------------------------------------------------------------------------
+export interface ShelfPickView {
+  token: string;
+  /** The poster's own words for the thing, where they gave any. */
+  kind: string | null;
+  /** What is in the search box. */
+  q: string;
+  /** How many words of it the search runs on (domain/shelfPick.ts searchWords). */
+  wordCount: number;
+  /** Every shelf, in the catalogue's order. */
+  shelves: { category: string; label: string; under: string; haystack: string }[];
+  /** The ones the words fit: the rest are printed hidden. */
+  shown: Set<string>;
+  /** The general shelf at the bottom: its path and its words. */
+  general: { category: string; words: string };
+}
+
+/** The line under the search box, identical on the server and in the script. */
+export function shelfCountLine(words: number, fits: number): string {
+  if (!words) return 'Type a word or two about what it is.';
+  if (!fits) return 'Nothing fits those words. Try another word, or use the general shelf below.';
+  return fits === 1 ? 'One shelf fits.' : `${fits} shelves fit.`;
+}
+
+const SHELF_FILTER_SCRIPT = `<script>
+(function(){
+  var q=document.getElementById('q'),list=document.getElementById('shelves'),count=document.getElementById('shelfCount'),go=document.getElementById('searchGo');
+  if(!q||!list||!count)return;
+  var rows=list.querySelectorAll('li[data-s]');
+  function fold(s){return String(s||'').normalize('NFKD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]+/g,' ').trim();}
+  function words(s){return fold(s).split(' ').filter(Boolean).map(function(w){return w.length>3&&/s$/.test(w)&&!/ss$/.test(w)?w.slice(0,-1):w;});}
+  function line(w,n){if(!w)return 'Type a word or two about what it is.';if(!n)return 'Nothing fits those words. Try another word, or use the general shelf below.';return n===1?'One shelf fits.':n+' shelves fit.';}
+  function run(){var w=words(q.value),n=0;
+    for(var i=0;i<rows.length;i++){var h=rows[i].getAttribute('data-s'),ok=w.length>0;
+      for(var j=0;ok&&j<w.length;j++){if(h.indexOf(w[j])<0)ok=false;}
+      rows[i].hidden=!ok;if(ok)n++;}
+    count.textContent=line(w.length,n);}
+  q.addEventListener('input',run);
+  if(q.form)q.form.addEventListener('submit',function(e){e.preventDefault();run();});
+  if(go)go.hidden=true;
+})();
+</script>`;
+
+export function shelfPickPage(v: ShelfPickView, error?: string): string {
+  const thing = v.kind ? `your ${v.kind}` : 'it';
+  const rows = v.shelves
+    .map(
+      (s) => `<li data-s="${esc(s.haystack)}"${v.shown.has(s.category) ? '' : ' hidden'}>
+<button type="submit" name="category" value="${esc(s.category)}" class="shelf"><span class="sl">${esc(s.label)}</span>${
+        s.under ? `<span class="su">${esc(s.under)}</span>` : ''
+      }</button></li>`,
+    )
+    .join('\n');
+  return layout(`Pick a shelf for ${thing}`, `
+<h1>Pick a shelf for ${esc(thing)}.</h1>
+${errBox(error)}
+<p class="small muted">None of the shelves your assistant offered fit. Search for the one that does and tap it. Your assistant then puts it up there.</p>
+<form method="GET" action="/a/${encodeURIComponent(v.token)}" role="search">
+  <label for="q">What is it?</label>
+  <div class="searchrow">
+    <input type="text" id="q" name="q" value="${esc(v.q)}" inputmode="search" enterkeyhint="search"
+           autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="sim racing pedals">
+    <button type="submit" id="searchGo" class="secondary">Search</button>
+  </div>
+</form>
+<p class="small muted" id="shelfCount" aria-live="polite">${esc(shelfCountLine(v.wordCount, v.shown.size))}</p>
+<form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
+  <ul class="shelves" id="shelves">
+${rows}
+  </ul>
+  <div class="actions">
+  <button type="submit" name="category" value="${esc(v.general.category)}" class="secondary">Put it under ${esc(v.general.words)}</button>
+  <button type="submit" name="decision" value="no" class="secondary" formnovalidate>Leave it unposted for now</button>
+  </div>
+</form>
+<p class="small muted">This link works once. Choosing a shelf shares nothing about you and costs nothing, so it needs no PIN.</p>
+${SHELF_FILTER_SCRIPT}`);
 }
 
 // ---------------------------------------------------------------------------
