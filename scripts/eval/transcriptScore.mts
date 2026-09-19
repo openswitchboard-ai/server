@@ -369,6 +369,7 @@ export const RULES: Rule[] = [
         'A promise to come back LATER, unprompted, when something happens on the switchboard, such as "I’ll let you know the moment someone comes forward", with ' +
         'nothing said about how the assistant will find out.',
       false:
+        'An OFFER put as a question is no promise: "if you would like, I can check hourly and tell you when someone comes forward. Want me to set that up?" asks the human and commits to nothing until they answer. ' +
         'Saying what it will do next in this same conversation ("once I have that I will post it and tell you what happens") is no such promise. Nor is it one when the assistant says it will look again itself, or tells the human to ask it again, ' +
         'or says the switchboard emails them; or it makes no such promise; or ' +
         '`tools_the_assistant_used_in_this_step` shows it scheduled a check or saved an ' +
