@@ -7,9 +7,10 @@
  * switchboard has already filed it under a taxonomy node — by an embedding
  * cosine against the node paths, with the poster's own path snapped onto the
  * nearest known one when it named a branch nobody has written down
- * (domain/categoryBackfill.ts). Jev is shown the same posting and the same
- * shortlist, and asked to pick. Two answers to one closed question, side by
- * side, and neither of them files anything.
+ * (domain/categoryBackfill.ts). Jev is shown the same posting and a shortlist
+ * drawn from the posting's OWN words rather than from the node we chose, and
+ * asked to pick. Two answers to one closed question, side by side, and neither
+ * of them files anything.
  *
  * TRIAL B, "near-miss pair scoring". Where the engine has already scored a
  * want against a have, Jev is asked the plain question underneath the score:
@@ -42,7 +43,7 @@
 import { getPool } from '../db.js';
 import { categoryLabelPath } from '../domain/matchRules.js';
 import { taxonomyKnows } from '../denylist.js';
-import { suggestCategories } from '../domain/categorySuggest.js';
+import { postingText, suggestCategories } from '../domain/categorySuggest.js';
 import { askJev, jevEnabled, type JevQuestion, type JevResult } from './jev.js';
 import type { Config } from '../config.js';
 
@@ -364,7 +365,26 @@ export function shadowCategoryTrial(
   if (!jevEnabled()) return Promise.resolve();
   return (async () => {
     try {
-      const suggested = await suggestCategories(cfg, card.category, JEV_CANDIDATE_LIMIT);
+      // THE BALLOT IS BUILT FROM THE POSTING, NOT FROM OUR OWN ANSWER.
+      //
+      // It used to ask the suggester about `card.category`, which is the node
+      // we had ALREADY filed the posting under. That node scores 1.0 against
+      // itself and the rest of the shortlist is its own neighbours, so every
+      // option on the ballot was a variation on our answer and Jev could only
+      // agree with us. A second opinion that can only agree is not one.
+      //
+      // So the shortlist is drawn from the poster's own words and stated facts
+      // with nothing about the filing in it (categorySuggest.postingText). Our
+      // node and the assistant's path are then added by name, because the two
+      // of them are what the trial is about — jevCategoryQuestion keeps both
+      // through the cap and drops a low-scored candidate instead.
+      const suggested = await suggestCategories(
+        cfg,
+        card.category,
+        JEV_CANDIDATE_LIMIT,
+        log,
+        { text: postingText(card) },
+      );
       const candidates = suggested.scored.map((s) => ({ id: s.category, score: s.score }));
       const question = jevCategoryQuestion(candidates, card.category, card.category_as_posted);
       const result = await askJev(jevCategoryState(card), { category: question });
@@ -383,6 +403,10 @@ export function shadowCategoryTrial(
         cardId: card.id,
         ours: {
           category: card.category,
+          // Which option on the ballot was ours, said as such. `category` has
+          // always been the same node, but the ballot is no longer built from
+          // it, so a reader of these rows needs it named rather than inferred.
+          filed: card.category,
           category_as_posted: card.category_as_posted ?? null,
           candidates,
         },

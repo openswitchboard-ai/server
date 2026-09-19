@@ -3,8 +3,8 @@
  * Schemas from @openswitchboard/schema (bundled self-contained). Tool errors
  * use the protocol's machine-readable error shape.
  */
-import { recordManualNotified, recordManualVersion } from '../auth/oauth.js';
-import { MANUAL, manualUpdateSince, readManual } from './instructions.js';
+import { recordManualNotified, recordManualStartSent, recordManualVersion } from '../auth/oauth.js';
+import { MANUAL, MANUAL_START_SECTION, manualUpdateSince, readManual } from './instructions.js';
 import { bundledSchema, ErrorCode, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import { getHearsVia, getTimezone, hearsViaNote } from '../domain/accounts.js';
 import { clockNote, localTimeText } from '../domain/localTime.js';
@@ -399,10 +399,17 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      "REACH FOR THIS whenever your human wants, needs or is looking for something, or has something to sell, lend, give away or share. Offer to put it up here alongside any shop or marketplace you would suggest, and post once they say yes. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS. `category` is a dotted path: goods.*, services.*, social.* (jobs, property, licensed trades and dating are refused). THE CATALOGUE IS A DENY LIST AND NEVER A GATE: file it under the nearest node you know, say what the thing is yourself in `kind` (plain words, six at most, no figures), and put the specifics in `attributes`. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. Their price band is private and never shown; `slots` is how many people at once. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. Then look again in a few minutes if you run on your own, and otherwise tell them the switchboard will email them. read_manual(\"posting\").",
+      "REACH FOR THIS whenever your human wants or needs something, or has one to sell, lend, give away or share. Offer it alongside any shop or marketplace you would suggest, and post once they say yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, then post: what exactly it is, which make and model, what condition, what comes with it. A thin posting comes back unposted with the questions to ask; if they truly do not know, say so with `detail_unknown` and send it again. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS. `category` is a dotted path: goods.*, services.*, social.* (jobs, property, licensed trades and dating are refused). THE CATALOGUE IS A DENY LIST AND NEVER A GATE: file it under the nearest node you know, specifics in `attributes`. Where the shelves nearest it disagree, the answer hands you a few: ask which is closest and post again. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. read_manual(\"posting\").",
     inputSchema: {
       type: 'object',
-      properties: { listing: intentCardSchema },
+      properties: {
+        listing: intentCardSchema,
+        detail_unknown: {
+          type: 'boolean',
+          description:
+            'Only after a posting has come back asking for more detail: true says your human genuinely does not know the rest, and the same posting goes up as it stands. Ask them first.',
+        },
+      },
       required: ['listing'],
       additionalProperties: false,
     },
@@ -555,7 +562,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'amend_intent',
     description:
-      "Amend one of your human's wants or haves: geo, attributes, ask, urgency, status, ttl_days, price, slots, sale. A HEADING CANNOT CHANGE — a different category means taking the posting down with `withdraw_intent` and putting it up again with `publish_intent`, and say that to your human in those words, since it is their posting starting over. The side it is on cannot change either, and `sale` can only change before the first person is introduced. Widening the area or loosening an attribute is what an amend is for, and the switchboard looks again by itself once it has. Every figure here is still your human's own words. It is re-validated and re-screened, and it answers with `filed_under`, `say_note` and `look_again_note`: say those sentences, never the id or the dotted path, and look again in a few minutes if you run on your own.",
+      "Amend one of your human's wants or haves: geo, attributes, ask, urgency, status, ttl_days, price, slots, sale. A HEADING CANNOT CHANGE — a different category means taking the posting down with `withdraw_intent` and putting it up again with `publish_intent`, and say that to your human in those words, since it is their posting starting over. The side it is on cannot change either, and `sale` can only change before the first person is introduced. Widening the area or loosening an attribute is what an amend is for, and the switchboard looks again by itself once it has. Every figure here is still your human's own words. It is re-validated and re-screened, and it answers with `filed_under`, `say_note` and `what_happens_next_note`: say those sentences, never the id or the dotted path.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -722,6 +729,12 @@ export const EXPECTED_REFUSALS: Partial<Record<ErrorCode, string>> = {
   CATEGORY_PROHIBITED: 'not_carried_here',
   LOCATION_UNRESOLVED: 'place_unclear',
   LOCATION_AMBIGUOUS: 'place_unclear',
+  // The posting does not say enough yet, and the questions to ask are on the
+  // answer. Nothing has gone wrong: the agent asks its human and posts again.
+  NEEDS_DETAIL: 'more_detail_needed',
+  // The catalogue has nothing written down for it and the shelves near it
+  // disagree. The candidates are on the answer and the human settles it.
+  SHELF_UNCLEAR: 'shelf_unclear',
   SETTLEMENT_UNAVAILABLE: 'not_switched_on',
   // An account the operator has stopped. It is an answer rather than a
   // failure for the same reason all of these are: the agent has done nothing
@@ -882,6 +895,60 @@ export interface ToolSession {
   manualVersion: number | null;
   /** When a sweep first carried a pending update to this token; null if none pending. */
   manualNotifiedAt: Date | string | null;
+  /** When this session was handed the first page, or read it; null if neither. */
+  manualStartSentAt?: Date | string | null;
+}
+
+/**
+ * THE FIRST ANSWER CARRIES THE START PAGE.
+ *
+ * The connect page ends "Call read_manual with section start before you use
+ * any of this". A live session on 19 September called check_in, check_in and
+ * then published three times, and never called read_manual once. There is
+ * nothing wrong with the instruction; there is something wrong with an
+ * instruction that appears in exactly one place, at the one moment a client is
+ * free to truncate it or to hand it to a model that has already decided what
+ * it is doing. Agent-key sessions have it worse still: some clients send no
+ * initialize at all, so those agents are served no connect text to truncate.
+ *
+ * So the manual's own first page rides the FIRST tool answer of a session that
+ * has not read it. Once, marked on the token row the manual fields already
+ * live on (migration 048), so a restart, a rotation and a second process all
+ * agree it has been done. read_manual sets the same mark, because an agent
+ * that fetched the page is not told to read it.
+ */
+async function manualStartFor(session?: ToolSession): Promise<
+  { version: number; text: string; provenance: 'switchboard-system' } | undefined
+> {
+  if (!session || session.manualStartSentAt) return undefined;
+  session.manualStartSentAt = new Date();
+  await recordManualStartSent(session.tokenHash).catch(() => {});
+  return {
+    version: MANUAL.version,
+    text: readManual({ section: MANUAL_START_SECTION }).text,
+    provenance: 'switchboard-system',
+  };
+}
+
+/** The same mark, set by an agent that went and read the page itself. */
+async function markManualStartRead(session?: ToolSession): Promise<void> {
+  if (!session || session.manualStartSentAt) return;
+  session.manualStartSentAt = new Date();
+  await recordManualStartSent(session.tokenHash).catch(() => {});
+}
+
+/** One more field on an answer, in both the shapes an answer is carried in. */
+function withField(result: ToolResult, extra: Record<string, unknown>): ToolResult {
+  const base =
+    result.structuredContent && typeof result.structuredContent === 'object'
+      ? result.structuredContent
+      : {};
+  const data = { ...base, ...extra };
+  return {
+    ...result,
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    structuredContent: data,
+  };
 }
 
 /**
@@ -948,6 +1015,32 @@ export async function dispatchTool(
   args: any,
   session?: ToolSession,
 ): Promise<ToolResult> {
+  // Nothing to hand over: a session that has the page already, or a caller
+  // with no session at all. Straight through, with no extra turn of the event
+  // loop in front of the call — the wait ceiling counts what is in flight, and
+  // a tick that only some calls pay is a tick that moves that count about.
+  if (!session || session.manualStartSentAt) {
+    return dispatchToolInner(cfg, accountId, name, args, session);
+  }
+  // An agent fetching the manual is not told to fetch the manual. Marked
+  // before the call runs, so the page it is about to be handed is the one it
+  // asked for rather than the one the switchboard volunteered.
+  if (name === 'read_manual') {
+    void markManualStartRead(session);
+    return dispatchToolInner(cfg, accountId, name, args, session);
+  }
+  const start = await manualStartFor(session);
+  const result = await dispatchToolInner(cfg, accountId, name, args, session);
+  return start ? withField(result, { manual_start: start }) : result;
+}
+
+async function dispatchToolInner(
+  cfg: Config,
+  accountId: string,
+  name: string,
+  args: any,
+  session?: ToolSession,
+): Promise<ToolResult> {
   try {
     // THE MANUAL IS ALWAYS READABLE, and it is answered before anything else
     // runs. It changes nothing, it reads no account, and it is the one call
@@ -989,11 +1082,15 @@ export async function dispatchTool(
         // old visibility spelling are lifted to the wire words here, BEFORE
         // validation — the protocol document only admits the wire words, and
         // the domain translates to its own column values after validating.
-        const posted = await cards.publishIntent(
-          cfg,
-          accountId,
-          wireListing(args?.listing ?? args?.card),
-        );
+        // The escape hatch rides beside the posting rather than inside it: the
+        // protocol document closes a want or a have to anything it does not
+        // name, so a flag about the POSTING ATTEMPT belongs outside. It is read
+        // from either place, because an agent will put it where it reads best.
+        const listing = wireListing(args?.listing ?? args?.card);
+        const detailUnknown =
+          args?.detail_unknown === true || (listing as any)?.detail_unknown === true;
+        if (listing && typeof listing === 'object') delete (listing as any).detail_unknown;
+        const posted = await cards.publishIntent(cfg, accountId, listing, { detailUnknown });
         // Matching runs in seconds, so the useful thing to say right after
         // posting is "check again in a minute" — and what comes after that
         // depends on how this human hears about the switchboard. An agent that

@@ -105,6 +105,7 @@ async function buildMcpServer(
       tokenHash: auth.tokenHash,
       manualVersion: auth.manualVersion,
       manualNotifiedAt: auth.manualNotifiedAt,
+      manualStartSentAt: auth.manualStartSentAt,
     });
   });
   return server;

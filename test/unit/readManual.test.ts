@@ -40,6 +40,8 @@ import {
 import { OWN_HUMAN_HEADING, OWN_HUMAN_PREAMBLE, SUSPENDED_BLOCK } from '../../src/mcp/connectFacts.js';
 import { SETTLEMENT_OFF_BLOCK } from '../../src/mcp/mcp.js';
 import { SAY_NOTE, TOOLS } from '../../src/mcp/tools.js';
+import { WHAT_HAPPENS_NEXT_NOTE } from '../../src/domain/cards.js';
+import { DETAIL_HUMAN_ACTION, detailShortfall } from '../../src/domain/postingDetail.js';
 import { PHOTO_NOTE } from '../../src/domain/channel.js';
 import { areaNote } from '../../src/domain/profile.js';
 import { clockNote } from '../../src/domain/localTime.js';
@@ -276,6 +278,31 @@ describe('the house register holds over every piece of the new copy', () => {
       expect(lintHumanCopy(section.about), section.id).toEqual([]);
     }
     for (const tool of TOOLS) expect(lintHumanCopy(tool.description), tool.name).toEqual([]);
-    for (const note of [SAY_NOTE, PHOTO_NOTE]) expect(lintHumanCopy(note.text)).toEqual([]);
+    for (const note of [SAY_NOTE, PHOTO_NOTE, WHAT_HAPPENS_NEXT_NOTE]) {
+      expect(lintHumanCopy(note.text)).toEqual([]);
+    }
+    // And every sentence the detail gate can write. The questions are built
+    // from the fields a posting is short of, so the lint runs over the whole
+    // ladder rather than over one example of it.
+    expect(lintHumanCopy(DETAIL_HUMAN_ACTION)).toEqual([]);
+    const thin = [
+      { category: 'goods.x.y', type: 'offering', attributes: {} },
+      { category: 'goods.x.y', type: 'offering', kind: 'pedal spring', attributes: {} },
+      {
+        category: 'goods.x.y',
+        type: 'offering',
+        kind: 'pedal spring',
+        attributes: { brand: 'fanatec' },
+      },
+      { category: 'goods.x.y', type: 'looking_for', kind: 'pedal spring', attributes: {} },
+      { category: 'services.x', type: 'looking_for', attributes: {} },
+      { category: 'social.x', type: 'offering', kind: 'book club', attributes: {} },
+    ];
+    const asked = new Set<string>();
+    for (const card of thin) {
+      for (const q of detailShortfall(card)!.questions) asked.add(q);
+    }
+    expect(asked.size).toBeGreaterThan(4);
+    for (const q of asked) expect(lintHumanCopy(q), q).toEqual([]);
   });
 });
