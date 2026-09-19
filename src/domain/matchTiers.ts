@@ -375,7 +375,23 @@ export function wordAgreement(a: PostingWords, b: PostingWords): WordAgreement {
   if (A.head && B.head) {
     const stems = (bag: WordBag) => new Set([...bag.all].map(headStem));
     const [ha, hb] = [headStem(A.head), headStem(B.head)];
-    head = ha === hb || (stems(B).has(ha) && stems(A).has(hb)) ? 'agree' : 'conflict';
+    // A CONTAINER WORD IS TRANSPARENT. "Fanatec brake pedal spring upgrade
+    // kit" against "Fanatec brake performance spring", both on the sim racing
+    // shelf, was called a conflict of "kit" against "spring" and blocked a
+    // pair that plainly is the same thing (dev, 20 September 2026). Where one
+    // head is a kit, a set or a bundle and the other side's head is named
+    // inside it, the two agree. Opening the rule wider than this — any head
+    // found anywhere in the other's words — let two different things through
+    // as SURE on the labelled set, which is the one error worth nothing.
+    const contains = (container: string, inner: string, bag: WordBag) =>
+      CONTAINERS.has(container) && bag.all.has(inner);
+    head =
+      ha === hb ||
+      (stems(B).has(ha) && stems(A).has(hb)) ||
+      contains(ha, hb, A) ||
+      contains(hb, ha, B)
+        ? 'agree'
+        : 'conflict';
   }
   // THE BRANDS conflict only where neither side's brand appears anywhere in
   // the other side's words: Vorwerk makes the Thermomix, and a posting that
