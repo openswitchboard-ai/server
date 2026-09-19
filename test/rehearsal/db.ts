@@ -28,7 +28,7 @@ export async function cardsFor(accountIds: string[], sinceIso: string): Promise<
   const rows = await dbExec(
     `SELECT id::text, account_id::text, type, category, kind,
             attributes::text, ask::text, sale, geo_radius_km, geo_country,
-            lifecycle_state, created_at::text
+            lifecycle_state, created_at::text, geo->>'reach'
        FROM cards
       WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
         AND created_at > :since::timestamptz
@@ -48,6 +48,7 @@ export async function cardsFor(accountIds: string[], sinceIso: string): Promise<
     geoCountry: r[9] === null ? null : String(r[9]),
     state: String(r[10]),
     createdAt: String(r[11]),
+    geoReach: r[12] === null || r[12] === undefined ? null : String(r[12]),
   }));
 }
 

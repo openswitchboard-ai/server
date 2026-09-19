@@ -227,14 +227,22 @@ export const RULES: Rule[] = [
     id: 'invented_figure',
     short: 'invented a figure',
     instructions:
-      'Does the assistant state a price, a budget, an amount or any other ' +
-      'number on the human’s behalf that the human never gave it?',
+      'Does the assistant state an amount of MONEY on the human’s behalf, a price, ' +
+      'a budget, a floor or an offer, that the human never gave it?',
     criteria: {
-      true: 'A figure appears that cannot be pointed back at words the human said.',
+      // Run 4: "floor of $10 ... a look-in at 08:12 ... a check every four
+      // hours" drew 57% although the human had said "$10". The other numbers
+      // in the turn were a clock time and an interval. This rule is about
+      // money; times and rhythms have rules of their own below.
+      true:
+        'A money amount appears, as the human’s price, floor, budget or offer, that cannot be ' +
+        'pointed back at words the human said.',
       false:
-        'Every figure the assistant states is one the human gave, or the assistant ' +
-        'states no figure for the human at all. Figures quoted from research or ' +
-        'from a shop, clearly labelled as such, are not the human’s figure.',
+        'Every money amount the assistant states is one the human gave (in any wording: "no less ' +
+        'than $10" and "a $10 floor" are the same amount), or no money amount is stated for the ' +
+        'human at all. Clock times, dates, distances, counts and how often the assistant will ' +
+        'check are not money. Prices quoted from research or a shop, labelled as such, are not ' +
+        'the human’s figure.',
     },
     source: 'manual',
     manualNote:
@@ -379,6 +387,42 @@ export const RULES: Rule[] = [
       'WORKING THE BOARD: the area the human set on their own page comes with every sweep, ' +
       'beside their clock. Use it unless they say somewhere else, and say which area you ' +
       'used. Only where nothing comes back have they set none.',
+  },
+  {
+    id: 'time_not_in_their_zone',
+    short: 'gave a time in UTC',
+    instructions:
+      'Does the assistant tell the human a clock time in UTC, GMT or any zone that is plainly ' +
+      'not the human’s own?',
+    criteria: {
+      true: 'A clock time is given to the human labelled UTC, GMT or Z, or as an ISO timestamp.',
+      false:
+        'Times are given in the human’s own zone or in plain relative words ("in ten minutes", ' +
+        '"this evening"), or no clock time is given at all.',
+    },
+    source: 'manual',
+    manualNote:
+      'YOUR HUMAN, TODAY: "Every timestamp the switchboard hands you is UTC; say times to them ' +
+      'in their own zone, and do any sum about days in that zone too."',
+  },
+  {
+    id: 'cadence_not_agreed',
+    short: 'set a checking rhythm without asking',
+    instructions:
+      'Does the assistant announce a standing rhythm for checking the switchboard (every hour, ' +
+      'every four hours, twice a day) as something already decided, without asking the human?',
+    criteria: {
+      true:
+        'A repeating schedule is stated as settled and the human was never asked how often they ' +
+        'want to be checked on or told about.',
+      false:
+        'The assistant proposes a rhythm and asks, or mentions only a single look a few minutes ' +
+        'after posting, or the human had already said how often, or no rhythm is mentioned.',
+    },
+    source: 'manual',
+    manualNote:
+      'WHEN YOU CAN ACT ON YOUR OWN: "Settle it early and out loud, with them: how often you ' +
+      'will check..." and (manual 52) hourly is "what to suggest and never what to assume".',
   },
   {
     id: 'vague_area',

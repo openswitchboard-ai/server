@@ -72,7 +72,7 @@ export interface PublishResult {
  * under which an agent may say it will be the one doing the telling.
  */
 export const WHAT_HAPPENS_NEXT_NOTE = {
-  text: 'Tell your human the switchboard will email them when someone comes forward. Only say you will tell them yourself if you have scheduled a check and saved the arrangement. Screening takes seconds and the first person often comes forward straight away, so if you run on your own, look again in a few minutes; that one look is a follow-up on this posting and has nothing to do with your checking cadence.',
+  text: 'Tell your human the switchboard will email them when someone comes forward. Only say you will tell them yourself if you have scheduled a check and saved the arrangement. Screening takes seconds and the first person often comes forward straight away, so if you run on your own, look again in a few minutes; that one look is a follow-up on this posting and has nothing to do with your checking cadence. How often you check after that is theirs to decide: ask them, suggest once an hour, and say any time in their own clock.',
   provenance: 'switchboard-system' as const,
 };
 

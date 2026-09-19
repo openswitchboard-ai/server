@@ -52,6 +52,7 @@ import { join } from 'node:path';
 import {
   bootstrapActor,
   createAgentKey,
+  dbExec,
   retireAccountCards,
   type TestActor,
 } from '../integration/helpers.js';
@@ -261,6 +262,15 @@ async function oneRun(
       const actor = DRY
         ? ({ email: `${id}@dry`, accountId: `dry-${id}`, pin: '000000', accessToken: 'dry', jar: {} as any } as TestActor)
         : await bootstrapActor(sheet.firstName, sheet.locality);
+      // A person who registers on the page gives the switchboard their clock;
+      // an account minted through the ops queue has none, and an assistant
+      // with no zone to go on told its human "08:12 UTC" (run 4). Both humans
+      // in this scenario live on Sydney time.
+      if (!DRY) {
+        await dbExec(`UPDATE accounts SET timezone = 'Australia/Sydney' WHERE id = :id::uuid`, [
+          { name: 'id', value: actor.accountId },
+        ]);
+      }
       if (!DRY) {
         const { token } = await createAgentKey(actor.jar, actor.pin, `rehearsal ${runId} ${id}`);
         log(await driver.prepare(token, runId, sheet.firstName));
