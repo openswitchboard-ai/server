@@ -1093,7 +1093,7 @@ export async function buildMutual(
       // Whose turn it is decides which of these is true. Telling someone who
       // has already pressed to go and press is the run-8 defect in one line.
       human_action: mine
-        ? 'Your human has given their go-ahead and it is recorded. The other side has not given theirs yet; first names are shared the moment they do, and there is nothing for your human to do again.'
+        ? 'Your human has given their go-ahead and it is recorded. First names are shared the moment the other side gives theirs, with nothing more for your human to do. The switchboard emails them when it happens; say you will tell them yourself only where you have agreed how often you check.'
         : 'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
     });
   }
