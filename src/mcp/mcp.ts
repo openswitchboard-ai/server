@@ -92,6 +92,15 @@ async function buildMcpServer(
     })),
   }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    // Which tool was called, and nothing else: no arguments, no account. It is
+    // the only way to tell whether assistants read the manual before they act
+    // (read_manual's section is a public table-of-contents word, so it rides
+    // along), and a rule nobody fetched is a different problem from a rule
+    // somebody read and ignored.
+    const called = String(req.params.name ?? '');
+    const section =
+      called === 'read_manual' ? String((req.params.arguments as any)?.section ?? 'start').slice(0, 40) : undefined;
+    console.log(JSON.stringify({ level: 30, time: Date.now(), msg: 'tool call', tool: called.slice(0, 40), ...(section ? { section } : {}) }));
     return dispatchTool(cfg, auth.accountId, req.params.name, req.params.arguments ?? {}, {
       tokenHash: auth.tokenHash,
       manualVersion: auth.manualVersion,

@@ -235,7 +235,12 @@ const MUST_SAY: [string, RegExp][] = [
 describe('the tool descriptions carry the rules and stay inside the budget', () => {
   it('holds every description to what a turn can afford', () => {
     for (const tool of TOOLS) {
-      const cap = tool.name === 'check_in' ? CHECK_IN_CAP : DESCRIPTION_CAP;
+      // publish_intent carries one more sentence than the rest: when to reach for
+      // the switchboard at all. A client that never reads the connect page has
+      // nowhere else to learn that (run 11: an assistant asked to find a used
+      // part searched four marketplaces and never thought of this one).
+      const cap =
+        tool.name === 'check_in' ? CHECK_IN_CAP : tool.name === 'publish_intent' ? 1650 : DESCRIPTION_CAP;
       expect(tool.description.length, tool.name).toBeLessThanOrEqual(cap);
     }
   });
