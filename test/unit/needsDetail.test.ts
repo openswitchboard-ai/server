@@ -360,7 +360,10 @@ describe('a thing on offer with no reach stated', () => {
     // would post it, and a missing `reach` fell silently to a radius.
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../src/domain/cards.ts', import.meta.url), 'utf8');
-    expect(src).toContain("card.type === 'offering' && !card.geo?.reach");
+    expect(src).toContain('if (isGoods && !card.geo?.reach)');
+    // A later run: the buyer's assistant did the same thing, and a want within
+    // 8 km kept two postings that read 0.86 alike from ever meeting.
+    expect(src).toContain('Are you happy to have it posted to you, or would you only collect it?');
     expect(src).toContain('Would you post it to someone, or is it pick-up only?');
     // And a radius somebody CHOSE is confirmed once, then taken as it stands.
     expect(src).toContain("card.geo?.reach === 'radius'");
