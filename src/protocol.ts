@@ -342,6 +342,11 @@ export type ErrorCode =
   // (domain/postingDetail.ts). Ahead of the pinned error document, because the
   // questions ride on the payload.
   | 'NEEDS_DETAIL'
+  // The posting carries a money figure, and this is the first time it has been
+  // sent inside the window, so it comes back once for the assistant to say
+  // that figure to its human (domain/postingFigure.ts). Ahead of the pinned
+  // error document as well: the figures ride on the payload.
+  | 'CONFIRM_FIGURE'
   // The catalogue has never heard of the path that was sent, and nothing near
   // it is close enough to file the posting under without guessing
   // (domain/categoryBackfill.ts). Ahead of the document as well: its
@@ -362,6 +367,7 @@ const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
   'SUSPENDED',
   'CONVERSATION_PAUSED',
   'NEEDS_DETAIL',
+  'CONFIRM_FIGURE',
   'SHELF_UNCLEAR',
 ];
 
@@ -385,6 +391,18 @@ export interface ShelfCandidate {
   words: string;
 }
 
+/**
+ * One money figure a posting carries, on CONFIRM_FIGURE. `what` is the plain
+ * words for which figure it is — an asking price, the least they will take,
+ * the most they will pay — so the assistant can say it to its human without
+ * reading a field name aloud.
+ */
+export interface ErrorFigure {
+  what: string;
+  amount: number;
+  currency: string;
+}
+
 export interface ProtocolError {
   schema_version: string;
   code: ErrorCode;
@@ -395,8 +413,10 @@ export interface ProtocolError {
   /** Up to five places a bare name could have meant, largest first — or, on
    *  SHELF_UNCLEAR, up to five shelves it could have gone on. */
   candidates?: (ErrorCandidate | ShelfCandidate)[];
-  /** On NEEDS_DETAIL: what to ask the human, in plain words, at most four. */
+  /** On NEEDS_DETAIL and CONFIRM_FIGURE: what to ask the human, at most four. */
   questions?: string[];
+  /** On CONFIRM_FIGURE: the figures to say back, at most four. */
+  figures?: ErrorFigure[];
   /**
    * The press an agent may wait on, when this refusal carries a link. Added
    * after the schema check rather than inside it: the published error document
@@ -416,8 +436,10 @@ export class OsbError extends Error {
       retry_after?: number;
       suggestions?: string[];
       candidates?: (ErrorCandidate | ShelfCandidate)[];
-      /** The questions to put to the human, on NEEDS_DETAIL. */
+      /** The questions to put to the human, on NEEDS_DETAIL and CONFIRM_FIGURE. */
       questions?: string[];
+      /** The figures to say back to the human, on CONFIRM_FIGURE. */
+      figures?: ErrorFigure[];
       /** The approval link row this refusal handed over, to wait on. */
       press_id?: string;
     } = {},
@@ -431,6 +453,7 @@ export class OsbError extends Error {
       ...(opts.suggestions?.length ? { suggestions: opts.suggestions.slice(0, 3) } : {}),
       ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
       ...(opts.questions?.length ? { questions: opts.questions.slice(0, 4) } : {}),
+      ...(opts.figures?.length ? { figures: opts.figures.slice(0, 4) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     };
     this.payload = AHEAD_OF_SCHEMA.includes(code)

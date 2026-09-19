@@ -330,12 +330,12 @@ describe('what the row carries and what the assistant hears', () => {
       // Who tells the human, and the one condition under which the agent may
       // say it will be the one doing it. In the 19 September rehearsal an
       // assistant said it would, with nothing scheduled and nothing saved.
-      expect(r.what_happens_next_note.text).toContain('the switchboard will email them');
-      expect(r.what_happens_next_note.text).toContain(
-        'Only say you will tell them yourself if you have scheduled a check and saved the arrangement',
-      );
-      expect(r.what_happens_next_note.text).toContain('look again in a few minutes');
-      expect(r.what_happens_next_note.text).toContain('nothing to do with your checking cadence');
+      // Nothing is saved on this account, so the note says that first and
+      // hands over the words to say instead of a promise.
+      expect(r.what_happens_next_note.text).toContain('no checking arrangement saved');
+      expect(r.what_happens_next_note.text).toContain('the switchboard will email you');
+      expect(r.what_happens_next_note.text).toContain('standing_arrangement');
+      expect(r.what_happens_next_note.text).toContain('One look a few minutes from now');
       expect(lintHumanCopy(r.what_happens_next_note.text)).toEqual([]);
     }
   });

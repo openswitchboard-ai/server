@@ -26,9 +26,14 @@ export async function dbNow(): Promise<string> {
 export async function cardsFor(accountIds: string[], sinceIso: string): Promise<CardFacts[]> {
   if (!accountIds.length) return [];
   const rows = await dbExec(
+    // price_enc IS NOT NULL, never the band itself: the band is encrypted
+    // under the account's own key and this harness holds no key. Whether one
+    // is SET is the whole of what can be read, and it is enough to catch an
+    // assistant that put a figure there on its human's behalf.
     `SELECT id::text, account_id::text, type, category, kind,
             attributes::text, ask::text, sale, geo_radius_km, geo_country,
-            lifecycle_state, created_at::text, geo->>'reach'
+            lifecycle_state, created_at::text, geo->>'reach',
+            (price_enc IS NOT NULL) AS has_band
        FROM cards
       WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
         AND created_at > :since::timestamptz
@@ -49,6 +54,7 @@ export async function cardsFor(accountIds: string[], sinceIso: string): Promise<
     state: String(r[10]),
     createdAt: String(r[11]),
     geoReach: r[12] === null || r[12] === undefined ? null : String(r[12]),
+    hasBand: r[13] === true || String(r[13]) === 'true',
   }));
 }
 

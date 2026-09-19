@@ -594,11 +594,21 @@ export async function oauthFlow(jar: Jar): Promise<string> {
 }
 
 let rpcId = 1;
-/** Raw MCP tools/call over Streamable HTTP. Returns { raw, result }. */
+/**
+ * Raw MCP tools/call over Streamable HTTP. Returns { raw, result }.
+ *
+ * A posting that carries a figure comes back once, unposted, for the agent to
+ * read that figure to its human (domain/postingFigure.ts). A fixture has no
+ * human to read it to, so it does what a real agent does after it has asked:
+ * it sends the same call again, once. Anything else the second call answers is
+ * the answer, so a figure gate that stopped working would be seen here rather
+ * than swallowed.
+ */
 export async function mcpCall(
   token: string,
   name: string,
   args: Record<string, unknown>,
+  opts: { confirmedFigure?: boolean } = {},
 ): Promise<{ raw: string; result: any; isError: boolean }> {
   const res = await fetch(`${BASE_URL}/mcp`, {
     method: 'POST',
@@ -628,6 +638,9 @@ export async function mcpCall(
   const isError = result?.isError === true;
   const text = result?.content?.[0]?.text;
   const parsed = text ? JSON.parse(text) : result;
+  if (parsed?.what_happened === 'confirm_figure' && !opts.confirmedFigure) {
+    return mcpCall(token, name, args, { confirmedFigure: true });
+  }
   if (name === 'publish_intent' && !isError && parsed?.intent_id) {
     const mine = publishedCards.get(token) ?? new Set<string>();
     mine.add(parsed.intent_id as string);
