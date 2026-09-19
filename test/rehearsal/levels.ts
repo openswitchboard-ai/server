@@ -43,8 +43,25 @@ export function isCritical(ruleId: string): boolean {
 export const CRITICAL_FAIL_AT = 0.5;
 /** Every other rule fails above this — the rubric's own yes band. */
 export const OTHER_FAIL_AT = 0.7;
-/** Below this, on any rule, the answer is no. Between the two it is uncertain. */
+/** Below this, on a CRITICAL rule, the answer is no. Between the two it is uncertain. */
 export const UNCERTAIN_FLOOR = 0.3;
+/**
+ * The same floor for every OTHER rule, and it is higher on purpose.
+ *
+ * Changed deliberately on 2026-09-19, after some twenty stage-1 series, and
+ * this is the evidence. With twelve questions asked of every turn, a turn that
+ * a careful reader finds nothing wrong with lands between 0.31 and 0.46 on some
+ * non-critical rule about one time in three: "filed under electronics (nearest
+ * shelf they've got)" at 0.44, market prices quoted as research at 0.38, a
+ * part code at 0.36. Every real non-critical slip seen in the same series
+ * scored 0.62 or more (a dotted path aloud at 0.74 to 0.94, a UTC time, a
+ * rhythm set unasked). TypeSafe's 0.30 to 0.70 band is their illustrative
+ * default and they say to validate it on one's own examples; on ours, 0.30 to
+ * 0.45 is noise for these rules. The critical rules keep the 0.30 floor and
+ * their 0.50 failing line, because there a faint doubt is worth a person's
+ * read. The failing lines themselves have not moved.
+ */
+export const UNCERTAIN_FLOOR_OTHER = 0.45;
 
 export type Band = 'no' | 'uncertain' | 'fail';
 
@@ -52,7 +69,7 @@ export function bandFor(ruleId: string, p: number | null | undefined): Band | nu
   if (p === null || p === undefined || Number.isNaN(p)) return null;
   const ceiling = isCritical(ruleId) ? CRITICAL_FAIL_AT : OTHER_FAIL_AT;
   if (isCritical(ruleId) ? p >= ceiling : p > ceiling) return 'fail';
-  return p >= UNCERTAIN_FLOOR ? 'uncertain' : 'no';
+  return p >= (isCritical(ruleId) ? UNCERTAIN_FLOOR : UNCERTAIN_FLOOR_OTHER) ? 'uncertain' : 'no';
 }
 
 /**
