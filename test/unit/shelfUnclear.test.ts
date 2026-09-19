@@ -346,7 +346,7 @@ describe('what the assistant is handed, and what is written', () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods' }));
     expect(r.intent_id).toBe(CARD);
     expect(r.filed_under).toBe('goods');
-    expect(r.filed_under_note).toBeUndefined();
+    expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 
   it('never refuses an amend, and files it the way it always did', async () => {

@@ -292,10 +292,14 @@ describe('what the row carries and what the assistant hears', () => {
     expect(lintHumanCopy(r.filed_under_note.text)).toEqual([]);
   });
 
-  it('says nothing about filing when the shelf is the one that was asked for', async () => {
+  it('gives the shelf in words even when it is the one that was asked for', async () => {
+    // An assistant handed only a dotted path reads the dotted path aloud, and
+    // one did (first rehearsal-suite run, 19 September 2026).
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods.bicycle.mountain' }));
     expect(r.filed_under).toBe('goods.bicycle.mountain');
-    expect(r.filed_under_note).toBeUndefined();
+    expect(r.filed_under_note.text).toMatch(/^Filed under /);
+    expect(r.filed_under_note.text).not.toContain('goods.bicycle');
+    expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 
   it('leaves the poster own words for the thing exactly as they were sent', async () => {
@@ -341,6 +345,6 @@ describe('what the row carries and what the assistant hears', () => {
     world.card.category_as_posted = 'goods.bicycle.mountain';
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
     expect(r.filed_under).toBe('goods.bicycle.mountain');
-    expect(r.filed_under_note).toBeUndefined();
+    expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 });

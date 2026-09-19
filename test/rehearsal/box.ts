@@ -72,6 +72,12 @@ export async function deepCleanAndBind(
     `openclaw ${home.profile} --log-level silent config set mcp.servers.openswitchboard.headers.Authorization "$H" >/dev/null`,
     `systemctl --user start ${home.unit}`,
     `for i in $(seq 1 25); do [ "$(systemctl --user is-active ${home.unit})" = active ] && break; sleep 3; done`,
+    // "active" is systemd's word for "the process was started", and the
+    // gateway takes several more seconds to open its socket. The first run
+    // of this suite asked four seconds after "active" and was refused the
+    // connection. So wait until the port actually answers.
+    `for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/${home.port}) 2>/dev/null && break; sleep 3; done`,
+    `sleep 5`,
     `systemctl --user is-active ${home.unit}`,
   ].join('; ');
   const active = execFileSync('ssh', [...sshArgs(host, key), remote], {

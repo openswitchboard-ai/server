@@ -5,6 +5,7 @@
  */
 import { recordManualNotified, recordManualStartSent, recordManualVersion } from '../auth/oauth.js';
 import { MANUAL, MANUAL_START_SECTION, manualUpdateSince, readManual } from './instructions.js';
+import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 import { bundledSchema, ErrorCode, OsbError, ProtocolError, SCHEMA_VERSION } from '../protocol.js';
 import { getHearsVia, getTimezone, hearsViaNote } from '../domain/accounts.js';
 import { clockNote, localTimeText } from '../domain/localTime.js';
@@ -1019,19 +1020,40 @@ export async function dispatchTool(
   // with no session at all. Straight through, with no extra turn of the event
   // loop in front of the call — the wait ceiling counts what is in flight, and
   // a tick that only some calls pay is a tick that moves that count about.
-  if (!session || session.manualStartSentAt) {
-    return dispatchToolInner(cfg, accountId, name, args, session);
-  }
-  // An agent fetching the manual is not told to fetch the manual. Marked
-  // before the call runs, so the page it is about to be handed is the one it
-  // asked for rather than the one the switchboard volunteered.
+  // The start page carries what the switchboard holds about this human: where
+  // they are and what their clock reads. Those facts used to arrive only in
+  // the connect text, and a client that never reads the connect text (OpenClaw
+  // does not ask for it at all) had its assistant open with "where are you
+  // located?" to a person who had already said (first rehearsal-suite run).
+  // Read only for the start page, and never for a stopped account.
   if (name === 'read_manual') {
-    void markManualStartRead(session);
+    if (session && !session.manualStartSentAt) void markManualStartRead(session);
+    const page = await dispatchToolInner(cfg, accountId, name, args, session);
+    const wantsStart = typeof args?.section !== 'string' || args.section === 'start';
+    return wantsStart ? withOwnHuman(page, accountId) : page;
+  }
+  if (!session || session.manualStartSentAt) {
     return dispatchToolInner(cfg, accountId, name, args, session);
   }
   const start = await manualStartFor(session);
   const result = await dispatchToolInner(cfg, accountId, name, args, session);
-  return start ? withField(result, { manual_start: start }) : result;
+  if (!start) return result;
+  const human = await ownHumanFactsFor(accountId);
+  return withField(result, { manual_start: human ? { ...start, your_human: human } : start });
+}
+
+/** What the switchboard holds about this human, or nothing. Never throws. */
+async function ownHumanFactsFor(
+  accountId: string,
+): Promise<{ text: string; provenance: 'switchboard-system' } | undefined> {
+  if (await suspendedBlock(accountId)) return undefined;
+  const text = await ownHumanBlock(accountId);
+  return text ? { text, provenance: 'switchboard-system' as const } : undefined;
+}
+
+async function withOwnHuman(result: ToolResult, accountId: string): Promise<ToolResult> {
+  const human = await ownHumanFactsFor(accountId);
+  return human ? withField(result, { your_human: human }) : result;
 }
 
 async function dispatchToolInner(

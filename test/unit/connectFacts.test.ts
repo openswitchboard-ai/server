@@ -297,9 +297,18 @@ describe('none of it can reach the other side', () => {
     }
   })(src);
 
-  it('is composed in one place and handed to one caller: the connect manual', () => {
+  it('is composed in one place and handed to two callers, both the account\u2019s own', () => {
+    // The connect manual, and since 19 September 2026 the manual's start page.
+    // A client that never reads the connect text (OpenClaw does not ask for
+    // it) left its assistant asking a human where they live after they had
+    // said. Both callers hold nothing but the bearer token's own account id.
     const importers = files.filter((f) => /from '.*connectFacts\.js'/.test(readFileSync(f, 'utf8')));
-    expect(importers.map((f) => f.replace(src, 'src'))).toEqual(['src/mcp/mcp.ts']);
+    expect(importers.map((f) => f.replace(src, 'src')).sort()).toEqual(['src/mcp/mcp.ts', 'src/mcp/tools.ts']);
+    const tools = readFileSync(join(src, 'mcp', 'tools.ts'), 'utf8');
+    // In tools.ts the block is built only for `accountId`, the caller's own,
+    // and only inside the start-page helper.
+    expect(tools.match(/ownHumanBlock\(/g)?.length).toBe(1);
+    expect(tools).toMatch(/ownHumanBlock\(accountId\)/);
 
     const mcp = readFileSync(join(src, 'mcp', 'mcp.ts'), 'utf8');
     // The only use of the composed text is the MCP `instructions` field of the

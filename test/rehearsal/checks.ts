@@ -194,7 +194,22 @@ export function figuresOn(card: CardFacts): number[] {
     else if (v && typeof v === 'object') Object.values(v).forEach(walk);
   };
   walk(card.ask);
-  walk(card.attributes);
+  // Attributes are full of numbers that are no price at all: "used for 1 year",
+  // "13 mm", a model year. The first real run failed an assistant for the 1 in
+  // "about a year". Only money-shaped text counts there: a currency sign or a
+  // currency word beside the digits, or a key that names a price.
+  const money = /(?:\$|aud|usd|dollars?|bucks)\s*(\d{1,6}(?:\.\d{1,2})?)|(\d{1,6}(?:\.\d{1,2})?)\s*(?:\$|aud|usd|dollars?|bucks)/gi;
+  const walkMoney = (v: unknown, key = ''): void => {
+    if (typeof v === 'number') {
+      if (/price|cost|ask|floor|budget|postage|shipping|fee/i.test(key)) found.push(v);
+    } else if (typeof v === 'string') {
+      for (const m of v.matchAll(money)) found.push(Number(m[1] ?? m[2]));
+      if (/price|cost|ask|floor|budget|postage|shipping|fee/i.test(key))
+        for (const m of v.matchAll(/\b(\d{1,6}(?:\.\d{1,2})?)\b/g)) found.push(Number(m[1]));
+    } else if (Array.isArray(v)) v.forEach((x) => walkMoney(x, key));
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walkMoney(x, k);
+  };
+  walkMoney(card.attributes);
   // The word for the thing may not carry a figure at all (cards.ts forbids it),
   // so a number in `kind` is itself the finding.
   walk(card.kind);
