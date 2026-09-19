@@ -246,7 +246,7 @@ const listing = (over: Record<string, unknown> = {}) => ({
   type: 'offering',
   category: 'goods.bicycle.mountain',
   kind: 'mountain bike',
-  geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
+  geo: { bucket: 'r3gx', radius_km: 25, reach: 'country' },
   ttl_days: 60,
   ...over,
 });
@@ -265,7 +265,7 @@ beforeEach(() => {
       category: 'goods.bicycle.mountain',
       category_as_posted: 'goods.bicycle.mountain',
       kind: 'mountain bike',
-      geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
+      geo: { bucket: 'r3gx', radius_km: 25, reach: 'country' },
       // Deliberately as thin as the rehearsal's: an amend must not be refused
       // for what the posting already was.
       attributes: {},
@@ -362,5 +362,8 @@ describe('a thing on offer with no reach stated', () => {
     const src = readFileSync(new URL('../../src/domain/cards.ts', import.meta.url), 'utf8');
     expect(src).toContain("card.type === 'offering' && !card.geo?.reach");
     expect(src).toContain('Would you post it to someone, or is it pick-up only?');
+    // And a radius somebody CHOSE is confirmed once, then taken as it stands.
+    expect(src).toContain("card.geo?.reach === 'radius'");
+    expect(src).toContain('Would you post it to someone further away, or is it pick-up only?');
   });
 });
