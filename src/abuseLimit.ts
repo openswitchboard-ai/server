@@ -110,8 +110,18 @@ export const accountlessVerificationCeiling = makeGlobalLimiter(
 /** DCR: 5 client registrations per IP per hour. */
 export const clientRegistrationLimiter = makeIpLimiter(5, 60 * 60 * 1000);
 
-/** Verification emails: 5 sends per IP per hour, on top of the per-email cap. */
-export const verificationEmailLimiter = makeIpLimiter(5, 60 * 60 * 1000);
+/**
+ * Verification emails: 15 sends per IP per hour, on top of the per-email cap.
+ *
+ * It was 5, and 5 is one household on one evening: two people signing up on a
+ * phone and a laptop behind the same router, one mistyped address and one
+ * code that arrived late, and the third person is told to wait an hour. The
+ * per-email cap (verificationRateLimited) is what stops codes being sprayed
+ * at one victim and it is unchanged; so is the global ceiling on accountless
+ * sends above. This one only has to stop a single connection mailing
+ * strangers in bulk, and 15 an hour still does.
+ */
+export const verificationEmailLimiter = makeIpLimiter(15, 60 * 60 * 1000);
 
 /**
  * Area suggestions: 60 lookups per IP per minute, behind a signed-in session.
