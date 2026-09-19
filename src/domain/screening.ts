@@ -119,7 +119,13 @@ export function rejectionInPlainWords(
  * personal detail or a figure would land and the whole of what the
  * prohibited-by-meaning check has to read.
  */
-export function collectFreeText(card: Pick<CardRow, 'attributes'> & { kind?: string | null }): string[] {
+export function collectFreeText(
+  card: Pick<CardRow, 'attributes'> & {
+    kind?: string | null;
+    also_called?: unknown;
+    not_these?: unknown;
+  },
+): string[] {
   const out: string[] = [];
   // Every piece here is the author's own words — the kind, the attribute names
   // they chose and the values they wrote — so every piece goes through
@@ -127,6 +133,21 @@ export function collectFreeText(card: Pick<CardRow, 'attributes'> & { kind?: str
   // KEY is as much theirs as the value is.
   if (typeof card.kind === 'string' && card.kind.trim()) {
     out.push(promptSafePair('kind', card.kind.trim()));
+  }
+  // AND THE HUMAN'S OTHER WORDS FOR IT (migration 050), screened exactly as
+  // `kind` is and for exactly the same reasons: they are free words the author
+  // chose, they are the first place a figure or a contact detail would land now
+  // that they exist, and the prohibited-by-meaning check must read every word
+  // that says what the thing is. Both lists go: something a person insists the
+  // thing is NOT is still words they wrote.
+  for (const [field, value] of [
+    ['also_called', card.also_called],
+    ['not_these', card.not_these],
+  ] as const) {
+    if (!Array.isArray(value)) continue;
+    for (const phrase of value) {
+      if (typeof phrase === 'string' && phrase.trim()) out.push(promptSafePair(field, phrase.trim()));
+    }
   }
   for (const [k, v] of Object.entries(card.attributes ?? {})) {
     if (typeof v === 'string') out.push(promptSafePair(k, v));
@@ -199,7 +220,7 @@ export async function applyVerdict(
   if (verdict.pass) {
     const { embedCard } = await import('./embeddings.js');
     const card = await getPool().query(
-      'SELECT id, category, kind, attributes FROM cards WHERE id = $1',
+      'SELECT id, category, kind, also_called, attributes FROM cards WHERE id = $1',
       [cardId],
     );
     if (card.rows[0]) await embedCard(cfg, card.rows[0]);

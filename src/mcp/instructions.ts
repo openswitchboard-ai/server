@@ -288,6 +288,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Three things, all about shelves. First, "none of these" has its own answer now. When your human recognises none of the shelves offered in shelf_unclear, post it again with the category none_of_these instead of the top level. The answer, under the plain word shelf_pick, is a link to a page on their own approval site where they search every shelf the catalogue has and tap the one that fits, or put it under things in general, or leave it unposted. Hand it over, say what it lets them do, and wait on its press_id with wait_for_press; that answer carries the shelf they chose in picked, so post it again with that category. Choosing a shelf takes no PIN. Second, the switchboard now also looks across the whole board for postings describing the same thing in other words, so a thing on a neighbouring shelf can still be found. Third, and this is the one that changes what you say: some introductions are a maybe. An entry carrying possible_note may or may not be the thing your human asked for. Show them the details, say plainly that it might be something else, and ask whether they want to go ahead; never present it as the thing they asked for. Read "introductions" and "categories" for the rest.',
   },
+  {
+    version: 59,
+    note:
+      'Two new things, and both of them are your human\'s judgement reaching the search. First, refine_intent. Once something is up, give the switchboard your human\'s OTHER WORDS for it: also_called takes up to six short phrases for the same thing — the trade name, the part number, what everyone in that hobby calls it — and not_these takes up to six they say it is NOT, which makes close things count for less and hides nothing from them. Ask in ordinary talk what else people call it and what it keeps getting mistaken for. The switchboard looks again the moment it lands, so stay with your human and bring them whoever comes forward. It cannot change what the thing is: that is a new posting, the same as a new heading. Second, respond(not_the_thing). When your human has looked at a maybe and told you it is the wrong thing, that is the action to use. It closes it exactly as decline does — reasonlessly, nothing crossing, the next person coming forward — and it writes down what did not fit so these get told apart better. Only ever on your human\'s own word, never on your own reading of the details. And a maybe now arrives with one more sentence from the switchboard saying which specifics agree and which differ, and with their other words for the thing beside their own: read those to your human and let them decide.',
+  },
 ];
 
 /**
@@ -393,7 +398,17 @@ The shelf helps things meet, and it is one reason among several. The switchboard
 
 3c. When it is your human who is waiting, the sweep comes back as "in_line" with one sentence and nothing else. Say that sentence and add nothing to it: there is no count, no position and nothing about anybody else, on purpose. There is nothing to do on it but wait, and you will hear the moment their turn comes. Anything you add to that sentence is something you have made up. "There's someone in the queue already", "you're second", "a few people are ahead of you" — the switchboard carries no count and no position, it has told you nothing of the kind, and it tells nobody about anybody else on purpose; so every one of those is a guess wearing the clothes of a fact, and it puts a hurry on your human that nobody intended. Tell them they are in line, say you will bring them their turn the moment it comes, and stop there.
 
-3f. SOME INTRODUCTIONS ARE A MAYBE. Where the switchboard is sure, an introduction reads as it always has. Where the other posting might be the same thing and might be something close to it (the words only partly agree, or it sits on a different shelf), the entry carries possible_note with one sentence in it, and says so in its first sentence as well. Everything else works the same: the details are open to both, and the names step still takes both presses. What changes is what you say. Show your human the details, say plainly that it may or may not be the thing they asked for, and ask whether they want to go ahead. Never present it as the thing they asked for, and never round a maybe up into a yes because it would be good news. A maybe never takes someone's turn while somebody with the very thing is waiting.`,
+3d. THEIR OTHER WORDS FOR THE THING. All the switchboard has to look with is the words on your human's own posting — one short phrase. Your human knows more than one: the trade name, the part number, what everyone in that hobby calls it, and the near neighbour it keeps being mistaken for. refine_intent is where those go — also_called for the same thing said another way, not_these for what it is emphatically not. Ask in ordinary talk: "what else do people call it?" and "is there something close that keeps coming up instead?" are the whole of it. The switchboard looks again by itself the moment they land, so stay with your human and bring them whoever comes forward. It cannot change what the thing IS: that is a new posting, the same as a new heading. Nothing about the board comes back from it, and there is nothing about the board for you to say.
+
+3f, the ones offered as a maybe, is its own section: read_manual("maybes").
+`,
+  },
+  {
+    id: 'maybes',
+    about: "An introduction the switchboard offers as a maybe, and what your human decides about it.",
+    text: `3f. SOME INTRODUCTIONS ARE A MAYBE. Where the switchboard is sure, an introduction reads as it always has. Where the other posting might be the same thing and might be something close to it (the words only partly agree, or it sits on a different shelf), the entry carries possible_note with one sentence in it, and says so in its first sentence as well. Everything else works the same: the details are open to both, and the names step still takes both presses. What changes is what you say. Show your human the details, say plainly that it may or may not be the thing they asked for, and ask whether they want to go ahead. Never present it as the thing they asked for, and never round a maybe up into a yes because it would be good news. A maybe never takes someone's turn while somebody with the very thing is waiting. On a maybe the details step now carries two more things for your human to weigh: the other side's own other words for their thing, under their own label, and one sentence from the switchboard saying which specifics the two of you agree on and which differ — the make, the model or part number, what the thing is called. Read both to your human. Nothing about anybody else's posting is in there and nothing about anybody else ever will be.
+
+3g. WHEN YOUR HUMAN SAYS IT IS NOT IT. They looked at a maybe, and it is the wrong part, the wrong model, the near neighbour rather than the thing. respond(not_the_thing) is the word for that. It closes it exactly the way respond(decline) closes one — reasonlessly, nothing at all crossing to the other side, nobody shut out, and whoever was waiting coming forward in the same breath — and the one thing it does beyond that is write down what did not fit, so the switchboard gets better at telling these apart. Use it ONLY where your human has said so in their own words. You may think a maybe looks wrong; that is not the call, it has never been the call, and reading the details and deciding for them is the one thing this whole arrangement exists to stop.`,
   },
   {
     id: 'near_misses',
@@ -610,7 +625,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 58,
+  version: 59,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

@@ -11,8 +11,10 @@ import {
   categoryLeafLabel,
   categoryPhrase,
   categoryPhraseWithArticle,
+  otherWordsOf,
   KIND_MAX_CHARS,
 } from './matchRules.js';
+import { agreementSentence, wordAgreement } from './matchTiers.js';
 import { inLineCount, noteMovement, ownCardIsFull } from './sequencer.js';
 import {
   counterpartyProfileConsentError,
@@ -569,6 +571,92 @@ export async function declineMatch(
 }
 
 /**
+ * IT IS NOT THE THING (Lachlan, 20 September 2026).
+ *
+ * The switchboard offers some introductions as a maybe. The human looks at the
+ * details, and sometimes the answer is simply "that's not it" — a different
+ * part, a different model, the near neighbour rather than the thing. Until
+ * today the only word for that was an ordinary decline, and the switchboard
+ * learned nothing from a judgement it could have learned a great deal from.
+ *
+ * IT CLOSES EXACTLY AS A DECLINE CLOSES, and that is the whole of what the
+ * other side experiences. Reasonless: no reason is taken, none is stored
+ * against the pairing, and none ever crosses. The slot it held is freed and
+ * whoever is next comes forward in the same request. NO MUTE — a decline is
+ * about one pairing rather than about a person, and `declineMatch` has never
+ * muted anybody; this does exactly what it does. (The `bad` verdict is the one
+ * action here that mutes an account, and it is untouched.)
+ *
+ * WHAT IS DIFFERENT IS ONE ROW, written for the engine rather than for anyone
+ * on either side. The two postings, the tier the introduction was made in, and
+ * the word signals for the pair recomputed from the two postings as they stand.
+ * The lines in matchTiers.ts were fitted on a set one agent wrote in one
+ * session and its own header says they must be re-tuned on real runs; this is
+ * what a real run leaves behind. Nothing reads it yet.
+ *
+ * ONLY A HUMAN DECIDES. Nothing here can check that, so the tool description
+ * and the manual both say it outright: an assistant calls this when its human
+ * has said the thing is wrong, and never on its own reading of the details.
+ *
+ * The row is best-effort in the strong sense — awaited, unable to throw. Losing
+ * a piece of evidence is bad; refusing to close an introduction a human has
+ * finished with because an evidence table hiccuped is worse.
+ */
+export async function notTheThing(
+  matchId: string,
+  accountId: string,
+  cfg?: Config,
+): Promise<{ promoted: string[]; recorded: boolean }> {
+  const m = await loadOpenMatchFor(matchId, accountId, false);
+  let recorded = false;
+  try {
+    const [want, have] = await Promise.all([getCard(m.card_want), getCard(m.card_have)]);
+    const words = want && have
+      ? wordAgreement(
+          { kind: want.kind, also_called: want.also_called, not_these: want.not_these, attributes: want.attributes },
+          { kind: have.kind, also_called: have.also_called, not_these: have.not_these, attributes: have.attributes },
+        )
+      : undefined;
+    const r = await getPool().query(
+      `INSERT INTO not_the_thing (match_id, card_want, card_have, tier, signals)
+       VALUES ($1,$2,$3,$4,$5::jsonb)
+       ON CONFLICT (match_id) DO NOTHING`,
+      [
+        matchId,
+        m.card_want,
+        m.card_have,
+        m.certainty ?? 'sure',
+        JSON.stringify({
+          fit: Number(m.score),
+          ...(words
+            ? {
+                words: words.score,
+                coverage: words.coverage,
+                brand: words.brand,
+                model: words.model,
+                head: words.head,
+                shared_beyond_head: words.sharedBeyondHead,
+                negated: words.negated,
+              }
+            : {}),
+        }),
+      ],
+    );
+    recorded = !!r.rowCount;
+  } catch {
+    /* the introduction still closes */
+  }
+  const promoted = await declineMatch(matchId, accountId, cfg);
+  return { promoted, recorded };
+}
+
+/** What the human's assistant says when their human says it is not the thing.
+ *  It closes the same way a decline closes, so it says the same thing about the
+ *  other side, and adds the one fact that is different: the words are kept. */
+export const NOT_THE_THING_SENTENCE =
+  'Right, that one is closed off now, and no reason went with it. I have made a note of what did not fit, so the switchboard gets better at telling these apart.';
+
+/**
  * SEVER. The switchboard closing an introduction itself, rather than a human
  * closing one off (docs/trust-and-safety.md, "Enforcement").
  *
@@ -944,10 +1032,43 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   if (typeof card.kind === 'string' && card.kind.trim()) {
     notes.push({ text: promptSafe(card.kind.trim(), KIND_MAX_CHARS), provenance: 'counterparty-untrusted' });
   }
+  // AND THEIR OTHER WORDS FOR THE SAME THING (migration 050). It is free text
+  // the other side wrote about their own thing, so it wears their label exactly
+  // as their `kind` does, goes through promptSafe on the same terms, and is
+  // read by the assistant as information rather than as instruction. What they
+  // said the thing is NOT stays here inside the engine: it is a search signal,
+  // and reading somebody else's exclusions aloud is not material for a
+  // decision.
+  for (const phrase of otherWordsOf(card.also_called)) {
+    notes.push({
+      text: promptSafe(phrase, KIND_MAX_CHARS),
+      provenance: 'counterparty-untrusted',
+    });
+  }
   // And on a POSSIBLE one, the switchboard's own word that it may be
   // something else: the details are exactly where a human decides that.
   const maybe = possibleNote(m);
-  if (maybe) notes.push(maybe);
+  if (maybe) {
+    notes.push(maybe);
+    // WHICH SPECIFICS AGREE AND WHICH DO NOT, computed from the two postings'
+    // own words (matchTiers.ts agreementSentence). It is the switchboard
+    // speaking, so it wears the switchboard's label, and it names kinds of
+    // detail and never a figure of any sort — see the boundary written over
+    // that function. Only on a maybe: on a sure one there is nothing to weigh.
+    const own = await getCard(side === 'want' ? m.card_want : m.card_have);
+    if (own) {
+      notes.push(
+        sbNote(
+          agreementSentence(
+            wordAgreement(
+              { kind: own.kind, also_called: own.also_called, not_these: own.not_these, attributes: own.attributes },
+              { kind: card.kind, also_called: card.also_called, not_these: card.not_these, attributes: card.attributes },
+            ),
+          ),
+        ),
+      );
+    }
+  }
   payload.notes = notes;
   return assertOutbound('intro.attributes', payload);
 }

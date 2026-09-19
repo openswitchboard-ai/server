@@ -19,6 +19,7 @@ import * as humanLinks from '../domain/humanLinks.js';
 import * as matches from '../domain/matches.js';
 import * as nearMiss from '../domain/nearMisses.js';
 import * as offers from '../domain/offers.js';
+import * as refine from '../domain/refine.js';
 import * as settlements from '../domain/settlements.js';
 import { checkReadRate, checkWriteRate } from '../domain/quotas.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
@@ -447,7 +448,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'respond',
     description:
-      "Respond to an introduction or an offer, or fetch the one-question page your human presses. Every answer carries the sentence to say: lead with it. A `possible_note` means they decide from the details first. THE LINK ORDER, all in the turn you are in: say what the page will ask, hand the link over, THEN call wait_for_press on the `press_id` beside it. \"Let me know once you have pressed it\" is a sentence you never write. Never press one of these pages for your human and never ask for their PIN: the press is how the switchboard knows a person agreed. LINK ACTIONS, each answering { link, press_id, expires_in_minutes, what_it_does }: request_share_name (their first name and their SUBURB cross here — say suburb, and never invite anything vaguer), request_accept, request_auto_negotiate, request_photo (they send it from their own phone; you cannot send an image), request_report (never talk them out of it, never report anybody yourself), request_keep_talking. OTHER ACTIONS: express_interest (does nothing), decline, propose_offer (the figure is the one your human said, in the words they said it; on Pass on it answers CONSENT_REQUIRED with their own page bound to that figure, and only Auto-negotiate lets you send one yourself), send_to_human, decline_offer, withdraw_offer, list_offers, verdict (\"how was that: good, fine or bad?\"), archive. read_manual(\"links_and_presses\").",
+      "Respond to an introduction or an offer, or fetch a page your human presses. Every answer carries the sentence to say: lead with it. A `possible_note` means they decide from the details. THE LINK ORDER, all in one turn: say what the page asks, hand the link over, THEN wait_for_press on the `press_id` beside it. \"Let me know once you have pressed it\" is a sentence you never write. Never press one for your human and never ask for their PIN: the press is how the switchboard knows a person agreed. LINK ACTIONS, each answering { link, press_id, expires_in_minutes, what_it_does }: request_share_name (their first name and their SUBURB cross here — say suburb, and never invite anything vaguer), request_accept, request_auto_negotiate, request_photo (from their own phone; you cannot send an image), request_report (never talk them out of it, never report anybody yourself), request_keep_talking. OTHER ACTIONS: express_interest (does nothing), decline, not_the_thing (ONLY on your human's word that a maybe is wrong — never yours; closes as decline does), propose_offer (the figure is the one your human said, in the words they said it; on Pass on it answers CONSENT_REQUIRED with their own page bound to it, and only Auto-negotiate lets you send one), send_to_human, decline_offer, withdraw_offer, list_offers, verdict (\"how was that: good, fine or bad?\"), archive. read_manual(\"links_and_presses\").",
     inputSchema: {
       type: 'object',
       properties: {
@@ -464,6 +465,7 @@ export const TOOLS: ToolDef[] = [
             'express_interest',
             'opt_in',
             'decline',
+            'not_the_thing',
             'propose_offer',
             'send_to_human',
             'decline_offer',
@@ -557,6 +559,33 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: { intro_id: { type: 'string', format: 'uuid' } },
       required: ['intro_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'refine_intent',
+    description:
+      "Give the switchboard your human's OTHER WORDS for something they have already put up, so it can find things worded differently. `also_called` is up to six short phrases for the same thing — the trade name, the part number, what everyone in that hobby says, \"BPK\", \"die-spring mod\" — and `not_these` is up to six short phrases they say it is NOT (\"elastomer kit\", \"whole pedal set\"), which makes close things count for less and hides nothing from them. Use their own words, gathered in ordinary talk: ask what else people call it and whether there is a near neighbour it keeps getting mistaken for. THIS CANNOT CHANGE WHAT THE THING IS — a different thing means taking it down and putting it up again, the same as a different heading. Plain words only: no price, no email address, no phone number, no link, and no wording aimed at an AI, or it comes back with the ordinary plain-words answer. The switchboard looks again by itself the moment this lands, so stay in the conversation and bring your human whoever comes forward. Say the `say_note` sentence as it stands, and never the id.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        intent_id: { type: 'string', format: 'uuid' },
+        also_called: {
+          type: 'array',
+          maxItems: 6,
+          items: { type: 'string', minLength: 1, maxLength: 60 },
+          description:
+            "Your human's other words for the same thing, in their words. Up to six short phrases.",
+        },
+        not_these: {
+          type: 'array',
+          maxItems: 6,
+          items: { type: 'string', minLength: 1, maxLength: 60 },
+          description:
+            'Short phrases your human says it is NOT. Up to six. Nothing is hidden from them by this; close things simply count for less.',
+        },
+      },
+      required: ['intent_id', 'also_called'],
       additionalProperties: false,
     },
   },
@@ -837,7 +866,16 @@ const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents']);
  * account the same as sending a message does. That is the point — a link is
  * cheap for an agent to ask for and expensive for a human to be handed.
  */
-const WRITE_TOOLS = new Set(['send_message', 'publish_intent', 'respond', 'settle']);
+// `refine_intent` is on it too, and for the ordinary reason: each call puts the
+// posting back through the screen and buys it a fresh embedding, so it costs
+// the switchboard real money and must cost the account something as well.
+const WRITE_TOOLS = new Set([
+  'send_message',
+  'publish_intent',
+  'respond',
+  'settle',
+  'refine_intent',
+]);
 
 /**
  * AND THE ONE RAIL UNDER wait_for_press, which is charged for neither.
@@ -1310,6 +1348,13 @@ async function dispatchToolInner(
           },
         });
       }
+      case 'refine_intent':
+        return ok(
+          await refine.refineIntent(cfg, accountId, args?.intent_id, {
+            also_called: args?.also_called,
+            not_these: args?.not_these,
+          }),
+        );
       case 'amend_intent':
         return ok({
           ...(await cards.amendIntent(cfg, accountId, args?.intent_id, args?.patch)),
@@ -1368,7 +1413,7 @@ async function dispatchToolInner(
         // attempt to attach one is rejected outright, never stored, never
         // forwarded.
         if (
-          (action === 'decline' || action === 'decline_offer') &&
+          (action === 'decline' || action === 'decline_offer' || action === 'not_the_thing') &&
           Object.keys(args ?? {}).some((k) => /reason/i.test(k))
         ) {
           return invalidInput('declines carry no reason, by design');
@@ -1422,6 +1467,21 @@ async function dispatchToolInner(
               ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
               note: matches.sbNote(
                 matches.withCameForward(matches.DECLINE_SENTENCE, promoted),
+              ),
+            });
+          }
+          case 'not_the_thing': {
+            // Their human looked at a maybe and said it is the wrong thing. It
+            // closes exactly as a decline closes — reasonless to the other
+            // side, the slot freed, nobody muted — and writes down the pair's
+            // signals so the lines can be re-checked against real judgements.
+            const { promoted } = await matches.notTheThing(intro_id, accountId, cfg);
+            return ok({
+              intro_id,
+              state: 'declined',
+              ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
+              note: matches.sbNote(
+                matches.withCameForward(matches.NOT_THE_THING_SENTENCE, promoted),
               ),
             });
           }

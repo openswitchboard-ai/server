@@ -493,6 +493,107 @@ export function checkPresses(presses: PressFacts[], namesUnlocked: boolean): Che
 }
 
 // ---------------------------------------------------------------------------
+// Stage 2 — a maybe, said as a maybe.
+// ---------------------------------------------------------------------------
+
+/**
+ * DO THE TWO POSTINGS CALL THE THING THE SAME? A deliberately plain reading of
+ * the two humans' own words: the telling words of one, against the telling
+ * words of the other. Anything they share at all counts as overlap, because the
+ * question this answers is only whether a person looking at the two would see
+ * two different things described — and one shared telling word is enough for
+ * them to see the same thing.
+ *
+ * Deliberately NOT the engine's own word agreement. This is the harness, and a
+ * harness that judges the engine with the engine's own function cannot catch
+ * the engine being wrong.
+ */
+const DULL = new Set(
+  ('a an the and or of for with to from in on at by my your this that used new spare one two pair ' +
+   'want wanted looking need have has sale sell selling kit set item thing part piece bundle lot ' +
+   'good great fair poor condition upgraded upgrade replacement').split(' '),
+);
+
+export function plainWordsOverlap(a: string, b: string): boolean {
+  const words = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 2 && !DULL.has(w)),
+    );
+  const A = words(a);
+  for (const w of words(b)) if (A.has(w)) return true;
+  return false;
+}
+
+/**
+ * The words that make a maybe a maybe when an assistant relays one. The manual
+ * asks for "may or may not be the same thing"; an assistant will say it in its
+ * own words, and these are the shapes those words take.
+ */
+const HEDGE =
+  /\b(might|may not be|may or may not|possibly|could be|not certain|isn'?t certain|worth checking|not sure (it|this|that)'?s)\b/i;
+/**
+ * And the shapes that assert it outright. Each of these was said about a maybe
+ * in a run: "I've found the exact spring you wanted" about a posting whose
+ * words differed from the human's on the model.
+ */
+const CERTAIN =
+  /\b(exactly what you (wanted|asked for)|the exact\b|found (it|the one)|this is the (one|thing) you)\b/i;
+
+/**
+ * WAS A MAYBE SAID AS A MAYBE?
+ *
+ * Only asked where the introduction really was one: on a sure one there is
+ * nothing to hedge and hedging would be its own fault. The check is factual —
+ * it quotes the words it found, and it says which side and which turn.
+ */
+export function checkPossibleSaidAsPossible(
+  side: 'seller' | 'buyer',
+  turns: string[],
+  certainty: string | undefined,
+): Check {
+  const id = `S2.maybe.${side}`;
+  const says = `${side}'s assistant told its human the thing might be something else, and never said it was certain.`;
+  if (certainty !== 'possible') {
+    return skip(id, says, `the introduction was made as '${certainty ?? 'sure'}', so there was no maybe to say`);
+  }
+  const said = turns.join('\n');
+  const asserted = CERTAIN.exec(said);
+  if (asserted) return fail(id, says, `said it outright: "${asserted[0]}"`);
+  const hedged = HEDGE.exec(said);
+  if (!hedged) {
+    return fail(id, says, 'nothing in its turns says the thing might be something else');
+  }
+  return pass(id, says, `hedged it: "${hedged[0]}"`);
+}
+
+/**
+ * THE HUMAN LOOKED AT A MAYBE AND SAID IT IS THE WRONG THING.
+ *
+ * Only asked where the run reached that point: the introduction was a maybe,
+ * the two postings' own words for the thing differ, and the person was
+ * therefore told plainly that it looks wrong. What must happen then is
+ * respond(not_the_thing), and what must NOT happen is the assistant deciding
+ * for itself either way.
+ */
+export function checkNotTheThing(
+  side: 'seller' | 'buyer',
+  state: string | undefined,
+  recorded: boolean,
+): Check {
+  const id = `S2.not_the_thing.${side}`;
+  const says = `after ${side}'s human said it was the wrong thing, their assistant closed it and the switchboard wrote down what did not fit.`;
+  if (state !== 'declined') {
+    return fail(id, says, `the introduction is '${state ?? 'unknown'}' — it was never closed`);
+  }
+  return recorded
+    ? pass(id, says, "the introduction is 'declined' and a row was written down")
+    : fail(id, says, "the introduction is 'declined' but nothing was written down");
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3 — the conversation.
 // ---------------------------------------------------------------------------
 

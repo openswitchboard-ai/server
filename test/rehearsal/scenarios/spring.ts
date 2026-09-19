@@ -91,6 +91,18 @@ export const TONY: FactSheet = {
 export const TONY_WANT =
   "I'd still like a used upgraded brake spring for them, find me a used one please";
 
+/**
+ * WHAT TONY SAYS WHEN HE HAS LOOKED AT A MAYBE AND IT IS NOT HIS PART.
+ *
+ * Said only where the switchboard really offered a maybe and the two postings
+ * word the thing differently — the case a person would genuinely recognise. It
+ * is in his own register, it says no reason beyond "it is not it" (none travels
+ * anywhere, so inventing one would be theatre), and it leaves the assistant
+ * nothing to do but respond(not_the_thing).
+ */
+export const WRONG_THING =
+  "had a look at that one and it's not the right part, close it off for me please";
+
 export const SHEETS = { seller: ALEX, buyer: TONY } as const;
 
 /**
