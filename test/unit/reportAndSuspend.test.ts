@@ -822,10 +822,12 @@ describe('the connect block leads with it', () => {
     world.stopped.add(ANA);
     const text = await instructionsFor(cfg, { accountId: ANA });
     expect(text.startsWith(SUSPENDED_HEADING)).toBe(true);
-    const own = text.indexOf(OWN_HUMAN_HEADING);
-    if (own !== -1) expect(text.indexOf(SUSPENDED_HEADING)).toBeLessThan(own);
-    // The manual still follows, unchanged.
-    expect(text).toContain('OPERATING MANUAL');
+    // And on a stopped account their own facts are not served at all: an area
+    // and a clock are for work this agent is not going to be doing, and the
+    // connect text is capped.
+    expect(text).not.toContain(OWN_HUMAN_HEADING);
+    // The connect page still follows, with the rules that never bend on it.
+    expect(text).toContain('THE RULES THAT NEVER BEND');
   });
 
   it('says the same sentence the tools say, and asks for memory', async () => {
@@ -847,7 +849,7 @@ describe('the connect block leads with it', () => {
     });
     const errors: unknown[] = [];
     const text = await instructionsFor(cfg, { accountId: ANA, onError: (e) => errors.push(e) });
-    expect(text).toContain('OPERATING MANUAL');
+    expect(text).toContain('THE RULES THAT NEVER BEND');
     expect(text).not.toContain(SUSPENDED_HEADING);
   });
 });

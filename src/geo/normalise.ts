@@ -46,6 +46,7 @@ import {
   regionNamed,
   resolvePlace,
   type Place,
+  type PlaceHint,
 } from './gazetteer.js';
 
 /** Radius assumed for a bucket the gazetteer cannot place. A card that names
@@ -218,9 +219,13 @@ function refuseCountry(text: string): void {
   }
 }
 
-/** Refuse a name several cities answer to, and say which they are. */
-function refuseAmbiguous(text: string): void {
-  const places = ambiguousPlaces(text);
+/** Refuse a name several cities answer to, and say which they are.
+ *
+ *  The hint does not change what is refused, only the order the candidates are
+ *  read out in: the human's own country first, so the first name their agent
+ *  says back to them is the likely one. */
+function refuseAmbiguous(text: string, hint: PlaceHint): void {
+  const places = ambiguousPlaces(text, hint);
   if (!places) return;
   const candidates = places.map(qualifyPlace);
   throw new OsbError('LOCATION_AMBIGUOUS', {
@@ -233,10 +238,10 @@ function refuseAmbiguous(text: string): void {
 }
 
 /** Every gate a free-text location passes before anything places it. */
-function refuseUnplaceable(text: string): void {
+function refuseUnplaceable(text: string, hint: PlaceHint): void {
   refuseRegion(text);
   refuseCountry(text);
-  refuseAmbiguous(text);
+  refuseAmbiguous(text, hint);
 }
 
 /**
@@ -252,8 +257,13 @@ function refuseUnplaceable(text: string): void {
  * the human, not about the map, and there is nothing in it to resolve. It is
  * stored only when it is not the default, so a card written before reach
  * existed and a card that means the same thing look the same in the database.
+ *
+ * `hint` says which country the human is probably in (src/geo/homeCountry.ts).
+ * It changes nothing about what resolves or what is refused — only the order
+ * the ambiguous candidates come back in, so a person in Franklin, ACT hears
+ * about their own Franklin first rather than five American ones.
  */
-export function normaliseGeo(geo: any): NormalisedGeo {
+export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
   const place: string | undefined =
     typeof geo?.place === 'string' && geo.place.trim() ? geo.place.trim() : undefined;
   const bucket: string | undefined =
@@ -299,7 +309,7 @@ export function normaliseGeo(geo: any): NormalisedGeo {
         human_action: `'${place}' reads like a street address. ${NAME_A_PLACE}`,
       });
     }
-    refuseUnplaceable(place);
+    refuseUnplaceable(place, hint);
     const hit = resolvePlace(place);
     if (!hit) {
       throw new OsbError('LOCATION_UNRESOLVED', {
@@ -327,7 +337,7 @@ export function normaliseGeo(geo: any): NormalisedGeo {
   // An invented bucket ("canberra", "AU-ACT", "AU"): the gazetteer gets a
   // turn, and what it finds becomes the card's place and canonical cell. A
   // bucket too wide or too shared to place is refused the way a place would be.
-  refuseUnplaceable(bucket!);
+  refuseUnplaceable(bucket!, hint);
   const hit = resolvePlace(bucket!);
   if (hit) return placed(bucket!, hit);
 

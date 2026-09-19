@@ -416,6 +416,20 @@ async function collectPhotosFor(
  * failure anywhere in there rolls back and the messages are still waiting. On
  * commit they are gone for good.
  */
+/**
+ * WHAT TO SAY WHEN A PICTURE COMES, and what to leave alone.
+ *
+ * Rehearsal, 19 September: the manual's rule is that an agent says a picture
+ * has come and who it is from, and leaves what is in it for its human to see
+ * — the first look belongs to the person who may be about to pay for the
+ * thing in it. It rides only on a batch that actually carries one: a note on
+ * every collection is a note nobody reads.
+ */
+export const PHOTO_NOTE = {
+  text: 'Say that a picture has come and who it is from, and leave what is in it for your human to see. Once they have looked, talk about it as freely as they like.',
+  provenance: 'switchboard-system' as const,
+};
+
 export async function receiveMessages(
   accountId: string,
   matchId: string,
@@ -425,6 +439,7 @@ export async function receiveMessages(
   photos?: any[];
   more_waiting: boolean;
   note: { text: string; provenance: 'switchboard-system' };
+  photo_note?: typeof PHOTO_NOTE;
 }> {
   const ch = await loadOpenChannel(matchId, accountId);
   const client = await getPool().connect();
@@ -446,7 +461,7 @@ export async function receiveMessages(
       const only = await collectPhotosFor(cfg, accountId, matchId, ch.channelId);
       return {
         messages: [],
-        ...(only.length ? { photos: only } : {}),
+        ...(only.length ? { photos: only, photo_note: PHOTO_NOTE } : {}),
         more_waiting: false,
         note: await collectNote(ch, accountId, 0, only.length),
       };
@@ -496,7 +511,7 @@ export async function receiveMessages(
     const photos = await collectPhotosFor(cfg, accountId, matchId, ch.channelId);
     return {
       messages,
-      ...(photos.length ? { photos } : {}),
+      ...(photos.length ? { photos, photo_note: PHOTO_NOTE } : {}),
       more_waiting: !!rest.rowCount,
       note: await collectNote(ch, accountId, collected, photos.length),
     };

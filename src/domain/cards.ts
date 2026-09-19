@@ -23,6 +23,7 @@ import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
+import { ownCountryHint } from './profile.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
 import type { Config } from '../config.js';
@@ -91,6 +92,33 @@ function logSnap(event: string, fields: Record<string, unknown>): void {
 
 function filedUnderNote(decision: { changed: boolean; category: string }): string {
   return `Filed under ${categoryLabelPath(decision.category)}, which is the nearest thing the catalogue knows. Your own words for it are kept as they were. Say where it went, and if that is the wrong shelf, take it down and put it up again somewhere better.`;
+}
+
+/**
+ * A posting's location, resolved — and, when the name turns out to be one
+ * several real towns answer to, asked again with the human's own country in
+ * front of the list.
+ *
+ * The rehearsal (19 September 2026): a person living in Franklin, ACT was
+ * offered five Franklins, all of them in the United States, because the
+ * candidates are ranked on population and five American towns outrank both
+ * Australian ones. The hint fixes the order; it never picks, so the human is
+ * asked exactly as before.
+ *
+ * Reading the hint costs an identity decrypt, so it is read only on the
+ * refusal that needs it. Nothing about a posting whose place resolves cleanly
+ * — which is nearly all of them — touches the account at all.
+ */
+async function placeCard(geo: any, accountId: string, purpose: string): Promise<NormalisedGeo> {
+  try {
+    return normaliseGeo(geo);
+  } catch (e) {
+    if (!(e instanceof OsbError) || e.payload.code !== 'LOCATION_AMBIGUOUS') throw e;
+    // The same refusal again, with the candidates in the order this human
+    // should hear them. It raises LOCATION_AMBIGUOUS once more; it returns
+    // only if a hint somehow settled the name, which is fine either way.
+    return normaliseGeo(geo, await ownCountryHint(accountId, purpose));
+  }
 }
 
 function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
@@ -365,7 +393,7 @@ export async function publishIntent(
 
   // Location resolution: a named place becomes a centre point and a
   // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
-  const geo = normaliseGeo(card.geo);
+  const geo = await placeCard(card.geo, accountId, 'own-country-for-publish');
 
   const account = await getAccount(accountId);
   if (!account) throw new Error('account not found');
@@ -765,7 +793,9 @@ export async function amendIntent(
   // Canonicalisation is idempotent, so rebuilding `current` from attributes
   // that already went through it changes nothing.
   const attributes = canonicaliseAttributes(filed.category, next.attributes ?? {});
-  const geo = normaliseGeo(next.geo);
+  // An amend re-resolves the place, so it asks the same question as publish
+  // and must offer the same answers in the same order.
+  const geo = await placeCard(next.geo, accountId, 'own-country-for-amend');
 
   await checkPublishQuota(accountId, cfg.quotas);
 

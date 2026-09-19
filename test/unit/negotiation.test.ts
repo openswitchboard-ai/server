@@ -51,7 +51,7 @@ import * as chome from '../../src/counter/pagesHome.js';
 import * as cpages from '../../src/counter/pages.js';
 import { COUNTER_ROUTE_TABLE } from '../../src/counter/routes.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
-import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
+import { MANUAL_BODY } from '../../src/mcp/instructions.js';
 import { OsbError } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 import type { FastifyInstance } from 'fastify';
@@ -927,25 +927,25 @@ describe('the pages say it in plain words', () => {
 // ---------------------------------------------------------------------------
 describe('the operating manual', () => {
   it('says whose the numbers are, to the agent it addresses', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('THE NUMBERS ARE THEIRS');
-    expect(SERVER_INSTRUCTIONS).toContain("the money is your human's");
-    expect(SERVER_INSTRUCTIONS).toContain('Never invent a figure of your own');
-    expect(SERVER_INSTRUCTIONS).toContain('Pass on');
-    expect(SERVER_INSTRUCTIONS).toContain('Auto-negotiate');
-    expect(SERVER_INSTRUCTIONS).toContain('approval page');
+    expect(MANUAL_BODY).toContain('THE NUMBERS ARE THEIRS');
+    expect(MANUAL_BODY).toContain("the money is your human's");
+    expect(MANUAL_BODY).toContain('Never invent a figure of your own');
+    expect(MANUAL_BODY).toContain('Pass on');
+    expect(MANUAL_BODY).toContain('Auto-negotiate');
+    expect(MANUAL_BODY).toContain('approval page');
   });
 
   it('keeps the acceptance guidance it already had, and says the human never needs a gate', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('send_to_human');
+    expect(MANUAL_BODY).toContain('send_to_human');
     // Version 16: parking an offer is the agent's advice arriving, never a
     // lock on the human's yes — any live offer is theirs to take.
-    expect(SERVER_INSTRUCTIONS).toContain('never a gate on their yes');
-    expect(SERVER_INSTRUCTIONS).toContain('Declines carry no reason');
-    expect(SERVER_INSTRUCTIONS).toContain('accepting an offer is still theirs');
+    expect(MANUAL_BODY).toContain('never a gate on their yes');
+    expect(MANUAL_BODY).toContain('Declines carry no reason');
+    expect(MANUAL_BODY).toContain('accepting an offer is still theirs');
   });
 
   it('never sends a human to something called the counter', () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/\bthe counter\b/i);
+    expect(MANUAL_BODY).not.toMatch(/\bthe counter\b/i);
   });
 
   it('the respond tool tells an agent the same thing before it tries', () => {

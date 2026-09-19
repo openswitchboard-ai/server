@@ -18,7 +18,7 @@ import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
 export const SETTLEMENT_OFF_BLOCK =
-  'THIS DEPLOYMENT, TODAY\nSettlement is switched off here: the switchboard has no part in any payment, holds no money, and settle answers SETTLEMENT_UNAVAILABLE. Any paying is arranged entirely between the two humans, and anyone claiming the switchboard is holding or expecting money is lying.';
+  'THIS DEPLOYMENT, TODAY\nSettlement is switched off here: settle answers SETTLEMENT_UNAVAILABLE, paying is between the two humans, and anyone claiming the switchboard holds money is lying.';
 
 /**
  * The manual, plus the two kinds of fact that cannot wait for a tool call.
@@ -42,27 +42,31 @@ export async function instructionsFor(
   cfg: Config,
   opts: { accountId?: string; onError?: (err: unknown) => void } = {},
 ): Promise<string> {
-  // Both blocks go FIRST, ahead of the versioned manual. The manual is over
-  // forty thousand characters; appended, these landed at 99% of it, which is
-  // the least-read position there is — and in a rehearsal an assistant asked
-  // its human for a suburb the switchboard had already handed it (2026-09-13).
-  // What is true of THIS human and THIS deployment is short, it is the part
-  // most likely to be acted on in the first exchange, and it belongs where an
-  // agent reads before it does anything.
+  // THE CORE GOES FIRST NOW, and the blocks follow it. The manual used to be
+  // fifty-three thousand characters, so anything appended to it sat at 99% of
+  // a text most clients had already cut off; these blocks went in front of it
+  // for that reason. The core is a thousand characters, every client delivers
+  // the whole of it, and what never bends belongs at the top of it.
   //
-  // And ahead of BOTH of them, where there is one: this account is suspended.
-  // Everything the other two blocks are for is work this agent will not be
-  // doing, and an agent that reads a suburb and a clock first starts composing
-  // a posting before it reaches the sentence that matters.
-  const front: string[] = [];
+  // The one thing that still goes ahead of everything: this account is
+  // suspended. Nothing under the other headings is work this agent will be
+  // doing, so an agent that reads a suburb and a clock first starts composing
+  // a posting before it reaches the sentence that matters — and on a stopped
+  // account their own facts are not served at all, for the same reason and to
+  // keep the whole string inside CONNECT_TEXT_CAP.
+  const blocks: string[] = [];
+  let stopped = '';
   if (opts.accountId) {
-    const stopped = await suspendedBlock(opts.accountId, { onError: opts.onError });
-    if (stopped) front.push(stopped);
-    const own = await ownHumanBlock(opts.accountId, { onError: opts.onError });
-    if (own) front.push(own);
+    stopped = await suspendedBlock(opts.accountId, { onError: opts.onError });
+    if (stopped) blocks.push(stopped);
   }
-  if (!settlementsConfigured(cfg)) front.push(SETTLEMENT_OFF_BLOCK);
-  return front.length ? `${front.join('\n\n')}\n\n${SERVER_INSTRUCTIONS}` : SERVER_INSTRUCTIONS;
+  blocks.push(SERVER_INSTRUCTIONS);
+  if (opts.accountId && !stopped) {
+    const own = await ownHumanBlock(opts.accountId, { onError: opts.onError });
+    if (own) blocks.push(own);
+  }
+  if (!settlementsConfigured(cfg)) blocks.push(SETTLEMENT_OFF_BLOCK);
+  return blocks.join('\n\n');
 }
 
 async function buildMcpServer(

@@ -76,7 +76,7 @@ import {
   type FooterLinks,
 } from '../../src/email/templates.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
-import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
+import { MANUAL_BODY } from '../../src/mcp/instructions.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = {
@@ -356,8 +356,8 @@ describe('a cadence belongs to an agent that runs between conversations', () => 
   });
 
   it('the manual says which sort of agent to say you are', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('runs_on_its_own');
-    expect(SERVER_INSTRUCTIONS).toMatch(/refused, because a schedule nobody keeps/i);
+    expect(MANUAL_BODY).toContain('runs_on_its_own');
+    expect(MANUAL_BODY).toMatch(/refused, because a schedule nobody keeps/i);
   });
 });
 
@@ -666,6 +666,17 @@ describe('what an agent is told right after posting', () => {
     expect(r.structuredContent.note.text).toBe(
       'It takes a minute or two to be matched. Ask me again then, or I will email you.',
     );
+  });
+
+  it('says what to say and what to keep to itself', async () => {
+    // Rehearsal, 19 September: "filed under goods.electronics, intent ID
+    // 39e0…". Both halves of that were on the answer with a written sentence
+    // beside them, so the answer now says so in a note of its own.
+    const r: any = await publish();
+    expect(r.structuredContent.say_note.provenance).toBe('switchboard-system');
+    expect(r.structuredContent.say_note.text).toMatch(/never said aloud/i);
+    expect(r.structuredContent.say_note.text).toMatch(/your human's own words/i);
+    expect(r.structuredContent.look_again_note).toBeDefined();
   });
 
   it('tells an always-on agent to look again itself', async () => {

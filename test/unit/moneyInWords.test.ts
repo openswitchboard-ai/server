@@ -387,7 +387,7 @@ describe('a figure in the note beside an offer', () => {
 
 describe('the manual', () => {
   it('carries the rule at the version it shipped at', async () => {
-    const { MANUAL, MANUAL_CHANGELOG, SERVER_INSTRUCTIONS } = await import(
+    const { MANUAL, MANUAL_CHANGELOG, MANUAL_BODY } = await import(
       '../../src/mcp/instructions.js'
     );
     // Version 35 is where this rule shipped; later versions stack on top of
@@ -400,8 +400,8 @@ describe('the manual', () => {
     expect(entry.note).toMatch(/propose_offer/);
     // The body says it too, so an agent connecting fresh reads it without the
     // changelog.
-    expect(SERVER_INSTRUCTIONS).toMatch(/the words you send carry NO figure at all/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/in digits or spelled out/i);
+    expect(MANUAL_BODY).toMatch(/the words you send carry NO figure at all/i);
+    expect(MANUAL_BODY).toMatch(/in digits or spelled out/i);
   });
 
   it('tells the tool surface the same thing', async () => {

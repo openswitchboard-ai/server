@@ -887,8 +887,8 @@ describe('the sentence that comes back with a collection', () => {
     expect(out.note.text).toContain('400 AUD');
     // And the tool itself tells an agent the sentence is there to lead with.
     const receive = TOOLS.find((t) => t.name === 'collect_messages')!;
-    expect(receive.description).toMatch(/lead with that/i);
-    expect(receive.description).toMatch(/something other than words is waiting/i);
+    expect(receive.description).toMatch(/lead with them/i);
+    expect(receive.description).toMatch(/never the whole answer/i);
   });
 });
 
@@ -903,7 +903,7 @@ describe('the tool surface', () => {
     const send = TOOLS.find((t) => t.name === 'send_message')!;
     expect(send.inputSchema.required).toEqual(['intro_id', 'text']);
     const receive = TOOLS.find((t) => t.name === 'collect_messages')!;
-    expect(receive.description).toMatch(/DELETES IT/);
+    expect(receive.description).toMatch(/COLLECTING DELETES/);
     expect(receive.description).toMatch(/counterparty-untrusted/);
   });
 

@@ -31,6 +31,7 @@
 import { getTimezone } from '../domain/accounts.js';
 import { clockNote } from '../domain/localTime.js';
 import { areaNote, readOwnArea, type OwnArea } from '../domain/profile.js';
+import { countryOfTimeZone } from '../geo/homeCountry.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
 
 /**
@@ -76,12 +77,14 @@ export async function suspendedBlock(
 /** The heading, in the manual's own register and beside THIS DEPLOYMENT, TODAY. */
 export const OWN_HUMAN_HEADING = 'YOUR HUMAN, TODAY';
 
-/** What the heading is for, said once before the facts themselves. */
+/**
+ * What the heading is for, said once before the facts themselves. Held short:
+ * the connect text is capped now (instructions.ts, CONNECT_TEXT_CAP), and this
+ * preamble is the one part of the block that says nothing an agent acts on.
+ */
 export const OWN_HUMAN_PREAMBLE =
-  'What the switchboard already holds about the human you act for. They gave it ' +
-  'on their own page, and it is here so your first question to them is never one ' +
-  'they have already answered. Both can change: what a sweep tells you later is ' +
-  'newer than this, and wins.';
+  'What the switchboard holds about the human you act for; a sweep tells you ' +
+  'anything newer.';
 
 /**
  * How long the whole block may take before connect goes on without it. One
@@ -154,11 +157,18 @@ export async function ownHumanBlock(
 ): Promise<string> {
   const now = opts.now ?? new Date();
   try {
+    // The zone is read first, and not only to be said back: it is what tells
+    // the gazetteer which country this human is in, so a shared name is read
+    // out to them with their own country's places at the top. One cheap query
+    // ahead of the identity read, both still inside the one budget.
     const [area, timezone] = await withTimeout(
-      Promise.all([
-        readOwnArea(accountId, OWN_AREA_CONNECT_PURPOSE),
-        getTimezone(accountId),
-      ]),
+      (async () => {
+        const tz = await getTimezone(accountId);
+        const own = await readOwnArea(accountId, OWN_AREA_CONNECT_PURPOSE, {
+          country: countryOfTimeZone(tz),
+        });
+        return [own, tz] as const;
+      })(),
       opts.timeoutMs ?? OWN_HUMAN_READ_TIMEOUT_MS,
     );
     return ownHumanBlockText({ area, timezone }, now);

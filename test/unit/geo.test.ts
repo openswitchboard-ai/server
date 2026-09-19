@@ -18,6 +18,7 @@ import {
   regionNamed,
   resolvePlace,
 } from '../../src/geo/gazetteer.js';
+import { countryOfArea, countryOfTimeZone, homeCountry } from '../../src/geo/homeCountry.js';
 import {
   MAX_RADIUS_KM,
   describeReach,
@@ -264,6 +265,54 @@ describe('gazetteer', () => {
     for (const s of ['Perth, Scotland', 'Perth, WA', 'AU-ACT', 'AU']) {
       expect(ambiguousPlaces(s), s).toBeUndefined();
     }
+  });
+
+  it("offers the human's own country first when a name is shared", () => {
+    // The rehearsal (19 September 2026): a person living in Franklin, ACT was
+    // offered five Franklins, every one of them in the United States, and
+    // their assistant told them truthfully that the name only resolved to US
+    // cities. Both Australian Franklins were in the asset the whole time,
+    // ranked off the end of the list by population.
+    const plain = ambiguousPlaces('Franklin')!.map((p) => qualifyPlace(p).display);
+    expect(plain.every((d) => d.endsWith(', US'))).toBe(true);
+
+    const mine = ambiguousPlaces('Franklin', { country: 'AU' })!.map(
+      (p) => qualifyPlace(p).display,
+    );
+    expect(mine[0]).toBe('Franklin, Australian Capital Territory, AU');
+    expect(mine[1]).toBe('Franklin, Tasmania, AU');
+    // Still five, and the American ones still in population order behind.
+    expect(mine.length).toBe(5);
+    expect(mine.slice(2)).toEqual(plain.slice(0, 3));
+    // And every one of them still selects the place it names.
+    for (const p of ambiguousPlaces('Franklin', { country: 'AU' })!) {
+      expect(resolvePlace(qualifyPlace(p).place)!.country).toBe(p.country);
+    }
+  });
+
+  it('leaves the order alone when the hint names a country without the name', () => {
+    const plain = ambiguousPlaces('Franklin')!.map((p) => qualifyPlace(p).display);
+    for (const cc of ['JP', 'FR', 'XX']) {
+      expect(
+        ambiguousPlaces('Franklin', { country: cc })!.map((p) => qualifyPlace(p).display),
+        cc,
+      ).toEqual(plain);
+    }
+    expect(ambiguousPlaces('Franklin', {})!.map((p) => qualifyPlace(p).display)).toEqual(plain);
+  });
+
+  it('a hint reorders the question and never answers it', () => {
+    // A name one city plainly owns is still not put to anyone, hint or no
+    // hint: an Australian typing "Sydney" is asked no more than anyone else.
+    for (const name of ['Paris', 'Canberra', 'Adelaide', 'Tokyo']) {
+      expect(ambiguousPlaces(name, { country: 'AU' }), name).toBeUndefined();
+    }
+    // And a name in question stays in question, even where exactly one place
+    // in the hinted country carries it — the switchboard asks rather than
+    // picking quietly on a clock setting.
+    const one = ambiguousPlaces('Franklin', { country: 'ZA' })!;
+    expect(qualifyPlace(one[0]).display).toBe('Franklin, KwaZulu-Natal, ZA');
+    expect(one.length).toBeGreaterThanOrEqual(2);
   });
 
   it('writes a place out in full', () => {
@@ -777,6 +826,63 @@ describe('every name the asset carries', () => {
   });
 });
 
+describe('which country a human is probably in', () => {
+  it('reads a country off the zones the switchboard actually sees', () => {
+    for (const [tz, cc] of [
+      ['Australia/Sydney', 'AU'],
+      ['Australia/Perth', 'AU'],
+      ['Pacific/Auckland', 'NZ'],
+      ['America/New_York', 'US'],
+      ['America/Los_Angeles', 'US'],
+      ['Pacific/Honolulu', 'US'],
+      ['US/Eastern', 'US'],
+      ['America/Toronto', 'CA'],
+      ['America/St_Johns', 'CA'],
+      ['Canada/Pacific', 'CA'],
+      ['Europe/London', 'GB'],
+      ['Europe/Dublin', 'IE'],
+    ] as [string, string][]) {
+      expect(countryOfTimeZone(tz), tz).toBe(cc);
+    }
+  });
+
+  it('says nothing rather than guessing, for a zone it has no table for', () => {
+    // A hint is worth having only where it is right. An unknown zone costs
+    // the ordering that was there before it, which is what everyone had.
+    for (const tz of ['Europe/Paris', 'Asia/Tokyo', 'UTC', '', '   ', 'nonsense', null, undefined]) {
+      expect(countryOfTimeZone(tz), String(tz)).toBeUndefined();
+    }
+  });
+
+  it('prefers the area on file over the clock, and drops an area in question', () => {
+    // A zone travels with a laptop; an area is something the person said.
+    expect(homeCountry({ area: 'Canberra', timezone: 'America/New_York' })).toBe('AU');
+    expect(homeCountry({ timezone: 'Australia/Sydney' })).toBe('AU');
+    // "Franklin" is the very question a hint is meant to help with, so it is
+    // no answer to it: the clock behind it is used instead.
+    expect(homeCountry({ area: 'Franklin', timezone: 'Australia/Sydney' })).toBe('AU');
+    expect(homeCountry({ area: 'Franklin' })).toBeUndefined();
+    expect(homeCountry({})).toBeUndefined();
+    expect(countryOfArea('Franklin, ACT')).toBe('AU');
+  });
+
+  it('carries the hint through the publish path without changing what places', () => {
+    const hint = { country: 'AU' };
+    // What resolves, resolves the same way with a hint as without one.
+    for (const place of ['Canberra', 'Franklin, ACT', 'Perth, Scotland', 'AU-ACT']) {
+      expect(normaliseGeo({ place, radius_km: 25 }, hint).geo.bucket, place).toBe(
+        normaliseGeo({ place, radius_km: 25 }).geo.bucket,
+      );
+    }
+    // What is refused is still refused — and now the first place the agent
+    // reads out to its human is the one down the road.
+    const e = err(() => normaliseGeo({ place: 'Franklin', radius_km: 25 }, hint));
+    expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
+    expect(e.payload.candidates[0].place).toBe('Franklin, Australian Capital Territory');
+    expect(e.payload.human_action).toContain('Franklin, Australian Capital Territory, AU');
+  });
+});
+
 describe('what the manual tells an agent about places', () => {
   // Version 40 gave the location ARGUMENT one home. What each reach means and
   // what the refusals are is on publish_intent, which is what an agent is
@@ -785,34 +891,35 @@ describe('what the manual tells an agent about places', () => {
   // back in their own voice, and posting wide. Every rule these two tests held
   // is still held, on whichever of the two now carries it.
   it('says to read the resolved place back, and what the refusals mean', async () => {
-    const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
+    const { MANUAL_BODY } = await import('../../src/mcp/instructions.js');
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!.description;
-    expect(SERVER_INSTRUCTIONS).toContain('location_resolved');
+    expect(MANUAL_BODY).toContain('location_resolved');
     expect(publish).toContain('location_resolved');
-    // The refusals are argument documentation and sit with the argument.
-    expect(publish).toContain('LOCATION_AMBIGUOUS');
-    expect(publish).toContain('LOCATION_UNRESOLVED');
-    expect(publish).toMatch(/ask which one, then repost with the fuller form/i);
+    // The refusals are a section of the manual now: read_manual("answers")
+    // holds every refusal that is the switchboard working, these two included.
+    expect(MANUAL_BODY).toContain('LOCATION_AMBIGUOUS');
+    expect(MANUAL_BODY).toContain('LOCATION_UNRESOLVED');
+    expect(MANUAL_BODY).toMatch(/post again with the fuller form it gives you/i);
     // The register: the place goes into what the agent says, in its own voice.
-    expect(SERVER_INSTRUCTIONS).toMatch(/say if that's wrong/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/amend it there and then/i);
+    expect(MANUAL_BODY).toMatch(/say if that's wrong/i);
+    expect(MANUAL_BODY).toMatch(/amend it there and then/i);
   });
 
   it('teaches place and reach as two different things, with the translation', async () => {
-    const { SERVER_INSTRUCTIONS } = await import('../../src/mcp/instructions.js');
+    const { MANUAL_BODY } = await import('../../src/mcp/instructions.js');
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!.description;
-    expect(SERVER_INSTRUCTIONS).toContain('geo.reach');
-    expect(SERVER_INSTRUCTIONS).toMatch(/lives where the thing lives/i);
+    expect(MANUAL_BODY).toContain('geo.reach');
+    expect(MANUAL_BODY).toMatch(/lives where the thing lives/i);
     // The sentence an agent actually has to translate, in both homes: it is
     // the one a rehearsal showed being got wrong.
-    expect(SERVER_INSTRUCTIONS).toMatch(/I'll post it anywhere in Australia/);
-    expect(publish).toMatch(/I'll post it anywhere in Australia/);
-    // What each reach means is on the tool, where the argument is filled in.
-    expect(publish).toMatch(/something done online/);
-    expect(publish).toMatch(/"country" for anywhere in that place's own country/);
-    expect(publish).toMatch(/never "Australia" in `place`/);
+    expect(MANUAL_BODY).toMatch(/I'll post it anywhere in Australia/);
+    // What each reach means is on the tool, where the argument is filled in,
+    // in the short form the description budget allows.
+    expect(publish).toMatch(/what happens online/);
+    expect(publish).toMatch(/"country" for what goes in a parcel/);
+    expect(publish).toMatch(/`reach` follows the THING/);
   });
 
   it('the reach change has a changelog note, and the log stays consistent', async () => {
@@ -833,7 +940,7 @@ describe('the geo tool schema agents actually see', () => {
     expect(geo.properties.reach.enum).toEqual(['radius', 'country', 'anywhere']);
     expect(publish.description).toMatch(/nearest suburb, city or region/);
     // The distinction the field exists for, at the point the model acts on it.
-    expect(publish.description).toMatch(/never "Australia" in `place`/);
+    expect(publish.description).toMatch(/`place` is the nearest suburb, city or region/);
     // anyOf cannot be expressed by constrained-decoding grammar compilers; the
     // server validates every listing against the full schema regardless.
     const blob = JSON.stringify(publish.inputSchema);

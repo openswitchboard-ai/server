@@ -168,6 +168,51 @@ describe('the suggestions themselves', () => {
     }
   });
 
+  it("puts the human's own country first when one is known", () => {
+    // The rehearsal (19 September 2026): a person in Franklin, ACT typed
+    // their own suburb and was offered American towns of the same name. The
+    // list is still the same list — their country is simply read first.
+    const plain = suggestAreas('frankl').map((s) => s.value);
+    expect(plain.every((v) => !v.startsWith('Franklin, Australian'))).toBe(true);
+
+    const mine = suggestAreas('frankl', undefined, { country: 'AU' }).map((s) => s.value);
+    expect(mine[0]).toBe('Franklin, Australian Capital Territory');
+    expect(mine[1]).toBe('Franklin, Tasmania');
+    expect(mine.length).toBe(plain.length);
+    // Everything else keeps the order it had, behind them.
+    expect(mine.slice(2)).toEqual(plain.slice(0, mine.length - 2));
+    // A hint for a country with no Franklin in it changes nothing at all.
+    for (const cc of ['JP', 'FR']) {
+      expect(suggestAreas('frankl', undefined, { country: cc }).map((s) => s.value), cc).toEqual(
+        plain,
+      );
+    }
+  });
+
+  it('finds a place a person has qualified as they typed it', () => {
+    // The second half of the same rehearsal: the posting door accepts
+    // "Franklin, ACT, Australia", and the box meant to help someone reach that
+    // string answered nothing — the index is keyed on a settlement's own name,
+    // and "franklin act" is nobody's name.
+    for (const typed of ['Franklin ACT', 'Franklin, ACT', 'Franklin, ACT, Australia']) {
+      expect(suggestAreas(typed).map((s) => s.value), typed).toEqual([
+        'Franklin, Australian Capital Territory',
+      ]);
+    }
+    expect(suggestAreas('Newtown NSW').map((s) => s.value)).toEqual([
+      'Newtown, New South Wales',
+    ]);
+    expect(suggestAreas('Perth, Scotland').map((s) => s.value)).toEqual(['Perth, Scotland']);
+    // A name that is simply two words is never taken apart: the plain reading
+    // answers first, and only a query nothing answers to is read as a hint.
+    expect(suggestAreas('Surry Hills')[0].value).toBe('Surry Hills, New South Wales');
+    expect(suggestAreas('New South').every((s) => s.value.toLowerCase().includes('new south')))
+      .toBe(true);
+    // And an invented qualifier still finds nothing rather than something.
+    expect(suggestAreas('Franklin, Nowhereland')).toEqual([]);
+    expect(suggestAreas('Nowhereville NSW')).toEqual([]);
+  });
+
   it('offers only places people live in — never a state, a territory or a country', () => {
     for (const q of ['austral', 'new south', 'califor', 'texas', 'united st']) {
       for (const s of suggestAreas(q)) {

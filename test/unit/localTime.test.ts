@@ -16,7 +16,7 @@ import {
   localTimeText,
   offsetMinutes,
 } from '../../src/domain/localTime.js';
-import { MANUAL_CHANGELOG, SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
+import { MANUAL_CHANGELOG, MANUAL_BODY } from '../../src/mcp/instructions.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
 
 const REHEARSAL = new Date('2026-09-12T05:58:46Z'); // 15:58 AEST, the have's expiry
@@ -86,9 +86,9 @@ describe('what the sweep says', () => {
   });
 
   it('the manual carries the rule and the version note', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('Times are theirs.');
-    expect(SERVER_INSTRUCTIONS).toContain('local_time_now');
-    expect(SERVER_INSTRUCTIONS).toContain('expires_local');
+    expect(MANUAL_BODY).toContain('Times are theirs.');
+    expect(MANUAL_BODY).toContain('local_time_now');
+    expect(MANUAL_BODY).toContain('expires_local');
     const v28 = MANUAL_CHANGELOG.find((c) => c.version === 28);
     expect(v28?.note).toMatch(/never call something expired from the date alone/);
   });
