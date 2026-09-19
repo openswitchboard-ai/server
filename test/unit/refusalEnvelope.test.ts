@@ -52,6 +52,10 @@ describe('the refusals that are the switchboard working', () => {
     expect(EXPECTED.sort()).toEqual(
       [
         'CATEGORY_PROHIBITED',
+        // The posting carries a money figure and this is the first time it has
+        // been sent. The figure comes back in plain words for the assistant to
+        // say to its human, which is the switchboard working, not a fault.
+        'CONFIRM_FIGURE',
         'CONSENT_REQUIRED',
         // One side of a conversation has spent the window its human's last
         // press granted it. Nothing has gone wrong, nothing is lost, and there

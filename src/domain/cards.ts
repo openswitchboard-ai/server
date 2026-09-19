@@ -25,6 +25,14 @@ import {
   detailShortfall,
   recordDetailAsked,
 } from './postingDetail.js';
+import {
+  FIGURE_HUMAN_ACTION,
+  figureAskKey,
+  figureQuestions,
+  figuresOnPosting,
+  type PostingFigure,
+} from './postingFigure.js';
+import { cadenceInPlainWords, readArrangement, type Arrangement } from './arrangement.js';
 import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
@@ -59,22 +67,54 @@ export interface PublishResult {
  * THE SENTENCE TO SAY AFTER POSTING, because the vague one keeps being said.
  *
  * Two things went wrong in the 19 September rehearsal and this note answers
- * both. An assistant posted and then told its human "I'll let you know when
- * someone comes forward" — with nothing scheduled, nothing saved, and no way
- * to wake itself, so nobody was ever going to let anybody know. And the same
- * assistant looked no more that day, although screening takes seconds and the
- * board is checked the moment a posting clears it, so somebody can be waiting
- * within minutes.
+ * both. An assistant posted and then told its human "I'll check back shortly
+ * and let you know the moment someone comes forward, no need to keep asking
+ * me" — with nothing scheduled, nothing saved, and no way to wake itself, so
+ * nobody was ever going to let anybody know. And the same assistant looked no
+ * more that day, although screening takes seconds and the board is checked the
+ * moment a posting clears it, so somebody can be waiting within minutes.
  *
- * The note this replaced said when to look again and left what to SAY to the
- * agent's judgement, and the judgement it reached was a promise it could not
- * keep. So the words are here: who tells the human, and the one condition
- * under which an agent may say it will be the one doing the telling.
+ * The note this replaced said the rule to every account alike: tell them the
+ * switchboard emails them, and promise to tell them yourself only if you have
+ * saved an arrangement. A rule is a thing an assistant has to apply to itself,
+ * and the one that said the sentence had read a version of it. So the note is
+ * a FACT ABOUT THIS ACCOUNT instead, read off what is actually saved: either
+ * there is a standing arrangement that says this agent runs on its own and how
+ * often it looks, or there is not, and the note says which and what may be
+ * said out loud because of it.
  */
-export const WHAT_HAPPENS_NEXT_NOTE = {
-  text: 'Tell your human the switchboard will email them when someone comes forward. Only say you will tell them yourself if you have scheduled a check and saved the arrangement. Screening takes seconds and the first person often comes forward straight away, so if you run on your own, look again in a few minutes; that one look is a follow-up on this posting and has nothing to do with your checking cadence. How often you check after that is theirs to decide: ask them, suggest once an hour, and say any time in their own clock.',
-  provenance: 'switchboard-system' as const,
-};
+export function whatHappensNextNote(a: Arrangement): {
+  text: string;
+  provenance: 'switchboard-system';
+} {
+  const saved = a.runs_on_its_own === true && a.check_every_minutes !== undefined;
+  return {
+    text: saved
+      ? `Your human has already agreed you look ${cadenceInPlainWords(a.check_every_minutes!)}, so say that as the arrangement it is. One look a few minutes from now is a follow-up on this posting and has nothing to do with that rhythm. Say any time in their own clock.`
+      : 'You have no checking arrangement saved for your human, so do not tell them you will let them know. Say this: the switchboard will email you when someone comes forward. If you can wake yourself, ask them how often to look (once an hour is what to suggest), save it with standing_arrangement, and only then say you will tell them yourself. One look a few minutes from now is fine either way; say times in their own clock.',
+    provenance: 'switchboard-system' as const,
+  };
+}
+
+/** The note for an account with nothing saved, which is where every one starts. */
+export const WHAT_HAPPENS_NEXT_NOTE = whatHappensNextNote({});
+
+/**
+ * The note for this account, on the arrangement it actually holds. Best-effort
+ * in the same sense the rest of the courtesies here are: an unreadable
+ * arrangement gives the note for an account with nothing saved, which is the
+ * careful answer — it promises the human nothing.
+ */
+async function whatHappensNextFor(accountId: string): Promise<{
+  text: string;
+  provenance: 'switchboard-system';
+}> {
+  try {
+    return whatHappensNextNote(await readArrangement(accountId));
+  } catch {
+    return WHAT_HAPPENS_NEXT_NOTE;
+  }
+}
 
 /**
  * WHERE THE POSTING WAS FILED, said out loud.
@@ -282,6 +322,40 @@ function assertKindPresent(kind: unknown): void {
   );
 }
 
+/**
+ * A FIGURE IS READ BACK ONCE, and then it goes up as it stands.
+ *
+ * The manual's rule (c), which this enforces word for word: "Before anything
+ * leaves, read back what you are about to send and ask yourself which words of
+ * theirs that exact number came from. If you cannot point at them, you invented
+ * it." An assistant did not, and posted a private band of "up to $45 AUD" for a
+ * human whose whole word about money was "not sure what my budget is, what do
+ * these usually go for?"
+ *
+ * So the first attempt inside the window comes back unposted with the figures
+ * on it, and the second with the SAME figures goes through untouched, because
+ * by then somebody has been asked. The key carries the amounts, so a changed
+ * number is a new question. A posting with no figure never comes here at all.
+ *
+ * Nothing is logged: the amounts are the human's own business, which is why
+ * the band is encrypted on the row in the first place.
+ */
+async function confirmFigures(
+  accountId: string,
+  kind: string | null,
+  figures: PostingFigure[],
+): Promise<void> {
+  if (!figures.length) return;
+  const key = figureAskKey(kind, figures);
+  if (await detailAskedRecently(accountId, key)) return;
+  await recordDetailAsked(accountId, key);
+  throw new OsbError('CONFIRM_FIGURE', {
+    human_action: FIGURE_HUMAN_ACTION,
+    questions: figureQuestions(figures),
+    figures,
+  });
+}
+
 /** `kind` as it is stored: trimmed, or null where the posting gave none. */
 const kindOf = (card: any): string | null => {
   const k = typeof card?.kind === 'string' ? card.kind.trim() : '';
@@ -395,12 +469,36 @@ export async function publishIntent(
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
 
-  // DOES IT SAY ENOUGH TO DESCRIBE THE THING TO A STRANGER?
+  // THE CHEAP REFUSALS, IN A FIXED ORDER, ONE AT A TIME.
   //
-  // Here, after the cheap checks and before anything is written or queued,
-  // because a posting that comes back unposted should cost the switchboard the
-  // same as a posting that is refused for its category. The whole of the
+  // All four of them live here, after the cheap checks and before anything is
+  // written or queued, because a posting that comes back unposted should cost
+  // the switchboard the same as a posting that is refused for its category.
+  //
+  // The order is: DETAIL, then REACH, then FIGURE. It is fixed, and each one
+  // throws, so an assistant is handed exactly one refusal per attempt and
+  // never two different ones for the same posting. Detail first because it is
+  // about what the thing IS, and the answers to it can change the rest; reach
+  // next because it is one question with two answers; the figure last because
+  // it is the one that is read back rather than asked about, and reading a
+  // number back on a posting that is still being described would be reading it
+  // back too early.
+  //
+  // DOES IT SAY ENOUGH TO DESCRIBE THE THING TO A STRANGER? The whole of the
   // reasoning, and the rule itself, is in domain/postingDetail.ts.
+  const shortfall = detailShortfall(card);
+  if (shortfall) {
+    const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));
+    if (!excused) {
+      // Written down first, so the second attempt has something to recognise.
+      await recordDetailAsked(accountId, kind);
+      throw new OsbError('NEEDS_DETAIL', {
+        human_action: DETAIL_HUMAN_ACTION,
+        questions: shortfall.questions,
+      });
+    }
+  }
+
   // HOW FAR IT REACHES IS THE HUMAN'S ANSWER, never a default. A posting that
   // leaves `reach` out used to fall silently to a radius, and in the third
   // rehearsal-suite run an assistant put a parcel-sized spring up within 8 km
@@ -438,18 +536,10 @@ export async function publishIntent(
     });
   }
 
-  const shortfall = detailShortfall(card);
-  if (shortfall) {
-    const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));
-    if (!excused) {
-      // Written down first, so the second attempt has something to recognise.
-      await recordDetailAsked(accountId, kind);
-      throw new OsbError('NEEDS_DETAIL', {
-        human_action: DETAIL_HUMAN_ACTION,
-        questions: shortfall.questions,
-      });
-    }
-  }
+  // AND A FIGURE IS READ BACK ONCE, before it can decide anything. See
+  // domain/postingFigure.ts for the rehearsal that bought this and for the
+  // manual rule it enforces.
+  await confirmFigures(accountId, kind, figuresOnPosting(card));
 
   // SNAP AT THE DOOR. The gate above decided whether this may go up at all,
   // on the path the assistant wrote; this decides where it goes. A path the
@@ -614,7 +704,7 @@ export async function publishIntent(
     // sentence in plain words beside it, moved or not.
     filed_under: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
-    what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
+    what_happens_next_note: await whatHappensNextFor(accountId),
   };
 }
 
@@ -877,6 +967,25 @@ export async function amendIntent(
       validation: v.reasons,
     });
   }
+  // A FIGURE AN AMEND ADDS OR CHANGES IS READ BACK ONCE, exactly as one on a
+  // publish is. Only the figures this patch is putting there are read back: an
+  // amend that leaves the money alone is nothing to ask about, and the band
+  // already on the row cannot be read back in any case, since it is encrypted
+  // under this account's own key and nothing here decrypts it. `price` sent at
+  // all is therefore treated as a change; an `ask` is compared with the one the
+  // posting already carries.
+  const p = patch ?? {};
+  const askChanged =
+    'ask' in p && JSON.stringify(p.ask ?? null) !== JSON.stringify(card.ask ?? null);
+  await confirmFigures(
+    accountId,
+    card.kind,
+    figuresOnPosting({
+      type: next.type,
+      ask: askChanged ? p.ask : undefined,
+      price: 'price' in p ? p.price : undefined,
+    }),
+  );
   // An amend is a re-publish, so the category faces the same gate. A card
   // whose category left the taxonomy since it was posted cannot be renewed
   // under it; the error names where to go instead.
@@ -971,7 +1080,7 @@ export async function amendIntent(
     ...('geo' in (patch ?? {}) ? locationEcho(geo) : {}),
     filed_under: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
-    what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
+    what_happens_next_note: await whatHappensNextFor(accountId),
   };
 }
 

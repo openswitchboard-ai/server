@@ -135,7 +135,14 @@ export class Harness {
     card: Record<string, unknown>,
     opts: { expectError?: boolean } = {},
   ): Promise<McpResult> {
-    const r = await this.mcp(actor.accessToken, 'publish_intent', { listing: card });
+    let r = await this.mcp(actor.accessToken, 'publish_intent', { listing: card });
+    // A posting carrying a figure comes back once for the agent to read that
+    // figure to its human (domain/postingFigure.ts). A fixture has nobody to
+    // read it to, so it does what an agent does once it has asked: it sends
+    // the same posting again, once.
+    if (r.result?.what_happened === 'confirm_figure') {
+      r = await this.mcp(actor.accessToken, 'publish_intent', { listing: card });
+    }
     if (!wasRefused(r) && r.result?.intent_id) {
       this.cards.push({ token: actor.accessToken, id: r.result.intent_id, label: actor.label });
     }
