@@ -30,6 +30,10 @@ export interface CardFacts {
   ask: Record<string, unknown> | null;
   sale: string | null;
   geoRadiusKm: number | null;
+  /** What the posting itself says about how far it reaches: 'country',
+   *  'radius' or 'anywhere'. Every card carries a radius whatever its reach, so
+   *  the radius alone says nothing. */
+  geoReach?: string | null;
   geoCountry: string | null;
   state: string;
   createdAt: string;
@@ -319,7 +323,11 @@ export function checkReach(card: CardFacts | undefined, assistantTurns: string[]
   const says =
     "the seller's posting reaches the whole country (it goes in a parcel), and the assistant said which reach it chose.";
   if (!card) return fail(id, says, 'no seller posting to read');
-  const isCountry = !!card.geoCountry && card.geoRadiusKm == null;
+  // `reach` is what decides it. Run 4's posting said "country" and still held
+  // radius_km 8, and this check failed it for the radius. Older rows with no
+  // reach are judged the old way.
+  const isCountry =
+    card.geoReach != null ? card.geoReach === 'country' : !!card.geoCountry && card.geoRadiusKm == null;
   const saidAloud = assistantTurns.some((t) => REACH_ALOUD.test(t));
   if (!isCountry) {
     return fail(
