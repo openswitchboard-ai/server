@@ -176,13 +176,32 @@ export interface TurnState {
    *  judged on what it said, and the tool lines are there to explain a slip
    *  rather than to make one. */
   tool_activity?: string[];
+  /** Every tool the assistant used anywhere in this step, so a promise that
+   *  was backed two turns later is not marked as empty. Rehearsal suite only. */
+  tools_the_assistant_used_in_this_step?: string[];
 }
 
 export function buildTurnState(
   transcript: Transcript,
   turn: Turn,
-  opts: { includeToolActivity?: boolean } = {},
+  opts: { includeToolActivity?: boolean; includeStepTools?: boolean } = {},
 ): TurnState {
+  // Every tool the assistant used anywhere in this step, earlier or later.
+  // One turn at a time, the scorer marked "I'll let you know when someone comes
+  // forward" as an empty promise at 92% when the assistant scheduled the check
+  // two turns on. Whether a promise was backed is a fact about the step.
+  const stepTools = opts.includeStepTools
+    ? [
+        ...new Set(
+          transcript.turns
+            .filter((t) => t.section === turn.section)
+            .flatMap((t) => t.toolActivityBefore)
+            .flatMap((line) => line.replace(/^called\s+/i, '').split(/[,\s]+/))
+            .map((w) => w.trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
   const priorHuman = transcript.turns
     .filter((t) => t.role === 'human' && t.section === turn.section && t.index < turn.index)
     .map((t) => t.text);
@@ -192,6 +211,7 @@ export function buildTurnState(
     ...(opts.includeToolActivity && turn.toolActivityBefore.length
       ? { tool_activity: turn.toolActivityBefore }
       : {}),
+    ...(stepTools.length ? { tools_the_assistant_used_in_this_step: stepTools } : {}),
   };
 }
 
@@ -323,7 +343,10 @@ export const RULES: Rule[] = [
         'nothing said about how the assistant will find out.',
       false:
         'The assistant says it will look again itself, or tells the human to ask it again, ' +
-        'or says the switchboard emails them; or it makes no such promise.',
+        'or says the switchboard emails them; or it makes no such promise; or ' +
+        '`tools_the_assistant_used_in_this_step` shows it scheduled a check or saved an ' +
+        'arrangement in this step (a tool named automations, cron, schedule, reminder or ' +
+        'standing_arrangement), which is what backs the promise.',
     },
     source: 'manual',
     manualNote:
