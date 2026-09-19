@@ -652,6 +652,10 @@ describe('what an agent is told right after posting', () => {
         schema_version: '0.12.0',
         type: 'offering',
         category: 'goods.bicycle.mountain',
+        // Enough to describe to a stranger, which is what the door now asks
+        // for on anything offered (domain/postingDetail.ts).
+        kind: 'mountain bike',
+        attributes: { brand: 'trek', frame_size: 'medium', condition: 'good' },
         geo: { place: 'Canberra' },
         urgency: 'days',
         visibility: 'anonymous-until-introduced',
@@ -676,7 +680,7 @@ describe('what an agent is told right after posting', () => {
     expect(r.structuredContent.say_note.provenance).toBe('switchboard-system');
     expect(r.structuredContent.say_note.text).toMatch(/never said aloud/i);
     expect(r.structuredContent.say_note.text).toMatch(/your human's own words/i);
-    expect(r.structuredContent.look_again_note).toBeDefined();
+    expect(r.structuredContent.what_happens_next_note).toBeDefined();
   });
 
   it('tells an always-on agent to look again itself', async () => {

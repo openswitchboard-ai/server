@@ -34,8 +34,13 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { categoryDenied, categoryStatus } from '../denylist.js';
-import { suggestCategories, type SuggestionSource } from './categorySuggest.js';
-import { nearestKnownAncestor } from './matchRules.js';
+import {
+  nodeText,
+  postingText,
+  suggestCategories,
+  type SuggestionSource,
+} from './categorySuggest.js';
+import { categoryLabelPath, nearestKnownAncestor } from './matchRules.js';
 import { embedCard } from './embeddings.js';
 import type { Config } from '../config.js';
 
@@ -70,6 +75,43 @@ export const DEFAULT_MIN_SCORE = { embedding: 0.55, lexical: 0.2 };
  * means what it says.
  */
 export const DOOR_MIN_SCORE = { embedding: 0.55, lexical: 0.45 };
+
+// ---------------------------------------------------------------------------
+// AND THE SECOND FLOOR, WHICH IS ABOUT CONFIDENCE RATHER THAN CLOSENESS.
+//
+// Clearing the floor above says the nearest node is not a stranger. It does
+// not say the switchboard knows which node. The rehearsal of 19 September:
+// 'goods.sim-racing.pedal-parts' snapped onto goods.motoring at 0.625, with
+// the runners-up scattered across motoring, bicycle parts and equestrian. Sim
+// racing is not motoring. The want for the other half of that pair would have
+// gone up under electronics, and the category gate would have kept the two
+// apart in silence — which is the whole defect the snap exists to close, done
+// one shelf further along.
+//
+// So a specific node is only taken when BOTH of these hold: the top answer is
+// close on its own terms, and the field behind it agrees about the branch. A
+// runner-up under the same second-level branch is agreement; a runner-up from
+// somewhere else has to be beaten by a margin before the top answer counts as
+// a decision rather than a coin landing.
+//
+// BOTH NUMBERS COME FROM ONE REHEARSAL AND ARE NOT YET EARNED. 0.625 with
+// scattered runners-up was wrong, and these are set above it; nothing else
+// has been measured. The jev_shadow table is collecting a second opinion on
+// exactly this question (src/shadow/jevTrials.ts, trial A), and these two are
+// what that data is for — tune them against it before trusting either.
+// ---------------------------------------------------------------------------
+
+/** Below this, the top answer is not a decision whatever the field behind it. */
+export const SHELF_CONFIDENT_MIN = 0.75;
+/** How far the top answer must beat the nearest answer from another branch. */
+export const SHELF_BRANCH_MARGIN = 0.08;
+/** How many shelves a refusal offers, one per branch. */
+export const SHELF_CANDIDATE_LIMIT = 4;
+/** The last option on that list: the human may recognise none of them. */
+export const SHELF_NONE_OPTION = 'none_of_these';
+
+/** The second-level branch a node sits under: 'goods.motoring' for a car part. */
+const branchOf = (category: string): string => category.split('.').slice(0, 2).join('.');
 
 export interface SnapCursor {
   created_at: string;
@@ -110,7 +152,15 @@ export type SnapHow =
   | 'as-posted' // the catalogue knows this node and holds it open
   | 'suggestion' // the nearest open node, close enough to be trusted
   | 'ancestor' // nothing was close enough, so the line it was filed on
+  | 'unclear' // something was close, nothing was convincing: ask the human
   | 'unmatched'; // nothing was close enough and the caller asked to be left alone
+
+/** One shelf to put to the human, on an unclear decision. */
+export interface ShelfChoice {
+  category: string;
+  /** The node in plain words: "car parts", "games console accessories". */
+  words: string;
+}
 
 export interface SnapDecision {
   /** Where the posting should be filed. */
@@ -126,11 +176,72 @@ export interface SnapDecision {
   score?: number;
   /** The other answers considered, nearest first. */
   runners_up?: string[];
+  /** On 'unclear': the shelves to put to the human, one per branch. */
+  candidates?: ShelfChoice[];
+}
+
+/**
+ * The node in the words a person would use for it. The whole label path reads
+ * as a database breadcrumb — "Secondhand consumer goods > Motoring > Car parts"
+ * — and what a human is being asked is only which of four things it is, so the
+ * node's own label is the whole of the answer.
+ */
+export function categoryWords(category: string): string {
+  const labels = categoryLabelPath(category).split(' > ');
+  return (labels[labels.length - 1] ?? category).toLowerCase();
 }
 
 /** True where the taxonomy holds this exact node and nobody has closed it. */
 const openNode = (category: string): boolean =>
   categoryStatus(category).status === 'open' && !categoryDenied(category);
+
+/**
+ * Is the winning answer a decision or a coin landing?
+ *
+ * Two conditions, both of them about the field rather than about the node. It
+ * has to be close on its own terms; and the answers behind it have to agree
+ * about the branch, either by being in it or by being far enough behind that
+ * their disagreement carries no weight. See the note on SHELF_CONFIDENT_MIN
+ * for the run that bought both numbers, and for the fact that neither is
+ * earned yet.
+ */
+function confidentIn(
+  best: { category: string; score: number },
+  ranked: { category: string; score: number }[],
+): boolean {
+  if (best.score < SHELF_CONFIDENT_MIN) return false;
+  const rest = ranked.filter((s) => s.category !== best.category);
+  if (!rest.length) return true;
+  if (branchOf(rest[0].category) === branchOf(best.category)) return true;
+  const elsewhere = rest.find((s) => branchOf(s.category) !== branchOf(best.category));
+  if (!elsewhere) return true;
+  return best.score - elsewhere.score >= SHELF_BRANCH_MARGIN;
+}
+
+/**
+ * The shelves to put to the human: one per branch, best first, and then the
+ * honest last option. One per branch because offering four flavours of the
+ * same wrong branch is not a choice; the disagreement between branches is the
+ * whole reason anybody is being asked.
+ *
+ * `none_of_these` is what makes the list answerable rather than a trap. The
+ * sentence beside it says what to do on that answer — post it under the top
+ * level, where it goes up as it stands.
+ */
+function shelfChoices(ranked: { category: string; score: number }[]): ShelfChoice[] {
+  const chosen: ShelfChoice[] = [];
+  const branches = new Set<string>();
+  for (const s of ranked) {
+    if (chosen.length >= SHELF_CANDIDATE_LIMIT) break;
+    if (!openNode(s.category)) continue;
+    const branch = branchOf(s.category);
+    if (branches.has(branch)) continue;
+    branches.add(branch);
+    chosen.push({ category: s.category, words: categoryWords(s.category) });
+  }
+  chosen.push({ category: SHELF_NONE_OPTION, words: 'none of these' });
+  return chosen;
+}
 
 /**
  * Where a posting under `category` really belongs.
@@ -147,6 +258,19 @@ export async function snapCategory(
     /** Below the floor: walk up the path rather than leaving it alone. */
     fallbackToAncestor?: boolean;
     minScore?: Partial<typeof DEFAULT_MIN_SCORE>;
+    /**
+     * The posting's own words, where the caller holds them. They are asked
+     * about alongside the path, because the path is a guess and the words are
+     * evidence (see categorySuggest.postingText).
+     */
+    posting?: { kind?: string | null; attributes?: unknown };
+    /**
+     * Where the suggestions are close but scattered, answer 'unclear' with the
+     * shelves rather than picking one. Only the publish door asks for this:
+     * the ops sweep is reading rows that are already up, and an amend must
+     * never take a posting down for being what it already was.
+     */
+    askWhenUnsure?: boolean;
   } = {},
 ): Promise<SnapDecision> {
   const from = String(category ?? '');
@@ -159,15 +283,38 @@ export async function snapCategory(
   let source: SuggestionSource | undefined;
   let best: { category: string; score: number } | undefined;
   let runnersUp: string[] = [];
+  let ranked: { category: string; score: number }[] = [];
   try {
     // Five rather than three: the top answer may be a family somebody closed,
     // and the point of asking is to have an open one left after that.
-    const result = await suggestCategories(cfg, from, 5, log);
+    const words = opts.posting ? postingText(opts.posting) : '';
+    const result = await suggestCategories(cfg, from, 5, log, {
+      // Path AND words. The path alone is what the assistant guessed, and in
+      // the rehearsal it shared tokens with three branches and with nothing
+      // that was actually in the box.
+      ...(words ? { text: `${nodeText(from)}; ${words}` } : {}),
+    });
     source = result.source;
     runnersUp = result.categories;
+    ranked = result.scored;
     best = result.scored.find((s) => s.score >= floor[result.source] && openNode(s.category));
   } catch (e: any) {
     log('snap: suggester unavailable', { category: from, error: e?.message });
+  }
+  if (best && opts.askWhenUnsure && !confidentIn(best, ranked)) {
+    // Close enough to be worth asking about, scattered enough that picking
+    // one would be a guess. The human whose thing it is can settle it in a
+    // sentence, so the posting waits and they are asked.
+    return {
+      category: from,
+      from,
+      changed: false,
+      how: 'unclear',
+      source,
+      score: best.score,
+      runners_up: runnersUp.filter((c) => c !== best!.category),
+      candidates: shelfChoices(ranked),
+    };
   }
   if (best) {
     return {

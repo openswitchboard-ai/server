@@ -56,6 +56,29 @@ export function nodeText(category: string): string {
   return `category: ${category} (${categoryLabelPath(category)})`;
 }
 
+/**
+ * THE POSTING'S OWN WORDS, for asking the catalogue where a thing belongs.
+ *
+ * A dotted path is what an assistant guessed, and asking the catalogue about
+ * the guess alone is asking the wrong question. 'goods.sim-racing.pedal-parts'
+ * shares tokens with motoring, bicycle parts and equestrian, and shares none
+ * with the thing itself: an upgraded Fanatec pedal spring. What the poster
+ * actually said about it — their words for it, and the facts they stated — is
+ * the evidence, and it is the same text the matching engine embeds a posting
+ * from (domain/matchRules.ts projectionText), minus the category head.
+ *
+ * Built in projectionText's shape so the two read alike: the words first, then
+ * the stated pairs in key order.
+ */
+export function postingText(posting: { kind?: string | null; attributes?: unknown }): string {
+  const attrs = Object.entries((posting.attributes ?? {}) as Record<string, unknown>)
+    .filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v))
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([k, v]) => `${k}: ${String(v).toLowerCase().slice(0, 60)}`);
+  const own = typeof posting.kind === 'string' ? posting.kind.trim().toLowerCase().slice(0, 60) : '';
+  return [...(own ? [`thing: ${own}`] : []), ...attrs].join('; ');
+}
+
 // ---------------------------------------------------------------------------
 // Lexical closeness: tokens first, trigrams to break ties.
 // ---------------------------------------------------------------------------
@@ -222,9 +245,16 @@ export const SUGGEST_CACHE_MAX = 500;
 
 const queryVectors = new Map<string, number[]>();
 
-/** The key: the same string in any spelling of whitespace or case is one key. */
-const cacheKey = (category: string): string =>
-  String(category ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+/**
+ * The key: the same string in any spelling of whitespace or case is one key.
+ *
+ * It is keyed on what the CALLER asked about — the bare category, or the free
+ * text where one was given — rather than on the framed query built from it.
+ * Framing first would make ' Goods.LAPTOP ' and 'goods.laptop' two keys again,
+ * because the label path is built before anything is normalised.
+ */
+const cacheKey = (asked: string): string =>
+  String(asked ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** For the suite, and for a corpus rebuild: the vectors are only ever a cache. */
 export function resetSuggestCache(): void {
@@ -235,8 +265,8 @@ export function suggestCacheSize(): number {
   return queryVectors.size;
 }
 
-async function embedQuery(cfg: Config, category: string): Promise<number[]> {
-  const key = cacheKey(category);
+async function embedQuery(cfg: Config, query: string, keyedOn: string): Promise<number[]> {
+  const key = cacheKey(keyedOn);
   const hit = queryVectors.get(key);
   if (hit) {
     // Touch it, so the ones being asked for are the ones that stay.
@@ -244,7 +274,7 @@ async function embedQuery(cfg: Config, category: string): Promise<number[]> {
     queryVectors.set(key, hit);
     return hit;
   }
-  const vector = await embedText(cfg, nodeText(category));
+  const vector = await embedText(cfg, query);
   queryVectors.set(key, vector);
   while (queryVectors.size > SUGGEST_CACHE_MAX) {
     const oldest = queryVectors.keys().next().value as string | undefined;
@@ -268,9 +298,23 @@ export async function suggestCategories(
   category: string,
   limit = 3,
   log: (msg: string, extra?: any) => void = () => {},
+  opts: {
+    /**
+     * Ask about this text instead of the category path. The door adds the
+     * posting's own words to the path, and the Jev ballot asks about the words
+     * alone, so that the shortlist it weighs is not the one we already chose.
+     */
+    text?: string;
+  } = {},
 ): Promise<SuggestionResult> {
+  const asked = opts.text?.trim();
+  // The embedding side compares like with like, so a bare path is framed the
+  // way the corpus was. The lexical side is token overlap on raw text and has
+  // always read the bare path, leaf bonus and all; framing it would change
+  // every score it has ever given.
+  const query = asked ? asked : nodeText(category);
   const lexical = () => {
-    const scored = lexicalSuggestions(category, limit);
+    const scored = lexicalSuggestions(asked ?? category, limit);
     return {
       categories: scored.map((s) => s.category),
       scored,
@@ -281,7 +325,7 @@ export async function suggestCategories(
     // Kick the warm-up off, but do not wait for it.
     void warmCategoryCorpus(cfg, log);
     if (!corpus) return lexical();
-    const q = await embedQuery(cfg, category);
+    const q = await embedQuery(cfg, query, asked ?? category);
     const scored = corpus.categories.map((c, i) => ({
       category: c,
       score: cosine(q, corpus!.vectors[i]),

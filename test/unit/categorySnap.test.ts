@@ -236,6 +236,10 @@ const listing = (over: Record<string, unknown> = {}) => ({
   type: 'offering',
   category: 'goods.gaming.sim-racing',
   kind: 'sim racing rig',
+  // Enough to describe the thing to a stranger. The door asks for that before
+  // it asks anything about shelves (domain/postingDetail.ts), and this suite
+  // is about the shelves.
+  attributes: { brand: 'fanatec', model: 'csl dd', condition: 'good' },
   geo: { bucket: 'r3gx', radius_km: 25 },
   ttl_days: 60,
   ...over,
@@ -313,16 +317,22 @@ describe('what the row carries and what the assistant hears', () => {
   // forward straight away, so an agent that can wake itself is told to look
   // again a few minutes after it posts or amends. One follow-up on this
   // posting, so the cadence floor has nothing to say about it.
-  it('tells an agent that runs on its own to look again in a few minutes', async () => {
+  it('says what happens next, and who does the telling', async () => {
     for (const r of [
       (await publishIntent(cfg, ACCOUNT, listing())) as any,
       (await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' })) as any,
     ]) {
-      expect(r.look_again_note.provenance).toBe('switchboard-system');
-      expect(r.look_again_note.text).toContain('look again in a few minutes');
-      expect(r.look_again_note.text).toContain('If you run on your own');
-      expect(r.look_again_note.text).toContain('nothing to do with your checking cadence');
-      expect(lintHumanCopy(r.look_again_note.text)).toEqual([]);
+      expect(r.what_happens_next_note.provenance).toBe('switchboard-system');
+      // Who tells the human, and the one condition under which the agent may
+      // say it will be the one doing it. In the 19 September rehearsal an
+      // assistant said it would, with nothing scheduled and nothing saved.
+      expect(r.what_happens_next_note.text).toContain('the switchboard will email them');
+      expect(r.what_happens_next_note.text).toContain(
+        'Only say you will tell them yourself if you have scheduled a check and saved the arrangement',
+      );
+      expect(r.what_happens_next_note.text).toContain('look again in a few minutes');
+      expect(r.what_happens_next_note.text).toContain('nothing to do with your checking cadence');
+      expect(lintHumanCopy(r.what_happens_next_note.text)).toEqual([]);
     }
   });
 

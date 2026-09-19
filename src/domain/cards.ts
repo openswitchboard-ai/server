@@ -19,6 +19,12 @@ import { runIntake } from '../intake/pipe.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { snapCategory } from './categoryBackfill.js';
+import {
+  DETAIL_HUMAN_ACTION,
+  detailAskedRecently,
+  detailShortfall,
+  recordDetailAsked,
+} from './postingDetail.js';
 import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
@@ -45,22 +51,28 @@ export interface PublishResult {
   filed_under?: string;
   /** Said out loud, and only where that is somewhere other than what was sent. */
   filed_under_note?: { text: string; provenance: 'switchboard-system' };
-  /** When to look again, for an agent that can (see LOOK_AGAIN_NOTE). */
-  look_again_note?: { text: string; provenance: 'switchboard-system' };
+  /** The sentence to say once it is up (see WHAT_HAPPENS_NEXT_NOTE). */
+  what_happens_next_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
- * THE FIRST PERSON OFTEN COMES FORWARD STRAIGHT AWAY.
+ * THE SENTENCE TO SAY AFTER POSTING, because the vague one keeps being said.
  *
- * Screening takes seconds and the board is checked the moment a posting
- * clears it, so somebody can be waiting on a want or a have minutes after it
- * went up. In the 19 September rehearsal an assistant posted, promised its
- * human it would say the moment anyone came forward, and then looked no more
- * that day. The manual carries the rule; this is the reminder at the one
- * moment it applies, in the same shape as every other note on the wire.
+ * Two things went wrong in the 19 September rehearsal and this note answers
+ * both. An assistant posted and then told its human "I'll let you know when
+ * someone comes forward" — with nothing scheduled, nothing saved, and no way
+ * to wake itself, so nobody was ever going to let anybody know. And the same
+ * assistant looked no more that day, although screening takes seconds and the
+ * board is checked the moment a posting clears it, so somebody can be waiting
+ * within minutes.
+ *
+ * The note this replaced said when to look again and left what to SAY to the
+ * agent's judgement, and the judgement it reached was a promise it could not
+ * keep. So the words are here: who tells the human, and the one condition
+ * under which an agent may say it will be the one doing the telling.
  */
-export const LOOK_AGAIN_NOTE = {
-  text: 'Screening takes seconds and the first person often comes forward straight away. If you run on your own, look again in a few minutes. This one look is a follow-up on this posting and has nothing to do with your checking cadence.',
+export const WHAT_HAPPENS_NEXT_NOTE = {
+  text: 'Tell your human the switchboard will email them when someone comes forward. Only say you will tell them yourself if you have scheduled a check and saved the arrangement. Screening takes seconds and the first person often comes forward straight away, so if you run on your own, look again in a few minutes; that one look is a follow-up on this posting and has nothing to do with your checking cadence.',
   provenance: 'switchboard-system' as const,
 };
 
@@ -88,6 +100,16 @@ export const LOOK_AGAIN_NOTE = {
  */
 function logSnap(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ event, ...fields }));
+}
+
+/**
+ * The one line on a SHELF_UNCLEAR refusal. It names the two moves: which of
+ * these, or the top level, where the posting goes up as it stands. Nothing is
+ * lost either way and nothing is being held over anybody.
+ */
+function shelfUnclearAction(from: string): string {
+  const top = String(from).split('.')[0] || 'goods';
+  return `The catalogue has nothing written down for that, and the shelves nearest it disagree. Ask your human which of these is closest to what the thing is, then post it again with that category. If they say none of these, post it under ${top} and it goes up as it stands.`;
 }
 
 function filedUnderNote(decision: { changed: boolean; category: string }): string {
@@ -312,6 +334,13 @@ export async function publishIntent(
   cfg: Config,
   accountId: string,
   card: any,
+  opts: {
+    /**
+     * The human genuinely does not know the rest. Honoured only on a second
+     * attempt at the same thing, inside the window — see domain/postingDetail.ts.
+     */
+    detailUnknown?: boolean;
+  } = {},
 ): Promise<PublishResult> {
   const v = validatePayload('intent-card', card);
   if (!v.valid) {
@@ -359,6 +388,25 @@ export async function publishIntent(
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
 
+  // DOES IT SAY ENOUGH TO DESCRIBE THE THING TO A STRANGER?
+  //
+  // Here, after the cheap checks and before anything is written or queued,
+  // because a posting that comes back unposted should cost the switchboard the
+  // same as a posting that is refused for its category. The whole of the
+  // reasoning, and the rule itself, is in domain/postingDetail.ts.
+  const shortfall = detailShortfall(card);
+  if (shortfall) {
+    const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));
+    if (!excused) {
+      // Written down first, so the second attempt has something to recognise.
+      await recordDetailAsked(accountId, kind);
+      throw new OsbError('NEEDS_DETAIL', {
+        human_action: DETAIL_HUMAN_ACTION,
+        questions: shortfall.questions,
+      });
+    }
+  }
+
   // SNAP AT THE DOOR. The gate above decided whether this may go up at all,
   // on the path the assistant wrote; this decides where it goes. A path the
   // catalogue has never heard of is moved onto the nearest node it does know,
@@ -371,7 +419,30 @@ export async function publishIntent(
   // and its label path (domain/matchRules.ts projectionText). `kind` is left
   // exactly as the assistant wrote it — the switchboard is moving the shelf,
   // never the words.
-  const filed = await snapCategory(cfg, card.category, undefined, { fallbackToAncestor: true });
+  //
+  // And where the answer is close but scattered, nothing is filed at all: the
+  // posting comes back with the shelves and the human settles it (see
+  // SHELF_CONFIDENT_MIN). Only publish asks — an amend below takes the answer
+  // it is given, because a posting already up must never come down for being
+  // what it already was.
+  const filed = await snapCategory(cfg, card.category, undefined, {
+    fallbackToAncestor: true,
+    askWhenUnsure: true,
+    posting: { kind, attributes: card.attributes },
+  });
+  if (filed.how === 'unclear') {
+    logSnap('publish: nothing near enough to file this under', {
+      account_id: accountId,
+      as_posted: filed.from,
+      source: filed.source,
+      score: filed.score,
+      runners_up: filed.runners_up,
+    });
+    throw new OsbError('SHELF_UNCLEAR', {
+      human_action: shelfUnclearAction(filed.from),
+      candidates: filed.candidates,
+    });
+  }
   if (filed.changed) {
     logSnap('publish: posting filed under a node the catalogue knows', {
       account_id: accountId,
@@ -501,7 +572,7 @@ export async function publishIntent(
     ...(filed.changed
       ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
       : {}),
-    look_again_note: LOOK_AGAIN_NOTE,
+    what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
   };
 }
 
@@ -774,7 +845,14 @@ export async function amendIntent(
   // is the postings that went up before, under a branch nobody has written
   // down: amending one is the moment it can be put somewhere it will actually
   // meet things, and the human amending it is the one who hears where.
-  const filed = await snapCategory(cfg, next.category, undefined, { fallbackToAncestor: true });
+  // No askWhenUnsure here, deliberately. An amend only ever adds to something
+  // already up, and refusing one would take a thing off the board for being
+  // what it already was; the posting's own words go in so the snap is at least
+  // as well informed as the door's.
+  const filed = await snapCategory(cfg, next.category, undefined, {
+    fallbackToAncestor: true,
+    posting: { kind: next.kind ?? card.kind, attributes: next.attributes },
+  });
   if (filed.changed) {
     logSnap('amend: posting filed under a node the catalogue knows', {
       account_id: accountId,
@@ -853,7 +931,7 @@ export async function amendIntent(
     ...(filed.changed
       ? { filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const } }
       : {}),
-    look_again_note: LOOK_AGAIN_NOTE,
+    what_happens_next_note: WHAT_HAPPENS_NEXT_NOTE,
   };
 }
 

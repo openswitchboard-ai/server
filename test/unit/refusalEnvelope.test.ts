@@ -60,11 +60,19 @@ describe('the refusals that are the switchboard working', () => {
         'INTENT_EXPIRED',
         'LOCATION_AMBIGUOUS',
         'LOCATION_UNRESOLVED',
+        // The posting does not yet say enough to describe the thing to a
+        // stranger. The questions to ask are on the answer, so this is the
+        // switchboard working rather than anything having gone wrong.
+        'NEEDS_DETAIL',
         'NOT_UNLOCKED_YET',
         'QUOTA_EXCEEDED',
         'RATE_LIMITED',
         'RATE_LIMITED_OFFERS',
         'SETTLEMENT_UNAVAILABLE',
+        // The catalogue has nothing written down for the path and the shelves
+        // near it disagree. The candidates ride the answer and the human
+        // settles it in a sentence.
+        'SHELF_UNCLEAR',
         // An account the operator has stopped. The agent did nothing wrong,
         // its human is owed a sentence, and there is nothing to retry — which
         // is exactly why it must not arrive as a bare failure line.

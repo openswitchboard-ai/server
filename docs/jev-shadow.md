@@ -45,6 +45,13 @@ from the existing suggester, plus the node we filed it under and the one the
 assistant actually wrote where the catalogue knows them — described by their
 label path in plain words, plus `none_of_these`.
 
+The suggester is run on the posting's OWN words and stated facts, with nothing
+about the filing in them. It used to be run on the node we had already chosen,
+which scores 1.0 against itself and brings its own neighbours up behind it, so
+every option on the ballot was a variation on our answer and Jev could only
+agree with us. Our node still goes on the ballot by name — agreement has to be
+possible — and the row records it under `ours.filed`.
+
 **Trial B, want against have.** For the five best-scoring pairs of a matching
 run at 0.45 and above:
 

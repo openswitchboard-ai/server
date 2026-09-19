@@ -336,7 +336,17 @@ export type ErrorCode =
   // granted it (domain/conversationWindow.ts). Nothing is lost and collecting
   // still works; one press starts a fresh window. Also ahead of the pinned
   // error document.
-  | 'CONVERSATION_PAUSED';
+  | 'CONVERSATION_PAUSED'
+  // The posting does not say enough for a stranger to know what the thing is,
+  // so it comes back unposted with the questions to put to the human
+  // (domain/postingDetail.ts). Ahead of the pinned error document, because the
+  // questions ride on the payload.
+  | 'NEEDS_DETAIL'
+  // The catalogue has never heard of the path that was sent, and nothing near
+  // it is close enough to file the posting under without guessing
+  // (domain/categoryBackfill.ts). Ahead of the document as well: its
+  // `candidates` are shelves rather than places.
+  | 'SHELF_UNCLEAR';
 
 /**
  * Codes this server ships that the pinned error document has not caught up
@@ -348,7 +358,12 @@ export type ErrorCode =
  * an account — is not one this repository is willing to offer. The list is
  * meant to be short and to empty itself as the schema catches up.
  */
-const AHEAD_OF_SCHEMA: readonly ErrorCode[] = ['SUSPENDED', 'CONVERSATION_PAUSED'];
+const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
+  'SUSPENDED',
+  'CONVERSATION_PAUSED',
+  'NEEDS_DETAIL',
+  'SHELF_UNCLEAR',
+];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */
 export interface ErrorCandidate {
@@ -358,6 +373,18 @@ export interface ErrorCandidate {
   place: string;
 }
 
+/**
+ * One shelf a posting could have gone on, on SHELF_UNCLEAR. The same field
+ * name as the places above, because it answers the same question — "which of
+ * these did you mean?" — and an agent already knows what to do with it.
+ */
+export interface ShelfCandidate {
+  /** The dotted path to post again under, or 'none_of_these'. */
+  category: string;
+  /** The node in plain words, e.g. "car parts", for the human to choose from. */
+  words: string;
+}
+
 export interface ProtocolError {
   schema_version: string;
   code: ErrorCode;
@@ -365,8 +392,11 @@ export interface ProtocolError {
   retry_after?: number;
   /** Up to three open taxonomy categories nearest a refused one. */
   suggestions?: string[];
-  /** Up to five places a bare name could have meant, largest first. */
-  candidates?: ErrorCandidate[];
+  /** Up to five places a bare name could have meant, largest first — or, on
+   *  SHELF_UNCLEAR, up to five shelves it could have gone on. */
+  candidates?: (ErrorCandidate | ShelfCandidate)[];
+  /** On NEEDS_DETAIL: what to ask the human, in plain words, at most four. */
+  questions?: string[];
   /**
    * The press an agent may wait on, when this refusal carries a link. Added
    * after the schema check rather than inside it: the published error document
@@ -385,7 +415,9 @@ export class OsbError extends Error {
       human_action?: string;
       retry_after?: number;
       suggestions?: string[];
-      candidates?: ErrorCandidate[];
+      candidates?: (ErrorCandidate | ShelfCandidate)[];
+      /** The questions to put to the human, on NEEDS_DETAIL. */
+      questions?: string[];
       /** The approval link row this refusal handed over, to wait on. */
       press_id?: string;
     } = {},
@@ -398,6 +430,7 @@ export class OsbError extends Error {
       ...(opts.retry_after !== undefined ? { retry_after: opts.retry_after } : {}),
       ...(opts.suggestions?.length ? { suggestions: opts.suggestions.slice(0, 3) } : {}),
       ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
+      ...(opts.questions?.length ? { questions: opts.questions.slice(0, 4) } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     };
     this.payload = AHEAD_OF_SCHEMA.includes(code)

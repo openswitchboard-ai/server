@@ -55,6 +55,11 @@ export interface AuthContext {
    */
   manualVersion: number | null;
   manualNotifiedAt: Date | string | null;
+  /**
+   * When this session was handed the manual's first page on a tool answer, or
+   * read it itself. null means it has had neither — see migration 048.
+   */
+  manualStartSentAt: Date | string | null;
 }
 
 /** Prefix of an OAuth access token minted by the token endpoint. */
@@ -82,7 +87,8 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
   // manual_version rides along on this SELECT so the check_in sweep can
   // tell a stale session what has changed without a query of its own.
   const r = await getPool().query(
-    `SELECT account_id, client_id, scope, manual_version, manual_notified_at FROM oauth_tokens
+    `SELECT account_id, client_id, scope, manual_version, manual_notified_at,
+            manual_start_sent_at FROM oauth_tokens
      WHERE token_hash = $1 AND kind = $2 AND NOT revoked AND NOT suspended
        AND expires_at > now()`,
     [sha256hex(token), kind],
@@ -105,7 +111,26 @@ export async function authenticate(req: FastifyRequest): Promise<AuthContext | u
     tokenHash: sha256hex(token),
     manualVersion: r.rows[0].manual_version ?? null,
     manualNotifiedAt: r.rows[0].manual_notified_at ?? null,
+    manualStartSentAt: r.rows[0].manual_start_sent_at ?? null,
   };
+}
+
+/**
+ * Mark that this session has the manual's first page: either it was handed to
+ * it on a tool answer, or it called read_manual and fetched the page itself.
+ *
+ * Written once per session and never unwound. The connect page has carried the
+ * instruction to read the manual since version 54 and a live session on
+ * 19 September never did — the clients that truncate server instructions, and
+ * the agent-key clients whose harness sends no initialize at all, never see it.
+ * This is the second place it appears, and there is no third.
+ */
+export async function recordManualStartSent(tokenHash: string): Promise<void> {
+  await getPool().query(
+    `UPDATE oauth_tokens SET manual_start_sent_at = now()
+      WHERE token_hash = $1 AND manual_start_sent_at IS NULL`,
+    [tokenHash],
+  );
 }
 
 /**
@@ -271,11 +296,14 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
   // manualVersion carries across a rotation: an hourly refresh is the same
   // agent in the same session, and it does not send initialize again, so
   // without this every refresh would look like a session that has read nothing.
+  // The first-page mark carries across for exactly the same reason: an agent
+  // that has read the manual should not be handed it again every hour.
   const issueTokens = async (
     accountId: string,
     clientId: string,
     scope: string,
     manualVersion: number | null = null,
+    manualStartSentAt: Date | string | null = null,
     // The family this pair belongs to. A code exchange starts one; a refresh
     // carries the one it was handed, so the whole chain from one press stays
     // killable in a single statement and ages from the press.
@@ -284,9 +312,9 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
     const access = `osb_at_${b64url(randomBytes(32))}`;
     const refresh = `osb_rt_${b64url(randomBytes(32))}`;
     await getPool().query(
-      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version, family_id, family_started_at, expires_at)
-       VALUES ($1,'access',$3,$4,$5,$6,$7,$8, now() + interval '${ACCESS_TTL_S} seconds'),
-              ($2,'refresh',$3,$4,$5,$6,$7,$8, now() + interval '${REFRESH_TTL_S} seconds')`,
+      `INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version, family_id, family_started_at, manual_start_sent_at, expires_at)
+       VALUES ($1,'access',$3,$4,$5,$6,$7,$8,$9, now() + interval '${ACCESS_TTL_S} seconds'),
+              ($2,'refresh',$3,$4,$5,$6,$7,$8,$9, now() + interval '${REFRESH_TTL_S} seconds')`,
       [
         sha256hex(access),
         sha256hex(refresh),
@@ -296,6 +324,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
         manualVersion,
         family.id,
         family.startedAt,
+        manualStartSentAt,
       ],
     );
     return {
@@ -422,6 +451,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
         row.client_id,
         row.scope,
         row.manual_version ?? null,
+        row.manual_start_sent_at ?? null,
         {
           id: row.family_id ?? randomUUID(),
           startedAt: row.family_started_at ?? new Date(),

@@ -53,6 +53,8 @@ const TOKEN_HASH = 'a'.repeat(64);
 let versionWrites: { tokenHash: string; version: number }[];
 /** Every manual_notified_at stamp the sweep makes. */
 let notifiedWrites: string[];
+/** Every token marked as having been handed the manual's first page. */
+let startWrites: string[];
 
 function fakePool() {
   return {
@@ -64,6 +66,10 @@ function fakePool() {
       }
       if (/UPDATE oauth_tokens SET manual_notified_at/.test(sql)) {
         notifiedWrites.push(params[0]);
+        return rows([]);
+      }
+      if (/UPDATE oauth_tokens SET manual_start_sent_at/.test(sql)) {
+        startWrites.push(params[0]);
         return rows([]);
       }
       // The read ceiling is checked before the sweep runs; this world never
@@ -94,6 +100,7 @@ function manualDouble(version: number): void {
 beforeEach(() => {
   versionWrites = [];
     notifiedWrites = [];
+  startWrites = [];
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
 
@@ -413,6 +420,10 @@ describe('the sweep carries it, for a day', () => {
       'runs_on_its_own_note',
       'timezone',
       'local_time_now',
+      // And the manual's first page, once: this session has not read it, and
+      // an agent working from rules it never saw is the whole of the defect
+      // (migration 048). It rides the answer last and never again.
+      'manual_start',
     ]);
     expect(versionWrites).toEqual([]);
   });
@@ -629,7 +640,10 @@ describe('what the switchboard calls things, in front of a model', () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     expect(publish.inputSchema.required).toEqual(['listing']);
-    expect(Object.keys(publish.inputSchema.properties)).toEqual(['listing']);
+    // `detail_unknown` rides beside the posting rather than inside it: the
+    // protocol document closes a want or a have to anything it does not name,
+    // and this is a fact about the posting ATTEMPT rather than about the thing.
+    expect(Object.keys(publish.inputSchema.properties)).toEqual(['listing', 'detail_unknown']);
   });
 
   it('carries a changelog note telling a returning agent the words changed', () => {
@@ -1722,5 +1736,79 @@ describe('and the body carries both, where a fresh session reads them', () => {
     expect(respond.description).toContain('request_report');
     expect(respond.description).toMatch(/never talk them out of it/i);
     expect((respond.inputSchema as any).properties.action.enum).toContain('request_report');
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * THE FIRST ANSWER CARRIES THE START PAGE.
+ *
+ * The connect page has ended "Call read_manual with section start before you
+ * use any of this" since version 54. The tool-call log of a live session on
+ * 19 September reads: check_in, check_in, publish, publish, publish. The
+ * instruction appeared in exactly one place, at the one moment a client is
+ * free to truncate it — and an agent-key client whose harness sends no
+ * initialize is served no connect text at all.
+ *
+ * So the first tool answer of a session that has not read the manual carries
+ * the page itself. Once, marked on the token row the manual fields already
+ * live on, so a restart and a second process agree it has been done.
+ */
+describe('the first answer of a session that has not read the manual', () => {
+  const fresh = (): ToolSession => ({
+    tokenHash: TOKEN_HASH,
+    manualVersion: MANUAL.version,
+    manualNotifiedAt: null,
+    manualStartSentAt: null,
+  });
+
+  it('hands over the start section, with its version and its provenance', async () => {
+    const r = body(await sweep(fresh()));
+    expect(r.manual_start.version).toBe(MANUAL.version);
+    expect(r.manual_start.provenance).toBe('switchboard-system');
+    expect(r.manual_start.text).toBe(sectionText('start'));
+    expect(r.manual_start.text).toContain('THE RULES THAT NEVER BEND');
+    expect(startWrites).toEqual([TOKEN_HASH]);
+  });
+
+  it('hands it over once and never again', async () => {
+    const session = fresh();
+    expect(body(await sweep(session)).manual_start).toBeDefined();
+    expect(body(await sweep(session)).manual_start).toBeUndefined();
+    expect(body(await sweep(session)).manual_start).toBeUndefined();
+    // One write, however many calls followed it.
+    expect(startWrites).toEqual([TOKEN_HASH]);
+  });
+
+  it('says nothing to a session that already has it', async () => {
+    const session = { ...fresh(), manualStartSentAt: new Date() };
+    expect(body(await sweep(session)).manual_start).toBeUndefined();
+    expect(startWrites).toEqual([]);
+  });
+
+  it('does not tell an agent that just read the manual to read the manual', async () => {
+    const session = fresh();
+    // read_manual answers with the section it was asked for and nothing else
+    // folded on: the page IS the answer.
+    const read = body(await dispatchTool(cfg, ANA, 'read_manual', { section: 'posting' }, session));
+    expect(read.manual_start).toBeUndefined();
+    expect(read.section).toBe('posting');
+    // And the sweep after it says nothing either, because the mark is set.
+    expect(body(await sweep(session)).manual_start).toBeUndefined();
+    expect(startWrites).toEqual([TOKEN_HASH]);
+  });
+
+  it('rides a refusal as readily as an answer, since a refusal is an answer here', async () => {
+    const session = fresh();
+    // An unreadable call is the one thing here that is still a failure, and
+    // even that one should not swallow the rules the agent has never read.
+    const r = body(await dispatchTool(cfg, ANA, 'respond', { action: 'nonsense' }, session));
+    expect(r.manual_start).toBeDefined();
+  });
+
+  it('leaves a caller with no session exactly as it was', async () => {
+    const r = body(await sweep(undefined));
+    expect(r.manual_start).toBeUndefined();
+    expect(startWrites).toEqual([]);
   });
 });

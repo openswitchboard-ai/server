@@ -77,6 +77,8 @@ interface TokenRow {
   suspended: boolean;
   /** The agent-manual version this session was last handed. */
   manual_version: number | null;
+  /** When this session was handed the manual's first page, or read it itself. */
+  manual_start_sent_at: Date | null;
 }
 
 let table: TokenRow[] = [];
@@ -86,7 +88,7 @@ const fakePool = {
   query: async (sql: string, params: any[] = []) => {
     const s = sql.replace(/\s+/g, ' ').trim();
 
-    if (s.startsWith('SELECT account_id, client_id, scope, manual_version, manual_notified_at FROM oauth_tokens')) {
+    if (s.startsWith('SELECT account_id, client_id, scope, manual_version, manual_notified_at, manual_start_sent_at FROM oauth_tokens')) {
       const [hash, kind] = params;
       const row = table.find(
         (t) =>
@@ -124,6 +126,7 @@ const fakePool = {
         revoked: false,
         suspended: false,
         manual_version: null,
+        manual_start_sent_at: null,
       };
       table.push(row);
       return { rows: [row], rowCount: 1 };
@@ -254,6 +257,10 @@ describe('agent key authentication: the round trip', () => {
       tokenHash: sha256hex(token),
       manualVersion: null,
       manualNotifiedAt: null,
+      // A key that has never been used has had neither the manual's first page
+      // handed to it nor a read_manual call of its own, so the first tool
+      // answer on it carries the page (migration 048).
+      manualStartSentAt: null,
     });
   });
 

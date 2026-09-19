@@ -768,3 +768,111 @@ describe('the hooks swallow everything', () => {
     expect(calls).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+/**
+ * THE BALLOT IS BUILT FROM THE POSTING, NOT FROM OUR OWN ANSWER.
+ *
+ * Trial A used to hand the suggester `card.category` — the node we had ALREADY
+ * filed the posting under. That node scores 1.0 against itself and the rest of
+ * the shortlist is its own neighbours, so every real option on the ballot was
+ * a variation on our answer and Jev could only agree with us. A second opinion
+ * that can only agree is not a second opinion.
+ */
+describe('what trial A puts on the ballot', () => {
+  /** What the suggester was actually asked about, and what it answered. */
+  const askedAbout: { category: string; text?: string }[] = [];
+  /** The parameters of every row written down. */
+  const recorded: any[][] = [];
+
+  beforeEach(() => {
+    askedAbout.length = 0;
+    recorded.length = 0;
+  });
+
+  async function runTrial(): Promise<any> {
+    await stubSecret();
+    initJev(cfgWith());
+    const suggest = await import('../../../src/domain/categorySuggest.js');
+    vi.spyOn(suggest, 'suggestCategories').mockImplementation(
+      async (_cfg: any, category: string, _limit?: number, _log?: any, opts: any = {}) => {
+        askedAbout.push({ category, text: opts.text });
+        const scored = [
+          { category: 'goods.electronics.console.accessories', score: 0.7 },
+          { category: 'goods.bicycle.parts', score: 0.6 },
+        ];
+        return { categories: scored.map((s) => s.category), scored, source: 'embedding' as const };
+      },
+    );
+    let sent: any;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      sent = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          answers: {
+            category: {
+              type: 'choice',
+              choice: 'goods.bicycle.road',
+              probabilities: { 'goods.bicycle.road': 0.9 },
+              confidence: 0.9,
+            },
+          },
+        }),
+      } as any;
+    });
+    const db = await import('../../../src/db.js');
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (_sql: string, params: any[] = []) => {
+        recorded.push(params);
+        return { rows: [], rowCount: 0 };
+      },
+    } as any);
+    await shadowCategoryTrial(cfgWith(), fullCard);
+    return sent;
+  }
+
+  it('asks the suggester about the posting own words, with no category in them', async () => {
+    await runTrial();
+    expect(askedAbout).toHaveLength(1);
+    const text = askedAbout[0].text!;
+    expect(text).toContain('road bike, 56cm');
+    expect(text).toContain('condition: used');
+    // Neither the node we filed it under nor the path the assistant wrote.
+    expect(text).not.toContain('goods.bicycle.road');
+    expect(text).not.toContain('goods.bikes.roadracing');
+    expect(text).not.toContain('category:');
+  });
+
+  it('still carries our node and the assistant own path as options', async () => {
+    const sent = await runTrial();
+    const criteria = Object.keys(sent.questions.category.criteria);
+    // The shortlist from the posting's words.
+    expect(criteria).toContain('goods.electronics.console.accessories');
+    expect(criteria).toContain('goods.bicycle.parts');
+    // Ours, so agreement is possible at all.
+    expect(criteria).toContain('goods.bicycle.road');
+    // And the way of saying none of them fits.
+    expect(criteria).toContain(JEV_NONE_OPTION);
+    expect(criteria.filter((k) => k !== JEV_NONE_OPTION).length).toBeLessThanOrEqual(
+      JEV_MAX_OPTIONS,
+    );
+    expect(new Set(criteria).size).toBe(criteria.length);
+  });
+
+  it('records which option on the ballot was ours', async () => {
+    await runTrial();
+    // trial, card_id, other_card_id, ours, jev, ...
+    const ours = JSON.parse(recorded[0][3]);
+    expect(ours.filed).toBe('goods.bicycle.road');
+    expect(ours.category).toBe('goods.bicycle.road');
+    expect(ours.category_as_posted).toBe('goods.bikes.roadracing');
+    // And the shortlist it was weighed against, for whoever tunes the door's
+    // confidence numbers against these rows.
+    expect(ours.candidates.map((c: any) => c.id)).toEqual([
+      'goods.electronics.console.accessories',
+      'goods.bicycle.parts',
+    ]);
+  });
+});
