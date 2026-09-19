@@ -33,6 +33,7 @@
     "duet": "RUN_DUET=1 tsx test/duet/run.ts",
     "duet:provision": "RUN_DUET_PROVISION=1 tsx test/duet/provision.ts",
     "duet:typecheck": "tsc -p test/duet/tsconfig.json",
+    "rehearsal": "tsx test/rehearsal/run.ts",
     "rehash-emails": "tsx scripts/ops/rehash-emails.mts",
     "jev-report": "tsx scripts/ops/jev-shadow-report.mts",
     "jev-transcript": "tsx scripts/eval/jev-transcript-score.mts"

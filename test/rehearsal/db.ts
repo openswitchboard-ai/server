@@ -1,0 +1,306 @@
+/**
+ * WHAT THE DATABASE SAYS HAPPENED.
+ *
+ * Every check's evidence that is not an assistant's own words comes from here,
+ * read through the RDS Data API the integration suite already uses. Nothing in
+ * this file writes anything except the two teardown helpers at the bottom, and
+ * both of those are about accounts this suite made and nobody else's.
+ *
+ * WHAT CANNOT BE READ, said once so no check quietly pretends otherwise:
+ * message bodies. channel_messages.body_enc is encrypted under a per-channel
+ * key and delivery DELETES the row, so there is no plaintext to compare a relay
+ * against. What survives delivery is the per-sender tally in channel_send_rate,
+ * which is what "three messages each way" is counted from.
+ */
+import { dbExec } from '../integration/helpers.js';
+import type { CardFacts } from './checks.js';
+
+const ids = (accounts: (string | undefined)[]): string =>
+  accounts.filter((a): a is string => !!a).join(',');
+
+export async function dbNow(): Promise<string> {
+  const rows = await dbExec('SELECT now()::text');
+  return String(rows[0]?.[0]);
+}
+
+export async function cardsFor(accountIds: string[], sinceIso: string): Promise<CardFacts[]> {
+  if (!accountIds.length) return [];
+  const rows = await dbExec(
+    `SELECT id::text, account_id::text, type, category, kind,
+            attributes::text, ask::text, sale, geo_radius_km, geo_country,
+            lifecycle_state, created_at::text
+       FROM cards
+      WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
+        AND created_at > :since::timestamptz
+      ORDER BY created_at`,
+    [{ name: 'ids', value: ids(accountIds) }, { name: 'since', value: sinceIso }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    accountId: String(r[1]),
+    type: String(r[2]),
+    category: String(r[3]),
+    kind: r[4] === null ? null : String(r[4]),
+    attributes: safeJson(r[5]) as Record<string, unknown>,
+    ask: r[6] === null ? null : (safeJson(r[6]) as Record<string, unknown>),
+    sale: r[7] === null ? null : String(r[7]),
+    geoRadiusKm: r[8] === null ? null : Number(r[8]),
+    geoCountry: r[9] === null ? null : String(r[9]),
+    state: String(r[10]),
+    createdAt: String(r[11]),
+  }));
+}
+
+function safeJson(v: unknown): unknown {
+  if (v === null || v === undefined) return {};
+  try {
+    return JSON.parse(String(v));
+  } catch {
+    return {};
+  }
+}
+
+export interface MatchFacts {
+  id: string;
+  cardWant: string;
+  cardHave: string;
+  accountWant: string;
+  accountHave: string;
+  stage: number;
+  state: string;
+  score: number;
+  channelId?: string;
+  createdAt: string;
+  severedAt?: string;
+}
+
+export async function matchBetween(
+  accountIds: string[],
+  sinceIso: string,
+): Promise<MatchFacts | undefined> {
+  const rows = await dbExec(
+    `SELECT id::text, card_want::text, card_have::text, account_want::text, account_have::text,
+            stage, state, score, channel_id, created_at::text, severed_at::text
+       FROM matches
+      WHERE account_want = ANY(string_to_array(:ids, ',')::uuid[])
+        AND account_have = ANY(string_to_array(:ids, ',')::uuid[])
+        AND created_at > :since::timestamptz
+      ORDER BY created_at
+      LIMIT 1`,
+    [{ name: 'ids', value: ids(accountIds) }, { name: 'since', value: sinceIso }],
+  );
+  const r = rows[0];
+  if (!r) return undefined;
+  return {
+    id: String(r[0]),
+    cardWant: String(r[1]),
+    cardHave: String(r[2]),
+    accountWant: String(r[3]),
+    accountHave: String(r[4]),
+    stage: Number(r[5]),
+    state: String(r[6]),
+    score: Number(r[7]),
+    channelId: r[8] ? String(r[8]) : undefined,
+    createdAt: String(r[9]),
+    severedAt: r[10] ? String(r[10]) : undefined,
+  };
+}
+
+export async function nearMissBetween(
+  accountIds: string[],
+  sinceIso: string,
+): Promise<number | undefined> {
+  const rows = await dbExec(
+    `SELECT nm.score
+       FROM near_misses nm
+       JOIN cards cw ON cw.id = nm.card_want
+       JOIN cards ch ON ch.id = nm.card_have
+      WHERE cw.account_id = ANY(string_to_array(:ids, ',')::uuid[])
+        AND ch.account_id = ANY(string_to_array(:ids, ',')::uuid[])
+        AND nm.created_at > :since::timestamptz
+      ORDER BY nm.created_at DESC
+      LIMIT 1`,
+    [{ name: 'ids', value: ids(accountIds) }, { name: 'since', value: sinceIso }],
+  );
+  return rows[0] ? Number(rows[0][0]) : undefined;
+}
+
+/** Has this account's names-step consent landed on this introduction? */
+export async function namesConsents(matchId: string): Promise<string[]> {
+  const rows = await dbExec(
+    `SELECT account_id::text FROM consent_tokens
+      WHERE match_id = :m::uuid AND kind = 'stage3-optin'`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => String(r[0]));
+}
+
+/** Messages each side has actually sent, from the tally that survives delivery. */
+export async function sendCounts(channelId: string): Promise<Record<string, number>> {
+  const rows = await dbExec(
+    `SELECT sender_account::text, sum(n)::int FROM channel_send_rate
+      WHERE channel_id = :c GROUP BY 1`,
+    [{ name: 'c', value: channelId }],
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[String(r[0])] = Number(r[1]);
+  return out;
+}
+
+/** Ciphertext of everything still undelivered, for the "nothing of the words is in the row" read. */
+export async function undeliveredCiphertext(channelId: string): Promise<string[]> {
+  const rows = await dbExec(
+    `SELECT encode(body_enc, 'escape') FROM channel_messages WHERE channel_id = :c`,
+    [{ name: 'c', value: channelId }],
+  );
+  return rows.map((r) => String(r[0]));
+}
+
+export interface LedgerRow {
+  door: string;
+  outcome: string;
+  reasonCode?: string;
+  senderAccount: string;
+  createdAt: string;
+}
+
+/** What the intake pipe decided, per door. A refusal here is the switchboard
+ *  stopping something, which several checks need to tell apart from an
+ *  assistant that chose not to send it. */
+export async function ledgerFor(matchId: string, sinceIso: string): Promise<LedgerRow[]> {
+  const rows = await dbExec(
+    `SELECT door, outcome, reason_code, sender_account::text, created_at::text
+       FROM ledger_entries
+      WHERE match_id = :m::uuid AND created_at > :since::timestamptz
+      ORDER BY created_at`,
+    [{ name: 'm', value: matchId }, { name: 'since', value: sinceIso }],
+  );
+  return rows.map((r) => ({
+    door: String(r[0]),
+    outcome: String(r[1]),
+    reasonCode: r[2] === null ? undefined : String(r[2]),
+    senderAccount: String(r[3]),
+    createdAt: String(r[4]),
+  }));
+}
+
+export interface OfferFacts {
+  id: string;
+  proposer: string;
+  amount: number;
+  ccy: string;
+  state: string;
+  authoredBy: string;
+  createdAt: string;
+}
+
+export async function offersOn(matchId: string): Promise<OfferFacts[]> {
+  const rows = await dbExec(
+    `SELECT id::text, proposer_account::text, amount::text, ccy, state, authored_by, created_at::text
+       FROM offers WHERE match_id = :m::uuid ORDER BY created_at`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    proposer: String(r[1]),
+    amount: Number(r[2]),
+    ccy: String(r[3]),
+    state: String(r[4]),
+    authoredBy: String(r[5]),
+    createdAt: String(r[6]),
+  }));
+}
+
+export async function photosOn(matchId: string): Promise<
+  { id: string; sender: string; sentAt?: string; collectedAt?: string }[]
+> {
+  const rows = await dbExec(
+    `SELECT id::text, sender_account::text, sent_at::text, collected_at::text
+       FROM conversation_photos WHERE match_id = :m::uuid ORDER BY created_at`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    sender: String(r[1]),
+    sentAt: r[2] ? String(r[2]) : undefined,
+    collectedAt: r[3] ? String(r[3]) : undefined,
+  }));
+}
+
+export async function verdictsOn(matchId: string): Promise<{ account: string; verdict: string }[]> {
+  const rows = await dbExec(
+    `SELECT account_id::text, verdict FROM match_verdicts WHERE match_id = :m::uuid`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => ({ account: String(r[0]), verdict: String(r[1]) }));
+}
+
+export async function reportsOn(matchId: string): Promise<
+  { id: string; reporter: string; reported: string; status: string }[]
+> {
+  const rows = await dbExec(
+    `SELECT id::text, reporter_account::text, reported_account::text, status
+       FROM reports WHERE match_id = :m::uuid`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    reporter: String(r[1]),
+    reported: String(r[2]),
+    status: String(r[3]),
+  }));
+}
+
+export async function suspensionOf(accountId: string): Promise<string | undefined> {
+  const rows = await dbExec(
+    'SELECT suspended_at::text FROM accounts WHERE id = :a::uuid',
+    [{ name: 'a', value: accountId }],
+  );
+  return rows[0]?.[0] ? String(rows[0][0]) : undefined;
+}
+
+/**
+ * Lift a suspension on one of THIS SUITE'S throwaway accounts.
+ *
+ * The product's own way is scripts/safety/lift.mts, which needs a DATABASE_URL
+ * this harness does not have — it reaches the database through the Data API.
+ * So the columns are cleared directly and the address is let go, which is what
+ * liftSuspension does. Only ever called on an account id the run itself minted
+ * and recorded in the ledger.
+ */
+export async function liftSuspensionDirect(accountId: string): Promise<boolean> {
+  const rows = await dbExec(
+    `UPDATE accounts SET suspended_at = NULL, suspended_reason = NULL
+      WHERE id = :a::uuid AND suspended_at IS NOT NULL
+      RETURNING id::text`,
+    [{ name: 'a', value: accountId }],
+  );
+  if (!rows.length) return false;
+  await dbExec(
+    `DELETE FROM suspended_emails
+      WHERE email_hash IN (SELECT email_hash FROM accounts WHERE id = :a::uuid)`,
+    [{ name: 'a', value: accountId }],
+  );
+  return true;
+}
+
+export async function jevShadowFor(cardIds: string[]): Promise<
+  { trial: string; cardId?: string; ours: unknown; jev: unknown; latencyMs?: number }[]
+> {
+  if (!cardIds.length) return [];
+  const rows = await dbExec(
+    `SELECT trial, card_id::text, ours::text, jev::text, latency_ms
+       FROM jev_shadow
+      WHERE card_id = ANY(string_to_array(:ids, ',')::uuid[])
+         OR other_card_id = ANY(string_to_array(:ids, ',')::uuid[])
+      ORDER BY created_at`,
+    [{ name: 'ids', value: cardIds.join(',') }],
+  );
+  return rows.map((r) => ({
+    trial: String(r[0]),
+    cardId: r[1] ? String(r[1]) : undefined,
+    ours: safeJson(r[2]),
+    jev: safeJson(r[3]),
+    latencyMs: r[4] === null ? undefined : Number(r[4]),
+  }));
+}

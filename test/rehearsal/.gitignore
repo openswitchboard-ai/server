@@ -1,0 +1,6 @@
+# The ledger of account ids this suite has minted on dev. It is state, not
+# source: it belongs to whoever ran the suite, it changes every run, and two
+# people's copies would fight. Account ids only — no addresses, no PINs, no
+# agent keys, none of which are ever written to disk outside a run's own
+# private folder.
+.ledger.json
