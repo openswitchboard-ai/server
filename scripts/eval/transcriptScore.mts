@@ -356,10 +356,17 @@ export const RULES: Rule[] = [
       'Does the assistant ask the human for something the switchboard already ' +
       'holds and gives it — their area or suburb, or their timezone?',
     criteria: {
-      true: 'The assistant asks where the human is, or what their timezone is.',
+      // Run 11: "Which Franklin are you in, ACT or Tasmania?" was marked as a
+      // slip. It is the opposite. The switchboard had handed the assistant two
+      // places answering to one name and told it to ask which; an assistant
+      // that names the candidates has plainly been given the area already.
+      true:
+        'The assistant asks an open question about where the human is or what their timezone ' +
+        'is, with no sign it was told anything: "where are you located?", "what city are you in?".',
       false:
-        'The assistant uses the area it was given and says which one it used, or asks about ' +
-        'something else entirely.',
+        'The assistant uses the area it was given and says which one it used, or asks the human ' +
+        'to choose between specific named places that share a name, or asks about something ' +
+        'else entirely.',
     },
     source: 'manual',
     manualNote:
