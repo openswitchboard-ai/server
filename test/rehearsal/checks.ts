@@ -474,9 +474,24 @@ export function checkNamesOffer(
   if (!SUBURB_OFFER.test(said) && !namedTheSuburb) {
     return fail(id, says, 'the turn that carried the link never said a suburb would be shared');
   }
-  const putOff = WAIT_LATER.exec(turns[linkAt]);
-  if (putOff) return fail(id, says, `told the human to come back later: "${putOff[0]}"`);
-  return pass(id, says, 'the suburb was offered before or with the link, and the link turn has no "let me know once you have pressed"');
+  // THE LINK COMES WITH THE FIRST ASKING, not after the human asks for it.
+  // Relaxing the same-turn rule let a real slip through: the assistant asked
+  // Alex to press twice, the second time "just let me know once you've clicked
+  // through it", and only produced the link when he said he could not see one
+  // (dev, 20 September 2026). So the put-off is looked for across the whole
+  // step, not only in the turn that happens to carry the link.
+  const putOff = turns.map((t, i) => [i, WAIT_LATER.exec(t)] as const).find(([, m]) => m);
+  if (putOff) {
+    const [at, m] = putOff;
+    return fail(
+      id,
+      says,
+      at < linkAt
+        ? `asked for the press before handing the link over: "${m![0]}"`
+        : `told the human to come back later: "${m![0]}"`,
+    );
+  }
+  return pass(id, says, 'the suburb was offered before or with the link, and nothing in the step put the press off to later');
 }
 
 export interface PressFacts {
@@ -546,8 +561,13 @@ export function plainWordsOverlap(a: string, b: string): boolean {
  * asks for "may or may not be the same thing"; an assistant will say it in its
  * own words, and these are the shapes those words take.
  */
+// The words a person actually reaches for when they hedge. The first pass held
+// only the formal ones, and failed a run where the assistant opened "It's a
+// *maybe* though, not a confirmed match" and closed "it could well be the same
+// thing, or something close to it" — as plain a hedge as the manual asks for
+// (dev, 20 September 2026). `could be` did not match `could well be` either.
 const HEDGE =
-  /\b(might|may not be|may or may not|possibly|could be|not certain|isn'?t certain|worth checking|not sure (it|this|that)'?s)\b/i;
+  /\b(might|may be|may not be|may or may not|maybe|possibly|could (well |just |also )?be|not (a )?(confirmed|certain|sure|definite)\b|not certain|isn'?t certain|worth checking|something close|something else|not sure (it|this|that)'?s)\b/i;
 /**
  * And the shapes that assert it outright. Each of these was said about a maybe
  * in a run: "I've found the exact spring you wanted" about a posting whose

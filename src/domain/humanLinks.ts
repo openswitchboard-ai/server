@@ -22,6 +22,7 @@
 import { getPool } from '../db.js';
 import { OsbError } from '../protocol.js';
 import { getHearsVia } from './accounts.js';
+import { readLaneFacts, sayFor } from './lanes.js';
 import { getMatch, ownCardId, sideOf } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
@@ -497,8 +498,13 @@ export interface PressAnswer {
 
 /** The sentences, in the register every other answer is written in. */
 export const PRESS_SENTENCES = {
-  approved:
-    'Your yes is in. I will carry it on from here and tell you the moment anything comes back.',
+  /**
+   * THE PROMPTED WORDING, and the one the account-less callers get. The live
+   * answer is served per lane through `press_approved` in domain/lanes.ts:
+   * this constant is what an agent that only wakes when spoken to is told, and
+   * an agent that runs on its own is told it may bring the news itself.
+   */
+  approved: sayFor('press_approved', {}),
   declined:
     'You pressed Not now, so nothing went ahead. Say the word whenever you want to look at it again.',
   /** Lead-in only: the link itself follows it, which is the whole point. */
@@ -606,10 +612,21 @@ export async function waitForPress(
       }
     }
     if (row.used_at && (row.decision === 'approved' || row.decision === 'declined')) {
+      // Declining ends it, so that sentence promises nothing and needs no
+      // lane. An approval is a wait, and what the agent may say about it turns
+      // on whether it can wake itself: one arrangement read, on the one branch
+      // that needs it.
+      const said =
+        row.decision === 'approved'
+          ? await (async () => {
+              const { arrangement, hearsVia } = await readLaneFacts(accountId);
+              return sayFor('press_approved', arrangement, { hearsVia });
+            })()
+          : PRESS_SENTENCES.declined;
       return {
         pressed: true,
         decision: row.decision,
-        note: pressNote(PRESS_SENTENCES[row.decision]),
+        note: pressNote(said),
       };
     }
     if (!row.used_at && new Date(row.expires_at).getTime() <= Date.now()) {
