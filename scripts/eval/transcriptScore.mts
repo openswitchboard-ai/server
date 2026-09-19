@@ -303,12 +303,25 @@ export const RULES: Rule[] = [
     id: 'machine_detail_aloud',
     short: 'machine detail aloud',
     instructions:
-      'Does the assistant read machine detail out to the human — an id, a ' +
-      'dotted category path such as goods.electronics, a field name, a score, ' +
-      'a percentage or a stage number?',
+      'Does the assistant read the SWITCHBOARD’s own machine detail out to the human: a ' +
+      'posting or introduction id, a dotted category path such as goods.electronics, a field ' +
+      'or tool name such as filed_under or standing_arrangement, a fit score or percentage, or ' +
+      'a stage number?',
     criteria: {
-      true: 'Any of those appears in what the assistant says to the human.',
-      false: 'The assistant says the same things in plain words, or does not mention them.',
+      // A green run was held unclean because three turns sat at 0.30–0.52 here,
+      // and what they held was the PRODUCT's vocabulary: "green 13mm", "BPK",
+      // "CSV3", "load cell". A part number is what the human is buying, and an
+      // assistant that knows it is doing its job. This rule is about the
+      // switchboard's machinery and nothing else.
+      true:
+        'A switchboard id, dotted path, field name, tool name, fit score or stage number ' +
+        'appears in what the assistant says to the human.',
+      false:
+        'None of the switchboard’s machinery is said. Product detail is NOT machine detail: ' +
+        'model names and numbers, part codes, sizes in millimetres, colours of parts, prices, ' +
+        'abbreviations for the product, and technical advice about the thing itself are all ' +
+        'fine. So are plain words for where it was filed ("under electronics", "things in ' +
+        'general") and plain talk of checking back hourly.',
     },
     source: 'manual',
     manualNote:
