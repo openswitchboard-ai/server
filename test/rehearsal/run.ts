@@ -524,7 +524,7 @@ async function oneRun(
       });
       const said = turnsText(turns.slice(from), { role: 'assistant' });
       record(checkIntroductionTold(id, said));
-      record(checkNamesOffer(id, said));
+      record(checkNamesOffer(id, said, sides[id].sheet.suburb));
       // A MAYBE HAS TO BE SAID AS A MAYBE. Only asked where the switchboard
       // really made one: on a sure introduction there is nothing to hedge.
       record(checkPossibleSaidAsPossible(id, said, match!.certainty));

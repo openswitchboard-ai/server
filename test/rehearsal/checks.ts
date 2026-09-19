@@ -451,13 +451,21 @@ export function checkIntroductionTold(side: 'seller' | 'buyer', turns: string[])
   return pass(id, says, 'told them somebody came forward, with no count and no id');
 }
 
-export function checkNamesOffer(side: 'seller' | 'buyer', turns: string[]): Check {
+export function checkNamesOffer(
+  side: 'seller' | 'buyer',
+  turns: string[],
+  suburb?: string,
+): Check {
   const id = `S2.names_offer.${side}`;
   const says = `${side}'s assistant offered a first name and a SUBURB, handed the link over and waited on the press in the same turn.`;
   const withLink = turns.filter((t) => /https?:\/\/\S+/.test(t));
   if (!withLink.length) return fail(id, says, 'no link was ever handed over');
   const said = withLink.join('\n');
-  if (!SUBURB_OFFER.test(said)) {
+  // Naming the place IS offering it: an assistant said it would share the
+  // first name and "Queanbeyan", which is the suburb, and the check wanted the
+  // word 'suburb' (dev, 20 September 2026).
+  const namedTheSuburb = suburb ? new RegExp(`\\b${suburb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(said) : false;
+  if (!SUBURB_OFFER.test(said) && !namedTheSuburb) {
     return fail(id, says, 'the turn that carried the link never said a suburb would be shared');
   }
   const putOff = WAIT_LATER.exec(said);
