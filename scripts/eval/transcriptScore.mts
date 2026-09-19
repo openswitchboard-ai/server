@@ -315,7 +315,8 @@ export const RULES: Rule[] = [
       // switchboard's machinery and nothing else.
       true:
         'A switchboard id, dotted path, field name, tool name, fit score or stage number ' +
-        'appears in what the assistant says to the human.',
+        'appears in what the assistant says to the human, OUTSIDE a link. A page link the ' +
+        'assistant hands over is the step working and is never a slip, whatever the link contains.',
       false:
         'None of the switchboard’s machinery is said. Product detail is NOT machine detail: ' +
         'model names and numbers, part codes, sizes in millimetres, colours of parts, prices, ' +
@@ -371,7 +372,7 @@ export const RULES: Rule[] = [
       false:
         'An OFFER put as a question is no promise: "if you would like, I can check hourly and tell you when someone comes forward. Want me to set that up?" asks the human and commits to nothing until they answer. ' +
         'Saying what it will do next in this same conversation ("once I have that I will post it and tell you what happens") is no such promise. Nor is it one when the assistant says it will look again itself, or tells the human to ask it again, ' +
-        'or says the switchboard emails them; or it makes no such promise; or ' +
+        'or says it is waiting on a page it has already handed over and will answer when the press lands (that is the same turn, not a promise for later); or says the switchboard emails them; or it makes no such promise; or ' +
         '`tools_the_assistant_used_in_this_step` shows it scheduled a check or saved an ' +
         'arrangement in this step (a tool named automations, cron, schedule, reminder or ' +
         'standing_arrangement), which is what backs the promise.',
