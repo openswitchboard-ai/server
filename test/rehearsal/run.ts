@@ -306,6 +306,19 @@ async function oneRun(
         at: new Date().toISOString(),
       });
       for (const m of spoken.matchAll(/\$\s?(\d{1,6})/g)) side.statedFigures.push(Number(m[1]));
+      // A figure the human AGREED to is theirs as surely as one they said. In
+      // one run the assistant quoted market prices, asked "post it with a
+      // ceiling around $30?", the human said "yeah, that sounds good", and the
+      // check then failed the posting for a figure "the human never stated".
+      // An assent right after an assistant turn that put figures to them as a
+      // question makes those figures stated.
+      {
+        const last = [...side.history].reverse().find((h) => h.role === 'assistant');
+        const assent = /^\s*(yes|yeah|yep|yup|sure|ok(ay)?|sounds good|that works|go ahead|do it|fine|perfect|great)\b/i;
+        if (last && /\?/.test(last.text) && assent.test(spoken || humanText) && !/\bnot\b|\bno\b/i.test((spoken || humanText).slice(0, 40))) {
+          for (const m of last.text.matchAll(/\$\s?(\d{1,6})/g)) side.statedFigures.push(Number(m[1]));
+        }
+      }
       side.history.push({ role: 'human', text: spoken || humanText });
 
       // A link the human said they would press is pressed by the harness, as

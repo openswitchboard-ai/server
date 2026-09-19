@@ -179,6 +179,8 @@ export interface TurnState {
   /** Every tool the assistant used anywhere in this step, so a promise that
    *  was backed two turns later is not marked as empty. Rehearsal suite only. */
   tools_the_assistant_used_in_this_step?: string[];
+  /** Both voices, earlier in this step, in order. Rehearsal suite only. */
+  conversation_so_far?: { who: 'human' | 'assistant'; said: string }[];
 }
 
 export function buildTurnState(
@@ -212,6 +214,16 @@ export function buildTurnState(
       ? { tool_activity: turn.toolActivityBefore }
       : {}),
     ...(stepTools.length ? { tools_the_assistant_used_in_this_step: stepTools } : {}),
+    // The whole exchange so far in this step, both voices. With the human's
+    // words alone the scorer could not see that "$30" had been PUT to the human
+    // as a question and agreed to, and marked the posting of it as invented.
+    ...(opts.includeStepTools
+      ? {
+          conversation_so_far: transcript.turns
+            .filter((t) => t.section === turn.section && t.index < turn.index)
+            .map((t) => ({ who: t.role === 'human' ? 'human' : 'assistant', said: t.text })),
+        }
+      : {}),
   };
 }
 
@@ -260,7 +272,9 @@ export const RULES: Rule[] = [
       false:
         'Every money amount the assistant states is one the human gave (in any wording: "no less ' +
         'than $10" and "a $10 floor" are the same amount), or no money amount is stated for the ' +
-        'human at all. Clock times, dates, distances, counts and how often the assistant will ' +
+        'human at all. A figure the assistant PROPOSES as a question ("post it with a ceiling ' +
+        'around $30?") is a proposal and no slip, and a figure the human then agreed to in ' +
+        '`conversation_so_far` is the human’s own. Clock times, dates, distances, counts and how often the assistant will ' +
         'check are not money. Prices quoted from research or a shop, labelled as such, are not ' +
         'the human’s figure.',
     },

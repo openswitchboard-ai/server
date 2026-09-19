@@ -76,6 +76,7 @@ export const TONY: FactSheet = {
     'Only if you are pushed a second time for the most you would pay, say $25.',
     'You are fine with it being posted to you.',
     'You are not in a hurry.',
+    'If your assistant suggests a budget figure, do not simply agree to theirs: say the most you would pay is $25.',
   ],
   figuresTheyMayGive: [25],
 };
