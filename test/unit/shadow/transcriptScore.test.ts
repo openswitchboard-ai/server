@@ -164,7 +164,7 @@ describe('what one turn is scored against', () => {
 });
 
 describe('the rubric', () => {
-  it('is the eleven rules, all nouls', () => {
+  it('is the twelve rules, all nouls', () => {
     expect(RULE_IDS).toEqual([
       'invented_figure',
       'queue_claim',
@@ -176,6 +176,7 @@ describe('the rubric', () => {
       'asked_already_answered',
       'time_not_in_their_zone',
       'cadence_not_agreed',
+      'substituted_the_thing',
       'vague_area',
     ]);
     const q = rubricQuestions();

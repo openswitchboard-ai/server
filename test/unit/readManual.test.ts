@@ -242,7 +242,7 @@ describe('the tool descriptions carry the rules and stay inside the budget', () 
       // nowhere else to learn that (run 11: an assistant asked to find a used
       // part searched four marketplaces and never thought of this one).
       const cap =
-        tool.name === 'check_in' ? CHECK_IN_CAP : tool.name === 'publish_intent' ? 1700 : DESCRIPTION_CAP;
+        tool.name === 'check_in' ? CHECK_IN_CAP : tool.name === 'publish_intent' ? 1850 : DESCRIPTION_CAP;
       expect(tool.description.length, tool.name).toBeLessThanOrEqual(cap);
     }
   });

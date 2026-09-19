@@ -91,7 +91,7 @@ export function whatHappensNextNote(a: Arrangement): {
   return {
     text: saved
       ? `Your human has already agreed you look ${cadenceInPlainWords(a.check_every_minutes!)}, so say that as the arrangement it is. One look a few minutes from now is a follow-up on this posting and has nothing to do with that rhythm. Say any time in their own clock.`
-      : 'You have no checking arrangement saved for your human, so do not tell them you will let them know. Say this: the switchboard will email you when someone comes forward. If you can wake yourself, ask them how often to look (once an hour is what to suggest), save it with standing_arrangement, and only then say you will tell them yourself. One look a few minutes from now is fine either way; say times in their own clock.',
+      : 'You and your human have not agreed how often you check (say it in those words), so do not tell them you will let them know. Say this: the switchboard will email you when someone comes forward. If you can wake yourself, ask how often (suggest hourly), save it with standing_arrangement, and only then say you will tell them. One look a few minutes from now is fine either way; say times in their own clock.',
     provenance: 'switchboard-system' as const,
   };
 }
