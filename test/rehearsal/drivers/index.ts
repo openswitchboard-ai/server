@@ -29,13 +29,14 @@ function requireEnv(name: string): string {
 export function nagathaDriver(): Driver {
   return {
     name: 'Nagatha',
-    async prepare(agentKey, _runId) {
+    async prepare(agentKey, _runId, humanFirstName) {
       return deepCleanAndBind(
         'nagatha',
         requireEnv('NAGATHA_HOST'),
         requireEnv('NAGATHA_KEY'),
         agentKey,
         MCP_URL,
+        humanFirstName,
       );
     },
     async ask(sessionId, utterance) {
@@ -56,13 +57,14 @@ export function nagathaDriver(): Driver {
 export function bilbyDriver(): Driver {
   return {
     name: 'Bilby',
-    async prepare(agentKey, _runId) {
+    async prepare(agentKey, _runId, humanFirstName) {
       return deepCleanAndBind(
         'bilby',
         requireEnv('DUET_B_HOST'),
         requireEnv('DUET_B_KEY'),
         agentKey,
         MCP_URL,
+        humanFirstName,
       );
     },
     async ask(sessionId, utterance) {

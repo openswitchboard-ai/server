@@ -246,7 +246,7 @@ const listing = (over: Record<string, unknown> = {}) => ({
   type: 'offering',
   category: 'goods.bicycle.mountain',
   kind: 'mountain bike',
-  geo: { bucket: 'r3gx', radius_km: 25 },
+  geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
   ttl_days: 60,
   ...over,
 });
@@ -265,7 +265,7 @@ beforeEach(() => {
       category: 'goods.bicycle.mountain',
       category_as_posted: 'goods.bicycle.mountain',
       kind: 'mountain bike',
-      geo: { bucket: 'r3gx', radius_km: 25 },
+      geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
       // Deliberately as thin as the rehearsal's: an amend must not be refused
       // for what the posting already was.
       attributes: {},
@@ -347,5 +347,20 @@ describe('the refusal an assistant is handed', () => {
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
     expect(r.intent_id).toBe(CARD);
     expect(r.state).toBe('PENDING_SCREENING');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// How far it reaches is the human's answer, never a default.
+// ---------------------------------------------------------------------------
+describe('a thing on offer with no reach stated', () => {
+  it('is what the posting door checks for, in the source', async () => {
+    // The third rehearsal-suite run (19 September 2026): a parcel-sized spring
+    // went up within 8 km because the assistant never asked whether its human
+    // would post it, and a missing `reach` fell silently to a radius.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/domain/cards.ts', import.meta.url), 'utf8');
+    expect(src).toContain("card.type === 'offering' && !card.geo?.reach");
+    expect(src).toContain('Would you post it to someone, or is it pick-up only?');
   });
 });

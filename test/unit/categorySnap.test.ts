@@ -240,7 +240,7 @@ const listing = (over: Record<string, unknown> = {}) => ({
   // it asks anything about shelves (domain/postingDetail.ts), and this suite
   // is about the shelves.
   attributes: { brand: 'fanatec', model: 'csl dd', condition: 'good' },
-  geo: { bucket: 'r3gx', radius_km: 25 },
+  geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
   ttl_days: 60,
   ...over,
 });
@@ -257,7 +257,7 @@ beforeEach(() => {
       category: 'goods.gaming.sim-racing',
       category_as_posted: 'goods.gaming.sim-racing',
       kind: 'sim racing rig',
-      geo: { bucket: 'r3gx', radius_km: 25 },
+      geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
       attributes: {},
       ask: null,
       urgency: 'none',

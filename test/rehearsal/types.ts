@@ -115,7 +115,7 @@ export interface Driver {
   /** 'Nagatha', 'Bilby', 'Claude' — the name that goes in the transcript. */
   name: string;
   /** Wipe it back to a clean assistant and point it at `agentKey`. */
-  prepare(agentKey: string, runId: string): Promise<string>;
+  prepare(agentKey: string, runId: string, humanFirstName?: string): Promise<string>;
   ask(sessionId: string, utterance: string): Promise<AgentReply>;
   /** Delete anything the run wrote for this client. Never throws. */
   teardown?(): Promise<void>;

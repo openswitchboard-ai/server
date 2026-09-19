@@ -284,9 +284,17 @@ export const RULES: Rule[] = [
       'look more closely at somebody the switchboard has made no introduction ' +
       'with?',
     criteria: {
-      true: 'An offer to contact, message or investigate a person nobody has been introduced to.',
+      // Third rehearsal-suite run: "I've set a look in five minutes and will let
+      // you know the moment there's anything to report" drew 57% here. Looking
+      // at the switchboard again is the assistant checking its own human's
+      // posting; nobody is being contacted. The rule needs a PERSON in it.
+      true:
+        'The turn speaks of a particular other person or posting that came close, and offers to ' +
+        'contact them, message them, pass them a word or look into them, with no introduction made.',
       false:
-        'The assistant offers only to change the human’s own posting, or makes no such offer.',
+        'The assistant offers only to change the human’s own posting, or to check the switchboard ' +
+        'again later, or says the switchboard will email them, or makes no such offer. Checking ' +
+        'back on one’s own posting is never contacting anybody.',
     },
     source: 'manual',
     manualNote:

@@ -401,6 +401,22 @@ export async function publishIntent(
   // because a posting that comes back unposted should cost the switchboard the
   // same as a posting that is refused for its category. The whole of the
   // reasoning, and the rule itself, is in domain/postingDetail.ts.
+  // HOW FAR IT REACHES IS THE HUMAN'S ANSWER, never a default. A posting that
+  // leaves `reach` out used to fall silently to a radius, and in the third
+  // rehearsal-suite run an assistant put a parcel-sized spring up within 8 km
+  // of Queanbeyan without ever asking its human whether they would post it,
+  // where the human would have said "anywhere in Australia". So a thing that
+  // is being offered comes back with that one question until somebody has
+  // answered it. It is asked of goods on offer only: a want, a service and a
+  // social posting keep the old default, which is right for most of them.
+  if (String(card.category ?? '').split('.')[0] === 'goods' && card.type === 'offering' && !card.geo?.reach) {
+    throw new OsbError('NEEDS_DETAIL', {
+      human_action:
+        'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.',
+      questions: ['Would you post it to someone, or is it pick-up only? If pick-up, how far from you?'],
+    });
+  }
+
   const shortfall = detailShortfall(card);
   if (shortfall) {
     const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));

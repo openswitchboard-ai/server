@@ -56,12 +56,26 @@ export async function deepCleanAndBind(
   key: string,
   agentKey: string,
   mcpUrl: string,
+  humanFirstName?: string,
 ): Promise<string> {
   const home = AGENT_HOMES[agent];
   const cleaned = (await ssh(host, key, `${DEEP_CLEAN} ${home.dir} ${home.unit}`, 300_000))
     .trim()
     .split('\n')
     .slice(-1)[0];
+
+  // Whose assistant this is, THIS run. The box's USER.md names one person, and
+  // the sides alternate: in the third run Nagatha, working for Alex, signed off
+  // "here's where things stand, Tony". A letters-only name, so nothing here can
+  // be anything but a name.
+  if (humanFirstName && /^[A-Za-z]{2,20}$/.test(humanFirstName)) {
+    await ssh(
+      host,
+      key,
+      `f=~/${home.dir}/workspace/USER.md; [ -f "$f" ] && sed -i -E 's/^- The user is [A-Za-z]+\\. Address (him|her|them) as [A-Za-z]+\\./- The user is ${humanFirstName}. Address them as ${humanFirstName}./; s/^(- Always (talk|communicate)[^.]*to )[A-Z][a-z]+( in the voice)/\\1${humanFirstName}\\3/' "$f"; grep -c "${humanFirstName}" "$f" || true`,
+      60_000,
+    );
+  }
 
   // The key over stdin, exactly as scratchpad/dev-reset2.mts does it: the far
   // side reads one line into $H and hands it to `config set`, so the token is
