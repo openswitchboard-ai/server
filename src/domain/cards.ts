@@ -152,15 +152,38 @@ function shelfUnclearAction(from: string): string {
   return `The catalogue has nothing written down for that, and the shelves nearest it disagree. Ask your human which of these is closest to what the thing is, then post it again with that category. If they say none of these, post it under ${top} and it goes up as it stands.`;
 }
 
+/**
+ * The shelf the way a person would say it: "electronics", "mountain bikes",
+ * "things in general". categoryLabelPath is the catalogue's breadcrumb
+ * ("Secondhand consumer goods > Electronics"), which is right for an embedding
+ * and wrong for a sentence: an assistant said it to its human exactly as
+ * handed, arrow and all, and it read as machinery (rehearsal, 19 September
+ * 2026). The deepest node the catalogue has a label for, in lower case; a bare
+ * top level gets plain words of its own.
+ */
+function shelfInWords(category: string): string {
+  const parts = category.split('.');
+  if (parts.length <= 1) {
+    return (
+      { goods: 'things in general', services: 'everyday help in general', social: 'people to do things with' }[
+        parts[0]
+      ] ?? parts[0]
+    );
+  }
+  const path = categoryLabelPath(category).split(' > ');
+  const leaf = path[path.length - 1] ?? category;
+  return leaf.replace(/\s*&\s*/g, ' and ').toLowerCase();
+}
+
 function filedUnderNote(decision: { changed: boolean; category: string }): string {
   // The shelf somebody asked for still needs WORDS. The first rehearsal-suite
   // run (19 September 2026): an assistant chose goods.electronics itself, so
   // nothing had moved and no sentence came back, only the dotted path, and it
   // read the path to its human because the path was all it had been given.
   if (!decision.changed) {
-    return `Filed under ${categoryLabelPath(decision.category)}. Say it in those words; the dotted path is yours to work with and is never said aloud.`;
+    return `Filed under ${shelfInWords(decision.category)}. Say it in those words; the dotted path is yours to work with and is never said aloud.`;
   }
-  return `Filed under ${categoryLabelPath(decision.category)}, which is the nearest thing the catalogue knows. Your own words for it are kept as they were. Say where it went, and if that is the wrong shelf, take it down and put it up again somewhere better.`;
+  return `Filed under ${shelfInWords(decision.category)}, which is the nearest thing the catalogue knows. Your own words for it are kept as they were. Say where it went, and if that is the wrong shelf, take it down and put it up again somewhere better.`;
 }
 
 /**

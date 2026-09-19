@@ -348,3 +348,17 @@ describe('what the row carries and what the assistant hears', () => {
     expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The shelf is said the way a person would say it.
+// ---------------------------------------------------------------------------
+describe('the shelf in the sentence an assistant is handed', () => {
+  it('carries no breadcrumb arrow and no catalogue heading', async () => {
+    // "Filed under Secondhand consumer goods > Electronics" was said to a human
+    // exactly as handed, and read as machinery (rehearsal, 19 September 2026).
+    const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods.bicycle.mountain' }));
+    expect(r.filed_under_note.text).not.toContain('>');
+    expect(r.filed_under_note.text).not.toMatch(/Secondhand consumer goods/);
+    expect(r.filed_under_note.text).toMatch(/^Filed under [a-z]/);
+  });
+});
