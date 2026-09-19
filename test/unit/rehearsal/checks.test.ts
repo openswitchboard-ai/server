@@ -252,3 +252,16 @@ describe('hearing a figure however it was said', () => {
     expect(moneySaid('used it for about a year, 13 mm')).toEqual([]);
   });
 });
+
+describe('hearing the kind-of-sale question however it was put', () => {
+  it('hears a firm price against offers, and best-offer with its hyphen', async () => {
+    const { SELLER_QUESTIONS } = await import('../../../test/rehearsal/checks.js');
+    for (const said of [
+      'What do you want for it, and is that a firm price or are you open to offers?',
+      'For best-offer, do you want to set a reserve floor?',
+      'Straight price, or everyone puts in one sealed figure?',
+    ]) expect(SELLER_QUESTIONS.kind_of_sale.test(said), said).toBe(true);
+    expect(SELLER_QUESTIONS.kind_of_sale.test('Which pedal set is it for?')).toBe(false);
+  });
+});
+

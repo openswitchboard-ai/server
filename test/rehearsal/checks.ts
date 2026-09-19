@@ -141,7 +141,12 @@ export function checkManual(
 export const SELLER_QUESTIONS = {
   make_model: /\b(fanatec|clubsport|which|what (kind|sort|model|make)|v3|model|make)\b/i,
   condition: /\b(condition|how old|how long|used|wear|worn|state of it|any damage)\b/i,
-  kind_of_sale: /\b(best offer|straight|asking price|price you want|how.{0,15}sell|sealed|one at a time|fixed price)\b/i,
+  // Widened after a run failed an assistant who had asked it plainly: "is that
+  // a firm price or are you open to offers?" and, a turn later, "for
+  // best-offer, do you want a reserve?" (the hyphen alone defeated the old
+  // pattern). These are the ways people actually put the question.
+  kind_of_sale:
+    /\b(best[- ]offer|straight|asking price|price you want|how.{0,15}sell|sealed|one at a time|(fixed|firm|set|straight) price|open to offers|take offers|make (you )?offers|name a price|highest offer)\b/i,
 };
 
 export interface AskedResult {
