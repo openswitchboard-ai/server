@@ -20,7 +20,8 @@
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { JEV_ENDPOINT, JEV_MODEL, postToJev } from '../../src/shadow/jev.js';
 import {
-  RULES,
+  rulesFor,
+  type RunFacts,
   buildTurnState,
   parseTranscript,
   rubricQuestions,
@@ -88,8 +89,8 @@ export type AskJev = (state: unknown) => Promise<{
 }>;
 
 /** The real scorer: one rubric of nine nouls per call. */
-function liveAsk(apiKey: string): AskJev {
-  const questions = rubricQuestions();
+function liveAsk(apiKey: string, facts: RunFacts): AskJev {
+  const questions = rubricQuestions(facts);
   return async (state) => {
     const r = await postToJev({
       state,
@@ -101,7 +102,7 @@ function liveAsk(apiKey: string): AskJev {
     });
     if (!r.ok) return { answers: {}, reason: r.reason };
     const answers: Record<string, number | null> = {};
-    for (const rule of RULES) {
+    for (const rule of rulesFor(facts)) {
       const a = r.answers[rule.id];
       answers[rule.id] = a?.type === 'noul' ? a.noul : null;
     }
@@ -117,7 +118,13 @@ function liveAsk(apiKey: string): AskJev {
  */
 export async function scoreTranscript(
   markdown: string,
-  opts: { assistantNames: string[]; ask?: AskJev; concurrency?: number } = { assistantNames: [] },
+  opts: {
+    assistantNames: string[];
+    ask?: AskJev;
+    concurrency?: number;
+    /** What the transcript cannot say, and some rules need. See Rule.needs. */
+    facts?: RunFacts;
+  } = { assistantNames: [] },
 ): Promise<ScoreResult> {
   const transcript = parseTranscript(markdown, { assistantNames: opts.assistantNames });
   const assistantTurns = transcript.turns.filter((t) => t.role === 'assistant');
@@ -142,7 +149,7 @@ export async function scoreTranscript(
         unavailable: `no Jev key in ${JEV_SECRET}; the speech rules were NOT read this run`,
       };
     }
-    ask = liveAsk(key);
+    ask = liveAsk(key, opts.facts ?? {});
   }
 
   const concurrency = Math.max(1, Math.min(8, opts.concurrency ?? 3));
@@ -153,7 +160,7 @@ export async function scoreTranscript(
       for (;;) {
         const i = next++;
         if (i >= assistantTurns.length) return;
-        out[i] = await scoreOne(transcript, assistantTurns[i], ask!);
+        out[i] = await scoreOne(transcript, assistantTurns[i], ask!, opts.facts ?? {});
       }
     }),
   );
@@ -180,6 +187,7 @@ async function scoreOne(
   transcript: ReturnType<typeof parseTranscript>,
   turn: Turn,
   ask: AskJev,
+  facts: RunFacts,
 ): Promise<ScoredTurn> {
   const state = buildTurnState(transcript, turn, { includeStepTools: true });
   const first = await ask(state);
@@ -195,7 +203,8 @@ async function scoreOne(
   };
   if (first.reason) return { ...base, reason: first.reason };
 
-  const needsSecond = RULES.some((r) => {
+  const rules = rulesFor(facts);
+  const needsSecond = rules.some((r) => {
     const b = bandFor(r.id, first.answers[r.id]);
     return b === 'fail' || b === 'uncertain';
   });
@@ -204,7 +213,7 @@ async function scoreOne(
   base.tokensIn += second?.usage?.input_tokens ?? 0;
   base.tokensOut += second?.usage?.output_tokens ?? 0;
 
-  for (const rule of RULES) {
+  for (const rule of rules) {
     const v1 = first.answers[rule.id] ?? null;
     const b1 = bandFor(rule.id, v1);
     if (b1 === null || b1 === 'no') continue;

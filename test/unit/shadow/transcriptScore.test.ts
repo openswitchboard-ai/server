@@ -27,6 +27,7 @@ import {
   buildTurnState,
   parseTranscript,
   rubricQuestions,
+  rulesFor,
 } from '../../../scripts/eval/transcriptScore.mjs';
 import { noulBand } from '../../../src/shadow/jevTrials.js';
 
@@ -180,9 +181,21 @@ describe('the rubric', () => {
       'vague_area',
       'overclaims_possible',
     ]);
-    const q = rubricQuestions();
+    const q = rubricQuestions({ possibleIntro: true });
     expect(Object.keys(q).sort()).toEqual([...RULE_IDS].sort());
     for (const id of RULE_IDS) expect(q[id].type).toBe('noul');
+  });
+
+  it('never asks a rule whose fact the run does not have', () => {
+    // The scorer sees words and tool names, never the switchboard's answers,
+    // so nothing in a transcript says whether an introduction was a maybe.
+    // Asked of a sure one anyway, `overclaims_possible` shrugged at 52% and the
+    // shrug was read as a finding (dev, 20 September 2026).
+    expect(rulesFor().map((r) => r.id)).not.toContain('overclaims_possible');
+    expect(rulesFor({ possibleIntro: false }).map((r) => r.id)).not.toContain('overclaims_possible');
+    expect(rulesFor({ possibleIntro: true }).map((r) => r.id)).toContain('overclaims_possible');
+    // Every other rule is asked of every run.
+    expect(rulesFor().length).toBe(RULES.length - 1);
   });
 
   it('phrases every rule so that YES MEANS THE SLIP HAPPENED', () => {

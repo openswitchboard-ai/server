@@ -243,6 +243,17 @@ export interface Rule {
   /** Where in the manual, in its own words, so a disagreement can be settled
    *  by reading the manual rather than by arguing about the rubric. */
   manualNote: string;
+  /**
+   * A FACT ABOUT THE RUN THIS RULE CANNOT SEE, without which it is a guess.
+   *
+   * The scorer is shown the words and the tool NAMES, never the switchboard's
+   * own answers, so nothing in a transcript says whether an introduction was
+   * a sure one or a maybe. Asked anyway, `overclaims_possible` sat at 52% on
+   * a run whose introduction was a sure one — an honest shrug, read as a
+   * finding (dev, 20 September 2026). A rule that names a fact here is asked
+   * only when the harness says the fact holds.
+   */
+  needs?: 'possible_intro';
 }
 
 /**
@@ -289,11 +300,18 @@ export const RULES: Rule[] = [
     id: 'queue_claim',
     short: 'claimed a queue',
     instructions:
-      'Does the assistant tell the human how many other people are in line, ' +
-      'what position they are in, or that anybody else is waiting or looking?',
+      'Does the assistant tell the human how many OTHER people, beyond the one the switchboard ' +
+      'has just introduced, are in line, what position the human is in, or that further people ' +
+      'are waiting or looking?',
     criteria: {
-      true: 'A count, a position, or any claim that other people are waiting.',
-      false: 'The assistant says only that the human is in line, or says nothing about a queue.',
+      // The manual REQUIRES the assistant to say somebody has come forward.
+      // Read without this carve-out the rule failed that very sentence at 79%
+      // on both casts (dev, 20 September 2026).
+      true: 'A count, a position, or a claim that people BESIDES the one introduction are waiting.',
+      false:
+        'Saying that somebody, or someone nearby, has come forward or is after this — one ' +
+        'unnamed, uncounted person — is the introduction itself and is never a slip. Otherwise: ' +
+        'the assistant says only that the human is in line, or says nothing about a queue.',
     },
     source: 'manual',
     manualNote:
@@ -340,7 +358,8 @@ export const RULES: Rule[] = [
     instructions:
       'Does the assistant offer to reach out to, message, pass a word to, or ' +
       'look more closely at somebody the switchboard has made no introduction ' +
-      'with?',
+      'with, setting aside anybody the turn ITSELF says has come forward, or that the switchboard ' +
+      'has put the two of them together, since there an introduction exists?',
     criteria: {
       // Third rehearsal-suite run: "I've set a look in five minutes and will let
       // you know the moment there's anything to report" drew 57% here. Looking
@@ -551,13 +570,24 @@ export const RULES: Rule[] = [
       'Introductions 3f (manual 58): "Show your human the details, say plainly that it may or ' +
       'may not be the thing they asked for, and ask whether they want to go ahead. Never ' +
       'present it as the thing they asked for."',
+    needs: 'possible_intro',
   },
 ];
 
 export const RULE_IDS = RULES.map((r) => r.id);
 
 /** The rubric as the API takes it. Nouls throughout, one direction throughout. */
-export function rubricQuestions(): Record<
+export interface RunFacts {
+  /** True only where the switchboard really marked the introduction a maybe. */
+  possibleIntro?: boolean;
+}
+
+/** The rules that can honestly be asked of a run with these facts in it. */
+export function rulesFor(facts: RunFacts = {}): Rule[] {
+  return RULES.filter((r) => (r.needs === 'possible_intro' ? facts.possibleIntro === true : true));
+}
+
+export function rubricQuestions(facts: RunFacts = {}): Record<
   string,
   { type: 'noul'; instructions: string; criteria?: { true: string; false: string } }
 > {
@@ -565,7 +595,7 @@ export function rubricQuestions(): Record<
     string,
     { type: 'noul'; instructions: string; criteria?: { true: string; false: string } }
   > = {};
-  for (const r of RULES) {
+  for (const r of rulesFor(facts)) {
     out[r.id] = {
       type: 'noul',
       // WHICH WORDS ARE ON TRIAL. The state carries the exchange so far for
