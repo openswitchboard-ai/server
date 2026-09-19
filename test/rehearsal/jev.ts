@@ -181,7 +181,7 @@ async function scoreOne(
   turn: Turn,
   ask: AskJev,
 ): Promise<ScoredTurn> {
-  const state = buildTurnState(transcript, turn);
+  const state = buildTurnState(transcript, turn, { includeStepTools: true });
   const first = await ask(state);
   const base: ScoredTurn = {
     section: turn.section,
@@ -240,7 +240,7 @@ export function slipRates(results: ScoreResult[]): {
       if (t.reason) continue;
       turnsBySpeaker.set(t.speaker, (turnsBySpeaker.get(t.speaker) ?? 0) + 1);
       for (const m of t.marks) {
-        const key = `${t.speaker} ${m.ruleId}`;
+        const key = `${t.speaker}\u0000${m.ruleId}`;
         const e = tally.get(key) ?? { failed: 0, uncertain: 0 };
         if (m.band === 'fail') e.failed++;
         if (m.band === 'uncertain') e.uncertain++;
@@ -250,7 +250,7 @@ export function slipRates(results: ScoreResult[]): {
   }
   return [...tally.entries()]
     .map(([key, e]) => {
-      const [speaker, ruleId] = key.split(' ');
+      const [speaker, ruleId] = key.split('\u0000');
       return { speaker, ruleId, ...e, turns: turnsBySpeaker.get(speaker) ?? 0 };
     })
     .sort((a, b) => b.failed - a.failed || b.uncertain - a.uncertain);
