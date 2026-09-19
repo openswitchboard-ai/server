@@ -838,7 +838,12 @@ describe('what trial A puts on the ballot', () => {
     expect(askedAbout).toHaveLength(1);
     const text = askedAbout[0].text!;
     expect(text).toContain('road bike, 56cm');
-    expect(text).toContain('condition: used');
+    // The stated facts, as the values themselves: the ballot is asked in the
+    // same plain register the catalogue's nodes are described in, and a schema
+    // key is not something anybody says about a bike.
+    expect(text).toContain('used');
+    expect(text).toContain('aluminium');
+    expect(text).not.toContain('condition:');
     // Neither the node we filed it under nor the path the assistant wrote.
     expect(text).not.toContain('goods.bicycle.road');
     expect(text).not.toContain('goods.bikes.roadracing');

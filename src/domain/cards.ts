@@ -611,6 +611,7 @@ export async function publishIntent(
       as_posted: filed.from,
       source: filed.source,
       score: filed.score,
+      lead: filed.lead,
       runners_up: filed.runners_up,
     });
     throw new OsbError('SHELF_UNCLEAR', {
@@ -626,6 +627,7 @@ export async function publishIntent(
       how: filed.how,
       source: filed.source,
       score: filed.score,
+      lead: filed.lead,
       runners_up: filed.runners_up,
     });
   }

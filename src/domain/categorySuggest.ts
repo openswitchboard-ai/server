@@ -8,10 +8,11 @@
  *
  * Two ways of measuring closeness, in this order:
  *
- *  1. Embeddings. Every open node's path and label path is embedded once with
- *     the same Titan model the matching engine uses, cached in this process,
- *     and the free-typed category is compared to them by cosine. The corpus is
- *     warmed in the background, so no request ever waits on it.
+ *  1. Embeddings. Every open node is described in plain words once (nodeText),
+ *     embedded with the same Titan model the matching engine uses, cached in
+ *     this process, and the question — the posting's own words, or the path
+ *     where that is all there is — is compared to them by cosine. The corpus
+ *     is warmed in the background, so no request ever waits on it.
  *  2. Token and trigram overlap on the raw text. Always available, needs
  *     nothing outside the process.
  *
@@ -20,7 +21,7 @@
  * the card is refused exactly the same way. NO-FALLBACKS applies to screening
  * and consent decisions; this is neither.
  */
-import { openCategories } from '../denylist.js';
+import { openCategories, taxonomyNode } from '../denylist.js';
 import { categoryLabelPath } from './matchRules.js';
 import { embedText } from './embeddings.js';
 import type { Config } from '../config.js';
@@ -30,7 +31,25 @@ export type SuggestionSource = 'embedding' | 'lexical';
 
 export interface Suggestion {
   category: string;
+  /** Raw closeness: cosine on the embedding side, token overlap on the other. */
   score: number;
+  /**
+   * HOW FAR IN FRONT OF THE FIELD, in standard deviations. Embedding side only.
+   *
+   * A raw cosine is not comparable between one query and the next, because it
+   * moves with how long and how mixed the query text is. Measured on dev's own
+   * corpus (19 September): 'goods.sim-racing.pedals' alone scores 0.52 against
+   * its nearest node; the same path with the posting's words after it scores
+   * 0.24 against the same node, with nothing about the answer changed. A fixed
+   * cosine floor therefore measures the shape of the question, not the quality
+   * of the answer — which is exactly how a 0.55 floor came to reject every
+   * correct answer at the door (see categoryBackfill.SHELF_CONFIDENT_LEAD).
+   *
+   * The lead is scale-free: it asks how far the top answer stands out from the
+   * other 498 nodes the same query was compared against. That number IS
+   * comparable between queries, and it is what the door's confidence is on.
+   */
+  lead?: number;
 }
 
 export interface SuggestionResult {
@@ -51,32 +70,73 @@ export function suggestableCategories(): string[] {
   return openCategories().filter((c) => c.includes('.'));
 }
 
-/** The text embedded for a node: the dotted path plus its human label path. */
+/**
+ * THE TEXT EMBEDDED FOR A NODE: what the node is, in words a person would use.
+ *
+ * It used to be `category: goods.electronics.console.accessories (Secondhand
+ * consumer goods > Electronics > Game consoles > Console accessories)` — a
+ * database breadcrumb, most of whose characters are punctuation, the word
+ * "category", and the same formal top-level name every node in the branch
+ * carries. Two nodes framed that way are similar to each other mostly because
+ * of the boilerplate, and a posting's own words are similar to none of them,
+ * because a person describing a thing does not write a breadcrumb.
+ *
+ * Measured on dev's catalogue, 19 September, twelve realistic postings: with
+ * the breadcrumb framing the right node was top of the list 9 times and in the
+ * top four 9 times; with the words below, 10 and 11. The case the rehearsal was
+ * about — a PlayStation controller posted as 'goods.gaming.accessories' — moves
+ * from fifteenth to first.
+ *
+ * So: the node's own label and the phrase the catalogue already holds for it
+ * ('console accessories', 'mountain bike'), then the branch it sits in. The
+ * top level is dropped: "Secondhand consumer goods" is on all 400-odd of them
+ * and says nothing about which one this is.
+ */
 export function nodeText(category: string): string {
-  return `category: ${category} (${categoryLabelPath(category)})`;
+  const node = taxonomyNode(category) as { label?: string; phrase?: string } | undefined;
+  const labels = categoryLabelPath(category).split(' > ').slice(1);
+  const leaf = labels[labels.length - 1] ?? category;
+  const phrase = typeof node?.phrase === 'string' ? node.phrase.trim() : '';
+  const head = phrase && phrase.toLowerCase() !== leaf.toLowerCase() ? `${leaf}, ${phrase}` : leaf;
+  return labels.length ? `${head}. ${labels.join(', ')}.` : category;
+}
+
+/** A dotted path read as the words in it: 'goods.sim-racing.pedals' -> 'sim racing pedals'. */
+export function pathWords(category: string): string {
+  return String(category ?? '')
+    .split('.')
+    .slice(1)
+    .join(' ')
+    .replace(/[-_]+/g, ' ')
+    .trim();
 }
 
 /**
- * THE POSTING'S OWN WORDS, for asking the catalogue where a thing belongs.
+ * THE TEXT ASKED ABOUT, framed the same way the nodes are: plain words.
  *
- * A dotted path is what an assistant guessed, and asking the catalogue about
- * the guess alone is asking the wrong question. 'goods.sim-racing.pedal-parts'
- * shares tokens with motoring, bicycle parts and equestrian, and shares none
- * with the thing itself: an upgraded Fanatec pedal spring. What the poster
- * actually said about it — their words for it, and the facts they stated — is
- * the evidence, and it is the same text the matching engine embeds a posting
- * from (domain/matchRules.ts projectionText), minus the category head.
+ * The posting's own words first, because they are the evidence — then the
+ * stated facts, as values rather than as `key: value` pairs, because the keys
+ * are schema and the corpus has no schema in it — and the assistant's own path
+ * last, named as a filing rather than as a fact, because it is a guess.
  *
- * Built in projectionText's shape so the two read alike: the words first, then
- * the stated pairs in key order.
+ * Measured with the same twelve postings: keys and values in the old framing
+ * put the right node first 9 times; this framing, 10, and it is the framing
+ * that recovers the console accessories case.
  */
-export function postingText(posting: { kind?: string | null; attributes?: unknown }): string {
-  const attrs = Object.entries((posting.attributes ?? {}) as Record<string, unknown>)
+export function askText(
+  category: string,
+  posting?: { kind?: string | null; attributes?: unknown },
+): string {
+  const words = pathWords(category);
+  if (!posting) return words || String(category ?? '');
+  const values = Object.entries((posting.attributes ?? {}) as Record<string, unknown>)
     .filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v))
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([k, v]) => `${k}: ${String(v).toLowerCase().slice(0, 60)}`);
+    .map(([, v]) => String(v).toLowerCase().slice(0, 60))
+    .join(', ');
   const own = typeof posting.kind === 'string' ? posting.kind.trim().toLowerCase().slice(0, 60) : '';
-  return [...(own ? [`thing: ${own}`] : []), ...attrs].join('; ');
+  const parts = [own, values, words ? `filed as ${words}` : ''].filter(Boolean);
+  return parts.length ? `${parts.join('. ')}.` : String(category ?? '');
 }
 
 // ---------------------------------------------------------------------------
@@ -214,11 +274,17 @@ export function warmCategoryCorpus(
   if (corpus) return Promise.resolve(corpus);
   if (!warming) {
     warming = buildCorpus(cfg, log)
+      .catch(() => undefined)
       .then((c) => {
         corpus = c;
+        // A FAILED WARM-UP IS NOT AN ANSWER, so it is not remembered as one.
+        // Holding the settled promise here left a process that started while
+        // Bedrock was unhappy answering lexically for as long as it lived,
+        // with nothing in the log after the one line at boot. Dropping it
+        // means the next caller tries again.
+        if (!c) warming = undefined;
         return c;
-      })
-      .catch(() => undefined);
+      });
   }
   return warming;
 }
@@ -246,15 +312,21 @@ export const SUGGEST_CACHE_MAX = 500;
 const queryVectors = new Map<string, number[]>();
 
 /**
- * The key: the same string in any spelling of whitespace or case is one key.
+ * The key: THE TEXT THAT IS SENT TO THE MODEL, and nothing else.
  *
- * It is keyed on what the CALLER asked about — the bare category, or the free
- * text where one was given — rather than on the framed query built from it.
- * Framing first would make ' Goods.LAPTOP ' and 'goods.laptop' two keys again,
- * because the label path is built before anything is normalised.
+ * This cache holds one thing — the vector a given string embeds to — and the
+ * only honest key for it is that string. It was keyed for a while on what the
+ * caller asked ABOUT rather than on what was sent, so that a spelling of the
+ * path was one key however the query around it was framed. Two callers framing
+ * the same path differently then shared one entry and one of them got the
+ * other's vector. The class of bug is "a key that is not the input", and the
+ * way it cannot recur is that `embedQuery` takes one string, keys on it, and
+ * embeds it — there is no second value for the two to drift apart.
+ *
+ * Whitespace and case are normalised, which is a property of the text itself.
  */
-const cacheKey = (asked: string): string =>
-  String(asked ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+const cacheKey = (embedded: string): string =>
+  String(embedded ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** For the suite, and for a corpus rebuild: the vectors are only ever a cache. */
 export function resetSuggestCache(): void {
@@ -265,8 +337,8 @@ export function suggestCacheSize(): number {
   return queryVectors.size;
 }
 
-async function embedQuery(cfg: Config, query: string, keyedOn: string): Promise<number[]> {
-  const key = cacheKey(keyedOn);
+async function embedQuery(cfg: Config, query: string): Promise<number[]> {
+  const key = cacheKey(query);
   const hit = queryVectors.get(key);
   if (hit) {
     // Touch it, so the ones being asked for are the ones that stay.
@@ -300,21 +372,32 @@ export async function suggestCategories(
   log: (msg: string, extra?: any) => void = () => {},
   opts: {
     /**
-     * Ask about this text instead of the category path. The door adds the
-     * posting's own words to the path, and the Jev ballot asks about the words
-     * alone, so that the shortlist it weighs is not the one we already chose.
+     * Ask about this text instead of the category path. The Jev ballot asks
+     * about the posting's words alone, so that the shortlist it weighs is not
+     * the one we already chose.
      */
     text?: string;
+    /**
+     * The posting's own words, where the caller holds them. The path is what
+     * an assistant guessed; the words are what the poster said. Both go into
+     * the question, framed the way the nodes are (see askText).
+     */
+    posting?: { kind?: string | null; attributes?: unknown };
   } = {},
 ): Promise<SuggestionResult> {
-  const asked = opts.text?.trim();
-  // The embedding side compares like with like, so a bare path is framed the
-  // way the corpus was. The lexical side is token overlap on raw text and has
-  // always read the bare path, leaf bonus and all; framing it would change
-  // every score it has ever given.
-  const query = asked ? asked : nodeText(category);
-  const lexical = () => {
-    const scored = lexicalSuggestions(asked ?? category, limit);
+  const given = opts.text?.trim();
+  // ONE FRAMING ON BOTH SIDES. The embedding side compares like with like, so
+  // the question is put in the same plain words the nodes are described in.
+  // The lexical side is token overlap on raw text and has always read the bare
+  // path, leaf bonus and all; framing it would change every score it has ever
+  // given.
+  const query = given || askText(category, opts.posting);
+  const lexical = (why: string, extra: Record<string, unknown> = {}) => {
+    // NEVER SILENTLY. The lexical scorer reads the shape of a string, not the
+    // meaning of a posting, and every answer it gives at the door should be
+    // findable in the log afterwards with the reason it was asked.
+    log('category-suggest: answering lexically', { why, asked: category, ...extra });
+    const scored = lexicalSuggestions(given ?? category, limit);
     return {
       categories: scored.map((s) => s.category),
       scored,
@@ -324,18 +407,25 @@ export async function suggestCategories(
   try {
     // Kick the warm-up off, but do not wait for it.
     void warmCategoryCorpus(cfg, log);
-    if (!corpus) return lexical();
-    const q = await embedQuery(cfg, query, asked ?? category);
+    if (!corpus) return lexical('corpus not warm');
+    const q = await embedQuery(cfg, query);
     const scored = corpus.categories.map((c, i) => ({
       category: c,
       score: cosine(q, corpus!.vectors[i]),
     }));
+    // How far in front of the field the answers stand, measured over the WHOLE
+    // field rather than over the handful that are returned — a top five is not
+    // a distribution. See Suggestion.lead.
+    const mean = scored.reduce((a, s) => a + s.score, 0) / (scored.length || 1);
+    const variance = scored.reduce((a, s) => a + (s.score - mean) ** 2, 0) / (scored.length || 1);
+    const sd = Math.sqrt(variance);
     scored.sort((a, b) => b.score - a.score || a.category.localeCompare(b.category));
-    const top = scored.slice(0, limit);
+    const top = scored
+      .slice(0, limit)
+      .map((s) => ({ ...s, lead: sd > 0 ? (s.score - mean) / sd : 0 }));
     return { categories: top.map((s) => s.category), scored: top, source: 'embedding' };
   } catch (e: any) {
-    log('category-suggest: falling back to lexical', { error: e?.message });
-    return lexical();
+    return lexical('the embedder would not answer', { error: e?.message });
   }
 }
 

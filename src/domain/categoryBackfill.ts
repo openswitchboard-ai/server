@@ -35,9 +35,8 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { categoryDenied, categoryStatus } from '../denylist.js';
 import {
-  nodeText,
-  postingText,
   suggestCategories,
+  type Suggestion,
   type SuggestionSource,
 } from './categorySuggest.js';
 import { categoryLabelPath, nearestKnownAncestor } from './matchRules.js';
@@ -76,6 +75,9 @@ export const DEFAULT_MIN_SCORE = { embedding: 0.55, lexical: 0.2 };
  */
 export const DOOR_MIN_SCORE = { embedding: 0.55, lexical: 0.45 };
 
+/** A pair of raw floors, one per way of measuring closeness. */
+type FloorSet = typeof DEFAULT_MIN_SCORE;
+
 // ---------------------------------------------------------------------------
 // AND THE SECOND FLOOR, WHICH IS ABOUT CONFIDENCE RATHER THAN CLOSENESS.
 //
@@ -94,17 +96,85 @@ export const DOOR_MIN_SCORE = { embedding: 0.55, lexical: 0.45 };
 // somewhere else has to be beaten by a margin before the top answer counts as
 // a decision rather than a coin landing.
 //
-// BOTH NUMBERS COME FROM ONE REHEARSAL AND ARE NOT YET EARNED. 0.625 with
-// scattered runners-up was wrong, and these are set above it; nothing else
-// has been measured. The jev_shadow table is collecting a second opinion on
-// exactly this question (src/shadow/jevTrials.ts, trial A), and these two are
-// what that data is for — tune them against it before trusting either.
+// That rule still stands, and the block below is about the RULER it is read
+// off: the two raw-cosine numbers this block bought came from one rehearsal,
+// and it turned out they could not have been earned, because the quantity they
+// were set on does not hold still.
 // ---------------------------------------------------------------------------
 
-/** Below this, the top answer is not a decision whatever the field behind it. */
+// ---------------------------------------------------------------------------
+// AND WHY THOSE TWO NUMBERS ARE NO LONGER THE ONES THE DOOR READS (20 Sept).
+//
+// The pair below are raw-cosine numbers, and a raw cosine turned out not to
+// mean the same thing from one question to the next. When the door started
+// asking about the posting's words as well as its path, every query got longer
+// and more mixed, and every cosine in the catalogue fell with it — measured on
+// dev's own corpus, 'goods.sim-racing.pedals' scores 0.52 against its nearest
+// node asked alone and 0.24 asked with the posting's words, with nothing about
+// the right answer changed. A 0.55 floor then rejected EVERY answer, correct
+// ones included, so `best` was never set, the unclear branch below was never
+// reached — it can only be reached when there is a best — and every unknown
+// path fell silently to its top level with no score at all. Twelve postings in
+// ninety minutes on 19 September, and not one SHELF_UNCLEAR in thirty runs.
+//
+// The instrument was wrong, not the setting. Across twelve realistic postings
+// there is no raw cosine that separates right from wrong: the one wrong top
+// answer scored 0.204 and three correct ones scored 0.258, 0.270 and 0.278.
+// What does separate them is how far the top answer stands out from the other
+// 498 nodes the same question was compared against (categorySuggest lead):
+// run end to end through this function against dev's own corpus, every answer
+// that was right led the field by 4.22 standard deviations or more, and the
+// one that was wrong by 3.73.
+//
+// So the embedding side is judged on the lead, and the two numbers below stay
+// exactly as they were for the lexical side, which has its own scale and has
+// not been remeasured.
+// ---------------------------------------------------------------------------
+
+/** Below this, a LEXICAL top answer is not a decision whatever the field behind it. */
 export const SHELF_CONFIDENT_MIN = 0.75;
-/** How far the top answer must beat the nearest answer from another branch. */
+/** How far a LEXICAL top answer must beat the nearest answer from another branch. */
 export const SHELF_BRANCH_MARGIN = 0.08;
+
+/**
+ * On the embedding side: how far in front of the field the top answer must
+ * stand before it is filed without asking.
+ *
+ * Measured, 20 September, twelve realistic postings put through this function
+ * against dev's catalogue: ten landed on the node a person would have chosen,
+ * leading the field by 4.22 to 8.87; an eleventh landed on a sibling of it
+ * (a wheelset under road bikes rather than bike parts, which the matcher's
+ * sibling rule still lets meet); and the twelfth — a Fanatec sim-racing brake
+ * spring, which this catalogue has no shelf for at all — led by 3.73 and is
+ * the one that should be asked about. Set between the two, nearer the wrong
+ * one, because the failure this whole file exists to stop is a confident wrong
+ * answer filed in silence.
+ *
+ * TWELVE POSTINGS IS TWELVE POSTINGS. It is more than the one rehearsal the
+ * old numbers came from and it is still not much. The jev_shadow table is
+ * collecting a second opinion on the same question (src/shadow/jevTrials.ts,
+ * trial A); tune this against that before trusting it further.
+ */
+export const SHELF_CONFIDENT_LEAD = 4.0;
+
+/**
+ * And below THIS the answer is not a candidate at all — the node does not
+ * stand out from the catalogue, so there is nothing worth putting to a human
+ * and the posting goes up on its own line. This one is not measured: nothing
+ * in the twelve came anywhere near it. It is deliberately low, because a
+ * shortlist with a real answer on it is a question a person can settle in a
+ * sentence and the top level is not.
+ */
+export const SHELF_MIN_LEAD = 2.0;
+
+/**
+ * How far the top answer must beat the nearest answer from ANOTHER branch,
+ * in the same standard deviations. Measured on the same twelve: where the
+ * runner-up was from another branch and the top answer was right, it led it by
+ * 1.29 or more; where the runner-up was from the same branch the margin does
+ * not apply, and those ran as close as 0.28.
+ */
+export const SHELF_BRANCH_MARGIN_LEAD = 1.0;
 /** How many shelves a refusal offers, one per branch. */
 export const SHELF_CANDIDATE_LIMIT = 4;
 /** The last option on that list: the human may recognise none of them. */
@@ -174,6 +244,13 @@ export interface SnapDecision {
   source?: SuggestionSource;
   /** The winning suggestion's closeness, where one won. */
   score?: number;
+  /**
+   * And how far in front of the catalogue it stood, in standard deviations.
+   * This is what the decision was actually made on wherever the embedding
+   * answered; the raw score above moves with the shape of the question and is
+   * kept because it is what was measured. See categorySuggest.Suggestion.lead.
+   */
+  lead?: number;
   /** The other answers considered, nearest first. */
   runners_up?: string[];
   /** On 'unclear': the shelves to put to the human, one per branch. */
@@ -205,17 +282,62 @@ const openNode = (category: string): boolean =>
  * for the run that bought both numbers, and for the fact that neither is
  * earned yet.
  */
-function confidentIn(
-  best: { category: string; score: number },
-  ranked: { category: string; score: number }[],
-): boolean {
-  if (best.score < SHELF_CONFIDENT_MIN) return false;
+function confidentIn(best: Suggestion, ranked: Suggestion[]): boolean {
+  // Which ruler: the lead where the embedding side gave one, the raw score
+  // otherwise. See SHELF_CONFIDENT_LEAD for why the two are not the same ruler.
+  const lead = typeof best.lead === 'number';
+  const of = (s: Suggestion) => (lead ? (s.lead ?? 0) : s.score);
+  const floor = lead ? SHELF_CONFIDENT_LEAD : SHELF_CONFIDENT_MIN;
+  const margin = lead ? SHELF_BRANCH_MARGIN_LEAD : SHELF_BRANCH_MARGIN;
+  if (of(best) < floor) return false;
   const rest = ranked.filter((s) => s.category !== best.category);
   if (!rest.length) return true;
   if (branchOf(rest[0].category) === branchOf(best.category)) return true;
   const elsewhere = rest.find((s) => branchOf(s.category) !== branchOf(best.category));
   if (!elsewhere) return true;
-  return best.score - elsewhere.score >= SHELF_BRANCH_MARGIN;
+  return of(best) - of(elsewhere) >= margin;
+}
+
+/**
+ * Is this answer worth putting to anybody — as a shelf to file under, or as a
+ * shelf to ask about? On the embedding side that is the lead; on the lexical
+ * side it is the old raw floor, which is the only thing that side has.
+ */
+function worthOffering(
+  s: Suggestion,
+  source: SuggestionSource,
+  floor: FloorSet,
+  minLead: number,
+): boolean {
+  if (!openNode(s.category)) return false;
+  if (typeof s.lead === 'number') return s.lead >= minLead;
+  return s.score >= floor[source];
+}
+
+/**
+ * THE PATH THE ASSISTANT WROTE IS A PRIOR, not evidence — but it is not
+ * nothing either.
+ *
+ * Where two answers are within a hair of each other and one of them sits on
+ * the line the posting was already filed on ('goods.motoring.*' for something
+ * posted under 'goods.motoring.spares'), that one is the tie-break. The
+ * assistant knew something when it wrote the top of the path, even where it
+ * invented the bottom of it. Anything wider than a hair is left alone: the
+ * words are the evidence and a prior does not get to overrule them.
+ */
+function preferAncestorLine(offerable: Suggestion[], from: string): Suggestion | undefined {
+  const top = offerable[0];
+  if (!top) return undefined;
+  const line = nearestKnownAncestor(from);
+  if (!line.includes('.')) return top; // A bare top level says nothing to tie-break on.
+  if (top.category === line || top.category.startsWith(`${line}.`)) return top;
+  const of = (s: Suggestion) => (typeof s.lead === 'number' ? s.lead : s.score);
+  const hair = typeof top.lead === 'number' ? SHELF_BRANCH_MARGIN_LEAD / 2 : SHELF_BRANCH_MARGIN / 2;
+  const onTheLine = offerable.find(
+    (s) => s.category === line || s.category.startsWith(`${line}.`),
+  );
+  if (onTheLine && of(top) - of(onTheLine) < hair) return onTheLine;
+  return top;
 }
 
 /**
@@ -261,7 +383,7 @@ export async function snapCategory(
     /**
      * The posting's own words, where the caller holds them. They are asked
      * about alongside the path, because the path is a guess and the words are
-     * evidence (see categorySuggest.postingText).
+     * evidence (see categorySuggest.askText).
      */
     posting?: { kind?: string | null; attributes?: unknown };
     /**
@@ -279,25 +401,42 @@ export async function snapCategory(
   // caller with the ancestor to fall back on can afford to be fussier.
   const base = opts.fallbackToAncestor ? DOOR_MIN_SCORE : DEFAULT_MIN_SCORE;
   const floor = { ...base, ...(opts.minScore ?? {}) };
+  // And the same question on the embedding side's own ruler. The door can put
+  // a middling answer to the human, so anything that stands out from the
+  // catalogue is worth having on the list. The sweep has nobody to ask and is
+  // MOVING A ROW THAT IS ALREADY UP, so it only acts where it would have been
+  // confident enough to file the posting at the door without asking.
+  const minLead = opts.fallbackToAncestor ? SHELF_MIN_LEAD : SHELF_CONFIDENT_LEAD;
 
   let source: SuggestionSource | undefined;
-  let best: { category: string; score: number } | undefined;
+  let best: Suggestion | undefined;
   let runnersUp: string[] = [];
-  let ranked: { category: string; score: number }[] = [];
+  let ranked: Suggestion[] = [];
+  let offerable: Suggestion[] = [];
   try {
     // Five rather than three: the top answer may be a family somebody closed,
     // and the point of asking is to have an open one left after that.
-    const words = opts.posting ? postingText(opts.posting) : '';
     const result = await suggestCategories(cfg, from, 5, log, {
-      // Path AND words. The path alone is what the assistant guessed, and in
-      // the rehearsal it shared tokens with three branches and with nothing
-      // that was actually in the box.
-      ...(words ? { text: `${nodeText(from)}; ${words}` } : {}),
+      // Path AND words, framed in one plain register (categorySuggest.askText).
+      // The path alone is what the assistant guessed, and in the rehearsal it
+      // shared tokens with three branches and with nothing that was actually
+      // in the box.
+      ...(opts.posting ? { posting: opts.posting } : {}),
     });
     source = result.source;
     runnersUp = result.categories;
     ranked = result.scored;
-    best = result.scored.find((s) => s.score >= floor[result.source] && openNode(s.category));
+    offerable = result.scored.filter((s) => worthOffering(s, result.source, floor, minLead));
+    best = preferAncestorLine(offerable, from);
+    if (result.source === 'lexical') {
+      // The last resort, said out loud at the door too: this answer was read
+      // off the shape of a string, not off what the posting says it is.
+      log('snap: the embedder was not there, this is the lexical answer', {
+        category: from,
+        best: best?.category ?? null,
+        score: best?.score ?? null,
+      });
+    }
   } catch (e: any) {
     log('snap: suggester unavailable', { category: from, error: e?.message });
   }
@@ -312,8 +451,12 @@ export async function snapCategory(
       how: 'unclear',
       source,
       score: best.score,
+      lead: best.lead,
       runners_up: runnersUp.filter((c) => c !== best!.category),
-      candidates: shelfChoices(ranked),
+      // Only answers that are actually worth a person's attention: the shelves
+      // put to them are the ones that stood out from the catalogue, best
+      // first, one per branch.
+      candidates: shelfChoices(offerable.length ? offerable : ranked),
     };
   }
   if (best) {
@@ -324,6 +467,7 @@ export async function snapCategory(
       how: 'suggestion',
       source,
       score: best.score,
+      lead: best.lead,
       runners_up: runnersUp.filter((c) => c !== best!.category),
     };
   }
