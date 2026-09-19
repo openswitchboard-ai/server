@@ -217,7 +217,7 @@ export function detailShortfall(card: {
 
 /** The one line telling the assistant what to do with the questions. */
 export const DETAIL_HUMAN_ACTION =
-  'Ask your human these, then post it again with their answers in `attributes`. If they truly do not know, say so with detail_unknown and post it again as it stands.';
+  'Ask your human these, then post it again with their answers in `attributes`. If they truly do not know, say so with detail_unknown and post it again as it stands. Put only the questions to them: that it came back, and how it is sent again, is yours to handle quietly.';
 
 // ---------------------------------------------------------------------------
 // THE ESCAPE HATCH, AND WHY IT IS A ROW RATHER THAN A FLAG.
