@@ -11,6 +11,7 @@ import { ask as askNagatha } from '../../realism/nagatha.js';
 // `--local` runner. DUET_B_PROFILE=bilby is what makes it Bilby.
 import { ask as askB } from '../../duet/agentB.js';
 import { deepCleanAndBind } from '../box.js';
+import { askThroughGateway } from './openclawGateway.js';
 import { MCP_URL } from '../config.js';
 import type { Driver } from '../types.js';
 import { claudeCodeDriver } from './claudeCode.js';
@@ -68,8 +69,23 @@ export function bilbyDriver(): Driver {
       );
     },
     async ask(sessionId, utterance) {
-      const r = await askB(sessionId, utterance);
-      return { text: r.text, toolActivity: r.toolsUsed, model: r.model, durationMs: r.durationMs, raw: r.raw };
+      // Through his running gateway, the way Nagatha is asked. duet's agentB
+      // uses the embedded `--local` runner, which refuses to start beside a
+      // live gateway, and a Bilby with no gateway cannot wake himself.
+      const r = await askThroughGateway(
+        requireEnv('DUET_B_HOST'),
+        requireEnv('DUET_B_KEY'),
+        'bilby',
+        sessionId,
+        utterance,
+      );
+      return {
+        text: r.text,
+        ...(r.toolsObserved ? { toolActivity: r.toolsUsed } : {}),
+        model: r.model,
+        durationMs: r.durationMs,
+        raw: r.raw,
+      };
     },
   };
 }

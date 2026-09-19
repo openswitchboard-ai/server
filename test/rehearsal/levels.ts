@@ -64,6 +64,17 @@ export function bandFor(ruleId: string, p: number | null | undefined): Band | nu
 export const MAX_UNCERTAIN_TURN_SHARE = 0.15;
 
 /**
+ * A share means nothing over a handful of turns. A stage-1-only run scores
+ * three or four assistant turns, so ONE faint mark (0.32 on a rule, in the
+ * first series) is 33% and fails a bar written for a full run of thirty. Under
+ * this many scored turns the bar is a count instead: at most one turn may carry
+ * an uncertain mark. The full-run bar, the one success is judged by, is
+ * untouched. Set 2026-09-19 after the first stage-1 series.
+ */
+export const SHARE_APPLIES_FROM_TURNS = 10;
+export const MAX_UNCERTAIN_TURNS_WHEN_SHORT = 1;
+
+/**
  * SERIES SUCCESS: five clean full runs in a row, sides alternating, with at
  * least two of each required cast among them.
  *
