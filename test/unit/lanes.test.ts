@@ -362,6 +362,14 @@ describe('nothing outside the table promises to come back', () => {
     /come back to you/i,
     /I will email you|I'?ll email you/i,
     /check back/i,
+    // "Your yes is in. I will carry it on from here AND TELL YOU the moment
+    // anything comes back" sat in humanLinks.ts and passed every pattern above,
+    // because the promise did not start the clause (dev, 20 September 2026).
+    // Match the promise wherever it sits in the sentence.
+    /\btell you (the moment|when|as soon as|once)/i,
+    // Deliberately not `bring it back`: "I can bring it back whenever you ask"
+    // is the opposite of a promise — it is bounded by the human speaking.
+    /\bbring (you|them) (the moment|when|as soon as)/i,
   ];
 
   /**
@@ -428,6 +436,12 @@ describe('the wordings themselves, one sentence at a time', () => {
       /Agree how often you look with your human/,
       /asking you is how they hear, since the switchboard may write/,
       /the switchboard emails them when somebody comes forward/,
+    ],
+    [
+      'press_approved',
+      /bring them anything that comes back/,
+      /save it with standing_arrangement/,
+      /check with you whenever they like/,
     ],
     [
       'waiting_on_their_go_ahead',

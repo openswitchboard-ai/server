@@ -214,6 +214,24 @@ export const SENTENCES = {
    * lands — recordStage3OptIn raises "your move" only while one side is still
    * missing — so the prompted wording claims no email here.
    */
+  /**
+   * THE ANSWER THE INSTANT A PRESS LANDS. It read "Your yes is in. I will
+   * carry it on from here and tell you the moment anything comes back" — an
+   * unconditional promise, in the one place an agent is certain to be read
+   * aloud. It escaped the guard sweep because the promise did not start its
+   * clause; the sweep now looks for it anywhere in a sentence (dev, 20
+   * September 2026).
+   *
+   * No mail is claimed: what comes back next is the other side's go-ahead,
+   * and nothing is sent to the side that has already pressed.
+   */
+  press_approved: waitingOn({
+    about: 'A press has just landed, and the agent is answering with what happens now.',
+    budget: 300,
+    head: 'Your yes is in. I have it from here.',
+    thing: 'anything that comes back',
+  }),
+
   waiting_on_their_go_ahead: waitingOn({
     about: 'Their own press has landed and the other side has not pressed yet.',
     budget: 300,
