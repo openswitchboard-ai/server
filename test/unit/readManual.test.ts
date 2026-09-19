@@ -228,6 +228,9 @@ const MUST_SAY: [string, RegExp][] = [
   ['send_message', /WORDS ONLY/],
   ['collect_messages', /COLLECTING DELETES/],
   ['amend_intent', /A HEADING CANNOT CHANGE/],
+  // The one rule that keeps refine_intent from becoming a second amend: it
+  // widens the words for a thing and can never change what the thing is.
+  ['refine_intent', /THIS CANNOT CHANGE WHAT THE THING IS/],
   ['withdraw_intent', /A conversation already open stays open/i],
   ['standing_arrangement', /RUN BETWEEN CONVERSATIONS/],
   ['settle', /ONLY EVER STARTS ON THE BUYER'S OWN PAGE/],

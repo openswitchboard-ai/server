@@ -450,9 +450,33 @@ export function categoryLabelPath(category: string): string {
   return labels.join(' > ');
 }
 
+/**
+ * The human's other words for the thing: short phrases, trimmed, capped, with
+ * the empties dropped and the same phrase said twice kept once. Anything that
+ * is not an array of strings reads as none, so a malformed column can never
+ * poison an embedding.
+ *
+ * THE CASE IS THE HUMAN'S. These phrases are read back to another person's
+ * assistant on the details step, and "ClubSport" is how its owner wrote it. The
+ * places that need them folded — the projection below, the word bag in
+ * matchTiers — lower-case them themselves, as they do with every other field.
+ */
+export function otherWordsOf(value: unknown, limit = 6): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== 'string') continue;
+    const p = v.trim().slice(0, 60);
+    if (p && !out.some((q) => q.toLowerCase() === p.toLowerCase())) out.push(p);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export function projectionText(card: {
   category: string;
   kind?: string | null;
+  also_called?: unknown;
   attributes?: any;
 }): string {
   const attrs = Object.entries(card.attributes ?? {})
@@ -466,7 +490,20 @@ export function projectionText(card: {
   // raw slug there — so it goes into the embedding, right after the head and
   // before the attributes, where the sort order cannot move it.
   const own = typeof card.kind === 'string' ? card.kind.trim().toLowerCase().slice(0, 60) : '';
-  const parts = [head, ...(own ? [`kind: ${own}`] : []), ...attrs];
+  // AND THEIR OTHER WORDS FOR IT (migration 050). The trade name, the part
+  // number, the word everyone in that hobby uses: the same thing said again, so
+  // a posting that reached for one spelling and a posting that reached for
+  // another sit closer in meaning than they used to. It rides immediately after
+  // `kind`, for the same reason `kind` rides where it does — the sort order
+  // below cannot move it, and on a posting filed under a leaf the catalogue has
+  // never heard of these two lines are the whole of what says what the thing IS.
+  const also = otherWordsOf(card.also_called);
+  const parts = [
+    head,
+    ...(own ? [`kind: ${own}`] : []),
+    ...(also.length ? [`also called: ${also.join(', ').toLowerCase()}`] : []),
+    ...attrs,
+  ];
   return parts.join('; ');
 }
 

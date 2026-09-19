@@ -73,6 +73,9 @@ import {
   checkMessagesBothWays,
   checkMessagesLeft,
   checkNamesOffer,
+  checkNotTheThing,
+  checkPossibleSaidAsPossible,
+  plainWordsOverlap,
   checkNoInventedFigure,
   checkPhoneDidNotCross,
   checkPinRefused,
@@ -95,7 +98,7 @@ import { DEFAULT_STREAK } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
 import { runTable, seriesSummary } from './report.js';
-import { ALEX, TONY, TONY_WANT, type FactSheet } from './scenarios/spring.js';
+import { ALEX, TONY, TONY_WANT, WRONG_THING, type FactSheet } from './scenarios/spring.js';
 import { judgeRun, judgeSeries, type RunSummary } from './series.js';
 import { renderTranscript, STAGE_NAMES } from './transcript.js';
 import { readToolCalls } from './toolLog.js';
@@ -522,6 +525,9 @@ async function oneRun(
       const said = turnsText(turns.slice(from), { role: 'assistant' });
       record(checkIntroductionTold(id, said));
       record(checkNamesOffer(id, said));
+      // A MAYBE HAS TO BE SAID AS A MAYBE. Only asked where the switchboard
+      // really made one: on a sure introduction there is nothing to hedge.
+      record(checkPossibleSaidAsPossible(id, said, match!.certainty));
     }
     const consented = DRY
       ? [sides.seller.actor.accountId, sides.buyer.actor.accountId]
@@ -532,6 +538,39 @@ async function oneRun(
       recorded: consented.includes(sides[p.side].actor.accountId),
     }));
     record(checkPresses(pressFacts, consented.length >= 2));
+
+    // -----------------------------------------------------------------
+    // AND WHERE THE SWITCHBOARD OFFERED A MAYBE AND THE WORDS REALLY DO
+    // DIFFER, the person looks at it and says it is the wrong thing.
+    //
+    // This is conditional on purpose, and both conditions matter. The tier has
+    // to be a maybe — closing a sure one is a different act with a different
+    // word for it — and the two postings' own words for the thing have to
+    // differ, because that is the case the person would actually recognise.
+    // On the ordinary run of this scenario the two describe the same spring,
+    // the introduction is a sure one, and none of this happens.
+    //
+    // WHEN IT DOES HAPPEN THE RUN ENDS HERE, and that is honest rather than a
+    // failure: the introduction is closed, so there is no conversation to have,
+    // no figure to agree and nothing to wrap up. The stages after this one are
+    // never opened, so nothing is judged that did not occur.
+    const wordsDiffer =
+      !!sellerCard?.kind &&
+      !!buyerCard?.kind &&
+      !plainWordsOverlap(sellerCard.kind, buyerCard.kind);
+    if (match.certainty === 'possible' && wordsDiffer) {
+      log('  the introduction is a maybe and the two postings word the thing differently');
+      await converse(sides.buyer, 2, {
+        opener: WRONG_THING,
+        rounds: 2,
+        done: async () => (DRY ? true : (await db.matchState(match!.id)) === 'declined'),
+      });
+      const state = DRY ? 'declined' : await db.matchState(match.id);
+      const recordedRow = DRY ? true : await db.notTheThingRecorded(match.id);
+      record(checkNotTheThing('buyer', state, recordedRow));
+      closeStage();
+      return finish();
+    }
     closeStage();
     if (LAST_STAGE < 3) return finish();
 

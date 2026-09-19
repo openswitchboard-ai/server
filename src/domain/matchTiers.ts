@@ -60,6 +60,7 @@ import {
   categoryCloseness,
   categoryCompatible,
   evaluatePair,
+  otherWordsOf,
   type GeoBucket,
   type PairEval,
   type PriceBand,
@@ -255,6 +256,23 @@ const meaningful = (t: string) => !STOP.has(t) && !CONDITION.has(t) && (t.length
 /** What one posting says about itself, sorted by how much each word counts. */
 export interface PostingWords {
   kind?: string | null;
+  /**
+   * THE HUMAN'S OTHER WORDS FOR THE SAME THING (migration 050): the trade name,
+   * the part number, "BPK", "die-spring mod". They weigh exactly what `kind`
+   * weighs, because that is what they are — the same thing said again — and
+   * they are what lets two postings that reached for different spellings agree.
+   * They never become the head noun: the head is what the posting is ABOUT, and
+   * the posting says that once, in `kind`.
+   */
+  also_called?: unknown;
+  /**
+   * THE PHRASES THE HUMAN SAYS IT IS NOT: "elastomer kit", "whole pedal set".
+   * A NEGATIVE WORD SIGNAL and nothing else. A candidate whose own words are
+   * dominated by one of these can never be sure and loses its word agreement —
+   * but it is never filtered out, and it is never hidden from the human. They
+   * hear about it as a maybe and they decide, which is the founder's rule.
+   */
+  not_these?: unknown;
   attributes?: unknown;
 }
 
@@ -266,6 +284,16 @@ interface WordBag {
   brand: Set<string>;
   model: Set<string>;
   head?: string;
+}
+
+/**
+ * A CONTAINER word says what the thing comes in, and the word before it says
+ * what the thing is: "pedal spring kit" is springs, "elastomer kit" is
+ * elastomers. Read the same way wherever a head is taken, so that the phrase a
+ * human writes under `not_these` is read exactly as a posting's own words are.
+ */
+function throughTheContainer(head: string | undefined, phrase: string[]): string | undefined {
+  return head && CONTAINERS.has(head) && phrase.length > 1 ? phrase[phrase.length - 2] : head;
 }
 
 function bagOf(p: PostingWords): WordBag {
@@ -284,6 +312,9 @@ function bagOf(p: PostingWords): WordBag {
   };
   const kindTokens = tokensOf(p.kind ?? '');
   add(kindTokens, WORD_WEIGHTS.kind);
+  // The same thing said again, in the human's other words for it. Same weight
+  // as `kind`, and no effect at all on the head noun below.
+  for (const phrase of otherWordsOf(p.also_called)) add(tokensOf(phrase), WORD_WEIGHTS.kind);
   const attrs =
     p.attributes && typeof p.attributes === 'object' ? (p.attributes as Record<string, unknown>) : {};
   for (const [k, v] of Object.entries(attrs)) {
@@ -305,10 +336,7 @@ function bagOf(p: PostingWords): WordBag {
     if (meaningful(t) && !notAHead(t)) phrase.push(t);
   }
   let head: string | undefined = phrase[phrase.length - 1];
-  // A CONTAINER word says what the thing comes in, and the word before it says
-  // what the thing is: "pedal spring kit" is springs, "elastomer kit" is
-  // elastomers.
-  if (head && CONTAINERS.has(head) && phrase.length > 1) head = phrase[phrase.length - 2];
+  head = throughTheContainer(head, phrase);
   // A head that is only the brand says nothing about which thing: "Fanatec".
   if (head && brand.has(head) && phrase.length === 1) head = undefined;
   return { weights, all, brand, model, head };
@@ -336,6 +364,52 @@ export interface WordAgreement {
   sharedBeyondHead: boolean;
   /** Any distinctive word in common at all (generic nouns never count). */
   sharedDistinctive: boolean;
+  /**
+   * One side said outright that the thing is NOT this, and the other side's
+   * words are the thing they named (migration 050, `not_these`). It costs the
+   * pair its word agreement and it bars a sure one; it never bars the pair.
+   */
+  negated: boolean;
+}
+
+/**
+ * IS THE OTHER POSTING THE VERY THING THIS ONE SAID IT IS NOT?
+ *
+ * "Dominated by the phrase" is deliberately narrow, because the cost of getting
+ * it wrong is a real pair losing its word agreement. One of two things has to
+ * be true of a phrase the human wrote under `not_these`:
+ *
+ *   - the other posting's HEAD NOUN is the phrase's own head, on stems — they
+ *     said "it is not an elastomer kit" and the other posting is about
+ *     elastomers; or
+ *   - every distinctive word of the phrase appears in the other posting's
+ *     words, and the phrase said more than one thing — "whole pedal set"
+ *     against a posting carrying pedal, set and whole.
+ *
+ * A single generic word ("kit") can never dominate anything on its own: the
+ * phrase's distinctive words are what count, and the generic nouns are dropped
+ * from that reading exactly as they are everywhere else in this file.
+ */
+function negatedBy(phrases: unknown, other: WordBag): boolean {
+  for (const phrase of otherWordsOf(phrases)) {
+    const tokens = tokensOf(phrase, { joins: false }).filter(meaningful);
+    if (!tokens.length) continue;
+    const distinctive = tokens.filter((t) => !GENERIC.has(t));
+    const headable = tokens.filter((t) => !notAHead(t));
+    const phraseHead = throughTheContainer(headable[headable.length - 1], headable);
+    if (
+      phraseHead &&
+      other.head &&
+      headStem(phraseHead) === headStem(other.head) &&
+      // A head alone is enough only where the phrase says something distinctive
+      // somewhere: "it is not a kit" names no thing at all.
+      distinctive.length > 0
+    ) {
+      return true;
+    }
+    if (distinctive.length > 1 && distinctive.every((t) => other.all.has(t))) return true;
+  }
+  return false;
 }
 
 function setAgreement(a: Set<string>, b: Set<string>): Agreement {
@@ -366,8 +440,15 @@ export function wordAgreement(a: PostingWords, b: PostingWords): WordAgreement {
     if (t !== A.head && t !== B.head) sharedBeyondHead = true;
   }
   const distinctive = totalA > 0 && totalB > 0;
-  const score = distinctive ? Math.min(1, (2 * shared) / (totalA + totalB)) : 0;
-  const coverage = distinctive ? Math.min(1, shared / Math.min(totalA, totalB)) : 0;
+  // THE NEGATIVE SIGNAL, read both ways: either human may have said what the
+  // thing is not. It costs the pair the whole of its word agreement, which is
+  // what bars a sure one (SURE_MIN_WORDS is above zero). Everything else about
+  // the pair is untouched: the cosine still stands, a maybe is still reachable,
+  // and nothing is filtered away.
+  const negated = negatedBy(a.not_these, B) || negatedBy(b.not_these, A);
+  const raw = distinctive ? Math.min(1, (2 * shared) / (totalA + totalB)) : 0;
+  const score = negated ? 0 : raw;
+  const coverage = negated || !distinctive ? 0 : Math.min(1, shared / Math.min(totalA, totalB));
   // THE HEADS agree when each appears in the other posting's words, compared
   // on their stems ("dog walker" and "dog walking" are one service). A
   // conflict is only called between two heads that share no stem.
@@ -411,6 +492,7 @@ export function wordAgreement(a: PostingWords, b: PostingWords): WordAgreement {
     distinctive,
     sharedBeyondHead,
     sharedDistinctive,
+    negated,
   };
 }
 
@@ -489,6 +571,52 @@ export interface TierResult {
  * The blend is still computed: it is the fit an introduction stores, what the
  * near miss is judged on, and where the geo and price hard rules live.
  */
+/**
+ * WHICH SPECIFICS AGREE AND WHICH DO NOT, in a sentence, for a maybe.
+ *
+ * A human deciding whether a maybe is their thing wants to know WHERE the two
+ * descriptions meet and where they part. The signals already say it, and until
+ * now they stayed inside the engine.
+ *
+ * THE HARD BOUNDARY (the founder, 20 September 2026). It names only WHICH KINDS
+ * OF DETAIL agree or differ. No number of any sort crosses it: no figure, no
+ * percentage, no bound, no tier, and nothing at all about any other posting or
+ * any other person. Where a signal cannot be said without a figure, it is left
+ * out. It is pure and it reads nothing but the agreement it is handed.
+ */
+export function agreementSentence(w: WordAgreement): string {
+  const LABELS: [keyof WordAgreement, string][] = [
+    ['brand', 'the make'],
+    ['model', 'the model or part number'],
+    ['head', 'what the thing is called'],
+  ];
+  const agree: string[] = [];
+  const differ: string[] = [];
+  for (const [key, label] of LABELS) {
+    if (w[key] === 'agree') agree.push(label);
+    else if (w[key] === 'conflict') differ.push(label);
+  }
+  const list = (xs: string[]) =>
+    xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs[0];
+  let sentence: string;
+  if (agree.length && differ.length) {
+    sentence = `What the two of you wrote agrees on ${list(agree)}, and differs on ${list(differ)}.`;
+  } else if (agree.length) {
+    sentence = `What the two of you wrote agrees on ${list(agree)}.`;
+  } else if (differ.length) {
+    sentence = `What the two of you wrote differs on ${list(differ)}.`;
+  } else {
+    sentence =
+      'Neither posting says enough about the make or the model to hold the two side by side.';
+  }
+  // The one thing worth saying beyond the three: their human wrote down that it
+  // is not this sort of thing, and here it is anyway, as a maybe, for them.
+  if (w.negated) {
+    sentence += ' One of you wrote down that the thing is not this sort of thing.';
+  }
+  return sentence;
+}
+
 export function tierFor(f: PairFacts): TierResult {
   const words = wordAgreement(f.a, f.b);
   const shelvesCompatible = categoryCompatible(f.categoryA, f.categoryB);
@@ -524,7 +652,7 @@ export function tierFor(f: PairFacts): TierResult {
   if (!ev.hardRulesPass) return out('nothing', `hard rule: ${ev.failed}`);
 
   const bump = Math.max(Number(f.bumpWant ?? 0), Number(f.bumpHave ?? 0));
-  const conflict = words.head === 'conflict' || words.brand === 'conflict';
+  const conflict = words.head === 'conflict' || words.brand === 'conflict' || words.negated;
   if (!conflict && semantic >= SURE_MIN_COSINE + bump && words.score >= SURE_MIN_WORDS) {
     return out('sure', 'close in meaning, the words agree, nothing contradicts');
   }

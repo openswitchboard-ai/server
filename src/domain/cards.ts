@@ -224,6 +224,10 @@ export interface CardRow {
   category_as_posted?: string | null;
   /** The poster's own plain words for the thing, where they gave any. */
   kind: string | null;
+  /** Their other words for the same thing: up to six short phrases (050). */
+  also_called?: string[] | null;
+  /** Short phrases they say it is NOT: a negative word signal only (050). */
+  not_these?: string[] | null;
   geo: any;
   geo_lat: number | null;
   geo_lon: number | null;

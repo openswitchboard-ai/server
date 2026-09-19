@@ -79,6 +79,8 @@ export interface MatchFacts {
   channelId?: string;
   createdAt: string;
   severedAt?: string;
+  /** Which tier the introduction was made in: 'sure' or 'possible' (050). */
+  certainty?: string;
 }
 
 export async function matchBetween(
@@ -87,7 +89,8 @@ export async function matchBetween(
 ): Promise<MatchFacts | undefined> {
   const rows = await dbExec(
     `SELECT id::text, card_want::text, card_have::text, account_want::text, account_have::text,
-            stage, state, score, channel_id, created_at::text, severed_at::text
+            stage, state, score, channel_id, created_at::text, severed_at::text,
+            certainty
        FROM matches
       WHERE account_want = ANY(string_to_array(:ids, ',')::uuid[])
         AND account_have = ANY(string_to_array(:ids, ',')::uuid[])
@@ -110,6 +113,7 @@ export async function matchBetween(
     channelId: r[8] ? String(r[8]) : undefined,
     createdAt: String(r[9]),
     severedAt: r[10] ? String(r[10]) : undefined,
+    certainty: r[11] ? String(r[11]) : undefined,
   };
 }
 
@@ -310,4 +314,25 @@ export async function jevShadowFor(cardIds: string[]): Promise<
     jev: safeJson(r[3]),
     latencyMs: r[4] === null ? undefined : Number(r[4]),
   }));
+}
+
+/**
+ * Did the switchboard write down that a human said an introduction was not the
+ * thing (migration 050, not_the_thing)? The row holds the two postings, the
+ * tier and the pair's signals; the harness only asks whether one is there.
+ */
+export async function notTheThingRecorded(matchId: string): Promise<boolean> {
+  const rows = await dbExec(
+    `SELECT count(*) FROM not_the_thing WHERE match_id = :id::uuid`,
+    [{ name: 'id', value: matchId }],
+  );
+  return Number(rows[0]?.[0] ?? 0) > 0;
+}
+
+/** The state an introduction is in right now. */
+export async function matchState(matchId: string): Promise<string | undefined> {
+  const rows = await dbExec(`SELECT state FROM matches WHERE id = :id::uuid`, [
+    { name: 'id', value: matchId },
+  ]);
+  return rows[0]?.[0] ? String(rows[0][0]) : undefined;
 }

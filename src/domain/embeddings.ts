@@ -42,7 +42,13 @@ export function vectorLiteral(v: number[]): string {
 /** Embed one card's projection and store it. Returns the projection text. */
 export async function embedCard(
   cfg: Config,
-  card: Pick<CardRow, 'id' | 'category' | 'attributes'> & { kind?: string | null },
+  card: Pick<CardRow, 'id' | 'category' | 'attributes'> & {
+    kind?: string | null;
+    /** The human's other words for the thing (migration 050). `not_these` is
+     *  deliberately absent: a phrase saying what something is NOT pulls an
+     *  embedding TOWARDS the thing it is not, so it stays a word signal only. */
+    also_called?: unknown;
+  },
 ): Promise<string> {
   const text = projectionText(card);
   const vec = await embedText(cfg, text);
@@ -63,7 +69,7 @@ export async function backfillEmbeddings(
   enqueueMatch: (cardId: string) => Promise<void>,
 ): Promise<number> {
   const r = await getPool().query(
-    `SELECT id, category, kind, attributes FROM cards
+    `SELECT id, category, kind, also_called, attributes FROM cards
      WHERE embedding IS NULL AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
      ORDER BY created_at ASC LIMIT 500`,
   );

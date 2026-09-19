@@ -650,8 +650,21 @@ export async function runMatchingForCard(
       categoryB: cand.category,
       geoA: geoOf(source),
       geoB: geoOf(cand),
-      a: { kind: (source as any).kind ?? null, attributes: source.attributes },
-      b: { kind: (cand as any).kind ?? null, attributes: cand.attributes },
+      // The human's other words for the thing, and the words they said it is
+      // NOT, ride with the posting (migration 050): the first widens what can
+      // agree, the second is a negative signal that bars a sure one.
+      a: {
+        kind: (source as any).kind ?? null,
+        also_called: (source as any).also_called,
+        not_these: (source as any).not_these,
+        attributes: source.attributes,
+      },
+      b: {
+        kind: (cand as any).kind ?? null,
+        also_called: (cand as any).also_called,
+        not_these: (cand as any).not_these,
+        attributes: cand.attributes,
+      },
       wantBand,
       haveBand,
       bumpWant: Number(sourceIsWant ? source.threshold_bump : cand.threshold_bump),
