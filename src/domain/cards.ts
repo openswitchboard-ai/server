@@ -528,13 +528,24 @@ export async function publishIntent(
   // of Queanbeyan without ever asking its human whether they would post it,
   // where the human would have said "anywhere in Australia". So a thing that
   // is being offered comes back with that one question until somebody has
-  // answered it. It is asked of goods on offer only: a want, a service and a
-  // social posting keep the old default, which is right for most of them.
-  if (String(card.category ?? '').split('.')[0] === 'goods' && card.type === 'offering' && !card.geo?.reach) {
+  // answered it. It was asked of things on offer only until a later run, where
+  // the BUYER's assistant did the same: a want went up within 8 km of Franklin,
+  // the seller was twenty kilometres away and posting country-wide, the two
+  // postings read 0.86 alike, and the buyer's own radius kept them apart. So
+  // it is asked of every goods posting, in the words that fit its side. A
+  // service and a social posting keep the old default, which suits them.
+  const isGoods = String(card.category ?? '').split('.')[0] === 'goods';
+  const offering = card.type === 'offering';
+  if (isGoods && !card.geo?.reach) {
     throw new OsbError('NEEDS_DETAIL', {
-      human_action:
-        'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.',
-      questions: ['Would you post it to someone, or is it pick-up only? If pick-up, how far from you?'],
+      human_action: offering
+        ? 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.'
+        : 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they are happy to have it posted to them, "radius" with a distance if they will only collect it.',
+      questions: [
+        offering
+          ? 'Would you post it to someone, or is it pick-up only? If pick-up, how far from you?'
+          : 'Are you happy to have it posted to you, or would you only collect it? If collecting, how far would you go?',
+      ],
     });
   }
 
@@ -546,16 +557,20 @@ export async function publishIntent(
   // back with the question, and the second, within the window, goes up as it
   // is, because by then somebody has been asked.
   if (
-    String(card.category ?? '').split('.')[0] === 'goods' &&
-    card.type === 'offering' &&
+    isGoods &&
     card.geo?.reach === 'radius' &&
     !(await detailAskedRecently(accountId, `${kind ?? ''}#reach`))
   ) {
     await recordDetailAsked(accountId, `${kind ?? ''}#reach`);
     throw new OsbError('NEEDS_DETAIL', {
-      human_action:
-        'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.',
-      questions: ['Would you post it to someone further away, or is it pick-up only?'],
+      human_action: offering
+        ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
+        : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
+      questions: [
+        offering
+          ? 'Would you post it to someone further away, or is it pick-up only?'
+          : 'Would you be happy to have it posted to you from further away, or will you only collect it?',
+      ],
     });
   }
 
