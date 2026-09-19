@@ -1071,11 +1071,11 @@ async function main(): Promise<number> {
       cutShort = true;
       break;
     }
-    const series = judgeSeries(summaries, WANT_STREAK);
+    const series = judgeSeries(summaries, WANT_STREAK, LAST_STAGE >= 6 ? undefined : []);
     if (series.green) break;
   }
 
-  const verdict = judgeSeries(summaries, WANT_STREAK);
+  const verdict = judgeSeries(summaries, WANT_STREAK, LAST_STAGE >= 6 ? undefined : []);
   const notRun: string[] = [];
   if (DRY) notRun.push('This was a DRY run: no assistant, no switchboard, no scorer was touched.');
   if (LAST_STAGE < 6) notRun.push(`Stages ${LAST_STAGE + 1}–6 were not run.`);

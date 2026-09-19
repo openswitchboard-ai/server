@@ -90,7 +90,14 @@ export interface SeriesVerdict {
   missing: string[];
 }
 
-export function judgeSeries(runs: RunSummary[], k: number): SeriesVerdict {
+export function judgeSeries(
+  runs: RunSummary[],
+  k: number,
+  // The cast mix is part of the FULL-RUN bar only. A stage gate run with one
+  // pairing could never meet it: stage 1 went three clean in a row and ran on
+  // regardless, waiting for a Claude Code run it had never been asked to do.
+  requiredCasts: { cast: string; atLeast: number }[] = REQUIRED_CASTS,
+): SeriesVerdict {
   // The tail of clean runs. An unclean or overruled run at the end means zero,
   // however many clean ones came before it.
   const tail: RunSummary[] = [];
@@ -112,7 +119,7 @@ export function judgeSeries(runs: RunSummary[], k: number): SeriesVerdict {
   const missing: string[] = [];
   if (streak < k) missing.push(`${k - streak} more clean run(s) in a row`);
   else {
-    for (const req of REQUIRED_CASTS) {
+    for (const req of requiredCasts) {
       const have = castCounts[normaliseCast(req.cast)] ?? 0;
       if (have < req.atLeast) {
         missing.push(
