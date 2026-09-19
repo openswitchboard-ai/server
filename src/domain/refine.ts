@@ -32,8 +32,9 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { getCard } from './cards.js';
 import { OsbError } from '../protocol.js';
-import { arrangementOrNothing, type Arrangement } from './arrangement.js';
-import { sayFor } from './lanes.js';
+import { type Arrangement } from './arrangement.js';
+import { readLaneFacts, sayFor } from './lanes.js';
+import type { HearsVia } from './accounts.js';
 import type { Config } from '../config.js';
 
 /** How many phrases either list takes, and how long one may be. */
@@ -108,6 +109,7 @@ export function refinedSentence(
   alsoCalled: string[],
   notThese: string[],
   a: Arrangement = {},
+  hearsVia?: HearsVia,
 ): string {
   const bits: string[] = [];
   if (alsoCalled.length) {
@@ -119,7 +121,7 @@ export function refinedSentence(
   }
   if (notThese.length) bits.push('I have written down what it is not, so close things count for less.');
   const added = bits.length ? bits.join(' ') : 'Nothing was added to it.';
-  return sayFor('refined', a, { added });
+  return sayFor('refined', a, { added, hearsVia });
 }
 
 /**
@@ -179,16 +181,18 @@ export async function refineIntent(
       MessageBody: JSON.stringify({ kind: 'screen-card', card_id: intentId }),
     }),
   );
+  const facts = await readLaneFacts(accountId);
   return {
     intent_id: intentId,
     state: 'PENDING_SCREENING',
     also_called: also.phrases,
     not_these: nots.phrases,
     say_note: {
-      // One cheap read of this account's own arrangement row, so the sentence
-      // knows which lane it is speaking into. Best-effort: unreadable is
-      // prompted, the lane that promises the least.
-      text: refinedSentence(also.phrases, nots.phrases, await arrangementOrNothing(accountId)),
+      // One cheap read of this account's own row, so the sentence knows which
+      // lane it is speaking into and whether the human behind it is written to
+      // at all. Best-effort: unreadable is prompted, the lane that promises the
+      // least, and no claim about post.
+      text: refinedSentence(also.phrases, nots.phrases, facts.arrangement, facts.hearsVia),
       provenance: 'switchboard-system' as const,
     },
   };

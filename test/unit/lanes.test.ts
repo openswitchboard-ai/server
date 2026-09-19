@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import * as db from '../../src/db.js';
 import { arrangementOrNothing, type Arrangement } from '../../src/domain/arrangement.js';
+import type { HearsVia } from '../../src/domain/accounts.js';
 import {
   SENTENCES,
   SENTENCE_IDS,
@@ -46,11 +47,41 @@ const AGREED: Arrangement = { runs_on_its_own: true, check_every_minutes: 60 };
 const NOT_YET: Arrangement = { runs_on_its_own: true };
 const NOTHING: Arrangement = {};
 
-const everyWording = (id: SentenceId): { name: string; text: string }[] => [
-  { name: 'autonomous, rhythm agreed', text: say(id, 'autonomous', AGREED, CTX) },
-  { name: 'autonomous, nothing agreed', text: say(id, 'autonomous', NOT_YET, CTX) },
-  { name: 'prompted', text: say(id, 'prompted', NOTHING, CTX) },
-];
+/**
+ * THE SECOND AXIS. `hears_via` decides whether the SWITCHBOARD writes; the
+ * lane decides whether the AGENT may promise. The three values a caller can
+ * hand over are all exercised, because the wrong answer on any of them is a
+ * human waiting on post that never comes:
+ *   'email'     — the switchboard really does write, so the claim is honest;
+ *   'assistant' — it writes nothing at all, so the claim is a lie;
+ *   undefined   — the caller never looked, so it has nothing to claim with.
+ */
+const HEARS: (HearsVia | undefined)[] = [undefined, 'email', 'assistant'];
+
+const everyWording = (
+  id: SentenceId,
+  hearsVia?: HearsVia,
+): { name: string; text: string }[] => {
+  const ctx = { ...CTX, ...(hearsVia ? { hearsVia } : {}) };
+  const by = hearsVia ?? 'nothing read';
+  return [
+    { name: `autonomous, rhythm agreed (${by})`, text: say(id, 'autonomous', AGREED, ctx) },
+    { name: `autonomous, nothing agreed (${by})`, text: say(id, 'autonomous', NOT_YET, ctx) },
+    { name: `prompted (${by})`, text: say(id, 'prompted', NOTHING, ctx) },
+  ];
+};
+
+/** Every wording the table can produce, across both axes. */
+const everyWordingAnyhow = (id: SentenceId): { name: string; text: string }[] =>
+  HEARS.flatMap((h) => everyWording(id, h));
+
+/**
+ * The claim itself, in both spellings the table uses. It matches the CLAIM
+ * only: a wording that tells an agent NOT to say the switchboard writes is the
+ * careful answer rather than an offender, so the negative phrasing is
+ * deliberately outside this.
+ */
+const CLAIMS_POST = /switchboard emails|switchboard will email/i;
 
 // ---------------------------------------------------------------------------
 describe('which lane an arrangement puts an agent in', () => {
@@ -88,18 +119,21 @@ describe('every sentence in the table', () => {
       const s = SENTENCES[id];
       expect(s.about.length, id).toBeGreaterThan(10);
       expect(s.budget, id).toBeGreaterThan(0);
-      for (const { name, text } of everyWording(id)) {
+      for (const { name, text } of everyWordingAnyhow(id)) {
         expect(text.length, `${id} — ${name}`).toBeGreaterThan(40);
       }
-      // And the three are genuinely three, rather than one wording repeated.
-      const said = everyWording(id).map((w) => w.text);
-      expect(new Set(said).size, id).toBe(3);
+      // And the three are genuinely three, rather than one wording repeated —
+      // whatever the caller knows about how this human hears.
+      for (const h of HEARS) {
+        const said = everyWording(id, h).map((w) => w.text);
+        expect(new Set(said).size, `${id} — ${h ?? 'nothing read'}`).toBe(3);
+      }
     }
   });
 
   it('is in the house register and inside its own budget', () => {
     for (const id of SENTENCE_IDS) {
-      for (const { name, text } of everyWording(id)) {
+      for (const { name, text } of everyWordingAnyhow(id)) {
         expect(lintHumanCopy(text), `${id} — ${name}`).toEqual([]);
         expect(text.length, `${id} — ${name}`).toBeLessThanOrEqual(SENTENCES[id].budget);
         // No machinery word a human would be read out, and no figure of
@@ -129,9 +163,11 @@ describe('every sentence in the table', () => {
 
   it('never lets a prompted agent offer to come back', () => {
     for (const id of SENTENCE_IDS) {
-      const text = say(id, 'prompted', NOTHING, CTX);
+      for (const h of HEARS) {
+      const text = say(id, 'prompted', NOTHING, { ...CTX, ...(h ? { hearsVia: h } : {}) });
       expect(text, id).not.toMatch(/I'?ll tell you|I will tell you|I will bring|I'?ll bring/i);
       expect(text, id).not.toMatch(/you will bring them|keep an eye out|keep an ear out/i);
+      }
     }
   });
 
@@ -142,6 +178,108 @@ describe('every sentence in the table', () => {
       const on = sayFor(id, AGREED, CTX);
       const off = sayFor(id, NOTHING, CTX);
       expect(on, id).not.toBe(off);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE POST, WHICH IS THE OTHER AXIS ENTIRELY.
+//
+// The lane says whether the AGENT may promise. hears_via says whether the
+// SWITCHBOARD will write. They were run together once: four sentences and the
+// manual paragraph told every spoken-to agent "the switchboard emails them",
+// although email/send.ts:254 and domain/channelNotify.ts drop every notice for
+// anybody whose hears_via is 'assistant'. Their humans were left waiting on
+// post that was never going to come, which is the same defect the lanes file
+// exists to stop, on the wrong axis.
+//
+// So the rule, held here for every sentence and both lanes at once: the phrase
+// appears where the caller read 'email' and NOWHERE else.
+// ---------------------------------------------------------------------------
+
+describe('the post is claimed only where the post is real', () => {
+  it('never says the switchboard writes to a human who hears it all from their agent', () => {
+    const offenders: string[] = [];
+    for (const id of SENTENCE_IDS) {
+      for (const { name, text } of everyWording(id, 'assistant')) {
+        if (CLAIMS_POST.test(text)) offenders.push(`${id} — ${name}: ${text}`);
+      }
+    }
+    expect(
+      offenders,
+      'this human is sent no mail at all, so a sentence about post is a lie',
+    ).toEqual([]);
+  });
+
+  it('never says it where the caller did not look, because under-promising is the safe way to fail', () => {
+    const offenders: string[] = [];
+    for (const id of SENTENCE_IDS) {
+      for (const { name, text } of everyWording(id, undefined)) {
+        if (CLAIMS_POST.test(text)) offenders.push(`${id} — ${name}: ${text}`);
+      }
+    }
+    expect(offenders, 'a caller that never read hears_via has nothing to claim with').toEqual([]);
+  });
+
+  it('says it on every sentence that is marked as claiming it, where the human is written to', () => {
+    for (const id of SENTENCE_IDS) {
+      const prompted = say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'email' });
+      expect(CLAIMS_POST.test(prompted), id).toBe(Boolean(SENTENCES[id].claimsEmail));
+    }
+  });
+
+  it('flips on the one column, with the arrangement held still', () => {
+    // The whole of the fix in one assertion: the same sentence, the same lane,
+    // the same arrangement, two different answers to how this human hears.
+    for (const id of SENTENCE_IDS) {
+      const posted = say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'email' });
+      const notPosted = say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'assistant' });
+      const unread = say(id, 'prompted', NOTHING, CTX);
+      if (SENTENCES[id].claimsEmail) {
+        expect(posted, id).not.toBe(notPosted);
+        // And a caller that never looked lands on the careful wording rather
+        // than inventing a third one.
+        expect(unread, id).toBe(notPosted);
+      } else {
+        // A sentence that never claimed the post reads the same either way:
+        // hears_via is not a second lane, and it must not become one.
+        expect(posted, id).toBe(notPosted);
+        expect(unread, id).toBe(notPosted);
+      }
+    }
+  });
+
+  it('leaves the agreed wordings alone, because that agent is the messenger itself', () => {
+    // An agent that runs between conversations on a saved rhythm promises on
+    // its own account and never leaned on the post, so how its human hears
+    // changes nothing at all about what it is told to say.
+    for (const id of SENTENCE_IDS) {
+      const posted = say(id, 'autonomous', AGREED, { ...CTX, hearsVia: 'email' });
+      const notPosted = say(id, 'autonomous', AGREED, { ...CTX, hearsVia: 'assistant' });
+      expect(posted, id).toBe(notPosted);
+      expect(posted, id).not.toMatch(CLAIMS_POST);
+    }
+  });
+
+  it('holds the rule on the not-yet wordings too, which say what to do meanwhile', () => {
+    // An agent that runs on its own with nothing agreed is told what to say
+    // until a rhythm is saved, and for some of these sentences that used to be
+    // "the switchboard emails them". Same rule, same axis.
+    for (const id of SENTENCE_IDS) {
+      expect(say(id, 'autonomous', NOT_YET, { ...CTX, hearsVia: 'assistant' }), id).not.toMatch(
+        CLAIMS_POST,
+      );
+      expect(say(id, 'autonomous', NOT_YET, CTX), id).not.toMatch(CLAIMS_POST);
+    }
+  });
+
+  it('holds the same rule through sayFor, which is how most callers arrive', () => {
+    for (const id of SENTENCE_IDS) {
+      expect(sayFor(id, NOTHING, { ...CTX, hearsVia: 'assistant' }), id).not.toMatch(CLAIMS_POST);
+      expect(sayFor(id, NOTHING, CTX), id).not.toMatch(CLAIMS_POST);
+      expect(sayFor(id, NOTHING, { ...CTX, hearsVia: 'email' }), id).toBe(
+        say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'email' }),
+      );
     }
   });
 });
@@ -250,7 +388,7 @@ describe('nothing outside the table promises to come back', () => {
 
   it('and every promise phrase in lanes.ts sits in a wording the table produced', () => {
     const everything = new Set<string>();
-    for (const id of SENTENCE_IDS) for (const w of everyWording(id)) everything.add(w.text);
+    for (const id of SENTENCE_IDS) for (const w of everyWordingAnyhow(id)) everything.add(w.text);
     const said = [...everything].join('\n');
     const lines = prose(readFileSync('src/domain/lanes.ts', 'utf8')).split('\n');
     const loose: string[] = [];
@@ -268,19 +406,28 @@ describe('nothing outside the table promises to come back', () => {
 
 // ---------------------------------------------------------------------------
 describe('the wordings themselves, one sentence at a time', () => {
-  const cases: [SentenceId, RegExp, RegExp, RegExp][] = [
+  /**
+   * id, agreed, not_yet, prompted-with-nothing-read, and — where the sentence
+   * claims the post at all — the prompted wording for a human the switchboard
+   * genuinely writes to. The fourth column is the careful answer and the fifth
+   * is the generous one, and no sentence may reach the fifth without being
+   * told 'email'.
+   */
+  const cases: [SentenceId, RegExp, RegExp, RegExp, RegExp?][] = [
     // id, agreed, not_yet, prompted
     [
       'after_posting',
       /already agreed you look every hour/,
       /have not agreed how often you check/,
+      /it may write to them about none of it/,
       /the switchboard will email you when someone comes forward/,
     ],
     [
       'just_posted',
       /look again a few minutes from now/,
       /Agree how often you look with your human/,
-      /check with you after that/,
+      /asking you is how they hear, since the switchboard may write/,
+      /the switchboard emails them when somebody comes forward/,
     ],
     [
       'waiting_on_their_go_ahead',
@@ -298,6 +445,7 @@ describe('the wordings themselves, one sentence at a time', () => {
       'in_line',
       /bring them their turn the moment it comes/,
       /how often you should look/,
+      /check with you whenever they like/,
       /emails them when their turn comes/,
     ],
     [
@@ -310,12 +458,14 @@ describe('the wordings themselves, one sentence at a time', () => {
       'refined',
       /bring them anyone who comes forward/,
       /standing_arrangement/,
+      /check with you whenever they like/,
       /emails them when somebody comes forward/,
     ],
     [
       'nothing_waiting',
       /bring them whatever arrives/,
       /standing_arrangement/,
+      /check with you whenever they like/,
       /emails them when something arrives/,
     ],
     [
@@ -328,13 +478,15 @@ describe('the wordings themselves, one sentence at a time', () => {
       'verdict_good',
       /bring them more like it/,
       /standing_arrangement/,
+      /check with you whenever they like/,
       /emails them when somebody comes forward/,
     ],
     [
       'manual_lane',
       /your human has agreed you look every hour/,
       /no rhythm is agreed yet/,
-      /Nothing on this account says you run between conversations/,
+      /do not say the switchboard writes to them either/,
+      /say the switchboard emails them, and that they can ask you again/,
     ],
   ];
 
@@ -342,7 +494,7 @@ describe('the wordings themselves, one sentence at a time', () => {
     expect(cases.map((c) => c[0]).sort()).toEqual([...SENTENCE_IDS].sort());
   });
 
-  for (const [id, agreed, notYet, prompted] of cases) {
+  for (const [id, agreed, notYet, prompted, promptedPosted] of cases) {
     it(`${id}: says the rhythm where one is agreed`, () => {
       expect(say(id, 'autonomous', AGREED, CTX)).toMatch(agreed);
     });
@@ -352,7 +504,26 @@ describe('the wordings themselves, one sentence at a time', () => {
     it(`${id}: promises nothing where the agent only wakes when spoken to`, () => {
       expect(say(id, 'prompted', NOTHING, CTX)).toMatch(prompted);
     });
+    if (promptedPosted) {
+      it(`${id}: says the post only where the post is real`, () => {
+        expect(say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'email' })).toMatch(
+          promptedPosted,
+        );
+        // And the careful wording is what 'assistant' gets, the same as a
+        // caller that never looked.
+        expect(say(id, 'prompted', NOTHING, { ...CTX, hearsVia: 'assistant' })).toMatch(prompted);
+      });
+    }
   }
+
+  it('marks every sentence that claims the post, and only those', () => {
+    // The fifth column and the table's own `claimsEmail` flag are two records
+    // of the same fact, so they are checked against each other: a sentence
+    // that claims the post must be marked, and a marked one must claim it.
+    for (const [id, , , , promptedPosted] of cases) {
+      expect(Boolean(SENTENCES[id].claimsEmail), id).toBe(Boolean(promptedPosted));
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

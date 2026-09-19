@@ -33,8 +33,18 @@
  * AND IT FLIPS ON ITS OWN. The lane is read per answer rather than baked into
  * anything, so a human turning autonomy on or off on their own page changes
  * every one of these sentences at once, with nothing else to do.
+ *
+ * THE SECOND AXIS, AND IT IS NOT THE LANE. Some of these sentences also say
+ * "the switchboard emails them". Whether that is true has nothing to do with
+ * the lane: `hears_via` decides whether the switchboard WRITES, and the lane
+ * decides whether the AGENT may promise. A human whose `hears_via` is
+ * 'assistant' is sent no notice mail at all (email/send.ts, channelNotify.ts),
+ * so telling their agent the post is coming leaves them waiting on post that
+ * never comes. Every wording that claims the email therefore reads
+ * `ctx.hearsVia`, and claims it on 'email' and nowhere else.
  */
-import { cadenceInPlainWords, type Arrangement } from './arrangement.js';
+import { getHearsVia, type HearsVia } from './accounts.js';
+import { arrangementOrNothing, cadenceInPlainWords, type Arrangement } from './arrangement.js';
 
 export type Lane = 'autonomous' | 'prompted';
 
@@ -55,6 +65,13 @@ export interface Ctx {
   added?: string;
   /** Filled in by `say` from the saved rhythm. */
   cadence?: string;
+  /**
+   * How this human hears about their switchboard, where the caller read it.
+   * 'email' is the one value that earns the sentence about post; 'assistant'
+   * and undefined both claim nothing. Undefined means the caller never looked,
+   * which is a different thing from a look that failed — see readLaneFacts.
+   */
+  hearsVia?: HearsVia;
 }
 
 type Wording = string | ((c: Ctx) => string);
@@ -64,6 +81,13 @@ export interface Sentence {
   about: string;
   /** The most characters this wording may run to, asserted in the tests. */
   budget: number;
+  /**
+   * Set where at least one wording says the switchboard writes to the human.
+   * The tests use it to hold the rule from both ends: a sentence marked here
+   * must claim the post on 'email' and must not claim it otherwise, and a
+   * sentence not marked here must read the same whatever `hearsVia` says.
+   */
+  claimsEmail?: boolean;
   prompted: Wording;
   autonomous: {
     /** A rhythm is saved: say it as the agreed thing it is. */
@@ -91,9 +115,14 @@ const notYetTail = (thing: string): string =>
  * `emails` is what the switchboard genuinely sends mail about, said so it
  * reads after "emails them". It is left out wherever no mail is actually sent,
  * because a promise about somebody else's post is still a promise.
+ *
+ * AND IT IS SAID ONLY TO A HUMAN WHO IS WRITTEN TO. Even where mail really is
+ * raised for this event, it is dropped on the way out for anybody whose
+ * `hears_via` is not 'email'. So the claim needs both: an event that raises
+ * mail, and a human the mail would reach.
  */
-const promptedTail = (emails?: string): string =>
-  `${emails ? `The switchboard emails them ${emails}. ` : ''}Tell them they can check with you whenever they like, and never say you will come back on your own.`;
+const promptedTail = (c: Ctx, emails?: string): string =>
+  `${emails && c.hearsVia === 'email' ? `The switchboard emails them ${emails}. ` : ''}Tell them they can check with you whenever they like, and never say you will come back on your own.`;
 
 /** A sentence made of a head that is true for everyone and one of the tails. */
 function waitingOn(o: {
@@ -108,7 +137,8 @@ function waitingOn(o: {
   return {
     about: o.about,
     budget: o.budget,
-    prompted: (c) => `${head(c)} ${promptedTail(o.emails)}`,
+    ...(o.emails ? { claimsEmail: true as const } : {}),
+    prompted: (c) => `${head(c)} ${promptedTail(c, o.emails)}`,
     autonomous: {
       agreed: (c) => `${head(c)} ${agreedTail(o.thing, c.cadence ?? 'on your rhythm')}`,
       not_yet: (c) => `${head(c)} ${notYetTail(o.thing)}`,
@@ -131,14 +161,23 @@ export const SENTENCES = {
    */
   after_posting: {
     about: 'What happens next, said once a want or a have is up.',
-    budget: 500,
-    prompted:
-      'Nothing on this account says you run between conversations, and you and your human have not agreed how often you check, so do not tell them you will let them know. Say this: the switchboard will email you when someone comes forward, and check with me whenever you like. If you do run between conversations, say so with standing_arrangement and give a cadence, and you can be the one telling them. One look a few minutes from now is fine either way; say times in their own clock.',
+    budget: 560,
+    claimsEmail: true,
+    prompted: (c: Ctx) =>
+      `Nothing on this account says you run between conversations, and you and your human have not agreed how often you check, so do not tell them you will let them know. Say this: ${
+        c.hearsVia === 'email'
+          ? 'the switchboard will email you when someone comes forward, and check with me whenever you like'
+          : 'check with me whenever you like and I will look then. Do not set them watching for anything from the switchboard, because it may write to them about none of it'
+      }. If you do run between conversations, say so with standing_arrangement and give a cadence, and you can be the one telling them. One look a few minutes from now is fine either way; say times in their own clock.`,
     autonomous: {
       agreed: (c: Ctx) =>
         `Your human has already agreed you look ${c.cadence}, so say that as the arrangement it is. One look a few minutes from now is a follow-up on this posting and has nothing to do with that rhythm. Say any time in their own clock.`,
-      not_yet:
-        'You and your human have not agreed how often you check (say it in those words), so do not yet tell them you will let them know. Say the switchboard will email them when someone comes forward. Ask how often to look (suggest hourly), save it with standing_arrangement, and only then say you will tell them. One look a few minutes from now is fine; say times in their own clock.',
+      not_yet: (c: Ctx) =>
+        `You and your human have not agreed how often you check (say it in those words), so do not yet tell them you will let them know. ${
+          c.hearsVia === 'email'
+            ? 'Say the switchboard will email them when someone comes forward.'
+            : 'Tell them to ask you whenever they like, and do not set them watching for anything from the switchboard, because it may write to them about none of it.'
+        } Ask how often to look (suggest hourly), save it with standing_arrangement, and only then say you will tell them. One look a few minutes from now is fine; say times in their own clock.`,
     },
   } as Sentence,
 
@@ -150,8 +189,13 @@ export const SENTENCES = {
   just_posted: {
     about: 'How soon after posting there is anything to see.',
     budget: 300,
-    prompted:
-      'It takes a minute or two before anyone can be put in touch. Tell them they can check with you after that, and that the switchboard emails them when somebody comes forward.',
+    claimsEmail: true,
+    prompted: (c: Ctx) =>
+      `It takes a minute or two before anyone can be put in touch. Tell them they can check with you after that, and that ${
+        c.hearsVia === 'email'
+          ? 'the switchboard emails them when somebody comes forward'
+          : 'asking you is how they hear, since the switchboard may write to them about none of it'
+      }.`,
     autonomous: {
       agreed: (c: Ctx) =>
         `It takes a minute or two before anyone can be put in touch, so look again a few minutes from now. That one look is a follow-up on this posting rather than your ${c.cadence} rhythm.`,
@@ -189,7 +233,8 @@ export const SENTENCES = {
   /**
    * Waiting a turn. The whole of what a waiting human hears: no count, no
    * position, no hint of who else is there (domain/sequencer.ts). A promotion
-   * sends the ordinary summons, so the switchboard really does email them.
+   * sends the ordinary summons, so the switchboard really does email them —
+   * where this human is written to at all, which is what `hearsVia` decides.
    */
   in_line: waitingOn({
     about: 'This human is waiting their turn on somebody else’s posting.',
@@ -253,13 +298,22 @@ export const SENTENCES = {
   manual_lane: {
     about: 'Which lane the agent reading this section is in.',
     budget: 700,
-    prompted:
-      'WHICH SORT OF AGENT YOU ARE. Nothing on this account says you run between conversations, so you are read here as an agent that is only present while its human is typing to you. That is the true answer for most of you rather than a lesser one. Never promise to tell them something later: say the switchboard emails them, and that they can ask you again whenever they like. If you do run on your own, say so with standing_arrangement and every sentence below changes with you.',
+    claimsEmail: true,
+    prompted: (c: Ctx) =>
+      `WHICH SORT OF AGENT YOU ARE. Nothing on this account says you run between conversations, so you are read here as an agent that is only present while its human is typing to you. That is the true answer for most of you rather than a lesser one. ${
+        c.hearsVia === 'email'
+          ? 'Never promise to tell them something later: say the switchboard emails them, and that they can ask you again whenever they like.'
+          : 'Never promise to tell them something later, and do not say the switchboard writes to them either: it may write to them about none of it, so asking you again is how they hear anything.'
+      } If you do run on your own, say so with standing_arrangement and every sentence below changes with you.`,
     autonomous: {
       agreed: (c: Ctx) =>
         `WHICH SORT OF AGENT YOU ARE. You run between conversations and your human has agreed you look ${c.cadence}, so a promise to bring them something is one you can keep. Say the rhythm as the agreed thing it is. The sentences the switchboard hands you already know which sort of agent you are, so say them as they are given rather than working it out again yourself.`,
-      not_yet:
-        'WHICH SORT OF AGENT YOU ARE. You run between conversations, and no rhythm is agreed yet. Before you promise to tell your human anything later, ask how often you should look, suggest hourly, and save it with standing_arrangement. Until it is saved, say the switchboard emails them. The sentences the switchboard hands you already know which sort of agent you are, and they change the moment it is saved.',
+      not_yet: (c: Ctx) =>
+        `WHICH SORT OF AGENT YOU ARE. You run between conversations, and no rhythm is agreed yet. Before you promise to tell your human anything later, ask how often you should look, suggest hourly, and save it with standing_arrangement. ${
+          c.hearsVia === 'email'
+            ? 'Until it is saved, say the switchboard emails them.'
+            : 'Do not say the switchboard writes to them in the meantime: it may write to them about none of it, so asking you again is how they hear anything.'
+        } The sentences the switchboard hands you already know which sort of agent you are, and they change the moment it is saved.`,
     },
   } as Sentence,
 } satisfies Record<string, Sentence>;
@@ -288,4 +342,37 @@ export function say(id: SentenceId, lane: Lane, a: Arrangement, ctx: Ctx = {}): 
 /** The same thing from an arrangement alone, for a caller with nothing else. */
 export function sayFor(id: SentenceId, a: Arrangement, ctx: Ctx = {}): string {
   return say(id, laneFor(a), a, ctx);
+}
+
+/**
+ * THE TWO FACTS A WAITING SENTENCE NEEDS, read once for the whole answer.
+ *
+ * The lane comes out of the arrangement column and the post comes out of
+ * hears_via. Both are one plaintext column on the account row and both are
+ * already read this cheaply elsewhere, so they are fetched together here and
+ * threaded through — never once per sentence, and never once per introduction
+ * inside a sweep (see checkMatches, which takes both as parameters).
+ *
+ * THE TWO DEFAULTS ARE DIFFERENT THINGS, and they are both right.
+ *
+ *  - A FAILED READ of hears_via answers 'email', because `getHearsVia` is the
+ *    same helper email/send.ts asks on the way out: a throw there means mail
+ *    really is attempted, so a sentence built on the same answer is telling
+ *    the truth about what the switchboard will do.
+ *  - NO READ AT ALL is `undefined` at the Ctx, and every wording falls quiet
+ *    about post. That is a caller which never looked rather than a look that
+ *    failed, so it has learned nothing to promise with. Under-promising is
+ *    safe; the whole defect this guards against is over-promising post that
+ *    never comes.
+ *
+ * An unreadable arrangement is the prompted lane, exactly as before.
+ */
+export async function readLaneFacts(
+  accountId: string,
+): Promise<{ arrangement: Arrangement; hearsVia: HearsVia }> {
+  const [arrangement, hearsVia] = await Promise.all([
+    arrangementOrNothing(accountId),
+    getHearsVia(accountId),
+  ]);
+  return { arrangement, hearsVia };
 }

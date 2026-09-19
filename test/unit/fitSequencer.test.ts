@@ -686,7 +686,10 @@ describe('in line: what each side is shown', () => {
 
   it('refuses to advance an introduction that is still in line, saying only that', async () => {
     await expect(matches.expressInterest(cfg, introId(2), buyer(2))).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET', human_action: matches.IN_LINE_SENTENCE },
+      // The refusal reads this account's own row, so it knows the human is
+      // written to and the sentence may say so. IN_LINE_SENTENCE is the
+      // wording for a caller that never looked at all.
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: matches.inLineSentence({}, 'email') },
     });
   });
 

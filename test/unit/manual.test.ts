@@ -215,8 +215,15 @@ describe('the manual introduces itself', () => {
       "I'll let you know the moment someone comes forward",
     );
     expect(MANUAL_BODY).toMatch(/a way to wake yourself and have saved the arrangement/i);
+    // It used to end "tell them the switchboard emails them instead", which
+    // is false for a human who hears the whole of it from their own
+    // assistant. The manual now points at hears_via rather than promising
+    // post on every account's behalf.
     expect(MANUAL_BODY).toMatch(
-      /If you wake only when you are spoken to, say that plainly and tell them the switchboard emails them instead/i,
+      /If you wake only when you are spoken to, say that plainly and tell them to ask you whenever they like/i,
+    );
+    expect(MANUAL_BODY).toMatch(
+      /say the switchboard writes to them only where hears_via says email/i,
     );
   });
 

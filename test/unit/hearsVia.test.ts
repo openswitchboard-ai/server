@@ -306,7 +306,12 @@ describe('a cadence belongs to an agent that runs between conversations', () => 
       expect(r.error).toBe(arrangement.CADENCE_NEEDS_RUNS_ON_ITS_OWN);
       expect(r.human_action).toBe(arrangement.CADENCE_NEEDS_RUNS_ON_ITS_OWN);
       expect(r.error).toContain('runs between conversations');
-      expect(r.error).toContain('the switchboard will email them instead');
+      // It used to end "the switchboard will email them instead", which is
+      // false for a human who hears it all from their own assistant. The
+      // refusal now points at the tool that really does answer whenever they
+      // ask, which is true whatever they hear by.
+      expect(r.error).toContain('check_in tells you everything waiting');
+      expect(r.error).not.toContain('email');
     }
   });
 
@@ -668,9 +673,13 @@ describe('what an agent is told right after posting', () => {
   it('tells a prompted agent to leave the telling to the switchboard', async () => {
     // Nothing saved, so this is the prompted lane (domain/lanes.ts): the
     // sentence says how soon there is anything to see and promises nothing.
+    // This account hears by email, so the sentence may say the switchboard
+    // writes — that half turns on hears_via rather than on the lane.
     const r: any = await publish();
     expect(r.isError, JSON.stringify(r.content?.[0]?.text)).toBeUndefined();
-    expect(r.structuredContent.note.text).toBe(say('just_posted', 'prompted', {}));
+    expect(r.structuredContent.note.text).toBe(
+      say('just_posted', 'prompted', {}, { hearsVia: 'email' }),
+    );
     expect(r.structuredContent.note.text).toMatch(/emails them when somebody comes forward/);
   });
 
