@@ -417,6 +417,27 @@ export async function publishIntent(
     });
   }
 
+  // AND A RADIUS ON A THING ON OFFER IS CONFIRMED ONCE. The question above
+  // catches a reach left out; an assistant can also CHOOSE pick-up only without
+  // asking, and one did (a parcel-sized spring, "about 8 km around Queanbeyan",
+  // from a human who would have posted it anywhere). Pick-up only is a fair
+  // answer for a sofa, so it is never refused outright: the first attempt comes
+  // back with the question, and the second, within the window, goes up as it
+  // is, because by then somebody has been asked.
+  if (
+    String(card.category ?? '').split('.')[0] === 'goods' &&
+    card.type === 'offering' &&
+    card.geo?.reach === 'radius' &&
+    !(await detailAskedRecently(accountId, `${kind ?? ''}#reach`))
+  ) {
+    await recordDetailAsked(accountId, `${kind ?? ''}#reach`);
+    throw new OsbError('NEEDS_DETAIL', {
+      human_action:
+        'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.',
+      questions: ['Would you post it to someone further away, or is it pick-up only?'],
+    });
+  }
+
   const shortfall = detailShortfall(card);
   if (shortfall) {
     const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));

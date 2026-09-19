@@ -272,7 +272,7 @@ const listing = (over: Record<string, unknown> = {}) => ({
   // Rich enough that the detail gate has nothing to say: this suite is about
   // the shelf.
   attributes: { brand: 'fanatec', model: 'csl elite', condition: 'good' },
-  geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
+  geo: { bucket: 'r3gx', radius_km: 25, reach: 'country' },
   ttl_days: 60,
   ...over,
 });
@@ -289,7 +289,7 @@ beforeEach(() => {
       category: 'goods.sim-racing.pedal-parts',
       category_as_posted: 'goods.sim-racing.pedal-parts',
       kind: 'upgraded Fanatec pedal spring',
-      geo: { bucket: 'r3gx', radius_km: 25, reach: 'radius' },
+      geo: { bucket: 'r3gx', radius_km: 25, reach: 'country' },
       attributes: { brand: 'fanatec' },
       ask: null,
       urgency: 'none',
