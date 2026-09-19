@@ -14,7 +14,7 @@
  * the run is repeated, because a suite that lets a human wave a flag through is
  * a suite that will eventually wave through a real one.
  */
-import { MAX_UNCERTAIN_TURN_SHARE, REQUIRED_CASTS } from './levels.js';
+import { MAX_UNCERTAIN_TURN_SHARE, REQUIRED_CASTS, SHARE_APPLIES_FROM_TURNS, MAX_UNCERTAIN_TURNS_WHEN_SHORT } from './levels.js';
 
 export interface RunSummary {
   run: number;
@@ -46,9 +46,15 @@ export function judgeRun(r: RunSummary): Cleanliness {
   const why: string[] = [];
   if (!r.deterministicClean) why.push('a deterministic check failed');
   if (r.failedTurns) why.push(`${r.failedTurns} turn(s) failed a speech rule on both calls`);
-  if (share > MAX_UNCERTAIN_TURN_SHARE) {
+  if (r.scoredTurns >= SHARE_APPLIES_FROM_TURNS) {
+    if (share > MAX_UNCERTAIN_TURN_SHARE) {
+      why.push(
+        `${Math.round(share * 100)}% of scored turns carry an uncertain mark (bar is ${Math.round(MAX_UNCERTAIN_TURN_SHARE * 100)}%)`,
+      );
+    }
+  } else if (r.uncertainTurns > MAX_UNCERTAIN_TURNS_WHEN_SHORT) {
     why.push(
-      `${Math.round(share * 100)}% of scored turns carry an uncertain mark (bar is ${Math.round(MAX_UNCERTAIN_TURN_SHARE * 100)}%)`,
+      `${r.uncertainTurns} of ${r.scoredTurns} scored turns carry an uncertain mark (a short run may carry ${MAX_UNCERTAIN_TURNS_WHEN_SHORT})`,
     );
   }
   if (r.overruled) why.push('a flag on this run was overruled by hand, so it does not count');
