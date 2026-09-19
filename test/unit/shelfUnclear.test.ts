@@ -339,19 +339,19 @@ describe('what the assistant is handed, and what is written', () => {
       listing({ category: 'goods.bicycle.parts' }),
     );
     expect(r.intent_id).toBe(CARD);
-    expect(r.filed_under).toBe('goods.bicycle.parts');
+    expect(r.category).toBe('goods.bicycle.parts');
   });
 
   it('posts it under the top level when they recognise none of them', async () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ category: 'goods' }));
     expect(r.intent_id).toBe(CARD);
-    expect(r.filed_under).toBe('goods');
+    expect(r.category).toBe('goods');
     expect(r.filed_under_note.text).not.toContain('nearest thing the catalogue knows');
   });
 
   it('never refuses an amend, and files it the way it always did', async () => {
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
     expect(r.intent_id).toBe(CARD);
-    expect(r.filed_under).toBe('goods.motoring.parts');
+    expect(r.category).toBe('goods.motoring.parts');
   });
 });
