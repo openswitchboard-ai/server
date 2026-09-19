@@ -220,7 +220,9 @@ describe('what the agent is offered', () => {
 
   it('tells the agent to ask in plain words, and that fine is a real answer', () => {
     expect(respond().description).toContain('how was that: good, fine or bad?');
-    expect(respond().description).toMatch(/never read the word back off the wire/i);
+    expect(respond().inputSchema.properties.verdict.description).toMatch(
+      /send back the one they said/i,
+    );
     expect(respond().inputSchema.properties.verdict.description).toMatch(
       /fine is a real answer/i,
     );

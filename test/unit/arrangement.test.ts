@@ -42,7 +42,7 @@ import * as arrangement from '../../src/domain/arrangement.js';
 import * as home from '../../src/counter/pagesHome.js';
 import * as pages from '../../src/counter/pages.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
-import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
+import { MANUAL_BODY } from '../../src/mcp/instructions.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
 
@@ -354,7 +354,7 @@ describe('how often to check is a number of minutes, with a floor', () => {
     expect(field.maximum).toBe(10080);
     expect(field.description).toMatch(/minutes/i);
     expect(field.description).toMatch(/30/);
-    expect(t.description).toMatch(/30-minute floor/i);
+    expect(t.description).toMatch(/the floor is 30/i);
   });
 
   it('the page offers a minutes box and the same sentence the server refuses with', () => {
@@ -384,8 +384,8 @@ describe('how often to check is a number of minutes, with a floor', () => {
   });
 
   it('the manual says the cadence is minutes with a 30-minute floor', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('check_every_minutes');
-    expect(SERVER_INSTRUCTIONS).toMatch(/more often than every 30 minutes/i);
+    expect(MANUAL_BODY).toContain('check_every_minutes');
+    expect(MANUAL_BODY).toMatch(/more often than every 30 minutes/i);
   });
 });
 
@@ -400,7 +400,7 @@ describe('the standing_arrangement tool', () => {
     expect(t.inputSchema.properties.action.enum).toEqual(['get', 'set']);
     // The description says the two things an agent must know before writing.
     expect(t.description).toMatch(/replaces the whole/i);
-    expect(t.description).toMatch(/never pre-approves a consent gate/i);
+    expect(t.description).toMatch(/never pre-approves a gate/i);
   });
 
   it('get on a fresh account comes back empty, with the note that says to settle one', async () => {
@@ -558,14 +558,14 @@ describe('the page the human reads it on', () => {
 
 // ---------------------------------------------------------------------------
 describe('the manual section for agents that can act unattended', () => {
-  const section = SERVER_INSTRUCTIONS.slice(
-    SERVER_INSTRUCTIONS.indexOf('WHEN YOU CAN ACT ON YOUR OWN'),
-    SERVER_INSTRUCTIONS.indexOf('WORKING THE BOARD'),
+  const section = MANUAL_BODY.slice(
+    MANUAL_BODY.indexOf('WHEN YOU CAN ACT ON YOUR OWN'),
+    MANUAL_BODY.indexOf('WORKING THE BOARD'),
   );
 
   it('sits after the patch-through section and before working the board', () => {
-    expect(SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH')).toBeLessThan(
-      SERVER_INSTRUCTIONS.indexOf('WHEN YOU CAN ACT ON YOUR OWN'),
+    expect(MANUAL_BODY.indexOf('PATCHED THROUGH')).toBeLessThan(
+      MANUAL_BODY.indexOf('WHEN YOU CAN ACT ON YOUR OWN'),
     );
     expect(section.length).toBeGreaterThan(800);
   });
@@ -614,6 +614,6 @@ describe('the manual section for agents that can act unattended', () => {
   });
 
   it('keeps the whole manual clean of the banned constructions', () => {
-    expect(lintEmailCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintEmailCopy(MANUAL_BODY)).toEqual([]);
   });
 });

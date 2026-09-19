@@ -227,7 +227,12 @@ function rowsFor(key: string): number[] {
   return Array.isArray(v) ? v : [v];
 }
 
-/** Does a trailing hint ("IL", "Australia", "ACT") describe this row? */
+/**
+ * Does a trailing hint ("IL", "Australia", "ACT") describe this row?
+ *
+ * Exported as `rowHasHint` for the suggestion list, which has to answer the
+ * same question about a name a person is still typing.
+ */
 function hintMatches(rowIdx: number, hint: string): boolean {
   const g = load();
   const r = g.file.rows[rowIdx];
@@ -240,6 +245,15 @@ function hintMatches(rowIdx: number, hint: string): boolean {
   if (division === undefined) return false;
   const keys = g.coarseKeys.get(division);
   return !!keys && (keys.has(hint) || keys.has(`${normaliseKey(cc)} ${hint}`));
+}
+
+/**
+ * Whether a row answers to a hint, for the one caller outside this file that
+ * needs it: the suggestion list, resolving "Franklin, ACT" as it is typed.
+ * The hint must already be normalised through `normaliseKey`.
+ */
+export function rowHasHint(rowIdx: number, hint: string): boolean {
+  return hintMatches(rowIdx, hint);
 }
 
 /** A settlement this size is what someone typing the bare name almost
@@ -455,16 +469,47 @@ export function qualifyPlace(p: Place): PlaceChoice {
   return { display: `${place}, ${p.country}`, place };
 }
 
+/** What the caller knows about the human asking. Today that is one thing: the
+ *  country they are probably in (src/geo/homeCountry.ts). */
+export interface PlaceHint {
+  /** ISO 3166-1 alpha-2, or undefined when nothing is known. */
+  country?: string;
+}
+
+/**
+ * The candidates ordered for the human who asked: their own country first,
+ * largest first inside each group.
+ *
+ * A hint only ever reorders. Whether a name is in question at all is settled
+ * before this runs, on population alone, so a person in Australia typing
+ * "Sydney" is no more asked than anyone else — and when the answer is a list,
+ * the Franklin down the road is at the top of it rather than off the end.
+ */
+function preferCountry(cities: number[], hint?: string): number[] {
+  if (!hint) return cities;
+  const rows = load().file.rows;
+  const cc = hint.toUpperCase();
+  const mine = cities.filter((i) => rows[i][1] === cc);
+  if (!mine.length) return cities;
+  return [...mine, ...cities.filter((i) => rows[i][1] !== cc)];
+}
+
 /**
  * The places a bare name could have meant, when no single one owns it.
  *
  * Returns undefined when the name is not in question — one city answers to
  * it, or a comma or a code already settles it, or one candidate is both ten
  * times the size of every rival and leaves no rival that is a town in its own
- * right. Otherwise: the candidates, largest first, one per qualified name, at
- * most five, for the caller to put to a human.
+ * right. Otherwise: the candidates, one per qualified name, at most five, for
+ * the caller to put to a human.
+ *
+ * Largest first, except that a `hint` naming the human's own country lifts the
+ * places in it to the front. The question asked is unchanged — a name several
+ * real towns answer to is never picked silently, not even when exactly one of
+ * them is in the human's country — but the first thing they are offered is now
+ * the one they most likely meant.
  */
-export function ambiguousPlaces(input: string): Place[] | undefined {
+export function ambiguousPlaces(input: string, hint: PlaceHint = {}): Place[] | undefined {
   const raw = (input ?? '').trim();
   if (!raw || raw.includes(',')) return undefined;
   if (CODE_FORM.test(raw)) return undefined;
@@ -482,7 +527,7 @@ export function ambiguousPlaces(input: string): Place[] | undefined {
   // smaller of them could never be picked by it. Keep the larger.
   const seen = new Set<string>();
   const out: Place[] = [];
-  for (const i of cities) {
+  for (const i of preferCountry(cities, hint.country)) {
     const p = toPlace(i);
     const { display } = qualifyPlace(p);
     if (seen.has(display)) continue;

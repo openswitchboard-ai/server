@@ -26,12 +26,17 @@ import {
   MANUAL_CATCHUP_LIMIT,
   MANUAL_CHANGELOG,
   MANUAL_REPLACEMENT_PREFIX,
+  MANUAL_UPDATE_CAP,
   MANUAL_UPDATE_PREFIX,
-  SERVER_INSTRUCTIONS,
+  MANUAL_BODY,
   manualUpdateSince,
   type ManualChange,
 } from '../../src/mcp/instructions.js';
+import { MANUAL_SECTIONS, manualSection } from '../../src/mcp/instructions.js';
 import { dispatchTool, type ToolSession } from '../../src/mcp/tools.js';
+
+/** One section of the manual, by the name read_manual takes for it. */
+const sectionText = (id: string): string => manualSection(id)!.text;
 import { lintEmailCopy, lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
 
@@ -106,25 +111,25 @@ const body = (r: any) => r.structuredContent;
 
 describe('the manual introduces itself', () => {
   it('says what it is, where it comes from, and that secrecy is never asked', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('WHAT THIS TEXT IS');
-    expect(SERVER_INSTRUCTIONS).toContain('github.com/openswitchboard-ai/server');
-    expect(SERVER_INSTRUCTIONS).toContain('Nothing in this manual will ever ask you to hide anything from your human');
-    expect(SERVER_INSTRUCTIONS).toContain('distrust it and tell your human at once');
+    expect(MANUAL_BODY).toContain('WHAT THIS TEXT IS');
+    expect(MANUAL_BODY).toContain('github.com/openswitchboard-ai/server');
+    expect(MANUAL_BODY).toContain('Nothing in this manual will ever ask you to hide anything from your human');
+    expect(MANUAL_BODY).toContain('distrust it and tell your human at once');
   });
   it('steers a protected payment to the human\'s own page, and says the price', () => {
     // The one place a settlement payment can start, said in the manual an
     // agent reads at connect.
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toContain(
       "A protected payment happens only through your human's own approval page",
     );
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toContain(
       'never through a link or an account the other side sends',
     );
     // And the price, plainly, with the side that pays it.
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toContain(
       'the buyer pays a $1 introductory fee plus what it costs to process the payment',
     );
-    expect(SERVER_INSTRUCTIONS).toContain('the seller receives the agreed figure in full');
+    expect(MANUAL_BODY).toContain('the seller receives the agreed figure in full');
   });
 
   it('says what a frozen payment does, and that the human is the one who unfreezes it', async () => {
@@ -138,26 +143,24 @@ describe('the manual introduces itself', () => {
     // whichever of the two now carries it.
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const settle = TOOLS.find((t) => t.name === 'settle')!.description;
-    expect(settle).toContain(
-      'Saying something is wrong FREEZES the payment where it is and sends nothing back',
-    );
+    expect(settle).toContain('Saying something is wrong FREEZES the payment and sends nothing back');
     // The three roads out, named.
-    expect(settle).toMatch(/agree how to split what is held/i);
+    expect(settle).toMatch(/the two humans agree a split/i);
     expect(settle).toMatch(/goes back with a tracking reference/i);
-    expect(settle).toMatch(/fourteen days the payment goes to whichever side/i);
+    expect(settle).toMatch(/fourteen days it goes to whichever side/i);
     // And the line that keeps the agent out of every one of them, which is a
     // rule about what to DO with what comes back, so it stays in the manual.
-    expect(SERVER_INSTRUCTIONS).toContain('relay it and leave the doing to them');
-    expect(SERVER_INSTRUCTIONS).toContain('presses on their own approval page');
-    expect(settle).toMatch(/Every one of those steps is theirs, on their own approval page/i);
+    expect(MANUAL_BODY).toContain('relay it and leave the doing to them');
+    expect(MANUAL_BODY).toContain('presses on their own approval page');
+    expect(settle).toMatch(/every step is their own press/i);
     // The two things a person will ask about the money. These are answers to a
     // human's question rather than the shape of a call, they have no home on
     // settle at all, and they stay in the manual.
-    expect(SERVER_INSTRUCTIONS).toMatch(/fee and the processing cost stay paid whatever happens/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/postage in either direction is between the two people/i);
+    expect(MANUAL_BODY).toMatch(/fee and the processing cost stay paid whatever happens/i);
+    expect(MANUAL_BODY).toMatch(/postage in either direction is between the two people/i);
     // And the manual still points at where the rest of it lives.
-    expect(SERVER_INSTRUCTIONS).toMatch(/written out on the settle tool/i);
-    expect(SERVER_INSTRUCTIONS).toContain('auto_release_at');
+    expect(MANUAL_BODY).toMatch(/written out on the settle tool/i);
+    expect(MANUAL_BODY).toContain('auto_release_at');
   });
 
   it('tells a connected agent about the freeze, in version 19', () => {
@@ -170,8 +173,8 @@ describe('the manual introduces itself', () => {
   });
 
   it('describes unattended work as the human\'s own revocable choice', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('always because they asked you to');
-    expect(SERVER_INSTRUCTIONS).toContain('change or cancel with a word');
+    expect(MANUAL_BODY).toContain('always because they asked you to');
+    expect(MANUAL_BODY).toContain('change or cancel with a word');
   });
 
   // -------------------------------------------------------------------------
@@ -182,30 +185,30 @@ describe('the manual introduces itself', () => {
   // that promise costs to make.
   // -------------------------------------------------------------------------
   it('says to look once a few minutes after posting, outside the cadence', () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/Look once, a few minutes after you post or amend/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/screening takes seconds/i);
+    expect(MANUAL_BODY).toMatch(/Look once, a few minutes after you post or amend/);
+    expect(MANUAL_BODY).toMatch(/screening takes seconds/i);
     // One follow-up is not a rhythm, so the floor is not in play — and the
     // floor itself is untouched.
-    expect(SERVER_INSTRUCTIONS).toMatch(/single follow-up on one posting/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/nowhere near the 30-minute floor/i);
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toMatch(/single follow-up on one posting/i);
+    expect(MANUAL_BODY).toMatch(/nowhere near the 30-minute floor/i);
+    expect(MANUAL_BODY).toContain(
       'The switchboard will not let anyone check more often than every 30 minutes',
     );
   });
 
   it('proposes hourly, agreed out loud and saved', () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/the shape to propose is about once an hour/i);
-    expect(SERVER_INSTRUCTIONS).toContain('shall I have a look every hour or so?');
-    expect(SERVER_INSTRUCTIONS).toContain('runs_on_its_own true and check_every_minutes 60');
-    expect(SERVER_INSTRUCTIONS).toMatch(/what to suggest and never what to assume/i);
+    expect(MANUAL_BODY).toMatch(/the shape to propose is about once an hour/i);
+    expect(MANUAL_BODY).toContain('shall I have a look every hour or so?');
+    expect(MANUAL_BODY).toContain('runs_on_its_own true and check_every_minutes 60');
+    expect(MANUAL_BODY).toMatch(/what to suggest and never what to assume/i);
   });
 
   it('makes the promise cost something to make', () => {
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toContain(
       "I'll let you know the moment someone comes forward",
     );
-    expect(SERVER_INSTRUCTIONS).toMatch(/a way to wake yourself and have saved the arrangement/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(/a way to wake yourself and have saved the arrangement/i);
+    expect(MANUAL_BODY).toMatch(
       /If you wake only when you are spoken to, say that plainly and tell them the switchboard emails them instead/i,
     );
   });
@@ -226,55 +229,55 @@ describe('the manual introduces itself', () => {
   // loosening, which sent an assistant looking for a tool that does not exist.
   // -------------------------------------------------------------------------
   it('tells the truth about what an amend can reach', () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(
       /Widen the area or loosen an attribute and it is an amend/,
     );
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(
       /A heading is the one thing an amend cannot touch/,
     );
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(
       /taking the posting down and putting it up again/,
     );
   });
 
   it('teaches wrapping one up: notice, offer once, archive, retrieve', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('WRAPPING ONE UP');
+    expect(MANUAL_BODY).toContain('WRAPPING ONE UP');
     // The one-time offer, in the plain human-facing voice ("archive" is fine
     // to say; the system words are not).
-    expect(SERVER_INSTRUCTIONS).toContain(
+    expect(MANUAL_BODY).toContain(
       'want me to archive it and keep the book club open for more people',
     );
-    expect(SERVER_INSTRUCTIONS).toContain('respond(archive)');
+    expect(MANUAL_BODY).toContain('respond(archive)');
     // Honesty about what survives: the record stays; the conversation and the
     // number live in the human's own chat.
-    expect(SERVER_INSTRUCTIONS).toMatch(/you hold on to who they got chatting with/i);
-    expect(SERVER_INSTRUCTIONS).toContain('the switchboard keeps neither');
+    expect(MANUAL_BODY).toMatch(/you hold on to who they got chatting with/i);
+    expect(MANUAL_BODY).toContain('the switchboard keeps neither');
     // Later retrieval answers the "who was that again?" question, plainly.
-    expect(SERVER_INSTRUCTIONS).toContain('who was that book club person again?');
+    expect(MANUAL_BODY).toContain('who was that book club person again?');
   });
   it('keeps archiving separate from what was posted, with both worked examples in plain voice', () => {
     // Archiving never assumes the fate of the want or have; the agent asks, and the two
     // worked cases (book club stays up, bike gets taken down) are both present.
-    expect(SERVER_INSTRUCTIONS).toContain('withdraw_intent');
-    expect(SERVER_INSTRUCTIONS).toMatch(/never pull a want or have down/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/book club with room/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/bike[\s\S]{0,80}sell/i);
-    expect(SERVER_INSTRUCTIONS).toContain('keep the book club open for more people');
+    expect(MANUAL_BODY).toContain('withdraw_intent');
+    expect(MANUAL_BODY).toMatch(/never pull a want or have down/i);
+    expect(MANUAL_BODY).toMatch(/book club with room/i);
+    expect(MANUAL_BODY).toMatch(/bike[\s\S]{0,80}sell/i);
+    expect(MANUAL_BODY).toContain('keep the book club open for more people');
   });
   it('keeps the system words out of the human-facing voice, archive excepted', () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(
       /machinery's words are yours to think in and never theirs to hear/i,
     );
-    expect(SERVER_INSTRUCTIONS).toMatch(/archive is plain enough to say out loud/i);
+    expect(MANUAL_BODY).toMatch(/archive is plain enough to say out loud/i);
   });
   it('teaches keeping a conversation moving so neither side waits in silence', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('KEEP IT MOVING');
+    expect(MANUAL_BODY).toContain('KEEP IT MOVING');
     // Tell your human what happens next when you carry something across.
-    expect(SERVER_INSTRUCTIONS).toMatch(/when they next check in with their own assistant/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/watching for the reply/i);
+    expect(MANUAL_BODY).toMatch(/when they next check in with their own assistant/i);
+    expect(MANUAL_BODY).toMatch(/watching for the reply/i);
     // And bring it to them when the ball is in their court.
-    expect(SERVER_INSTRUCTIONS).toMatch(/when the ball is in your human's court/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/both sides quietly waiting on each other/i);
+    expect(MANUAL_BODY).toMatch(/when the ball is in your human's court/i);
+    expect(MANUAL_BODY).toMatch(/both sides quietly waiting on each other/i);
   });
 
   it('sends a figure as an offer and keeps the open conversation for words', () => {
@@ -283,18 +286,17 @@ describe('the manual introduces itself', () => {
     // conversation, and the whole negotiation then happened in free text where
     // no limit of the human's could be enforced. The conversation is sealed by
     // design, so the only lever is making the offer road the visible one.
-    expect(SERVER_INSTRUCTIONS).toContain('The open conversation is for words');
-    expect(SERVER_INSTRUCTIONS).toMatch(/a figure is a different thing, and it travels as an offer/i);
+    expect(MANUAL_BODY).toContain('The open conversation is for words');
+    expect(MANUAL_BODY).toMatch(/a figure is a different thing, and it travels as an offer/i);
     // Why the offer road is the safe one: the human's limits are enforced, and
     // only the allowed number crosses.
-    expect(SERVER_INSTRUCTIONS).toMatch(/refuses anything outside it/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/nothing they keep private can slip out with it/i);
+    expect(MANUAL_BODY).toMatch(/refuses anything outside it/i);
+    expect(MANUAL_BODY).toMatch(/nothing they keep private can slip out with it/i);
     // Hearing a figure is fine; sending one is the offer's job.
-    expect(SERVER_INSTRUCTIONS).toMatch(/hearing a figure here is perfectly fine/i);
-    expect(SERVER_INSTRUCTIONS).toContain("Sending one is propose_offer's job");
+    expect(MANUAL_BODY).toMatch(/hearing a figure here is perfectly fine/i);
+    expect(MANUAL_BODY).toContain("Sending one is propose_offer's job");
     // It sits with the relay guidance, where an agent is deciding what to send.
-    const patched = SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH'));
-    expect(patched).toContain('The open conversation is for words');
+    expect(sectionText('figures')).toContain('The open conversation is for words');
   });
 
   it('tells a connected agent about the offer steer, in version 15', () => {
@@ -309,12 +311,12 @@ describe('the manual introduces itself', () => {
   it('puts the same steer on the tools an agent reaches for', async () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const desc = (name: string) => TOOLS.find((t) => t.name === name)!.description;
-    expect(desc('send_message')).toMatch(/a figure belongs on an offer/i);
+    expect(desc('send_message')).toMatch(/put the number on respond\(propose_offer\)/i);
     expect(desc('open_conversation')).toMatch(/a figure travels as an offer/i);
     // propose_offer already said the numbers are the human's; it now also says
     // that this is the road every figure of theirs takes.
-    expect(desc('respond')).toContain('the numbers belong to your human');
-    expect(desc('respond')).toMatch(/this is where any figure travels/i);
+    expect(desc('respond')).toMatch(/the figure is the one your human said/i);
+    expect(desc('respond')).toContain('CONSENT_REQUIRED');
   });
 
   it('keeps the keep-it-moving change and carries a current latest note', () => {
@@ -340,7 +342,7 @@ describe('the version stamp and its changelog', () => {
   });
 
   it('the manual, its notes and the two prefixes all keep the project voice', () => {
-    expect(lintEmailCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintEmailCopy(MANUAL_BODY)).toEqual([]);
     for (const c of MANUAL_CHANGELOG) expect(lintEmailCopy(c.note), c.note).toEqual([]);
     expect(lintEmailCopy(MANUAL_UPDATE_PREFIX)).toEqual([]);
     expect(lintEmailCopy(MANUAL_REPLACEMENT_PREFIX)).toEqual([]);
@@ -373,12 +375,23 @@ describe('manualUpdateSince: what a stale session is told', () => {
     expect(said).not.toContain(MANUAL.text);
   });
 
-  it('past the limit, hands over the whole manual and says it replaces the old one', () => {
+  it('past the limit, points at read_manual rather than carrying the manual', () => {
     manualDouble(2 + MANUAL_CATCHUP_LIMIT);
     const said = manualUpdateSince(1)!;
     expect(said.startsWith(MANUAL_REPLACEMENT_PREFIX)).toBe(true);
-    expect(said).toContain(MANUAL.text);
+    // The whole manual used to ride this wire. It is fifty thousand
+    // characters and a sweep is no place for it, so the agent is sent to
+    // read_manual instead and the sweep stays small.
+    expect(said).not.toContain(MANUAL.text);
+    expect(said).toContain('read_manual');
     expect(said).not.toContain('- what changed in version 2');
+  });
+
+  it('never spends more than the update cap on one sweep', () => {
+    expect(manualUpdateSince(MANUAL.version - 1)!.length).toBeLessThanOrEqual(MANUAL_UPDATE_CAP);
+    expect(manualUpdateSince(MANUAL.version - MANUAL_CATCHUP_LIMIT)!.length).toBeLessThanOrEqual(
+      MANUAL_UPDATE_CAP,
+    );
   });
 });
 
@@ -432,12 +445,12 @@ describe('the sweep carries it, for a day', () => {
     expect(body(await sweep(session)).manual_update).toBeUndefined();
   });
 
-  it('a session further behind than the limit gets the whole manual, for the same day', async () => {
+  it('a session further behind than the limit is sent to read_manual, for the same day', async () => {
     const session: ToolSession = { tokenHash: TOKEN_HASH, manualVersion: 1, manualNotifiedAt: null };
     manualDouble(2 + MANUAL_CATCHUP_LIMIT);
     const first = body(await sweep(session));
     expect(first.manual_update.startsWith(MANUAL_REPLACEMENT_PREFIX)).toBe(true);
-    expect(first.manual_update).toContain(MANUAL.text);
+    expect(first.manual_update).toContain('read_manual');
     expect(notifiedWrites).toEqual([TOKEN_HASH]);
 
     session.manualNotifiedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
@@ -475,14 +488,13 @@ describe('the sweep carries it, for a day', () => {
 // ---------------------------------------------------------------------------
 describe('the manual says what a manual_update is', () => {
   it('names the field and says to take it aboard as if read at connect', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('manual_update');
-    expect(SERVER_INSTRUCTIONS).toMatch(/this manual speaking/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/as though you had read it here at the start/i);
+    expect(MANUAL_BODY).toContain('manual_update');
+    expect(MANUAL_BODY).toMatch(/this manual speaking/i);
+    expect(MANUAL_BODY).toMatch(/as though you had read it here at the start/i);
   });
 
-  it('says it in WORKING THE BOARD, where the other sweep-time rules live', () => {
-    const section = SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('WORKING THE BOARD'));
-    expect(section).toContain('manual_update');
+  it('says it in the answers section, where the other sweep-time rules live', () => {
+    expect(sectionText('answers')).toContain('manual_update');
   });
 });
 
@@ -523,7 +535,7 @@ const BANNED = [
 /**
  * Round four: the three words for an area. These came in through the pinned
  * schema package rather than through anything written here, which is why the
- * version 39 sweep over SERVER_INSTRUCTIONS alone did not catch them and an
+ * version 39 sweep over MANUAL_BODY alone did not catch them and an
  * assistant still said "location is bucketed" out loud.
  *
  * `bucket` in quotes is the exception, and only in quotes: it is the wire's own
@@ -542,15 +554,15 @@ const AREA_WORDS = [
 describe('what the switchboard calls things, in front of a model', () => {
   it('keeps the system words out of the manual an agent reads at connect', () => {
     for (const { label, re } of BANNED) {
-      expect(re.test(SERVER_INSTRUCTIONS), `${label} in SERVER_INSTRUCTIONS`).toBe(false);
+      expect(re.test(MANUAL_BODY), `${label} in MANUAL_BODY`).toBe(false);
     }
   });
 
   it('leaves the everyday verbs alone: this sweep is about nouns', () => {
     // The guard on the guard. "want" and "have" are how a human talks, and the
     // manual is full of them; only the shouted protocol spellings are banned.
-    expect(SERVER_INSTRUCTIONS).toMatch(/\bwant\b/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/\bhave\b/);
+    expect(MANUAL_BODY).toMatch(/\bwant\b/);
+    expect(MANUAL_BODY).toMatch(/\bhave\b/);
   });
 
   it('names the tools in plain speech', async () => {
@@ -778,17 +790,14 @@ describe('version 36: what the rehearsals taught', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
 describe('and the body carries all six, where a fresh session reads them', () => {
-  const from = (heading: string) =>
-    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
-
   it('asks which kind of sale it is, in the section that describes the two', () => {
-    const sale = from('3d. Two ways to sell');
+    const sale = sectionText('selling');
     expect(sale).toMatch(/your human's to choose and never yours to assume/i);
     expect(sale).toMatch(/ask them before anything they are selling goes up/i);
     expect(sale).toContain('do you want one person at a time at your price');
@@ -800,7 +809,7 @@ describe('and the body carries all six, where a fresh session reads them', () =>
   // What survives from the rehearsal is the half that was always right: the
   // choice is said out loud, and a small radius hides a thing in silence.
   it('still says the choice out loud and still warns about a small radius', () => {
-    const board = from('WORKING THE BOARD');
+    const board = sectionText('posting_reach');
     expect(board).toMatch(/say which reach you chose and why, so your human can correct you/i);
     expect(board).toMatch(/going quiet about it does not/i);
     expect(board).toMatch(/two people meet only where both areas overlap/i);
@@ -808,7 +817,7 @@ describe('and the body carries all six, where a fresh session reads them', () =>
   });
 
   it('gives the ceiling rule a check and an exact question, where the numbers live', () => {
-    const numbers = from('THE NUMBERS ARE THEIRS');
+    const numbers = sectionText('offers');
     expect(numbers).toMatch(/this is the one that keeps going wrong/i);
     expect(numbers).toMatch(/a word beside it is a feeling rather than a second number/i);
     expect(numbers).toContain('"About $420, could stretch a little" is four hundred and twenty dollars');
@@ -819,7 +828,7 @@ describe('and the body carries all six, where a fresh session reads them', () =>
   });
 
   it('stops at "you are in line", and names the glosses that are inventions', () => {
-    const inLine = from('3c. When it is your human who is waiting');
+    const inLine = sectionText('introductions');
     expect(inLine).toMatch(/anything you add to that sentence is something you have made up/i);
     expect(inLine).toContain("There's someone in the queue already");
     expect(inLine).toMatch(/the switchboard carries no count and no position/i);
@@ -827,7 +836,7 @@ describe('and the body carries all six, where a fresh session reads them', () =>
   });
 
   it('puts the whole link order beside the link actions themselves', () => {
-    const page = from('WHAT GOES TO THEIR PAGE');
+    const page = sectionText('links_and_presses');
     // The order is now three numbered steps in the same paragraph that names
     // request_share_name, request_accept and request_auto_negotiate — the
     // paragraph an agent is reading at the moment it reaches for a link.
@@ -845,16 +854,16 @@ describe('and the body carries all six, where a fresh session reads them', () =>
   });
 
   it('says suburb everywhere it describes what crosses at the first step', () => {
-    const page = from('WHAT GOES TO THEIR PAGE');
+    const page = sectionText('links_and_presses');
     expect(page).toMatch(/what crosses at that first step is a first name and a suburb/i);
     expect(page).toMatch(/so say suburb when you explain it to them/i);
     expect(page).toMatch(/ten minutes away or two hours/i);
     expect(page).toMatch(/never invite something vaguer than the page asks for/i);
     // And the body no longer teaches the vaguer phrase anywhere an agent reads
     // it as instruction. Shipped changelog notes keep their own day's words.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/rough area/i);
-    expect(SERVER_INSTRUCTIONS).toContain('first name + suburb');
-    expect(SERVER_INSTRUCTIONS).toContain('the first name and suburb they shared');
+    expect(MANUAL_BODY).not.toMatch(/rough area/i);
+    expect(MANUAL_BODY).toContain('first name + suburb');
+    expect(MANUAL_BODY).toContain('the first name and suburb they shared');
   });
 });
 
@@ -935,23 +944,23 @@ describe('version 37: a refusal that is the switchboard working', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
 describe('the body no longer tells an agent to expect a failure', () => {
   it('says a refusal that is the switchboard working answers like any other call', () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/a refusal that is the switchboard working is an answer/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/only a call that cannot be read still comes back as a failure/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/never read the word out and never tell them something has gone wrong/i);
+    expect(MANUAL_BODY).toMatch(/a refusal that is the switchboard working is an answer/i);
+    expect(MANUAL_BODY).toMatch(/only a call that cannot be read still comes back as a failure/i);
+    expect(MANUAL_BODY).toMatch(/never read the word out and never tell them something has gone wrong/i);
     // The old framing, where every refusal was an error to be read as one.
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/errors are machine-readable/i);
+    expect(MANUAL_BODY).not.toMatch(/errors are machine-readable/i);
   });
 
   it('stops naming a prohibited category as an error with a code on it', () => {
-    const oneA = SERVER_INSTRUCTIONS.slice(
-      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
-      SERVER_INSTRUCTIONS.indexOf('2. Price bands are private'),
+    const oneA = MANUAL_BODY.slice(
+      MANUAL_BODY.indexOf('1a. Categories come from'),
+      MANUAL_BODY.indexOf('2. Price bands are private'),
     );
     expect(oneA).toMatch(/comes back as an ordinary answer with the sentence to say/i);
     expect(oneA).toMatch(/closest open ones in suggestions/i);
@@ -960,9 +969,9 @@ describe('the body no longer tells an agent to expect a failure', () => {
   });
 
   it('1a says the catalogue is a deny list, and names what kind is for', () => {
-    const oneA = SERVER_INSTRUCTIONS.slice(
-      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
-      SERVER_INSTRUCTIONS.indexOf('2. Price bands are private'),
+    const oneA = MANUAL_BODY.slice(
+      MANUAL_BODY.indexOf('1a. Categories come from'),
+      MANUAL_BODY.indexOf('2. Price bands are private'),
     );
     // What to do when the catalogue has nothing: file it under what it does
     // have, and say the thing in your own words.
@@ -980,7 +989,7 @@ describe('the body no longer tells an agent to expect a failure', () => {
   it('says the limit plainly where the read ceiling is explained', () => {
     // The ceiling still has a retry_after to wait out; what changed is that
     // the agent is no longer taught to read a code where a plain word ships.
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toMatch(
       /answers that the limit has been reached and hands you a retry_after/i,
     );
   });
@@ -1002,9 +1011,9 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
 
   it('publish_intent asks which kind of sale it is, before anything goes up', async () => {
     const d = await desc('publish_intent');
-    expect(d).toContain(
-      'ask which kind of sale they want before you post it: one person at a time at their price, or everyone who is interested puts in one sealed figure and they take the one they like',
-    );
+    expect(d).toContain('ASK WHICH KIND OF SALE before you post something they are selling');
+    expect(d).toMatch(/one person at a time/i);
+    expect(d).toMatch(/one sealed figure/i);
     expect(d).toContain('The choice is theirs and never yours to assume.');
   });
 
@@ -1013,23 +1022,25 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
   // loud, and the warning about a few kilometres around one suburb.
   it('publish_intent says the reach choice out loud and warns about a small radius', async () => {
     const d = await desc('publish_intent');
-    expect(d).toContain('Say which reach you chose and why when you confirm the posting');
-    expect(d).toMatch(/two people meet only where both areas overlap/i);
-    expect(d).toMatch(/hides the thing in silence/i);
+    expect(d).toMatch(/say out loud which reach you chose so they can correct you/i);
+    // The reasoning behind it is a section now; the instruction is on the tool.
+    expect(sectionText('posting_reach')).toMatch(/two people meet only where both areas overlap/i);
+    expect(sectionText('posting_reach')).toMatch(/hides it in silence/i);
   });
 
   it('respond says the figure is the one their human said, and the question to ask', async () => {
     const d = await desc('respond');
-    expect(d).toContain('The figure is the figure your human said, in the words they said it');
-    expect(d).toContain('"about $420, could stretch a little" is $420 and nothing else');
-    expect(d).toContain('what is the most you would pay?');
-    expect(d).toContain('what is the least you would take?');
+    expect(d).toContain('the figure is the one your human said, in the words they said it');
+    // The worked example and the repair question are a section now.
+    expect(sectionText('offers')).toContain('"About $420, could stretch a little"');
+    expect(sectionText('offers')).toContain('what is the most you would pay?');
+    expect(sectionText('offers')).toContain('what is the least you would take?');
   });
 
   it('check_in stops at the in-line sentence', async () => {
     const d = await desc('check_in');
-    expect(d).toContain('When your human is the one waiting, say the in_line sentence and nothing else.');
-    expect(d).toMatch(/there is no count and no position here/i);
+    expect(d).toMatch(/`in_line` means your human's turn has not come: say that sentence and stop/i);
+    expect(d).toMatch(/there is no count and no position/i);
     expect(d).toContain("there's someone in the queue already");
   });
 
@@ -1041,9 +1052,9 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
 
   it('respond says suburb wherever the first step is described', async () => {
     const d = await desc('respond');
-    expect(d).toContain('sharing their first name and their suburb');
-    expect(d).toContain('If they have never said what first name and suburb they share, that page asks them there');
-    expect(d).toMatch(/request_share_name \(the step where their first name and suburb cross/);
+    expect(d).toMatch(/their first name and their SUBURB cross here/);
+    expect(d).toMatch(/say suburb, and never invite anything vaguer/);
+    expect(sectionText('links_and_presses')).toMatch(/the page asks for a suburb/i);
     // And nothing on the tool surface still teaches the vaguer word.
     const { TOOLS } = await import('../../src/mcp/tools.js');
     for (const t of TOOLS) {
@@ -1124,13 +1135,12 @@ describe('version 38: a photo, when words are not enough', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
 describe('and the body carries the photo where a fresh session would look', () => {
-  const patched = () =>
-    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH'));
+  const patched = () => sectionText('photos');
 
   it('sits in the section that covers the conversation', () => {
     expect(patched()).toContain('respond(request_photo)');
@@ -1181,7 +1191,7 @@ describe('and the body carries the photo where a fresh session would look', () =
     for (const { label, re } of BANNED) {
       expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
     }
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
@@ -1247,7 +1257,7 @@ describe('version 39: the area comes to you, and what travels is said plainly', 
 
   it('keeps the house register, with no antithesis in the new wording', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
     for (const { label, re } of BANNED) {
       expect(re.test(entry().note), `${label} in the version 39 entry`).toBe(false);
     }
@@ -1265,8 +1275,7 @@ describe('version 39: the area comes to you, and what travels is said plainly', 
 });
 
 describe('and the body carries the area where a fresh session reads it', () => {
-  const from = (heading: string) =>
-    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
+  const from = (_heading: string) => sectionText('posting_reach');
 
   it('sits with the clock, where what an agent knows about its human is described', () => {
     const board = from('WORKING THE BOARD');
@@ -1295,14 +1304,14 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(board).toMatch(/their own area unless the thing itself is somewhere else/i);
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const checkIn = TOOLS.find((t) => t.name === 'check_in')!.description;
-    expect(checkIn).toMatch(/rather than opening with a question they have already answered/i);
+    expect(checkIn).toMatch(/use their `area` as the place on what you post/i);
     expect(checkIn).toMatch(/say which area you used/i);
   });
 
   it('says what travels where posting thin is explained', () => {
-    const postThin = SERVER_INSTRUCTIONS.slice(
-      SERVER_INSTRUCTIONS.indexOf('1. Post thin.'),
-      SERVER_INSTRUCTIONS.indexOf('1a. Categories come from'),
+    const postThin = MANUAL_BODY.slice(
+      MANUAL_BODY.indexOf('1. Post thin.'),
+      MANUAL_BODY.indexOf('1a. Categories come from'),
     );
     expect(postThin).toContain(
       'the suburb they gave and how far they are happy to travel',
@@ -1317,20 +1326,20 @@ describe('and the body carries the area where a fresh session reads it', () => {
     // sentence comes out before the sweep runs.
     const PROHIBITION =
       "Bucketed, cell and geohash are the machinery's own words for it and your human should never hear one of them.";
-    expect(SERVER_INSTRUCTIONS).toContain(PROHIBITION);
+    expect(MANUAL_BODY).toContain(PROHIBITION);
     expect(MANUAL_CHANGELOG.find((c) => c.version === 39)!.note).toContain(PROHIBITION);
-    const rest = SERVER_INSTRUCTIONS.split(PROHIBITION).join(' ');
+    const rest = MANUAL_BODY.split(PROHIBITION).join(' ');
     // The manual is prose an agent reads end to end, so it is held to the
     // stricter form: not even a quoted field name belongs in it.
     for (const word of [/\bbucket(ed|s|ing)?\b/i, /\bgeohash(es)?\b/i, /\bcells?\b/i]) {
-      expect(word.test(rest), `${word} in SERVER_INSTRUCTIONS`).toBe(false);
+      expect(word.test(rest), `${word} in MANUAL_BODY`).toBe(false);
     }
   });
 
   it('keeps them off the tool surface too, where the schema package put them', async () => {
     // The half this sweep did not cover, and the reason the rehearsal happened
     // anyway. The manual has forbidden these three words since version 39, but
-    // the check ran over SERVER_INSTRUCTIONS alone. The pinned schema package
+    // the check ran over MANUAL_BODY alone. The pinned schema package
     // titled the geo object "Bucketed location", said the switchboard
     // "resolves it to a coarse cell", and described the field as "Canonical
     // coarse cell (geohash4)" — all of it rendered straight into the model's
@@ -1379,7 +1388,7 @@ describe('and the body carries the area where a fresh session reads it', () => {
     for (const { label, re } of BANNED) {
       expect(re.test(board), `${label} in WORKING THE BOARD`).toBe(false);
     }
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
@@ -1423,7 +1432,7 @@ describe('version 41: tell your human before you answer the stranger', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
     for (const { label, re } of BANNED) {
       expect(re.test(entry().note), `${label} in the version 41 entry`).toBe(false);
     }
@@ -1431,11 +1440,7 @@ describe('version 41: tell your human before you answer the stranger', () => {
 });
 
 describe('and the body carries it where an agent reads before replying', () => {
-  const patched = () =>
-    SERVER_INSTRUCTIONS.slice(
-      SERVER_INSTRUCTIONS.indexOf('PATCHED THROUGH'),
-      SERVER_INSTRUCTIONS.indexOf('KEEP IT MOVING'),
-    );
+  const patched = () => sectionText('safety_and_reports');
 
   it('sits right after the untrusted-text guidance in the conversation section', () => {
     const p = patched();
@@ -1462,7 +1467,7 @@ describe('and the body carries it where an agent reads before replying', () => {
     for (const { label, re } of BANNED) {
       expect(re.test(patched()), `${label} in PATCHED THROUGH`).toBe(false);
     }
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
@@ -1530,7 +1535,7 @@ describe('version 43: reach follows the thing', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
     for (const { label, re } of BANNED) {
       expect(re.test(entry().note), `${label} in the version 43 entry`).toBe(false);
     }
@@ -1538,7 +1543,7 @@ describe('version 43: reach follows the thing', () => {
 });
 
 describe('and the body teaches the new rule where a fresh session reads it', () => {
-  const board = () => SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf('WORKING THE BOARD'));
+  const board = () => sectionText('posting_reach');
 
   it('no longer teaches post-wide-by-default anywhere in the manual body', () => {
     // The shipped version 30 and version 36 entries keep their own words; the
@@ -1578,7 +1583,7 @@ describe('and the body teaches the new rule where a fresh session reads it', () 
     for (const { label, re } of BANNED) {
       expect(re.test(board()), `${label} in WORKING THE BOARD`).toBe(false);
     }
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
@@ -1590,22 +1595,24 @@ describe('publish_intent carries the rule where the posting is made', () => {
 
   it('says the thing decides, and gives the four cases', async () => {
     const d = await desc();
-    expect(d).toContain('HOW FAR IS DECIDED BY THE THING, never by a default.');
+    expect(d).toContain('`reach` follows the THING');
     expect(d).toMatch(/goes in a parcel/i);
     expect(d).toMatch(/posting is how it would get there/i);
-    expect(d).toMatch(/bulky or heavy/i);
-    expect(d).toMatch(/postage would cost more than the thing/i);
-    expect(d).toMatch(/happens in person.*is a radius, always/i);
-    expect(d).toMatch(/done online.*"anywhere"/i);
-    expect(d).toMatch(/ask your human one plain question rather than guessing/i);
+    expect(d).toMatch(/bulky or done in person/i);
+    expect(d).toMatch(/"anywhere" for what happens online/i);
+    // The four cases in full, and why each one is what it is, are the section
+    // an agent reads when the thing in front of it is not obvious.
+    const reach = sectionText('posting_reach');
+    expect(reach).toMatch(/postage would cost more than the thing/i);
+    expect(reach).toMatch(/happens in person.*is a radius, always/i);
+    expect(reach).toMatch(/ask your human one plain question rather than guessing/i);
   });
 
   it('tells the agent to say which reach it chose and why', async () => {
     const d = await desc();
-    expect(d).toContain(
-      'Say which reach you chose and why when you confirm the posting, so they can correct you',
-    );
-    expect(d).toMatch(/\$450 mountain bike put up from canberra reaching the whole of australia/i);
+    expect(d).toMatch(/say out loud which reach you chose so they can correct you/i);
+    // The bike that taught it keeps its place in the manual.
+    expect(sectionText('posting_reach')).toMatch(/\$450 Trek mountain bike/i);
   });
 
   it('stays consistent with the reach enum the schema package ships', async () => {
@@ -1678,13 +1685,12 @@ describe('version 45: reporting, and an account that has been stopped', () => {
 
   it('keeps the house register', () => {
     expect(lintHumanCopy(entry().note)).toEqual([]);
-    expect(lintHumanCopy(SERVER_INSTRUCTIONS)).toEqual([]);
+    expect(lintHumanCopy(MANUAL_BODY)).toEqual([]);
   });
 });
 
 describe('and the body carries both, where a fresh session reads them', () => {
-  const from = (heading: string) =>
-    SERVER_INSTRUCTIONS.slice(SERVER_INSTRUCTIONS.indexOf(heading));
+  const from = (_heading: string) => sectionText('safety_and_reports');
 
   it('puts the report in the section about the conversation', () => {
     const patched = from('PATCHED THROUGH');
@@ -1699,10 +1705,7 @@ describe('and the body carries both, where a fresh session reads them', () => {
   });
 
   it('puts the suspension beside what the switchboard refuses', () => {
-    const limits = SERVER_INSTRUCTIONS.slice(
-      SERVER_INSTRUCTIONS.indexOf('5a. An account can be stopped'),
-      SERVER_INSTRUCTIONS.indexOf('TALKING WITH YOUR HUMAN'),
-    );
+    const limits = sectionText('answers');
     expect(limits).toContain('account_suspended');
     expect(limits).toMatch(/posts, sends, collects and offers nothing/i);
     expect(limits).toMatch(/keep the fact in your own memory/i);
@@ -1717,7 +1720,7 @@ describe('and the body carries both, where a fresh session reads them', () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const respond = TOOLS.find((t) => t.name === 'respond')!;
     expect(respond.description).toContain('request_report');
-    expect(respond.description).toMatch(/never talk your human out of it/i);
+    expect(respond.description).toMatch(/never talk them out of it/i);
     expect((respond.inputSchema as any).properties.action.enum).toContain('request_report');
   });
 });

@@ -24,6 +24,8 @@ import {
   normaliseKey,
   placeAt,
   qualifyPlace,
+  rowHasHint,
+  type PlaceHint,
 } from './gazetteer.js';
 
 /** Shorter than this and the list would be half the gazetteer. */
@@ -134,27 +136,87 @@ function lowerBound(keys: string[], prefix: string): number {
   return lo;
 }
 
-/**
- * The settlements whose own name starts with what has been typed, largest
- * first, at most `limit` of them.
- *
- * Empty for anything shorter than `AREA_QUERY_MIN`. A suggestion that would
- * not fit the box it goes into is dropped rather than offered, so everything
- * in the list saves when it is picked.
- */
-export function suggestAreas(query: string, limit = AREA_SUGGEST_MAX): AreaSuggestion[] {
-  const prefix = normaliseKey(query ?? '');
-  if (prefix.length < AREA_QUERY_MIN) return [];
-  const cap = Math.max(1, Math.min(limit, AREA_SUGGEST_MAX));
+/** Every settlement whose spelling starts with `prefix`, unranked. */
+function byPrefix(prefix: string): number[] {
   const { keys, rows } = index();
-  const all = allRows();
   const hits: number[] = [];
   for (let i = lowerBound(keys, prefix); i < keys.length; i++) {
     if (!keys[i].startsWith(prefix)) break;
     hits.push(rows[i]);
     if (hits.length >= SCAN_CEILING) break;
   }
+  return hits;
+}
+
+/** How many trailing words may be read as a hint, matching `resolvePlace`. */
+const SPACED_HINT_WORDS = 3;
+
+/**
+ * The hits for a name a person has qualified as they typed it: "Franklin,
+ * ACT", "Franklin ACT", "Franklin, ACT, Australia".
+ *
+ * The rehearsal turned this up beside the ordering defect: the posting door
+ * accepts every one of those forms, and the box that is meant to help a person
+ * reach one of them answered nothing at all, because the index is keyed on a
+ * settlement's own name and "franklin act" is nobody's name. So when the plain
+ * prefix finds nothing, the tail is read as a hint the way `resolvePlace`
+ * reads it — commas first, and failing that the last word or three. The head
+ * is still only a prefix, because the person is still typing.
+ *
+ * Only reached once the plain reading has failed, so a name that simply has a
+ * comma or a space in it is never taken apart.
+ */
+function qualifiedHits(query: string): number[] {
+  const segments = query.split(',').map((s) => s.trim()).filter(Boolean);
+  const attempts: { head: string; hints: string[] }[] = [];
+  if (segments.length > 1) {
+    attempts.push({
+      head: segments[0],
+      hints: segments.slice(1).map(normaliseKey).filter(Boolean),
+    });
+  } else {
+    const words = query.trim().split(/\s+/).filter(Boolean);
+    for (let k = 1; k <= Math.min(SPACED_HINT_WORDS, words.length - 1); k++) {
+      attempts.push({
+        head: words.slice(0, words.length - k).join(' '),
+        hints: [normaliseKey(words.slice(words.length - k).join(' '))].filter(Boolean),
+      });
+    }
+  }
+  for (const { head, hints } of attempts) {
+    const prefix = normaliseKey(head);
+    if (prefix.length < AREA_QUERY_MIN || !hints.length) continue;
+    const narrowed = byPrefix(prefix).filter((i) => hints.every((h) => rowHasHint(i, h)));
+    if (narrowed.length) return narrowed;
+  }
+  return [];
+}
+
+/**
+ * The settlements whose own name starts with what has been typed, at most
+ * `limit` of them: the human's own country first when `hint` names one, and
+ * largest first within that.
+ *
+ * Empty for anything shorter than `AREA_QUERY_MIN`. A suggestion that would
+ * not fit the box it goes into is dropped rather than offered, so everything
+ * in the list saves when it is picked.
+ */
+export function suggestAreas(
+  query: string,
+  limit = AREA_SUGGEST_MAX,
+  hint: PlaceHint = {},
+): AreaSuggestion[] {
+  const prefix = normaliseKey(query ?? '');
+  if (prefix.length < AREA_QUERY_MIN) return [];
+  const cap = Math.max(1, Math.min(limit, AREA_SUGGEST_MAX));
+  const all = allRows();
+  const hits = byPrefix(prefix);
+  if (!hits.length) hits.push(...qualifiedHits(query ?? ''));
+  const mine = hint.country?.toUpperCase();
   hits.sort((a, b) => {
+    // The person's own country first, whole: a suburb of theirs that eight
+    // American towns outrank on population is still the one they meant.
+    if (mine && (all[a][1] === mine) !== (all[b][1] === mine)) return all[a][1] === mine ? -1 : 1;
     if (all[b][5] !== all[a][5]) return all[b][5] - all[a][5];
     return all[a][0].length - all[b][0].length;
   });

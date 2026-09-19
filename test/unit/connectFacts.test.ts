@@ -154,7 +154,12 @@ describe('reading those facts at connect', () => {
     await withMocks({}, async (mod, spies) => {
       const block = await mod.ownHumanBlock(ACCOUNT, { now: NOW });
       expect(block).toContain('Your human is in Franklin');
-      expect(spies.readOwnArea).toHaveBeenCalledWith(ACCOUNT, OWN_AREA_CONNECT_PURPOSE);
+      // And with the country behind their clock, so a shared name — Franklin,
+      // of all names — is read back to them with their own country's places
+      // first (src/geo/homeCountry.ts).
+      expect(spies.readOwnArea).toHaveBeenCalledWith(ACCOUNT, OWN_AREA_CONNECT_PURPOSE, {
+        country: 'AU',
+      });
       expect(OWN_AREA_CONNECT_PURPOSE).toMatch(/connect/);
     });
   });
@@ -200,7 +205,7 @@ describe('the manual served at connect', () => {
     return instructionsFor(cfg, opts);
   }
 
-  it('serves the versioned manual whole, with the block above it', async () => {
+  it('serves the connect page first, with the human\'s own facts under it', async () => {
     vi.resetModules();
     vi.doMock('../../src/mcp/connectFacts.js', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
@@ -208,13 +213,14 @@ describe('the manual served at connect', () => {
     }));
     try {
       const text = await instructions(SETTLING, { accountId: ACCOUNT });
-      // What is true of THIS human goes first: appended, it sat at 99% of a
-      // forty-thousand-character manual, and an assistant asked for a suburb
-      // it had already been handed (2026-09-13).
-      expect(text.startsWith('YOUR HUMAN, TODAY\nstand-in')).toBe(true);
-      // And the versioned text is carried whole, untouched by it.
-      expect(text).toContain(SERVER_INSTRUCTIONS);
-      expect(text.endsWith(SERVER_INSTRUCTIONS)).toBe(true);
+      // The core goes first now. It used to go last, because the manual it
+      // followed ran to fifty thousand characters and these blocks sat at 99%
+      // of a text most clients had already cut off (2026-09-13). The core is
+      // a thousand characters, so what never bends reads first and this
+      // human's own facts read straight after it.
+      expect(text.startsWith(SERVER_INSTRUCTIONS)).toBe(true);
+      expect(text).toContain('YOUR HUMAN, TODAY\nstand-in');
+      expect(text.endsWith('YOUR HUMAN, TODAY\nstand-in')).toBe(true);
     } finally {
       vi.doUnmock('../../src/mcp/connectFacts.js');
       vi.resetModules();
@@ -263,17 +269,15 @@ describe('the manual served at connect', () => {
       expect(off).toContain('settle answers SETTLEMENT_UNAVAILABLE');
       expect(off).not.toContain('YOUR HUMAN, TODAY');
 
-      // Both ride ahead of the manual, the human's own facts first: they are
-      // the ones an agent acts on in its first exchange.
-      expect(off.indexOf('THIS DEPLOYMENT, TODAY')).toBe(0);
+      // Both ride under the core, the human's own facts first: they are the
+      // ones an agent acts on in its first exchange.
+      expect(off.indexOf('THIS DEPLOYMENT, TODAY')).toBeGreaterThan(0);
 
       const both = await instructions(NO_SETTLEMENT, { accountId: ACCOUNT });
-      expect(both.indexOf('YOUR HUMAN, TODAY')).toBe(0);
+      expect(both.indexOf(SERVER_INSTRUCTIONS)).toBe(0);
+      expect(both.indexOf('YOUR HUMAN, TODAY')).toBeGreaterThan(0);
       expect(both.indexOf('THIS DEPLOYMENT, TODAY')).toBeGreaterThan(
         both.indexOf('YOUR HUMAN, TODAY'),
-      );
-      expect(both.indexOf(SERVER_INSTRUCTIONS)).toBeGreaterThan(
-        both.indexOf('THIS DEPLOYMENT, TODAY'),
       );
     } finally {
       vi.doUnmock('../../src/mcp/connectFacts.js');

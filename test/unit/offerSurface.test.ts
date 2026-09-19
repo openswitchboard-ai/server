@@ -36,7 +36,7 @@ import * as db from '../../src/db.js';
 import * as cards from '../../src/domain/cards.js';
 import * as offers from '../../src/domain/offers.js';
 import { dispatchTool } from '../../src/mcp/tools.js';
-import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
+import { MANUAL_BODY } from '../../src/mcp/instructions.js';
 import type { Config } from '../../src/config.js';
 
 const cfg = {
@@ -330,8 +330,8 @@ describe('when the other side takes the figure', () => {
   });
 
   it('the manual tells an agent what deal_agreed means', () => {
-    expect(SERVER_INSTRUCTIONS).toContain('deal_agreed');
-    expect(SERVER_INSTRUCTIONS).toMatch(/switchboard's part is finished/i);
+    expect(MANUAL_BODY).toContain('deal_agreed');
+    expect(MANUAL_BODY).toMatch(/switchboard's part is finished/i);
   });
 });
 

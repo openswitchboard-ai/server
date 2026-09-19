@@ -294,7 +294,7 @@ describe('the tool an agent reads', () => {
     const respond = TOOLS.find((t) => t.name === 'respond')!;
     expect(respond.description).toContain('press_id');
     expect(respond.description).toContain('wait_for_press');
-    expect(respond.description).toMatch(/rather than asking your human to come back/i);
+    expect(respond.description).toMatch(/is a sentence you never write/i);
   });
 });
 
@@ -399,7 +399,7 @@ describe('hand it over, then wait', () => {
   });
 
   it('carries one new note in the manual, at the version it was written for', async () => {
-    const { MANUAL, MANUAL_CHANGELOG, SERVER_INSTRUCTIONS } = await import(
+    const { MANUAL, MANUAL_CHANGELOG, MANUAL_BODY } = await import(
       '../../src/mcp/instructions.js'
     );
     // Version 34 is where this note shipped; later versions are welcome to
@@ -414,8 +414,8 @@ describe('hand it over, then wait', () => {
     // Nothing that shipped before it was touched.
     expect(MANUAL_CHANGELOG.filter((c) => c.version === 33)).toHaveLength(1);
     // And the manual itself carries the rule, for an agent connecting fresh.
-    expect(SERVER_INSTRUCTIONS).toContain('Hand the page over first, then wait on it.');
-    expect(SERVER_INSTRUCTIONS).toMatch(
+    expect(MANUAL_BODY).toContain('Hand the page over first, then wait on it.');
+    expect(MANUAL_BODY).toMatch(
       /never ask them to come back and report a press you could have waited for/i,
     );
   });

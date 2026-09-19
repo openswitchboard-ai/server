@@ -26,6 +26,7 @@ import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
 import { isValidTimeZone } from '../domain/localTime.js';
 import { suggestAreas } from '../geo/suggest.js';
+import { countryOfTimeZone } from '../geo/homeCountry.js';
 import {
   arrangementInPlainWords,
   readArrangement,
@@ -3349,9 +3350,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         return reply.code(429).send({ error: 'slow_down' });
       }
       const q = String((req.query as any)?.q ?? '');
+      // Their own country first. The hint comes from the zone alone and never
+      // from the area on file: this box is where the area is being replaced,
+      // and reading the old one would mean an identity decrypt on every
+      // keystroke to order a list that a zone orders just as well.
+      const hint = { country: countryOfTimeZone(await getTimezone(s.accountId)) };
       return reply
         .header('cache-control', 'private, max-age=60')
-        .send({ places: suggestAreas(q) });
+        .send({ places: suggestAreas(q, undefined, hint) });
     });
 
     counter.post('/profile', async (req, reply) => {

@@ -389,9 +389,9 @@ describe('an agent cannot upload', () => {
     const respond = TOOLS.find((t) => t.name === 'respond')!;
     expect(respond.inputSchema.properties.action.enum).toContain('request_photo');
     // And the description says whose job it is, in so many words.
-    expect(respond.description).toMatch(/YOU CANNOT SEND AN IMAGE/);
+    expect(respond.description).toMatch(/you cannot send an image/i);
     expect(TOOLS.find((t) => t.name === 'send_message')!.description).toMatch(
-      /no way to attach an image here/,
+      /cannot attach an image/i,
     );
   });
 
@@ -703,6 +703,20 @@ describe('the sentence that rides back', () => {
     expect(got.note.text).toMatch(/photo has come through/);
     expect(got.note.text).toMatch(/link/);
     expect(got.note.text).not.toMatch(/Nothing has come through/);
+  });
+
+  it('rides a note about the first look when a picture is in the batch', async () => {
+    await sendPhoto();
+    const got: any = await channel.receiveMessages(BEPPE, MATCH, cfg);
+    expect(got.photos).toHaveLength(1);
+    expect(got.photo_note.provenance).toBe('switchboard-system');
+    expect(got.photo_note.text).toMatch(/who it is from/i);
+    expect(got.photo_note.text).toMatch(/leave what is in it for your human to see/i);
+  });
+
+  it('says nothing about a picture when none has come', async () => {
+    const got: any = await channel.receiveMessages(BEPPE, MATCH, cfg);
+    expect(got.photo_note).toBeUndefined();
   });
 
   it('answers plainly when there really is nothing', async () => {

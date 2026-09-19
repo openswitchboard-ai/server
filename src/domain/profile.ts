@@ -25,9 +25,11 @@ import {
   looksLikeStreetAddress,
   regionNamed,
   resolvePlace,
+  type PlaceHint,
 } from '../geo/gazetteer.js';
+import { homeCountry } from '../geo/homeCountry.js';
 import { OsbError } from '../protocol.js';
-import { getAccount } from './accounts.js';
+import { getAccount, getTimezone } from './accounts.js';
 import type { Config } from '../config.js';
 
 export interface SharedProfile {
@@ -198,6 +200,7 @@ export interface OwnArea {
 export async function readOwnArea(
   accountId: string,
   purpose = 'own-area-for-sweep',
+  hint: PlaceHint = {},
 ): Promise<OwnArea | undefined> {
   let area = '';
   try {
@@ -210,7 +213,7 @@ export async function readOwnArea(
     return undefined;
   }
   if (!area) return undefined;
-  const resolved = resolvedAreaName(area);
+  const resolved = resolvedAreaName(area, hint);
   return {
     area,
     ...(resolved ? { area_resolved: resolved } : {}),
@@ -218,15 +221,44 @@ export async function readOwnArea(
   };
 }
 
-/** The area written out in full, when it settles to one place on its own. */
-export function resolvedAreaName(area: string): string | undefined {
+/** The area written out in full, when it settles to one place on its own.
+ *
+ *  The hint is passed through for consistency with every other reading of an
+ *  area — it reorders candidates and never settles a name, so a name in
+ *  question is still left unresolved here. */
+export function resolvedAreaName(area: string, hint: PlaceHint = {}): string | undefined {
   const raw = (area ?? '').trim();
   if (!raw) return undefined;
   if (looksLikeStreetAddress(raw)) return undefined;
   if (wideAreaNamed(raw)) return undefined;
-  if (ambiguousPlaces(raw)) return undefined;
+  if (ambiguousPlaces(raw, hint)) return undefined;
   const hit = resolvePlace(raw);
   return hit ? describePlace(hit) : undefined;
+}
+
+/**
+ * The country this human is probably in, for ordering the places a shared
+ * name could have meant. Their own area first, their time zone second.
+ *
+ * Fail-soft, like everything else that reads an account for a courtesy: a
+ * failed read means no hint, and the caller behaves exactly as it did before
+ * hints existed. The read is an identity decrypt, so it carries a purpose of
+ * its own rather than borrowing the sweep's.
+ */
+export async function ownCountryHint(
+  accountId: string,
+  purpose = 'own-country-for-place-ordering',
+): Promise<PlaceHint> {
+  try {
+    const [profile, timezone] = await Promise.all([
+      readSharedProfile(accountId, { purpose, actor: accountId }).catch(() => undefined),
+      getTimezone(accountId),
+    ]);
+    const country = homeCountry({ area: profile?.locality, timezone });
+    return country ? { country } : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
