@@ -635,7 +635,7 @@ export const TOOLS: ToolDef[] = [
             runs_on_its_own: {
               type: 'boolean',
               description:
-                'True only if you run between conversations: you can wake yourself on a schedule and reach your human without waiting to be spoken to. False (or left out) if you only exist while your human is typing to you. It is the one setting that decides who carries the news — say false and the switchboard emails your human about anything that needs them.',
+                'True only if you run between conversations: you can wake yourself on a schedule and reach your human without waiting to be spoken to. False (or left out) if you only exist while your human is typing to you. It is the one setting that decides who carries the news — say false and you must never offer to come back on your own, because you cannot. How your human hears from the switchboard itself is a separate thing they choose: check_in carries it as hears_via, with a sentence saying what it means.',
             },
             check_every_minutes: {
               type: 'integer',
@@ -1116,18 +1116,20 @@ async function dispatchToolInner(
     // telling an agent what the rules are — including the rules about a
     // stopped account. Refusing it would be refusing to explain the refusal.
     //
-    // It reads one thing about the account now: the standing arrangement, one
-    // cheap plaintext column, so a section whose advice depends on which lane
-    // this agent is in is served in that lane (domain/lanes.ts). Best-effort,
-    // so a suspended or unreadable account still gets the whole manual and
-    // reads the lane that promises the least.
+    // It reads two things about the account now, in one statement: the
+    // standing arrangement and how this human hears, both cheap plaintext
+    // columns, so a section whose advice depends on which lane this agent is
+    // in is served in that lane, and the sentence about post is said only to
+    // an agent whose human is actually posted to (domain/lanes.ts).
+    // Best-effort, so a suspended or unreadable account still gets the whole
+    // manual, reads the lane that promises the least, and claims no post.
     if (name === 'read_manual') {
-      const standing = await arrangement.arrangementOrNothing(accountId);
+      const facts = await lanes.readLaneFacts(accountId);
       return ok(
         readManual({
           ...(typeof args?.section === 'string' ? { section: args.section } : {}),
           ...(Number.isInteger(args?.since) ? { since: args.since as number } : {}),
-          laneNote: lanes.sayFor('manual_lane', standing),
+          laneNote: lanes.sayFor('manual_lane', facts.arrangement, { hearsVia: facts.hearsVia }),
         }),
       );
     }
@@ -1169,15 +1171,15 @@ async function dispatchToolInner(
         const posted = await cards.publishIntent(cfg, accountId, listing, { detailUnknown });
         // Screening runs in seconds, so the useful thing to say right after
         // posting is how soon there is anything to look for — and what comes
-        // after that depends on which lane this agent is in (domain/lanes.ts).
-        // One read of the arrangement row serves both this sentence and the
-        // what_happens_next_note already riding on the answer.
-        const standing = await arrangement.arrangementOrNothing(accountId);
+        // after that depends on which lane this agent is in, and on whether
+        // this human is written to at all (domain/lanes.ts). One read of the
+        // account row serves both facts.
+        const facts = await lanes.readLaneFacts(accountId);
         return ok({
           ...posted,
           say_note: SAY_NOTE,
           note: {
-            text: lanes.sayFor('just_posted', standing),
+            text: lanes.sayFor('just_posted', facts.arrangement, { hearsVia: facts.hearsVia }),
             provenance: 'switchboard-system',
           },
         });
@@ -1200,11 +1202,18 @@ async function dispatchToolInner(
           // builds about waiting depends on which lane this agent is in
           // (domain/lanes.ts). It rides the answer as well, as it always has.
           const standing = await arrangement.readArrangement(accountId);
+          // AND SO IS HEARS_VIA, for the same reason and in the same place.
+          // It already rode the answer as a field; it is read here, before the
+          // sweep, because a sentence claiming the switchboard posts something
+          // is only true for a human the switchboard posts to (email/send.ts
+          // drops the rest). One read for fifty introductions.
+          const hearsVia = await getHearsVia(accountId);
           const withNotes = await matches.checkMatches(
             cfg,
             accountId,
             args?.intent_id,
             standing,
+            hearsVia,
           );
           // One count for the whole sweep tells a polling agent where there is
           // something to collect, so noticing a waiting message never depends
@@ -1274,11 +1283,11 @@ async function dispatchToolInner(
           // installed, still learns how they want to be treated on its first
           // call.
           // The two facts that decide whether you may offer to negotiate at
-          // all: how this human hears about the switchboard, and whether the
+          // all: how this human hears about the switchboard (read above, once,
+          // because the sweep's own sentences turn on it too), and whether the
           // agent on this account has said it runs between conversations.
           // Both have to be true, so both ride the sweep where an agent can
           // read them without digging.
-          const hearsVia = await getHearsVia(accountId);
           // The human's clock rides the sweep as well: the zone, the local
           // time now, and one sentence telling the agent to say times in it.
           const tz = await getTimezone(accountId);
@@ -1553,12 +1562,16 @@ async function dispatchToolInner(
               'agent',
               cfg,
             );
+            // One read of this account's own row for the one sentence that
+            // needs it: which lane the agent is in, and whether its human is
+            // posted to at all.
+            const facts = await lanes.readLaneFacts(accountId);
             return ok({
               ...recorded,
               ...(promoted[0] ? { now_live_intro_id: promoted[0] } : {}),
               note: matches.sbNote(
                 matches.withCameForward(
-                  matches.verdictSentence(said, await arrangement.arrangementOrNothing(accountId)),
+                  matches.verdictSentence(said, facts.arrangement, facts.hearsVia),
                   promoted,
                 ),
               ),

@@ -251,12 +251,19 @@ describe('closing, filing away, and saying how it went', () => {
 
   it('each verdict is acknowledged in its own words', async () => {
     const good = await respond({ action: 'verdict', verdict: 'good' });
-    expect(good.note.text).toBe(verdictSentence('good'));
+    expect(good.note.text).toBe(verdictSentence('good', {}, 'assistant'));
     expect(good.note.text).toMatch(/went well/);
-    // Nothing is saved on this account, so the prompted wording stands: the
-    // switchboard does the watching and the agent promises nothing.
-    expect(good.note.text).toMatch(/emails them when somebody comes forward/);
+    // Nothing is saved on this account, so the prompted wording stands and the
+    // agent promises nothing. And this human hears the whole of it from their
+    // own assistant (hears_via above), so the switchboard writes to them about
+    // none of it — the sentence must not say post is coming, because none is.
+    expect(good.note.text).not.toMatch(/switchboard emails/);
+    expect(good.note.text).toMatch(/check with you whenever they like/);
     expect(good.note.text).not.toMatch(/I will keep an eye out/);
+    // And the very same call to an emailed human does say it.
+    expect(verdictSentence('good', {}, 'email')).toMatch(
+      /emails them when somebody comes forward/,
+    );
 
     const fine = await respond({ action: 'verdict', verdict: 'fine' });
     expect(fine.note.text).toBe(verdictSentence('fine'));

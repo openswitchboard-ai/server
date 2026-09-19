@@ -5,12 +5,12 @@ import {
   readArrangement,
   type Arrangement,
 } from './arrangement.js';
-import { laneFor, say, sayFor, type Lane } from './lanes.js';
+import { laneFor, readLaneFacts, say, sayFor, type Lane } from './lanes.js';
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
-import { getAccount, getHearsVia, getTimezone } from './accounts.js';
+import { getAccount, getHearsVia, getTimezone, type HearsVia } from './accounts.js';
 import { getCard } from './cards.js';
 import {
   MAX_THRESHOLD_BUMP,
@@ -335,10 +335,12 @@ export const IN_LINE_HEAD = "You're in line for this one.";
  * "I'll tell you when it's your turn" was said to every agent alike until
  * 20 September 2026, including the ones that are not there to say it. A
  * promotion sends the ordinary summons (domain/sequencer.ts), so the
- * switchboard really does email them when their turn comes.
+ * switchboard really does email them when their turn comes — unless this
+ * human hears it all from their own assistant instead, which is what
+ * `hearsVia` carries. A caller that has not read it claims no post.
  */
-export function inLineSentence(a: Arrangement = {}): string {
-  return sayFor('in_line', a);
+export function inLineSentence(a: Arrangement = {}, hearsVia?: HearsVia): string {
+  return sayFor('in_line', a, { hearsVia });
 }
 
 /** The wording for an account with nothing saved, which promises the least. */
@@ -363,10 +365,12 @@ async function loadOpenMatchFor(
   // the sweep carries, and nothing more — a waiting agent must not be able to
   // learn anything about the line by poking at it.
   if (requireLive && m.live === false) {
-    // One cheap read of the account's own arrangement row, and only on this
-    // refusal, so the sentence knows which sort of agent it is talking to.
+    // One cheap read of the account's own row, and only on this refusal, so
+    // the sentence knows which sort of agent it is talking to and whether the
+    // human behind it is written to at all.
+    const facts = await readLaneFacts(accountId);
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: inLineSentence(await arrangementOrNothing(accountId)),
+      human_action: inLineSentence(facts.arrangement, facts.hearsVia),
     });
   }
   return m;
@@ -1499,14 +1503,19 @@ export const ARCHIVE_SENTENCE =
  * that does anything beyond the record, so it is the only one that says more:
  * the pairing is muted and the introduction is closed.
  */
-export function verdictSentence(verdict: Verdict, a: Arrangement = {}): string {
+export function verdictSentence(
+  verdict: Verdict,
+  a: Arrangement = {},
+  hearsVia?: HearsVia,
+): string {
   switch (verdict) {
     case 'good':
       // "I will keep an eye out for more like it" is a thing only an agent
       // that comes back can do. More like it arrive as introductions, and an
-      // introduction is summoned by email, so the spoken-to wording can say
-      // so honestly and leave the watching to the switchboard.
-      return sayFor('verdict_good', a);
+      // introduction is summoned by email, so the spoken-to wording can say so
+      // honestly and leave the watching to the switchboard — but only for a
+      // human the summons is actually posted to (`hearsVia`).
+      return sayFor('verdict_good', a, { hearsVia });
     case 'bad':
       return 'Sorry that one did not work out. I have closed it off, and you will not hear from that person again.';
     default:
@@ -1522,12 +1531,18 @@ export function verdictSentence(verdict: Verdict, a: Arrangement = {}): string {
  * caller already reads it for the `arrangement` field, so it is passed in from
  * there. A caller that does not have one hands over nothing, and every
  * sentence falls to the wording that promises the least.
+ *
+ * AND SO IS HEARS_VIA, for the same reason and on the same terms. It decides
+ * whether a sentence may say the switchboard posts anything, the sweep's
+ * caller already reads it for the `hears_via` field, and a caller that hands
+ * over nothing claims no post on any of the fifty.
  */
 export async function checkMatches(
   cfg: Config,
   accountId: string,
   intentId?: string,
   arrangement: Arrangement = {},
+  hearsVia?: HearsVia,
 ) {
   const lane: Lane = laneFor(arrangement);
   const params: any[] = [accountId];
@@ -1643,7 +1658,11 @@ export async function checkMatches(
     //     that sentence would be scarcity theatre.
     if (m.live === false) {
       if (await ownCardIsFull(ownCardId(m, accountId))) continue;
-      out.push({ intro_id: m.id, state: 'in_line', note: sbNote(say('in_line', lane, arrangement)) });
+      out.push({
+        intro_id: m.id,
+        state: 'in_line',
+        note: sbNote(say('in_line', lane, arrangement, { hearsVia })),
+      });
       continue;
     }
     const signal = await buildSignal(m, accountId);

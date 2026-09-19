@@ -48,8 +48,7 @@ import {
   type MatchRow,
 } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
-import { arrangementOrNothing } from './arrangement.js';
-import { sayFor } from './lanes.js';
+import { readLaneFacts, sayFor } from './lanes.js';
 import { runIntake } from '../intake/pipe.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
@@ -374,10 +373,12 @@ async function collectNote(
       return sbNote(`${extras}${photos ? '' : ' No words have come through on this one.'}`.trim());
     }
     // Nothing waiting, so the only thing left to say is who brings the next
-    // thing that arrives — which depends on which lane this agent is in. One
-    // cheap read of the account's own arrangement row, and only on the empty
-    // answer; best-effort, so unreadable is the prompted lane.
-    return sbNote(sayFor('nothing_waiting', await arrangementOrNothing(accountId)));
+    // thing that arrives — which depends on which lane this agent is in, and
+    // on whether the human behind it is written to at all. One cheap read of
+    // the account's own row, and only on the empty answer; best-effort, so
+    // unreadable is the prompted lane and no claim about post.
+    const facts = await readLaneFacts(accountId);
+    return sbNote(sayFor('nothing_waiting', facts.arrangement, { hearsVia: facts.hearsVia }));
   }
   const many = collected === 1 ? 'One message has' : `${collected} messages have`;
   const pass =

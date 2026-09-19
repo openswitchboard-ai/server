@@ -89,7 +89,7 @@ export const CHECK_EVERY_MINUTES_HELP =
  * refusal to an agent, and in the manual.
  */
 export const CADENCE_NEEDS_RUNS_ON_ITS_OWN =
-  'A checking cadence is for an agent that runs between conversations. If you only act when your human speaks to you, leave it unset; the switchboard will email them instead.';
+  'A checking cadence is for an agent that runs between conversations. If you only act when your human speaks to you, leave it unset; check_in tells you everything waiting the moment they ask you.';
 
 export const ARRANGEMENT_FIELDS = [
   'runs_on_its_own',
@@ -480,7 +480,7 @@ export function runsOnItsOwnNote(runs: boolean): {
   return {
     text: runs
       ? 'You have told the switchboard you run between conversations, so you may look again on your own and bring your human anything that has moved, without waiting to be asked.'
-      : 'Nothing on this account says you run between conversations, so look when your human asks you to and no oftener. If you do run on your own, say so with standing_arrangement and give a cadence, and the switchboard will let you carry the news instead of emailing them.',
+      : 'Nothing on this account says you run between conversations, so look when your human asks you to and no oftener. If you do run on your own, say so with standing_arrangement and give a cadence, and you can carry the news to them yourself.',
     provenance: 'switchboard-system',
   };
 }

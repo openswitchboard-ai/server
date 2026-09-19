@@ -43,8 +43,9 @@ import {
   figuresOnPosting,
   type PostingFigure,
 } from './postingFigure.js';
-import { arrangementOrNothing, type Arrangement } from './arrangement.js';
-import { sayFor } from './lanes.js';
+import { type Arrangement } from './arrangement.js';
+import { readLaneFacts, sayFor } from './lanes.js';
+import type { HearsVia } from './accounts.js';
 import { categoryLabelPath } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
@@ -98,27 +99,36 @@ export interface PublishResult {
  * often it looks, or there is not, and the note says which and what may be
  * said out loud because of it.
  */
-export function whatHappensNextNote(a: Arrangement): {
+export function whatHappensNextNote(
+  a: Arrangement,
+  hearsVia?: HearsVia,
+): {
   text: string;
   provenance: 'switchboard-system';
 } {
-  return { text: sayFor('after_posting', a), provenance: 'switchboard-system' as const };
+  return {
+    text: sayFor('after_posting', a, { hearsVia }),
+    provenance: 'switchboard-system' as const,
+  };
 }
 
 /** The note for an account with nothing saved, which is where every one starts. */
 export const WHAT_HAPPENS_NEXT_NOTE = whatHappensNextNote({});
 
 /**
- * The note for this account, on the arrangement it actually holds. Best-effort
- * in the same sense the rest of the courtesies here are: an unreadable
- * arrangement gives the note for an account with nothing saved, which is the
- * careful answer — it promises the human nothing.
+ * The note for this account, on the two facts it actually holds: the
+ * arrangement, and whether the switchboard writes to this human at all. One
+ * read for both. Best-effort in the same sense the rest of the courtesies here
+ * are: an unreadable row gives the note for an account with nothing saved,
+ * which is the careful answer — it promises the human nothing and claims no
+ * post on their behalf.
  */
 async function whatHappensNextFor(accountId: string): Promise<{
   text: string;
   provenance: 'switchboard-system';
 }> {
-  return whatHappensNextNote(await arrangementOrNothing(accountId));
+  const facts = await readLaneFacts(accountId);
+  return whatHappensNextNote(facts.arrangement, facts.hearsVia);
 }
 
 /**
