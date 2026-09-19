@@ -91,6 +91,14 @@ export interface RunResult {
   green: boolean;
   /** Anything that stopped the run before it finished. */
   error?: string;
+  /**
+   * TRUE ONLY WHERE THE SWITCHBOARD REALLY CALLED THE INTRODUCTION A MAYBE.
+   *
+   * The transcript cannot say this — the scorer is shown words and tool names,
+   * never the switchboard's own answers — so the rules that turn on it are
+   * asked only when this is true. See Rule.needs in transcriptScore.mts.
+   */
+  possibleIntro?: boolean;
 }
 
 /**

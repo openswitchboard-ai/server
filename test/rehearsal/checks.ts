@@ -457,10 +457,16 @@ export function checkNamesOffer(
   suburb?: string,
 ): Check {
   const id = `S2.names_offer.${side}`;
-  const says = `${side}'s assistant offered a first name and a SUBURB, handed the link over and waited on the press in the same turn.`;
-  const withLink = turns.filter((t) => /https?:\/\/\S+/.test(t));
-  if (!withLink.length) return fail(id, says, 'no link was ever handed over');
-  const said = withLink.join('\n');
+  const says = `${side}'s assistant offered a first name and a SUBURB, handed the link over, and did not put the press off to later.`;
+  const linkAt = turns.findIndex((t) => /https?:\/\/\S+/.test(t));
+  if (linkAt < 0) return fail(id, says, 'no link was ever handed over');
+  // THE OFFER MAY COME A TURN BEFORE THE LINK, and usually should: the
+  // assistant says what will be shared, the human says go on, and the link
+  // follows. Requiring both in one turn failed a run where the assistant did
+  // exactly the right thing in two (dev, 20 September 2026). So: the offer has
+  // to be made at or before the turn that carries the link, and the link turn
+  // must not send the human away to press it later.
+  const said = turns.slice(0, linkAt + 1).join('\n');
   // Naming the place IS offering it: an assistant said it would share the
   // first name and "Queanbeyan", which is the suburb, and the check wanted the
   // word 'suburb' (dev, 20 September 2026).
@@ -468,9 +474,9 @@ export function checkNamesOffer(
   if (!SUBURB_OFFER.test(said) && !namedTheSuburb) {
     return fail(id, says, 'the turn that carried the link never said a suburb would be shared');
   }
-  const putOff = WAIT_LATER.exec(said);
+  const putOff = WAIT_LATER.exec(turns[linkAt]);
   if (putOff) return fail(id, says, `told the human to come back later: "${putOff[0]}"`);
-  return pass(id, says, 'link handed over in the same turn as the suburb offer, with no "let me know once you have pressed"');
+  return pass(id, says, 'the suburb was offered before or with the link, and the link turn has no "let me know once you have pressed"');
 }
 
 export interface PressFacts {

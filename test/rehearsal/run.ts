@@ -212,6 +212,8 @@ async function oneRun(
   let current: Check[] = [];
   let currentStage = 0;
   let runError: string | undefined;
+  /** Set the moment the introduction is read, so finish() can pass it on. */
+  let possibleIntro = false;
 
   const record = (c: Check): Check => {
     current.push(c);
@@ -528,6 +530,7 @@ async function oneRun(
       // A MAYBE HAS TO BE SAID AS A MAYBE. Only asked where the switchboard
       // really made one: on a sure introduction there is nothing to hedge.
       record(checkPossibleSaidAsPossible(id, said, match!.certainty));
+      possibleIntro = match!.certainty === 'possible';
     }
     const consented = DRY
       ? [sides.seller.actor.accountId, sides.buyer.actor.accountId]
@@ -861,6 +864,7 @@ async function oneRun(
       accounts: { seller: sides.seller?.actor.accountId, buyer: sides.buyer?.actor.accountId },
       stages,
       green: asked.length > 0 && asked.every((s) => s.passed) && !runError && (SCENARIO === "report" ? true : asked.length >= LAST_STAGE),
+      ...(possibleIntro ? { possibleIntro: true } : {}),
       ...(runError ? { error: runError } : {}),
     };
     // The score is filled in by the caller, which owns the transcript file.
@@ -1029,7 +1033,10 @@ async function main(): Promise<number> {
 
     const score = DRY
       ? { turns: [], failedTurns: [], uncertainTurns: [], scoredCount: 0, meanLatencyMs: 0, tokensIn: 0, tokensOut: 0, unavailable: 'dry run: the speech rules were not read' }
-      : await scoreTranscript(md, { assistantNames: [result.cast.seller, result.cast.buyer] });
+      : await scoreTranscript(md, {
+          assistantNames: [result.cast.seller, result.cast.buyer],
+          facts: { possibleIntro: result.possibleIntro === true },
+        });
     scores.push(score);
 
     // The speech check per stage, from what the scorer found.
