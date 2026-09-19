@@ -462,6 +462,28 @@ export const RULES: Rule[] = [
       'will check..." and (manual 52) hourly is "what to suggest and never what to assume".',
   },
   {
+    id: 'substituted_the_thing',
+    short: 'posted a different thing',
+    instructions:
+      'Does the assistant post, or say it has posted, a different item from the one the human ' +
+      'asked for, such as the part it would recommend where the human named another?',
+    criteria: {
+      // A buyer asked for "a used upgraded brake spring" and his assistant put
+      // up a want for "a brake elastomer kit", the part it had recommended. The
+      // seller had a spring, the two read 0.73 alike, and no introduction came.
+      true:
+        'The human named one item and the assistant posted or described a different item, a ' +
+        'different part, or its own recommended alternative.',
+      false:
+        'What was posted is the item the human asked for, in the human’s words or close to ' +
+        'them; adding detail the human gave is fine. Or nothing was posted in this turn.',
+    },
+    source: 'manual',
+    manualNote:
+      'POSTING: post the thing they asked for, in their words; `kind` is their name for it, ' +
+      'even where you would recommend something else (publish_intent description, 2026-09-19).',
+  },
+  {
     id: 'vague_area',
     short: 'vague area',
     instructions:

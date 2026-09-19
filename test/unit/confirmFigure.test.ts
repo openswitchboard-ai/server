@@ -323,7 +323,7 @@ describe('what happens next, read off this account', () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing());
     const text = r.what_happens_next_note.text;
     expect(r.what_happens_next_note.provenance).toBe('switchboard-system');
-    expect(text).toContain('no checking arrangement saved');
+    expect(text).toContain('have not agreed how often you check');
     expect(text).toContain('the switchboard will email you');
     expect(text).toContain('standing_arrangement');
     expect(text).toContain('their own clock');
@@ -349,7 +349,7 @@ describe('what happens next, read off this account', () => {
     // validator refuses one; a row that somehow holds it promises nothing.
     world.arrangement = { check_every_minutes: 60 };
     const r: any = await publishIntent(cfg, ACCOUNT, listing());
-    expect(r.what_happens_next_note.text).toContain('no checking arrangement saved');
+    expect(r.what_happens_next_note.text).toContain('have not agreed how often you check');
   });
 
   it('keeps every wording of it inside the house register and the budget', () => {
@@ -363,7 +363,7 @@ describe('what happens next, read off this account', () => {
     expect(none.text.length).toBeLessThanOrEqual(420);
     // An agent that runs on its own with no cadence agreed has agreed nothing.
     expect(whatHappensNextNote({ runs_on_its_own: true }).text).toContain(
-      'no checking arrangement saved',
+      'have not agreed how often you check',
     );
   });
 });

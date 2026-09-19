@@ -332,7 +332,7 @@ describe('what the row carries and what the assistant hears', () => {
       // assistant said it would, with nothing scheduled and nothing saved.
       // Nothing is saved on this account, so the note says that first and
       // hands over the words to say instead of a promise.
-      expect(r.what_happens_next_note.text).toContain('no checking arrangement saved');
+      expect(r.what_happens_next_note.text).toContain('have not agreed how often you check');
       expect(r.what_happens_next_note.text).toContain('the switchboard will email you');
       expect(r.what_happens_next_note.text).toContain('standing_arrangement');
       expect(r.what_happens_next_note.text).toContain('One look a few minutes from now');
