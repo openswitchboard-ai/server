@@ -27,6 +27,19 @@ function requireEnv(name: string): string {
   return v;
 }
 
+/** One more try when the CALL broke (ssh died, the gateway timed out). A reply
+ *  the assistant actually gave is never retried: that would be asking twice. */
+async function withOneRetry<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    const msg = (e as Error).message ?? '';
+    if (!/ssh failed|timed out|ETIMEDOUT|ECONNRESET|Connection (closed|reset)/i.test(msg)) throw e;
+    await new Promise((r) => setTimeout(r, 15_000));
+    return fn();
+  }
+}
+
 export function nagathaDriver(): Driver {
   return {
     name: 'Nagatha',
@@ -41,7 +54,7 @@ export function nagathaDriver(): Driver {
       );
     },
     async ask(sessionId, utterance) {
-      const r = await askNagatha(sessionId, utterance);
+      const r = await withOneRetry('nagatha', () => askNagatha(sessionId, utterance));
       return {
         text: r.text,
         // An OpenClaw receipt that is absent means "not observable", and that
@@ -72,12 +85,8 @@ export function bilbyDriver(): Driver {
       // Through his running gateway, the way Nagatha is asked. duet's agentB
       // uses the embedded `--local` runner, which refuses to start beside a
       // live gateway, and a Bilby with no gateway cannot wake himself.
-      const r = await askThroughGateway(
-        requireEnv('DUET_B_HOST'),
-        requireEnv('DUET_B_KEY'),
-        'bilby',
-        sessionId,
-        utterance,
+      const r = await withOneRetry('bilby', () =>
+        askThroughGateway(requireEnv('DUET_B_HOST'), requireEnv('DUET_B_KEY'), 'bilby', sessionId, utterance),
       );
       return {
         text: r.text,

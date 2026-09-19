@@ -120,3 +120,19 @@ describe('the cast', () => {
     expect(() => parseCast('nagatha')).toThrow(/two clients/);
   });
 });
+
+describe('a run the harness broke', () => {
+  it('neither extends the streak nor resets it', () => {
+    // An ssh call died mid-turn and took a clean streak with it. That says
+    // nothing about the assistants, so the run is void: skipped, and reported.
+    const broken: RunSummary = { ...clean(2, 'nagatha,bilby'), cutShort: true, voided: true };
+    const v = judgeSeries([clean(1, 'nagatha,bilby'), broken, clean(3, 'nagatha,bilby')], 2);
+    expect(v.streak).toBe(2);
+  });
+
+  it('still resets on a run that failed a check', () => {
+    const failed: RunSummary = { ...clean(2, 'nagatha,bilby'), deterministicClean: false, cutShort: true };
+    const v = judgeSeries([clean(1, 'nagatha,bilby'), failed, clean(3, 'nagatha,bilby')], 2);
+    expect(v.streak).toBe(1);
+  });
+});

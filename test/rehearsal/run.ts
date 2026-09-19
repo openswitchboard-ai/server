@@ -1038,9 +1038,17 @@ async function main(): Promise<number> {
       scoredTurns: score.scoredCount,
       overruled: OVERRULES.some((o) => o.run === i),
       cutShort: !!result.error,
+      // A failed CHECK cuts a run short and is a finding. Anything else that
+      // stopped it is the harness breaking: the twenty-first series lost a
+      // clean streak to an ssh call that died mid-turn.
+      voided: !!result.error && !String(result.error).startsWith('cut short on a failed check'),
     });
 
     const judged = judgeRun(summaries[summaries.length - 1]);
+    if (summaries[summaries.length - 1].voided) {
+      log(`run ${i} is VOID (the harness broke, the assistants did not): ${result.error}. Not counted either way.`);
+      continue;
+    }
     if (!judged.clean && !KEEP_GOING) {
       log(`series stopped after run ${i}: ${judged.why.join('; ')}`);
       cutShort = true;
