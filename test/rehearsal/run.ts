@@ -370,6 +370,14 @@ async function oneRun(
       for (let i = 0; i < rounds; i++) {
         const said = await drive(side, next, stage);
         if (opts.done && (await opts.done())) return;
+        // An assistant that answers with nothing has nothing for the human to
+        // reply to. One run ended on "user messages must have non-empty
+        // content" when the simulator was handed an empty turn; a person would
+        // simply ask again.
+        if (!said.trim()) {
+          next = NUDGE;
+          continue;
+        }
         next = await side.simulator.reply(side.history, said);
         if (!DRY) await sleep(GAP_MS);
       }
@@ -388,10 +396,16 @@ async function oneRun(
     const publishFor = async (side: Side, openers: string[]): Promise<CardFacts | undefined> => {
       const from = Date.now();
       let card: CardFacts | undefined;
-      for (const opener of openers) {
+      for (const [i, opener] of openers.entries()) {
+        // Every opener but the last is ONE exchange: the human says it, hears
+        // the answer, and says the next thing they came to say. Left to chat,
+        // the simulated buyer let his assistant talk him out of the spring
+        // ("I'll look into the kit") and never said the second line at all,
+        // which is a test of the simulator and no test of the assistant.
+        const last = i === openers.length - 1;
         await converse(side, 1, {
           opener,
-          rounds: ROUND_CAP,
+          rounds: last ? ROUND_CAP : 1,
           done: async () => {
             const found = await cardsOf(side);
             card = found[0];

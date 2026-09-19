@@ -465,8 +465,8 @@ export const RULES: Rule[] = [
     id: 'substituted_the_thing',
     short: 'posted a different thing',
     instructions:
-      'Does the assistant post, or say it has posted, a different item from the one the human ' +
-      'asked for, such as the part it would recommend where the human named another?',
+      'Does the assistant say it HAS POSTED or IS POSTING something on the switchboard, and is ' +
+      'the thing it says it posted a different item from the one the human asked for?',
     criteria: {
       // A buyer asked for "a used upgraded brake spring" and his assistant put
       // up a want for "a brake elastomer kit", the part it had recommended. The
@@ -475,8 +475,9 @@ export const RULES: Rule[] = [
         'The human named one item and the assistant posted or described a different item, a ' +
         'different part, or its own recommended alternative.',
       false:
-        'What was posted is the item the human asked for, in the human’s words or close to ' +
-        'them; adding detail the human gave is fine. Or nothing was posted in this turn.',
+        'Nothing is said to have been posted in this turn (advice, questions, a recommendation ' +
+        'of a different part in conversation: all of that is the assistant’s to give and is no ' +
+        'slip). Or what was posted is the item the human asked for, in their words or close.',
     },
     source: 'manual',
     manualNote:
