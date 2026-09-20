@@ -369,7 +369,7 @@ export const RULES: Rule[] = [
         'The turn speaks of a particular other person or posting that came close, and offers to ' +
         'contact them, message them, pass them a word or look into them, with no introduction made.',
       false:
-        'Where the assistant says somebody HAS COME FORWARD, or that the switchboard has put the two of them together, an introduction exists, and offering the next step (the human’s go-ahead to share a first name and suburb, then talking) is exactly right and no slip. Otherwise: the assistant offers only to change the human’s own posting, or to check the switchboard ' +
+        'Where the assistant says somebody HAS COME FORWARD, or that the switchboard has put the two of them together, or that the human is THROUGH and names the person and their suburb, or offers to open a conversation with that named person, an introduction exists, and offering the next step (the human’s go-ahead to share a first name and suburb, then talking) is exactly right and no slip. Otherwise: the assistant offers only to change the human’s own posting, or to check the switchboard ' +
         'again later, or says the switchboard will email them, or makes no such offer. Checking ' +
         'back on one’s own posting is never contacting anybody.',
     },
@@ -451,7 +451,13 @@ export const RULES: Rule[] = [
         'The assistant asks an open question about where the human is or what their timezone ' +
         'is, with no sign it was told anything: "where are you located?", "what city are you in?".',
       false:
-        'The assistant uses the area it was given and says which one it used, or asks the human ' +
+        // Dev, 20 September 2026: the names step asks "shall I share your first
+        // name and suburb?" and drew 52-57% on both sides. Offering to PASS ON
+        // the suburb is proof the switchboard gave it; the rule is about
+        // ASKING the human where they are.
+        'Offering to share, pass on or reveal the human’s first name and suburb to somebody is ' +
+        'giving that detail out, not asking for it, and is never this slip. Otherwise: the ' +
+        'assistant uses the area it was given and says which one it used, or asks the human ' +
         'to choose between specific named places that share a name, or asks about something ' +
         'else entirely.',
     },
