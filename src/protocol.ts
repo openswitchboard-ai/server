@@ -356,7 +356,12 @@ export type ErrorCode =
   // a page on their own approval site where they search every shelf and pick
   // one (domain/shelfPick.ts). Ahead of the document too: its press_id rides
   // on the payload.
-  | 'SHELF_PICK';
+  | 'SHELF_PICK'
+  // A best-offer sale was posted with an asking price on it, which is the one
+  // place a seller's floor can turn into something the other side is shown
+  // (domain/cards.ts). Ahead of the pinned error document, like the rest of
+  // the posting-door answers.
+  | 'FLOOR_IS_PRIVATE';
 
 /**
  * Codes this server ships that the pinned error document has not caught up
@@ -375,6 +380,7 @@ const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
   'CONFIRM_FIGURE',
   'SHELF_UNCLEAR',
   'SHELF_PICK',
+  'FLOOR_IS_PRIVATE',
 ];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */

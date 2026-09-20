@@ -2943,9 +2943,15 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       try {
         await amendIntent(cfg, s.accountId!, id, patch);
       } catch (e: any) {
+        // A refusal that is the switchboard working carries a sentence; an
+        // OsbError's own `message` is the bare code, and a person editing
+        // their own card should never be shown one. (The way in: setting an
+        // asking price on a sale by best offer, where the floor is private —
+        // domain/cards.ts.)
+        const said = e?.payload?.human_action ?? e?.message ?? 'invalid card';
         return html(
           reply,
-          pages.messagePage('Could not save', `<p>${pages.esc(e?.message ?? 'invalid card')}</p>`, `/ledger/${id}/edit`, 'Back to editing'),
+          pages.messagePage('Could not save', `<p>${pages.esc(said)}</p>`, `/ledger/${id}/edit`, 'Back to editing'),
           400,
         );
       }

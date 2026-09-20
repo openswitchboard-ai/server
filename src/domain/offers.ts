@@ -1,6 +1,6 @@
 import { aboutThing } from '../email/templates.js';
 import { getPool } from '../db.js';
-import { writeConsentEvent } from '../crypto.js';
+import { decryptFields, writeConsentEvent } from '../crypto.js';
 import { getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
 import { type Arrangement } from './arrangement.js';
@@ -381,8 +381,18 @@ async function assertAgentMayPropose(
 //   - the seller's agent sees NONE of them until the window closes. A seller
 //     who could watch them arrive would be running an auction too, and would
 //     be tempted to tell somebody where they stood;
-//   - the ask is the FLOOR. A number under it is refused to the buyer's own
-//     agent, with the reason, and never reaches the seller at all;
+//   - the RESERVE FLOOR is the seller's private band, and a number under it is
+//     refused to the buyer's own agent and never reaches the seller at all.
+//     It used to be the ask, and the refusal used to name it, on the reasoning
+//     that the buyer's side had already been shown it. That was the defect
+//     (dev, 20 September 2026): a seller's reserve was going up as the public
+//     asking price and being read out to the person bidding against it. A best
+//     offer now carries no ask at all (domain/cards.ts), so the floor is read
+//     from the band the matcher reads, and the refusal names no figure —
+//     saying "that is under the floor" tells the buyer only that the floor is
+//     above a number they chose themselves, which is the least that can be
+//     said while still refusing rather than silently dropping;
+
 //   - a number after the close is refused. A buyer who put none by the close
 //     is filed away the way a lapsed slot is.
 //
@@ -427,6 +437,67 @@ export async function bestOfferSealedFrom(matchId: string, accountId: string): P
   return !!sale && sale.sale === 'best-offer' && !!sale.open;
 }
 
+/**
+ * THE FLOOR ON A BEST OFFER, and where it is read from now.
+ *
+ * Since 20 September 2026 a best offer carries no asking price at all: the
+ * floor is the seller's private reserve, the `min` of the band that is
+ * encrypted on the row and decrypted only inside the engine (domain/cards.ts
+ * for the refusal that keeps it out of `ask`, domain/matcher.ts for the other
+ * reader of the same field). So this reads the band, under the seller's own
+ * key, with an audit line written for it exactly as the matcher's read is.
+ *
+ * `disclosed` says whether the figure it found is one the buyer has already
+ * been shown. It is true only for a row that still carries an ask — a best
+ * offer posted before the rule — and it decides nothing except whether the
+ * refusal may say the number out loud.
+ *
+ * Nobody with a declared ceiling under this floor is introduced in the first
+ * place (matchRules.ts evaluatePrice is a hard gate), so this door fires for a
+ * buyer offering under their own stated ceiling, and never as a surprise to
+ * somebody the switchboard should not have put here.
+ *
+ * Best-effort on the decrypt, and it fails OPEN: a band that cannot be read is
+ * no floor rather than a refusal, because a seller whose key is briefly
+ * unreadable should not have a buyer's one sealed number turned away. The
+ * seller still sees every number when the window closes and still chooses.
+ */
+async function bestOfferFloor(
+  sale: SaleRow,
+): Promise<{ amount: number; ccy: string; disclosed: boolean } | undefined> {
+  const ask = sale.ask;
+  if (ask && Number.isFinite(ask.amount)) {
+    return { amount: Number(ask.amount), ccy: String(ask.ccy).toUpperCase(), disclosed: true };
+  }
+  try {
+    const r = await getPool().query(
+      `SELECT c.account_id, c.price_enc, a.data_key_enc
+         FROM cards c JOIN accounts a ON a.id = c.account_id
+        WHERE c.id = $1`,
+      [sale.card_id],
+    );
+    const row = r.rows[0];
+    if (!row?.price_enc) return undefined;
+    const f = await decryptFields(
+      row.account_id,
+      row.data_key_enc,
+      { price: row.price_enc },
+      {
+        purpose: 'best-offer-floor',
+        actor: 'system',
+        refs: { card_id: sale.card_id },
+      },
+    );
+    const band = JSON.parse(f.price) as { band?: { min?: unknown }; ccy?: unknown };
+    const min = band?.band?.min;
+    if (typeof min !== 'number' || !Number.isFinite(min) || min <= 0) return undefined;
+    return { amount: min, ccy: String(band.ccy ?? '').toUpperCase(), disclosed: false };
+  } catch {
+    // See the note above: unreadable is no floor, never a refusal.
+    return undefined;
+  }
+}
+
 /** The refusals a best-offer number can meet, each said plainly to the side
  *  that tried. None of them leaks anything about anyone else's number. */
 async function assertBestOfferRules(
@@ -447,14 +518,17 @@ async function assertBestOfferRules(
       human_action: 'The window on this has closed.',
     });
   }
-  const ask = sale.ask;
-  if (ask && Number.isFinite(ask.amount)) {
-    const sameCcy = String(input.ccy).toUpperCase() === String(ask.ccy).toUpperCase();
-    if (!sameCcy || Number(input.amount) < Number(ask.amount)) {
-      // The floor is the seller's own asking price, which the buyer's side has
-      // already been shown, so naming it here discloses nothing new.
+  const floor = await bestOfferFloor(sale);
+  if (floor) {
+    const sameCcy = String(input.ccy).toUpperCase() === String(floor.ccy).toUpperCase();
+    if (!sameCcy || Number(input.amount) < Number(floor.amount)) {
       throw new OsbError('NOT_UNLOCKED_YET', {
-        human_action: `That is below the floor on this one: the asking price is ${ask.amount} ${String(ask.ccy).toUpperCase()}, and a number under it is not carried.`,
+        human_action: floor.disclosed
+          ? // A figure that is already on the other side's screen. Naming it
+            // back discloses nothing new, and only rows posted before a best
+            // offer stopped carrying an ask can reach this.
+            `That is below the floor on this one: the asking price is ${floor.amount} ${floor.ccy}, and a number under it is not carried.`
+          : 'That is below the floor on this one, so it has not been carried. The floor is the seller’s own and is never shown to anybody. Ask your human whether they would go higher, and send the number they give you; if they would not, there is nothing to send here.',
       });
     }
   }

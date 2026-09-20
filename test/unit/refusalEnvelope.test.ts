@@ -57,6 +57,10 @@ describe('the refusals that are the switchboard working', () => {
         // say to its human, which is the switchboard working, not a fault.
         'CONFIRM_FIGURE',
         'CONSENT_REQUIRED',
+        // A best offer was posted with an asking price on it. The seller's
+        // floor is private on that kind of sale, and the sentence says where
+        // it belongs — an answer rather than a fault, like the rest of these.
+        'FLOOR_IS_PRIVATE',
         // One side of a conversation has spent the window its human's last
         // press granted it. Nothing has gone wrong, nothing is lost, and there
         // is exactly one thing to do about it, so the sentence says what.
