@@ -50,6 +50,24 @@ export const ROUND_CAP = Number(process.env.REHEARSAL_ROUND_CAP ?? 8);
 /** The gap between nudges, so two assistants are not talked over. */
 export const GAP_MS = Number(process.env.REHEARSAL_GAP_MS ?? 20_000);
 
+/**
+ * HOW LONG ONE SIDE OF ONE STAGE MAY TAKE, IN WALL-CLOCK TIME.
+ *
+ * ROUND_CAP counts turns, not minutes, and the two are not the same thing: an
+ * assistant that holds the line on a press for fifty seconds and then does it
+ * again spends five minutes inside ONE round. On 20 September 2026 a run sat
+ * in that loop for thirty minutes — the assistant waiting, its human never
+ * pressing, nothing moving either way — and nothing in the suite was counting.
+ *
+ * Running out of this is a FAILURE and not a void: the rig did not break, an
+ * assistant spent half an hour getting nowhere, and that is a finding about
+ * the assistant rather than about us. A person watching would have stopped it
+ * long before, and the suite should too.
+ */
+export const STAGE_BUDGET_MS = Number(process.env.REHEARSAL_STAGE_BUDGET_MS ?? 480_000);
+/** And the whole run, so six patient stages cannot add up to an afternoon. */
+export const RUN_BUDGET_MS = Number(process.env.REHEARSAL_RUN_BUDGET_MS ?? 2_700_000);
+
 /** The neutral nudge. It says nothing about springs, prices or what to do. */
 export const NUDGE = 'anything new?';
 
