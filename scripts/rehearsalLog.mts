@@ -38,11 +38,33 @@ interface Turn {
 interface Run {
   startedAt: string;
   cast: { seller?: string; buyer?: string };
-  green: boolean;
-  void: boolean;
+  /**
+   * WHAT ACTUALLY HAPPENED, in four words rather than one flag.
+   *
+   *   clean    every stage passed AND no turn broke a speech rule.
+   *   issues   it went the whole way, but something went wrong on the way.
+   *   stopped  it was cut short.
+   *   void     the rig broke, or it was a dry run and nothing happened.
+   *
+   * The suite's own `green` means only that every stage asked for passed. A
+   * run can be green and still have had an assistant break a speech rule, and
+   * calling that "ran all the way" on a page somebody reads to follow progress
+   * makes a bad run look fine. Lachlan caught exactly that, 20 September 2026.
+   */
+  outcome: 'clean' | 'issues' | 'stopped' | 'void';
   why: string;
   turns: Turn[];
 }
+
+/**
+ * A DRY RUN IS NOT A RUN. `--dry` drives the whole suite with canned replies
+ * and a stubbed human so the harness itself can be exercised without spending
+ * a real conversation. Every one of them passes every check, because nothing
+ * was ever asked of an assistant. Nine of them sat in this page's first draft
+ * counted among the runs that "ran all the way", which is the page telling a
+ * flattering lie. The transcript says so in its own header; this reads it.
+ */
+const DRY = /DRY RUN/;
 
 const HEADING = /^#{1,6}\s+(.*)$/;
 const TURN = /^\*\*([^*:]{1,60}):\*\*\s*(.*)$/;
@@ -113,10 +135,19 @@ function parseTranscript(md: string, assistants: string[]): Turn[] {
  * being flattened into "something went wrong", because a reason nobody can act
  * on is worse than a long one.
  */
-function shortWhy(error: string | undefined, green: boolean, isVoid: boolean): string {
-  if (green) return 'Ran the whole way through.';
+function shortWhy(
+  error: string | undefined,
+  outcome: Run['outcome'],
+  issues: string[],
+  dry: boolean,
+): string {
+  if (dry) return 'A dry run: canned replies and a stubbed human, to exercise the rig. Nothing here was said by an assistant.';
+  if (outcome === 'void') return 'The test rig broke before the assistants had their turn. Nothing here is their doing.';
+  if (outcome === 'clean') return 'Ran the whole way through with nothing amiss.';
+  if (outcome === 'issues') {
+    return `Ran the whole way through, but ${issues.join('; ')}.`;
+  }
   if (!error) return 'Ended before every stage was reached.';
-  if (isVoid) return 'The test rig broke before the assistants had their turn. Nothing here is their doing.';
   const said: [RegExp, string][] = [
     [/names_offer.*no link was ever handed over/i, 'The assistant never gave its human the link to press.'],
     [/names_offer.*before handing the link/i, 'The assistant asked its human to press a link it had not given them yet.'],
@@ -165,19 +196,51 @@ function readRuns(): Run[] {
       const cast = j.cast ?? {};
       const names = [cast.seller, cast.buyer].filter(Boolean) as string[];
       const mdPath = join(dir, file.replace('.json', '.md'));
-      const turns = existsSync(mdPath) ? parseTranscript(readFileSync(mdPath, 'utf8'), names) : [];
+      const md = existsSync(mdPath) ? readFileSync(mdPath, 'utf8') : '';
+      const turns = md ? parseTranscript(md, names) : [];
       const error = typeof j.error === 'string' ? j.error : undefined;
+      const dry = DRY.test(md.slice(0, 400));
       // A VOID RUN IS NOT A FAILURE: the rig broke and the assistants never got
-      // their turn. Counting those either way would be dishonest.
-      const isVoid = !!error && /is not set|VOID|credentials|ECONNREFUSED|gateway/i.test(error);
-      // A run with no turns at all is the rig breaking too, whatever it said.
-      const empty = turns.filter((t) => t.role !== 'note').length === 0;
+      // their turn. Counting those either way would be dishonest. A run with no
+      // turns at all is the rig breaking too, whatever it said.
+      const isVoid =
+        dry ||
+        (!!error && /is not set|VOID|credentials|ECONNREFUSED|gateway/i.test(error)) ||
+        turns.filter((t) => t.role !== 'note').length === 0;
+
+      // WHAT WENT WRONG ON A RUN THAT STILL FINISHED. The suite fails a run on
+      // a check, but a speech rule broken by an assistant is reported without
+      // stopping it, and so is a turn the judge could not call either way.
+      // Both are "issues": it went the whole way, and it was not clean.
+      const sb = j.scoreboard ?? {};
+      const scored = (sb.turns ?? []).filter((t: any) => !t.reason).length;
+      const failed = (sb.failedTurns ?? []).length;
+      const unsure = (sb.uncertainTurns ?? []).length;
+      // The suite's own doubt bar: a share over a full run, a flat count when
+      // the run was too short for a share to mean anything. Kept in step with
+      // test/rehearsal/levels.ts.
+      const tooMuchDoubt = scored >= 10 ? unsure / scored > 0.15 : unsure > 1;
+      const issues: string[] = [];
+      if (failed) issues.push(`${failed} turn${failed > 1 ? 's' : ''} broke a speech rule`);
+      if (tooMuchDoubt) issues.push(`${unsure} turn${unsure > 1 ? 's' : ''} the judge could not call either way`);
+      const failedChecks = (j.stages ?? []).flatMap((st: any) =>
+        (st.checks ?? []).filter((c: any) => c.verdict === 'fail').map((c: any) => c.id),
+      );
+      if (failedChecks.length && !error) issues.push(`${failedChecks.length} check(s) failed`);
+
+      const outcome: Run['outcome'] = isVoid
+        ? 'void'
+        : !j.green
+          ? 'stopped'
+          : issues.length
+            ? 'issues'
+            : 'clean';
+
       runs.push({
         startedAt: j.startedAt ?? series,
         cast,
-        green: !!j.green,
-        void: isVoid || empty,
-        why: shortWhy(error, !!j.green, isVoid || empty),
+        outcome,
+        why: shortWhy(error, outcome, issues, dry),
         turns,
       });
     }
@@ -241,23 +304,26 @@ function page(runs: Run[]): string {
   .count{font-size:.78rem;color:var(--muted);margin-top:10px}
   .runs{display:flex;flex-direction:column;gap:16px;margin-top:16px}
   .run{background:var(--surface);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
-  .run.is-green{border-color:color-mix(in srgb,var(--pass) 45%,var(--rule))}
+  .run.o-clean{border-color:color-mix(in srgb,var(--pass) 45%,var(--rule))}
+  .run.o-issues{border-color:color-mix(in srgb,var(--doubt) 45%,var(--rule))}
   .rhead{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:13px 16px;
     background:var(--sunk);cursor:pointer;width:100%;text-align:left;font:inherit;color:inherit;
     border:0;border-bottom:1px solid var(--rule)}
   .rhead:hover{background:color-mix(in srgb,var(--accent) 7%,var(--sunk))}
   .rn{font-family:var(--mono);font-size:.78rem;color:var(--faint);font-variant-numeric:tabular-nums}
   .verdict{font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:5px}
-  .v-green{background:var(--pass-soft);color:var(--pass)}
-  .v-fail{background:var(--fail-soft);color:var(--fail)}
+  .v-clean{background:var(--pass-soft);color:var(--pass)}
+  .v-issues{background:var(--doubt-soft);color:var(--doubt)}
+  .v-stopped{background:var(--fail-soft);color:var(--fail)}
   .v-void{background:var(--void-soft);color:var(--void)}
   .rtitle{font-weight:600;font-size:.95rem}
   .rwhen{font-family:var(--mono);font-size:.76rem;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
   .why{padding:11px 16px;font-size:.9rem;display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid var(--rule)}
   .why .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding-top:3px;white-space:nowrap}
-  .why.f{background:var(--fail-soft)} .why.f .k{color:var(--fail)}
-  .why.v{background:var(--void-soft)}
-  .why.g{background:var(--pass-soft)} .why.g .k{color:var(--pass)}
+  .why.stopped{background:var(--fail-soft)} .why.stopped .k{color:var(--fail)}
+  .why.issues{background:var(--doubt-soft)} .why.issues .k{color:var(--doubt)}
+  .why.void{background:var(--void-soft)}
+  .why.clean{background:var(--pass-soft)} .why.clean .k{color:var(--pass)}
   .body{padding:2px 16px 18px}
   .convo{margin-top:18px}
   .convo h3{font-size:.76rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);
@@ -280,16 +346,20 @@ function page(runs: Run[]): string {
   <p class="lede">Every automated run of the OpenSwitchboard rehearsal suite, oldest first. Two
     simulated people — Alex selling an upgraded Fanatec ClubSport V3 brake spring, Tony wanting
     one — each talk to their own assistant, and the assistants talk to the switchboard. This page
-    is only what each side said. Where a run stopped, one line says why.</p>
+    is only what each side said. One line on each says how it ended: <b>clean</b> means it went
+    the whole way with nothing amiss, <b>finished, with issues</b> means it got there but an
+    assistant slipped on the way, and <b>stopped</b> means it was cut short. Dry runs — canned
+    replies, to exercise the rig — are marked as not real runs and left out of the count.</p>
   <div class="tally" id="tally"></div>
 
   <div class="controls">
     <label class="f">Show
       <select id="f-outcome">
         <option value="all">All runs</option>
-        <option value="green">Ran all the way</option>
-        <option value="fail">Stopped</option>
-        <option value="void">Rig broke</option>
+        <option value="clean">Clean — all the way, nothing amiss</option>
+        <option value="issues">Finished, with issues</option>
+        <option value="stopped">Stopped</option>
+        <option value="void">Rig broke or dry run</option>
       </select>
     </label>
     <label class="f">Conversation
@@ -317,18 +387,22 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const dayOf = (r) => (r.startedAt || '').slice(0,10);
 const sideOf = (s) => /seller/i.test(s) ? 'seller' : /buyer/i.test(s) ? 'buyer' : 'other';
-const outcomeOf = (r) => r.void ? 'void' : r.green ? 'green' : 'fail';
+const LABEL = { clean:'clean', issues:'finished, with issues', stopped:'stopped', void:'not a real run' };
 
 for (const d of [...new Set(RUNS.map(dayOf))].filter(Boolean).sort())
   $('f-day').insertAdjacentHTML('beforeend', '<option>' + esc(d) + '</option>');
 
-const tally = { green:0, fail:0, void:0 };
-for (const r of RUNS) tally[outcomeOf(r)]++;
+const tally = { clean:0, issues:0, stopped:0, void:0 };
+for (const r of RUNS) tally[r.outcome]++;
+// The headline count is REAL runs. A dry run and a broken rig asked nothing of
+// an assistant, so counting them among the runs would flatter the record.
+const real = RUNS.length - tally.void;
 $('tally').innerHTML =
-  '<span class="chip"><b>' + RUNS.length + '</b> runs</span>' +
-  '<span class="chip"><b>' + tally.green + '</b> ran all the way</span>' +
-  '<span class="chip"><b>' + tally.fail + '</b> stopped</span>' +
-  '<span class="chip"><b>' + tally.void + '</b> rig broke</span>';
+  '<span class="chip"><b>' + real + '</b> real runs</span>' +
+  '<span class="chip"><b>' + tally.clean + '</b> clean</span>' +
+  '<span class="chip"><b>' + tally.issues + '</b> finished, with issues</span>' +
+  '<span class="chip"><b>' + tally.stopped + '</b> stopped</span>' +
+  '<span class="chip"><b>' + tally.void + '</b> not real runs</span>';
 
 function turnHtml(t) {
   if (t.role === 'note') return '<div class="note">' + esc(t.text) + '</div>';
@@ -338,9 +412,8 @@ function turnHtml(t) {
 }
 
 function runHtml(r, f, open) {
-  const outcome = outcomeOf(r);
-  const label = outcome === 'green' ? 'ran all the way' : outcome === 'void' ? 'rig broke' : 'stopped';
-  const cls = outcome === 'green' ? 'g' : outcome === 'void' ? 'v' : 'f';
+  const outcome = r.outcome;
+  const label = LABEL[outcome];
   const cast = (r.cast.seller || '?') + ' for Alex, ' + (r.cast.buyer || '?') + ' for Tony';
   const when = (r.startedAt || '').replace('T',' ').slice(0,16);
 
@@ -353,14 +426,14 @@ function runHtml(r, f, open) {
     return '<div class="convo"><h3>' + esc(sec) + '</h3>' + turns.map(turnHtml).join('') + '</div>';
   }).join('');
 
-  return '<article class="run' + (outcome === 'green' ? ' is-green' : '') + '">' +
+  return '<article class="run o-' + outcome + '">' +
     '<button class="rhead" type="button" aria-expanded="' + (open ? 'true' : 'false') + '">' +
       '<span class="rn">#' + (r.idx + 1) + '</span>' +
-      '<span class="verdict v-' + (outcome === 'green' ? 'green' : outcome === 'void' ? 'void' : 'fail') + '">' + label + '</span>' +
+      '<span class="verdict v-' + outcome + '">' + label + '</span>' +
       '<span class="rtitle">' + esc(cast) + '</span>' +
       '<span class="rwhen">' + esc(when) + '</span>' +
     '</button>' +
-    '<div class="why ' + cls + '"><span class="k">why</span><span>' + esc(r.why) + '</span></div>' +
+    '<div class="why ' + outcome + '"><span class="k">why</span><span>' + esc(r.why) + '</span></div>' +
     '<div class="body"' + (open ? '' : ' hidden') + '>' +
       (convos || '<div class="empty">Nothing was said on this run.</div>') +
     '</div></article>';
@@ -374,14 +447,19 @@ function render() {
     text: $('f-text').value.trim().toLowerCase(),
   };
   let shown = RUNS.map((r,i) => ({ ...r, idx:i }));
-  if (f.outcome !== 'all') shown = shown.filter(r => outcomeOf(r) === f.outcome);
+  if (f.outcome !== 'all') shown = shown.filter(r => r.outcome === f.outcome);
   if (f.day !== 'all') shown = shown.filter(r => dayOf(r) === f.day);
   if (f.text) shown = shown.filter(r => r.turns.some(t => t.text.toLowerCase().includes(f.text)));
 
   $('count').textContent = shown.length + ' of ' + RUNS.length + ' runs';
   // The newest run is open when the page lands: it is the one being worked on.
+  // The newest real run opens when the page lands: it is the one being worked
+  // on, and a dry run opening instead would be the page's first impression.
+  let openAt = -1;
+  for (let i = shown.length - 1; i >= 0; i--) if (shown[i].outcome !== 'void') { openAt = i; break; }
+  if (openAt < 0) openAt = shown.length - 1;
   $('runs').innerHTML = shown.length
-    ? shown.map((r,i) => runHtml(r, f, i === shown.length - 1)).join('')
+    ? shown.map((r,i) => runHtml(r, f, i === openAt)).join('')
     : '<div class="empty">No runs match these filters.</div>';
 }
 
