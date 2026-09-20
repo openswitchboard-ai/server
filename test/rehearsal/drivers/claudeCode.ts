@@ -38,6 +38,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentReply, Driver } from '../types.js';
 
+/**
+ * A directory holding nothing but this rig's own Claude Code login, signed in
+ * once by hand:
+ *
+ *   mkdir -p ~/.osb-rehearsal-claude
+ *   CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude claude   # then /login
+ *   export REHEARSAL_CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude
+ *
+ * Unset, the driver makes a fresh directory per run as it always did — which
+ * is properly isolated and, on a machine whose login lives in the Keychain,
+ * not signed in to anything.
+ */
+const REHEARSAL_CLAUDE_CONFIG_DIR = process.env.REHEARSAL_CLAUDE_CONFIG_DIR ?? '';
+
 export interface ClaudeArgsInput {
   utterance: string;
   mcpConfigPath: string;
@@ -172,7 +186,19 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       // A fresh everything, per run. Nothing survives from the last one, which
       // is the whole of what "deep clean" means for this client.
       mkdirSync(opts.privateDir, { recursive: true, mode: 0o700 });
-      configDir = mkdtempSync(join(opts.privateDir, `cc-config-${runId}-`));
+      // THE CONFIG DIR IS WHERE THE LOGIN LIVES, so a fresh one per run means
+      // no login at all: on macOS the token sits in the Keychain but the
+      // account record does not, and the CLI answers "Not logged in · Please
+      // run /login". Half the runs of 20 September 2026 died there.
+      //
+      // So a dedicated directory can be named instead, logged into ONCE by
+      // hand and reused. It is not the founder's own ~/.claude: it holds
+      // nothing but this rig's login, so the isolation that matters is intact
+      // — the working directory is still empty, --strict-mcp-config still
+      // means the only MCP server is the one written below, and
+      // --setting-sources '' still means no project or user settings.
+      configDir = REHEARSAL_CLAUDE_CONFIG_DIR || mkdtempSync(join(opts.privateDir, `cc-config-${runId}-`));
+      if (REHEARSAL_CLAUDE_CONFIG_DIR) mkdirSync(configDir, { recursive: true, mode: 0o700 });
       workDir = mkdtempSync(join(opts.privateDir, `cc-cwd-${runId}-`));
       mcpConfigPath = join(configDir, 'mcp.json');
       writeFileSync(
@@ -190,7 +216,9 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       );
       sessions.clear();
       // The path, never the contents.
-      return 'Claude: fresh config dir and empty working directory; one MCP server, written 0600';
+      return REHEARSAL_CLAUDE_CONFIG_DIR
+        ? 'Claude: the rig\u2019s own signed-in config dir and an empty working directory; one MCP server, written 0600'
+        : 'Claude: fresh config dir and empty working directory; one MCP server, written 0600';
     },
 
     async ask(sessionId: string, utterance: string): Promise<AgentReply> {
@@ -214,8 +242,19 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
     },
 
     async teardown(): Promise<void> {
-      // The key on disk goes with the run that minted it.
-      for (const dir of [configDir, workDir]) {
+      // THE KEY ON DISK GOES WITH THE RUN THAT MINTED IT — but a config dir
+      // the rig was signed into by hand is not ours to delete, or the next run
+      // is back to "Not logged in". Where one was named, only the MCP file
+      // this run wrote is removed; the throwaway dirs go whole.
+      if (mcpConfigPath && REHEARSAL_CLAUDE_CONFIG_DIR) {
+        try {
+          rmSync(mcpConfigPath, { force: true });
+        } catch {
+          /* teardown never fails a run */
+        }
+      }
+      const doomed = REHEARSAL_CLAUDE_CONFIG_DIR ? [workDir] : [configDir, workDir];
+      for (const dir of doomed) {
         if (!dir) continue;
         try {
           rmSync(dir, { recursive: true, force: true });
