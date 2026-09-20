@@ -123,12 +123,31 @@ describe('the refusals that are the switchboard working', () => {
   });
 
   it('keeps the payload inside it conformant, once the envelope is set aside', () => {
-    const { what_happened, link, ...payload }: any = answerFor('QUOTA_EXCEEDED', {
+    const { nothing_happened, what_happened, link, ...payload }: any = answerFor('QUOTA_EXCEEDED', {
       retry_after: 60,
     }).structuredContent;
     expect(what_happened).toBe('limit_reached');
+    expect(nothing_happened).toBe(true);
     expect(link).toBeUndefined();
     expect(validateOutbound('error', payload).valid).toBe(true);
+  });
+
+  /**
+   * THE DENIAL IS FIRST, AND IT IS EVERY TIME.
+   *
+   * An assistant refused six times over told its human "It's up, Alex" with
+   * nothing posted (dev, 20 September 2026). The refusal was an ordinary
+   * answer carrying `what_happened: "floor_is_private"` — a label, which it
+   * read as a label. A person believing their thing is out in the world when
+   * it is not is the worst thing this switchboard can do, so the negative is
+   * now said outright, and said before anything else an agent might skim.
+   */
+  it('opens every refusal by saying that nothing happened', () => {
+    for (const code of Object.keys(EXPECTED_REFUSALS)) {
+      const body: any = answerFor(code as any, {}).structuredContent;
+      expect(body.nothing_happened, code).toBe(true);
+      expect(Object.keys(body)[0], code).toBe('nothing_happened');
+    }
   });
 
   it('says every one of the words in plain speech', () => {

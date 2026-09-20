@@ -376,10 +376,13 @@ describe('settle tool', () => {
       expect(r.isError).toBe(false);
       expect((r.structuredContent as any).what_happened).toBe('not_switched_on');
       expect((r.structuredContent as any).code).toBe('SETTLEMENT_UNAVAILABLE');
+      // Every refusal opens by saying nothing happened, so an agent skimming
+      // the top of its answer reads the denial before the label.
+      expect((r.structuredContent as any).nothing_happened).toBe(true);
       // The payload inside the answer still validates against the protocol
-      // error document, once the two the envelope adds are set aside: the
+      // error document, once the three the envelope adds are set aside: the
       // published document takes nothing it does not name.
-      const { what_happened, link, ...payload } = r.structuredContent as any;
+      const { nothing_happened, what_happened, link, ...payload } = r.structuredContent as any;
       expect(validateOutbound('error', payload).valid).toBe(true);
     } finally {
       spy.mockRestore();
