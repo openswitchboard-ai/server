@@ -828,6 +828,13 @@ export function protocolAnswer(payload: ProtocolError): ToolResult {
       isError: true,
     };
   }
+  // WHICH REFUSAL, IN THE LOG. The tool-call line says only that publish_intent
+  // was called, so five refusals in a row and a card that never appeared looked
+  // identical to five successes — and working out which refusal it was meant
+  // guessing from the transcript (20 September 2026). The CODE only: never the
+  // sentence, which can carry a link, and never an account id.
+  // eslint-disable-next-line no-console
+  console.log(JSON.stringify({ level: 30, time: Date.now(), msg: 'refused', code: String(payload.code).slice(0, 40) }));
   const link = linkIn(payload.human_action);
   // NOTHING HAPPENED, SAID BEFORE ANYTHING ELSE.
   //
