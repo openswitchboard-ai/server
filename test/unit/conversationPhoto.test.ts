@@ -53,6 +53,7 @@ import { rekognition, s3 } from '../../src/aws.js';
 import * as photo from '../../src/domain/channelPhoto.js';
 import * as channel from '../../src/domain/channel.js';
 import { photoLink } from '../../src/domain/humanLinks.js';
+import { lintHumanCopy } from '../../src/email/lint.js';
 import { TOOLS } from '../../src/mcp/tools.js';
 import { photoPage } from '../../src/counter/pages.js';
 import { OsbError } from '../../src/protocol.js';
@@ -407,6 +408,23 @@ describe('an agent cannot upload', () => {
       counterparty_account: BEPPE,
     });
     expect(world.photos).toHaveLength(0);
+  });
+
+  it('hands the agent a finished sentence with the page inside it', async () => {
+    // An agent cannot upload, so the whole of its part is saying this and
+    // waiting. The sentence carries the link, which is what stops a turn
+    // ending with a page the human was never given (dev, 20 September 2026).
+    const link = await photoLink(cfg, ANA, MATCH);
+    expect(link.say).toMatch(/^Here is your page — it asks you to pick a photo from your own phone/);
+    expect(link.say).toContain('and press Send');
+    // Bound to this one conversation at mint time, and the sentence says so:
+    // there is nothing for the person to choose on the page.
+    expect(link.say).toMatch(/the person you are already talking to on this one and nowhere else/);
+    expect(link.say).toContain(link.link);
+    expect(link.say.trim().endsWith(link.link)).toBe(true);
+    // Said to the person pressing it, and in the register everything else is in.
+    expect(link.say).not.toMatch(/\byour human\b/i);
+    expect(lintHumanCopy(link.say.replace(link.link, ''))).toEqual([]);
   });
 
   it('refuses to mint one where there is no open conversation', async () => {

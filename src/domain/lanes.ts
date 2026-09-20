@@ -158,17 +158,31 @@ export const SENTENCES = {
    * comes forward, no need to keep asking me", with nothing scheduled and no
    * way to wake itself; and it looked no more that day, although screening
    * takes seconds and somebody can be waiting within minutes.
+   *
+   * AND THE ESCAPE HATCH IT USED TO LEAVE OPEN, closed 20 September 2026. The
+   * prompted wording used to end "If you do run between conversations, say so
+   * with standing_arrangement and give a cadence, and you can be the one
+   * telling them." An assistant read that, said so TO ITS HUMAN — "I do run
+   * between check-ins on my own, so I'll keep an eye on it" — and saved
+   * nothing. Twenty minutes later it had to take the sentence back. So the
+   * wording no longer invites a claim: until the arrangement is saved the
+   * agent IS the prompted sort, and saving is the only thing that changes it.
+   *
+   * THE BUDGET WENT UP FOR THAT, 560 to 680. The closing clause has to say
+   * three things where the old one said one — what you are until it is saved,
+   * that telling them is not the move, and that saving is — and the wording
+   * that only said the first of them is exactly the one that was ignored.
    */
   after_posting: {
     about: 'What happens next, said once a want or a have is up.',
-    budget: 560,
+    budget: 680,
     claimsEmail: true,
     prompted: (c: Ctx) =>
       `Nothing on this account says you run between conversations, and you and your human have not agreed how often you check, so do not tell them you will let them know. Say this: ${
         c.hearsVia === 'email'
           ? 'the switchboard will email you when someone comes forward, and check with me whenever you like'
           : 'check with me whenever you like and I will look then. Do not set them watching for anything from the switchboard, because it may write to them about none of it'
-      }. If you do run between conversations, say so with standing_arrangement and give a cadence, and you can be the one telling them. One look a few minutes from now is fine either way; say times in their own clock.`,
+      }. Until standing_arrangement is saved you ARE an agent that does not run between conversations, and telling your human otherwise is a promise nothing behind you can keep. Saving it is what changes this sentence; saying it to them is not. One look a few minutes from now is fine either way; say times in their own clock.`,
     autonomous: {
       agreed: (c: Ctx) =>
         `Your human has already agreed you look ${c.cadence}, so say that as the arrangement it is. One look a few minutes from now is a follow-up on this posting and has nothing to do with that rhythm. Say any time in their own clock.`,
@@ -322,7 +336,7 @@ export const SENTENCES = {
         c.hearsVia === 'email'
           ? 'Never promise to tell them something later: say the switchboard emails them, and that they can ask you again whenever they like.'
           : 'Never promise to tell them something later, and do not say the switchboard writes to them either: it may write to them about none of it, so asking you again is how they hear anything.'
-      } If you do run on your own, say so with standing_arrangement and every sentence below changes with you.`,
+      } Until standing_arrangement is saved you ARE an agent that does not run on its own, and telling your human otherwise is the one thing never allowed here. Saving it is what changes every sentence below; saying it to them changes nothing and leaves them waiting.`,
     autonomous: {
       agreed: (c: Ctx) =>
         `WHICH SORT OF AGENT YOU ARE. You run between conversations and your human has agreed you look ${c.cadence}, so a promise to bring them something is one you can keep. Say the rhythm as the agreed thing it is. The sentences the switchboard hands you already know which sort of agent you are, so say them as they are given rather than working it out again yourself.`,

@@ -541,6 +541,93 @@ describe('the wordings themselves, one sentence at a time', () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * THE ESCAPE HATCH, CLOSED. Dev, 20 September 2026.
+ *
+ * Right after posting, an assistant told its human "I do run between check-ins
+ * on my own, so I'll keep an eye on it and let you know the moment someone
+ * comes forward — no need for you to chase it." Nothing was saved on the
+ * account. The judge marked it an unbacked promise at 86% on both calls, and
+ * twenty minutes later the assistant took the sentence back to its human
+ * unprompted: "this account isn't actually set up to run between conversations
+ * on its own".
+ *
+ * The cause was in the prompted wording itself, which invited exactly that:
+ * "If you do run between conversations, say so with standing_arrangement and
+ * give a cadence, and you can be the one telling them." An agent that believes
+ * it runs on its own reads "say so" and says so TO ITS HUMAN, which is the one
+ * place saying it does nothing.
+ *
+ * So the prompted wordings no longer leave the claim open. Until the
+ * arrangement is saved the agent IS the prompted sort, whatever it believes,
+ * and saving is the only thing that changes the sentence.
+ */
+describe('a prompted agent is never invited to claim autonomy it has not saved', () => {
+  /** The two wordings that carried the hatch, and the only two that could. */
+  const HAD_THE_HATCH: SentenceId[] = ['after_posting', 'manual_lane'];
+
+  it('covers exactly the wordings that ever offered it', () => {
+    // A sweep, so a wording that grows one tomorrow is caught here rather than
+    // in a rehearsal: "if you do run…" is the shape the invitation takes.
+    const offering: SentenceId[] = [];
+    for (const id of SENTENCE_IDS) {
+      for (const h of HEARS) {
+        const text = say(id, 'prompted', NOTHING, { ...CTX, ...(h ? { hearsVia: h } : {}) });
+        if (/\bif you do run\b/i.test(text) && !offering.includes(id)) offering.push(id);
+      }
+    }
+    expect(offering, 'a prompted wording that invites the claim again').toEqual([]);
+    // And the two that used to are still the two that talk about saving at all.
+    for (const id of SENTENCE_IDS) {
+      const text = say(id, 'prompted', NOTHING, CTX);
+      expect(/standing_arrangement/.test(text), id).toBe(HAD_THE_HATCH.includes(id));
+    }
+  });
+
+  for (const id of HAD_THE_HATCH) {
+    it(`${id}: says what the agent IS until the arrangement is saved`, () => {
+      for (const h of HEARS) {
+        const text = say(id, 'prompted', NOTHING, { ...CTX, ...(h ? { hearsVia: h } : {}) });
+        const where = `${id} — ${h ?? 'nothing read'}`;
+        // Not "if you do run", but "until it is saved you ARE the other sort".
+        expect(text, where).toMatch(/Until standing_arrangement is saved you ARE an agent that does not run/);
+        // And saying it to the human is named as the thing that is not the move.
+        expect(text, where).toMatch(/telling your human otherwise/i);
+        expect(text, where).toMatch(/Saving it is what changes/);
+      }
+    });
+
+    it(`${id}: never tells a prompted agent it can be the one telling them`, () => {
+      for (const h of HEARS) {
+        const text = say(id, 'prompted', NOTHING, { ...CTX, ...(h ? { hearsVia: h } : {}) });
+        expect(text, id).not.toMatch(/you can be the one telling them/i);
+        expect(text, id).not.toMatch(/and every sentence below changes with you/i);
+      }
+    });
+  }
+
+  it('leaves the autonomous wordings exactly as they were', () => {
+    // The correction is to the PROMPTED lane alone. An agent that has saved
+    // the arrangement is the messenger, and nothing here tells it otherwise.
+    for (const id of HAD_THE_HATCH) {
+      expect(say(id, 'autonomous', AGREED, CTX), id).not.toMatch(/Until standing_arrangement is saved/);
+      expect(say(id, 'autonomous', NOT_YET, CTX), id).toMatch(/standing_arrangement/);
+    }
+  });
+
+  it('and saving it really is what flips the sentence', () => {
+    // The whole of the correction in one assertion: the same sentence, the
+    // same human, and the only difference is a saved arrangement.
+    for (const id of HAD_THE_HATCH) {
+      const before = sayFor(id, NOTHING, CTX);
+      const after = sayFor(id, AGREED, CTX);
+      expect(before, id).toMatch(/does not run/);
+      expect(after, id).not.toMatch(/does not run/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('what a caller passes', () => {
   it('takes the lane it was given rather than working it out again', () => {
     // The caller reads the arrangement once for the whole answer and hands

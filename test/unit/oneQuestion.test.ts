@@ -43,7 +43,8 @@ import { createHash } from 'node:crypto';
 import { buildApp } from '../../src/app.js';
 import * as db from '../../src/db.js';
 import * as humanLinks from '../../src/domain/humanLinks.js';
-import { dispatchTool } from '../../src/mcp/tools.js';
+import { dispatchTool, TOOLS } from '../../src/mcp/tools.js';
+import { lintHumanCopy } from '../../src/email/lint.js';
 import { hashPin } from '../../src/counter/pin.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { OsbError } from '../../src/protocol.js';
@@ -965,6 +966,120 @@ describe('the assistant fetches the links and never acts', () => {
     expect(world.mandateWrites).toHaveLength(0);
   });
 
+  // -------------------------------------------------------------------------
+  /**
+   * THE SENTENCE THAT REACHES THE HUMAN.
+   *
+   * Dev, 20 September 2026: an assistant fetched a names link, its first wait
+   * failed, it fetched a second link and waited several more times, and across
+   * fifteen minutes it never put a link in front of its human at all — it
+   * discussed a page he had never been given and asked him whether it was
+   * loading. The three-step handover was already written out at length in
+   * read_manual("links_and_presses") and said again on both tool descriptions.
+   * More manual was plainly not the lever.
+   *
+   * So the lever this asserts: the answer the agent is reading at that moment
+   * hands it a finished sentence with the link already inside it. Leading with
+   * `say` IS the handover, and it cannot be led with while the link is still
+   * sitting unsaid in the answer. `what_it_does` stays the agent-facing half.
+   */
+  describe('every link answer carries the sentence to say, with the link in it', () => {
+    /** The nouns that belong to the machinery, as every human-facing test lists them. */
+    const BANNED = [
+      { label: 'card', re: /\b(index\s+)?cards?\b/i },
+      { label: 'channel', re: /\bchannels?\b/i },
+      { label: 'match', re: /\bmatch(es)?\b/i },
+      { label: 'stage', re: /\bstages?\b/i },
+      { label: 'connection', re: /\bconnections?\b/i },
+      { label: 'score', re: /\bscores?\b/i },
+    ];
+
+    const everyLinkAction: [string, Record<string, unknown>][] = [
+      ['request_share_name', { intro_id: MATCH, action: 'request_share_name' }],
+      ['request_accept', { intro_id: MATCH, action: 'request_accept', offer_id: OFFER }],
+      [
+        'request_auto_negotiate',
+        { intent_id: CARD_W, action: 'request_auto_negotiate', numbers: { limit: 400, ccy: 'AUD' } },
+      ],
+    ];
+
+    for (const [name, args] of everyLinkAction) {
+      it(`${name}: says what the page asks and ends on the very link it minted`, async () => {
+        const out = body(await respond(args));
+        expect(out.say, name).toBeTruthy();
+        // The link is IN the sentence, so an agent that relays it has handed
+        // the page over whether or not it thought about step two.
+        expect(out.say, name).toContain(out.link);
+        expect(out.say.trim().endsWith(out.link), name).toBe(true);
+        // One lead-in, the same everywhere, so the shape is learned once.
+        expect(out.say, name).toMatch(/^Here is your page — it asks /);
+        // Said to the person who will press it, rather than about them.
+        expect(out.say, name).not.toMatch(/\byour human\b/i);
+        // And it is a sentence, rather than the agent-facing half again.
+        expect(out.say, name).not.toBe(out.what_it_does);
+        // The agent-facing half still talks ABOUT the human, in the third
+        // person, which is the whole difference between the two fields.
+        expect(out.what_it_does, name).toMatch(/\byour human\b|\bthey\b/i);
+      });
+
+      it(`${name}: is in the house register, like everything else a person hears`, async () => {
+        const out = body(await respond(args));
+        // Only the link may carry the machinery: a token is not prose.
+        const prose = out.say.replace(out.link, '');
+        expect(lintHumanCopy(prose), name).toEqual([]);
+        for (const { label, re } of BANNED) {
+          expect(re.test(prose), `${label} in ${name}: ${prose}`).toBe(false);
+        }
+        expect(prose, name).not.toMatch(/press_id|intro_id|offer_id|what_it_does/);
+      });
+    }
+
+    it('says SUBURB on the names page, because that is the word the page uses', async () => {
+      // Never invite something vaguer than the page asks for: the other person
+      // is working out whether this is ten minutes away or two hours.
+      const out = body(await respond({ intro_id: MATCH, action: 'request_share_name' }));
+      expect(out.say).toContain('your first name and your suburb');
+      expect(out.say).not.toMatch(/\barea\b/i);
+      expect(out.say).toMatch(/nothing crosses until you press it/);
+    });
+
+    it('names the figure on the accept page, in the words money is said in', async () => {
+      const out = body(await respond({ intro_id: MATCH, action: 'request_accept', offer_id: OFFER }));
+      expect(out.say).toMatch(/whether to accept \$\d/);
+      // A page that moves money asks for a credential, so the sentence says so
+      // before they open it.
+      expect(out.say).toMatch(/takes your passkey or PIN/);
+    });
+
+    it('names the edge on the auto-negotiate page, and the credential it asks for', async () => {
+      const out = body(
+        await respond({
+          intent_id: CARD_W,
+          action: 'request_auto_negotiate',
+          numbers: { limit: 400, ccy: 'AUD' },
+        }),
+      );
+      expect(out.say).toMatch(/pay no more than \$400 AUD|take no less than \$400 AUD/);
+      expect(out.say).toMatch(/takes your passkey or PIN/);
+    });
+
+    it('is named on the tool an agent reads, inside the same budget as before', () => {
+      // The inconsistency that left the hole: respond promised "every answer
+      // carries the sentence to say", which was true of the other actions and
+      // not of the link ones. It is true of all of them now, and the tool says
+      // where the sentence is.
+      const respondTool = TOOLS.find((t) => t.name === 'respond')!;
+      expect(respondTool.description).toMatch(/lead with it; on a link action it is `say`/);
+      expect(respondTool.description).toContain('{ say, link, press_id');
+      expect(respondTool.description).toMatch(/THE LINK ORDER, one turn: lead with `say`, THEN wait_for_press/);
+      // Hand it over FIRST, then wait: the order is unchanged, and `say` is
+      // what makes step two trivial rather than what replaces it.
+      expect(respondTool.description).toMatch(/is a sentence you never write/);
+      // The cap did not move for this (test/unit/readManual.test.ts).
+      expect(respondTool.description.length).toBeLessThanOrEqual(1400);
+    });
+  });
+
   it('relays the auto-negotiate refusal to the agent that asked', async () => {
     world.hearsVia = 'email';
     const r: any = await respond({
@@ -1192,6 +1307,11 @@ describe('(h) keep the conversation going', () => {
     const r: any = await respond({ intro_id: MATCH, action: 'request_keep_talking' });
     expect(body(r).expires_in_minutes).toBe(15);
     expect(body(r).what_it_does).toContain('keep this conversation going');
+    // And the half that is for the human: a finished sentence with the page
+    // inside it, so relaying it is the whole of the handover.
+    expect(body(r).say).toMatch(/^Here is your page — it asks whether to keep this conversation going/);
+    expect(body(r).say).toContain(body(r).link);
+    expect(lintHumanCopy(body(r).say.replace(body(r).link, ''))).toEqual([]);
     expect(world.links).toHaveLength(1);
     expect(world.links[0].action).toBe('conversation-renew');
     expect(body(r).press_id).toBe(world.links[0].id);

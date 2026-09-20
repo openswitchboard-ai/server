@@ -29,8 +29,28 @@ import { validateMandate, validateOfferNote, type Mandate } from './negotiation.
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink, signLink } from '../counter/links.js';
 import type { Config } from '../config.js';
 
-/** What every one of these answers with, in the same four fields. */
+/** What every one of these answers with, in the same five fields. */
 export interface HumanLink {
+  /**
+   * THE SENTENCE TO SAY, and the reason this field exists.
+   *
+   * Dev, 20 September 2026: an assistant fetched a names link, waited on it,
+   * fetched a second one, waited again, and across a quarter of an hour never
+   * put a link in front of its human at all. It talked at length about a page
+   * he had never been given and asked him whether it was loading. The manual
+   * says the handover in three steps at great length, and both tool
+   * descriptions say it again; it happened anyway.
+   *
+   * What has worked in this codebase is handing the agent a ready-made
+   * sentence in the answer it is reading at that moment, which it then relays.
+   * So every link answer now carries one: plain, in the house register, in the
+   * second person, WITH THE LINK ALREADY IN IT and with what the page asks
+   * already said. Leading with it is the whole of steps one and two, and it
+   * cannot be led with while the link is still sitting in the answer.
+   *
+   * `what_it_does` below stays exactly what it was: the agent-facing half.
+   */
+  say: string;
   link: string;
   /**
    * The press itself, to wait on. An agent hands the link over and then calls
@@ -42,6 +62,18 @@ export interface HumanLink {
   /** One plain sentence saying what the person will be asked. */
   what_it_does: string;
 }
+
+/**
+ * The one shape every `say` wears. The lead-in is the same everywhere — it is
+ * the lead-in `PRESS_SENTENCES.waiting` already uses — so an agent learns the
+ * shape once, and the page itself always lands at the end where it is read out
+ * last and stays clickable.
+ *
+ * `asks` is what the page asks, said to the person who will press it: it reads
+ * after "it asks", so it is written as a clause rather than a sentence.
+ */
+const saySentence = (asks: string, link: string): string =>
+  `Here is your page — it asks ${asks}: ${link}`;
 
 /**
  * The two things that have to be true before an agent may even offer to
@@ -152,8 +184,17 @@ export async function sendNumberLink(
     m.account_want === accountId && (await isBestOffer(matchId))
       ? ' This is your one number for this; it stays sealed until the seller sees them all.'
       : '';
+  const sealed =
+    oneNumber === ''
+      ? ''
+      : ' — this is your one number for this one, and it stays sealed until the seller sees them all';
+  const page = url(cfg, token);
   return {
-    link: url(cfg, token),
+    say: saySentence(
+      `whether to send ${money(rounded, ccy)} to the other side, and nothing goes until you press it${sealed}`,
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does.${oneNumber} Once they press it, your next check_matches shows the result.`,
@@ -218,8 +259,17 @@ export async function acceptNumberLink(
     ccy: o.ccy,
     counterpartyAccount: o.proposer_account,
   });
+  const page = url(cfg, token);
+  const forWhat =
+    o.account_have === accountId
+      ? ` for your ${categoryPhrase(o.category)}`
+      : ` for the ${categoryPhrase(o.category)} you are after`;
   return {
-    link: url(cfg, token),
+    say: saySentence(
+      `whether to accept ${money(Number(o.amount), o.ccy)}${forWhat}, and saying yes takes your passkey or PIN`,
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN. Once they press it, your next check_matches shows the result.`,
@@ -248,11 +298,18 @@ export async function shareNameLink(
   const minted = await stage3LinkFor(cfg, accountId, matchId, counterparty);
   if (!minted) throw new Error('could not mint the names link');
   return {
+    // Suburb, and never anything vaguer: the other person is working out
+    // whether this is ten minutes away or two hours, and a state tells them
+    // nothing. The sentence the agent relays has to say the word the page uses.
+    say: saySentence(
+      'whether to share your first name and your suburb with them, and nothing crosses until you press it',
+      minted.link,
+    ),
     link: minted.link,
     press_id: minted.press_id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page asking your human whether to share their first name and area with the other side. Nothing crosses until they say yes there. Once they press it, your next check_matches shows the result.',
+      'Opens one page asking your human whether to share their first name and suburb with the other side. Nothing crosses until they say yes there. Once they press it, your next check_matches shows the result.',
   };
 }
 
@@ -295,8 +352,13 @@ export async function photoLink(
     refId: matchId,
     counterpartyAccount: ch.counterpartyAccount,
   });
+  const page = url(cfg, token);
   return {
-    link: url(cfg, token),
+    say: saySentence(
+      'you to pick a photo from your own phone and press Send, and it goes to the person you are already talking to on this one and nowhere else',
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
@@ -335,8 +397,17 @@ export async function reportLink(
     refId: matchId,
     counterpartyAccount: counterparty,
   });
+  const page = url(cfg, token);
   return {
-    link: url(cfg, token),
+    // The passkey is said here because the manual says to say it (version 46):
+    // this page ends a conversation for good and puts somebody on the record,
+    // so it asks for a credential, and a frightened person should not meet
+    // that as a surprise. A press no assistant can make is the point of it.
+    say: saySentence(
+      'whether to report this person, with a box for a line in your own words about what happened, and it will ask for your passkey or PIN because this press is yours alone',
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
@@ -371,8 +442,13 @@ export async function keepTalkingLink(
     refId: matchId,
     counterpartyAccount: ch.counterpartyAccount,
   });
+  const page = url(cfg, token);
   return {
-    link: url(cfg, token),
+    say: saySentence(
+      'whether to keep this conversation going, and one press gives us a fresh run of messages and days on it',
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
@@ -432,8 +508,13 @@ export async function autoNegotiateLink(
     card.type === 'HAVE'
       ? `take no less than ${money(mandate.limit, mandate.ccy)}`
       : `pay no more than ${money(mandate.limit, mandate.ccy)}`;
+  const page = url(cfg, token);
   return {
-    link: url(cfg, token),
+    say: saySentence(
+      `whether to let me talk numbers on your ${thing} and ${edge}, and saying yes takes your passkey or PIN`,
+      page,
+    ),
+    link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does: `Opens one page asking your human whether to let you negotiate their ${thing}: ${edge}. Saying yes takes their PIN, and it writes those numbers onto that one want or have. Once they press it, your next check_matches shows the result.`,
