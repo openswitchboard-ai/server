@@ -440,32 +440,32 @@ describe('the wordings themselves, one sentence at a time', () => {
     [
       'press_approved',
       /bring them anything that comes back/,
-      /Save theirs with standing_arrangement/,
+      /save it with standing_arrangement/,
       /check with you whenever they like/,
     ],
     [
       'waiting_on_their_go_ahead',
       /bring them their go-ahead/,
-      /Save theirs with standing_arrangement/,
+      /save it with standing_arrangement/,
       /check with you whenever they like/,
     ],
     [
       'awaiting_their_go_ahead',
       /bring them their go-ahead/,
-      /Save theirs with standing_arrangement/,
+      /save it with standing_arrangement/,
       /check with you whenever they like/,
     ],
     [
       'in_line',
       /bring them their turn the moment it comes/,
-      /Ask how often to look/,
+      /Confirm with your human how often/,
       /check with you whenever they like/,
       /emails them when their turn comes/,
     ],
     [
       'awaiting_other_side',
       /bring them their reply/,
-      /suggest hourly/,
+      /Confirm with your human how often/,
       /never say you will come back on your own/,
     ],
     [
