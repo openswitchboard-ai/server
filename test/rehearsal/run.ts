@@ -61,6 +61,8 @@ import {
   MEET_WAIT_MS,
   NUDGE,
   ROUND_CAP,
+  STAGE_BUDGET_MS,
+  RUN_BUDGET_MS,
   SCREEN_WAIT_MS,
   assertDev,
   loadRatelimitBypass,
@@ -214,6 +216,23 @@ async function oneRun(
   let runError: string | undefined;
   /** Set the moment the introduction is read, so finish() can pass it on. */
   let possibleIntro = false;
+  /** When this run began, for the wall-clock budgets. */
+  const runStartedMs = Date.now();
+  /** When the stage now open began. Reset by openStage. */
+  let stageStartedMs = Date.now();
+
+  /**
+   * TIME IS A CHECK LIKE ANY OTHER. Thrown as a FailFast so it stops the run
+   * where it stands, is written into the transcript, and reads as the failure
+   * it is rather than as the harness giving up.
+   */
+  const outOfTime = (): string | undefined => {
+    const run = Date.now() - runStartedMs;
+    const stage = Date.now() - stageStartedMs;
+    if (run > RUN_BUDGET_MS) return `the run passed ${Math.round(RUN_BUDGET_MS / 60_000)} minutes and was still going`;
+    if (stage > STAGE_BUDGET_MS) return `stage ${currentStage} passed ${Math.round(STAGE_BUDGET_MS / 60_000)} minutes with nothing settled`;
+    return undefined;
+  };
 
   const record = (c: Check): Check => {
     current.push(c);
@@ -227,6 +246,7 @@ async function oneRun(
     if (currentStage) closeStage();
     currentStage = n;
     current = [];
+    stageStartedMs = Date.now();
     log(`--- stage ${n} ${STAGE_NAMES[n] ?? ''} ---`);
   };
   const closeStage = () => {
@@ -373,6 +393,8 @@ async function oneRun(
       let next = opts.opener ?? NUDGE;
       const rounds = opts.rounds ?? ROUND_CAP;
       for (let i = 0; i < rounds; i++) {
+        const late = outOfTime();
+        if (late) throw new FailFast(`took too long — ${late}`);
         const said = await drive(side, next, stage);
         if (opts.done && (await opts.done())) return;
         // An assistant that answers with nothing has nothing for the human to
