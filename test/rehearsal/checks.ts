@@ -432,7 +432,10 @@ const ID_LIKE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\
 // an assistant never writes. Both the contraction and the long form.
 const WAIT_LATER =
   /\b(let me know|tell me|come back to me|ping me|give me a shout)\b[^.]{0,30}\b(once|when|after)\b[^.]{0,40}\b(pressed|press it|done|clicked|sorted that)\b/i;
-const SUBURB_OFFER = /\b(first name and (your )?(suburb|area)|name and suburb|suburb)\b/i;
+// `suburbs` plural failed a run where the assistant said "get first names and
+// suburbs crossed" — the offer, in the plural, because it is describing both
+// sides (dev, 20 September 2026).
+const SUBURB_OFFER = /\b(first names? and (your )?(suburbs?|areas?)|names? and suburbs?|suburbs?)\b/i;
 
 export function checkIntroductionTold(side: 'seller' | 'buyer', turns: string[]): Check {
   const id = `S2.told.${side}`;

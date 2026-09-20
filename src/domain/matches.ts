@@ -1206,8 +1206,18 @@ export async function openChannel(matchId: string, accountId: string) {
   const m = await loadOpenMatchFor(matchId, accountId);
   const optins = await stage3OptinCount(m.id);
   if (optins < 2 || m.stage < 3) {
+    // THIS REFUSAL USED TO SAY NOTHING ABOUT WHAT HAPPENS NEXT. It read "A
+    // conversation can open only after both humans opt in to mutual
+    // disclosure" — the switchboard's own vocabulary, and a dead end. An
+    // assistant that reaches it has a human in front of it asking why, so it
+    // fills the gap itself: "I'll check back in shortly to see if they've done
+    // the same", promised with nothing saved and nothing able to wake it (dev,
+    // 20 September 2026, Jev 54% on both calls). It is the same state
+    // waiting_on_their_go_ahead describes, so it now says the same thing, in
+    // the lane this agent is actually in.
+    const { arrangement, hearsVia } = await readLaneFacts(accountId);
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'A conversation can open only after both humans opt in to mutual disclosure.',
+      human_action: sayFor('waiting_on_their_go_ahead', arrangement, { hearsVia }),
     });
   }
   let channelId = m.channel_id;
