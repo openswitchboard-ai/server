@@ -399,10 +399,10 @@ async function mintedToken(): Promise<string> {
 
 // ---------------------------------------------------------------------------
 describe('respond(request_report) mints and returns, and changes nothing', () => {
-  it('answers the four fields every link action answers', async () => {
+  it('answers the five fields every link action answers', async () => {
     const r = body(await respond({ intro_id: MATCH, action: 'request_report' }));
     expect(Object.keys(r).sort()).toEqual(
-      ['expires_in_minutes', 'link', 'press_id', 'what_it_does'].sort(),
+      ['expires_in_minutes', 'link', 'press_id', 'say', 'what_it_does'].sort(),
     );
     expect(r.link).toContain('https://my.test/a/');
     expect(r.expires_in_minutes).toBe(15);
@@ -421,6 +421,39 @@ describe('respond(request_report) mints and returns, and changes nothing', () =>
     expect(r.what_it_does).toMatch(/report this person/i);
     expect(r.what_it_does).toMatch(/never that they were reported/i);
     expect(lintHumanCopy(r.what_it_does)).toEqual([]);
+  });
+
+  /**
+   * THE OTHER HALF, added 20 September 2026. `what_it_does` above is written
+   * for the agent; this is the sentence for the frightened person, with the
+   * page already inside it, so an agent that leads with it has handed the link
+   * over rather than talked about one. The defect it closes is an assistant
+   * that fetched two links in a quarter of an hour and showed its human
+   * neither.
+   */
+  it('hands the agent the sentence to say, with the page inside it', async () => {
+    const r = body(await respond({ intro_id: MATCH, action: 'request_report' }));
+    expect(r.say).toMatch(/^Here is your page — it asks whether to report this person/);
+    expect(r.say).toMatch(/a box for a line in your own words about what happened/);
+    expect(r.say).toContain(r.link);
+    expect(r.say.trim().endsWith(r.link)).toBe(true);
+    // Said to them, rather than about them.
+    expect(r.say).not.toMatch(/\byour human\b/i);
+    expect(lintHumanCopy(r.say.replace(r.link, ''))).toEqual([]);
+  });
+
+  it('warns them the page asks for their passkey or PIN, as the manual requires', async () => {
+    // Manual version 46: the report page asks for a credential, because an
+    // assistant with a browser could otherwise finish this press itself, and
+    // closing a conversation for good is not a thing any assistant should do
+    // on its human's behalf. So the sentence handed over says so, and the
+    // person meets the credential expecting it rather than as a surprise.
+    const r = body(await respond({ intro_id: MATCH, action: 'request_report' }));
+    expect(r.say).toMatch(/passkey or PIN/);
+    expect(r.say).toMatch(/this press is yours alone/);
+    const { MANUAL_CHANGELOG } = await import('../../src/mcp/instructions.js');
+    const entry = MANUAL_CHANGELOG.find((c) => c.version === 46)!;
+    expect(entry.note).toMatch(/tell them the page will ask for their passkey or PIN/);
   });
 
   it('refuses at mint time when there is nothing left to close', async () => {
