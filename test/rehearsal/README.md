@@ -42,23 +42,29 @@ a fresh `CLAUDE_CONFIG_DIR` per run — and that is where the login lives, so on
 a machine whose token sits in the Keychain the CLI answered **"Not logged in ·
 Please run /login"** and every run it was cast in died.
 
-Sign one directory in by hand, once:
+**Signing in by hand does not work here, and cannot.** The driver runs the CLI
+in bare mode (`CLAUDE_CODE_SIMPLE`), and bare mode never reads OAuth or the
+keychain — authentication is an API key or a third-party provider, nothing
+else. An afternoon went on "Not logged in · Please run /login" answers from a
+CLI that was signed in perfectly well; it simply was not allowed to look. A
+long-lived `claude setup-token` is OAuth too, so it is ignored the same way.
 
-```
-mkdir -p ~/.osb-rehearsal-claude
-CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude claude    # then /login, then exit
-export REHEARSAL_CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude
-```
+So the third assistant goes through **Bedrock, on the AWS credentials the run
+already holds** — the same `AWS_PROFILE` that reaches the database and the
+logs. Nothing extra to set up:
 
-That directory holds this rig's login and nothing else — it is not your own
-`~/.claude`. Everything else stays isolated: empty working directory,
-`--strict-mcp-config` so the only MCP server is the one the run writes, and
-`--setting-sources ''`. Teardown removes the MCP file it wrote and leaves the
-login alone.
+| variable | default | what it does |
+| --- | --- | --- |
+| `REHEARSAL_CLAUDE_BEDROCK` | `1` | `0` falls back to a plain `ANTHROPIC_API_KEY` |
+| `REHEARSAL_CLAUDE_MODEL` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | named on every turn and recorded by name |
 
-Leave the variable unset and the driver behaves as before: a fresh directory
-per run, properly isolated and signed in to nothing. **Turns are billed to
-whichever account you sign that directory into.**
+Haiku 4.5 is about two tenths of a cent a turn, so a six-run series is small
+change. It is also the honest test: the manual-delivery faults this suite
+exists to find are the ones a smaller model hits first, and most people will
+not arrive on the largest model.
+
+Everything else stays isolated: empty working directory, `--strict-mcp-config`
+so the only MCP server is the one the run writes, and `--setting-sources ''`.
 
 | flag | what it does |
 | --- | --- |
