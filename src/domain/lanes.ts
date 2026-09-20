@@ -108,8 +108,22 @@ const render = (w: Wording, c: Ctx): string => (typeof w === 'function' ? w(c) :
 const agreedTail = (thing: string, cadence: string): string =>
   `You look ${cadence} as agreed, so tell them you will bring them ${thing}.`;
 
+/**
+ * THE ASKING IS THE POINT, AND IT WAS READ AS A RECIPE.
+ *
+ * This said "Ask your human how often you should look (suggest hourly), save
+ * it with standing_arrangement, and then tell them you will bring them X" —
+ * three steps, which an assistant did in one breath without waiting for an
+ * answer: it saved hourly off its own bat and told its human it would keep to
+ * "your usual hourly rhythm", a rhythm that human had never been asked about
+ * and never agreed (dev, 20 September 2026, Jev 81-91% on both calls).
+ *
+ * The wording now makes the answer the precondition rather than a step in a
+ * list, and says outright that a rhythm nobody agreed is not theirs to
+ * describe as theirs.
+ */
 const notYetTail = (thing: string): string =>
-  `Ask your human how often you should look (suggest hourly), save it with standing_arrangement, and then tell them you will bring them ${thing}.`;
+  `Ask how often to look, suggest hourly, and WAIT for the answer — a rhythm you chose is not theirs. Save theirs with standing_arrangement, then promise ${thing}.`;
 
 /**
  * `emails` is what the switchboard genuinely sends mail about, said so it
@@ -249,7 +263,7 @@ export const SENTENCES = {
   waiting_on_their_go_ahead: waitingOn({
     about: 'Their own press has landed and the other side has not pressed yet.',
     budget: 300,
-    head: 'Your human has said yes and it is recorded. Their go-ahead is the only thing left, and first names are shared the moment it lands.',
+    head: 'Your human\u2019s yes is recorded. Theirs is the only thing left, and first names cross the moment it lands.',
     thing: 'their go-ahead',
   }),
 

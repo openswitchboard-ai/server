@@ -278,7 +278,7 @@ describe('nothing else may contradict it', () => {
     const e = await getStagePayload(cfg, ANA, MATCH, 3).catch((x) => x);
     expect(e).toBeInstanceOf(OsbError);
     expect(e.payload.code).toBe('NOT_UNLOCKED_YET');
-    expect(e.payload.human_action).toMatch(/it is recorded/i);
+    expect(e.payload.human_action).toMatch(/yes is recorded/i);
     expect(e.payload.human_action).not.toMatch(/Ask your human to give the go-ahead/);
   });
 
