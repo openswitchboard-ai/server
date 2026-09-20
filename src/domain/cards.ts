@@ -346,6 +346,47 @@ function assertKindPresent(kind: unknown): void {
 }
 
 /**
+ * ON A BEST OFFER THE FLOOR IS PRIVATE, and `ask` is not where it lives.
+ *
+ * The rehearsal that bought this (dev, 20 September 2026). A man selling by
+ * best offer was asked by his assistant "what's your floor — the minimum you'd
+ * take?", said $10, and was told in the assistant's own words that "that
+ * becomes the asking price everyone's sealed offers get measured against". It
+ * went up as the posting's `ask`, which is the one money field that is
+ * DISCLOSABLE, so the switchboard carried it across at the details step and
+ * the buyer's assistant read it out: "Their asking price: $10 AUD." A seller's
+ * reserve, said aloud to the person bidding against it.
+ *
+ * Nobody misread anything. On a STRAIGHT sale an asking price is exactly what
+ * it sounds like and crossing early is the point of it. On a best offer there
+ * is no asking price at all — the whole arrangement is that nobody sees a
+ * number until the seller sees them all — so the question "where does the
+ * floor go?" had no answer anywhere, and `ask` was a reasonable guess at it.
+ *
+ * WHY REFUSE RATHER THAN MOVE IT QUIETLY. Routing the figure into `price`
+ * would post the thing and say so in a note, and the human would never be
+ * asked. Putting somebody's number somewhere they did not ask for it is its
+ * own surprise, and it teaches the assistant nothing: the next posting guesses
+ * again. A refusal costs one round trip and is the only place this rule can be
+ * said at the moment it is being broken.
+ *
+ * The check is on the CARD AS IT WILL STAND, so it holds an amend that turns a
+ * straight sale into a best offer with an ask already on the row, as well as
+ * one that adds an ask to a best offer. It is the first of the cheap refusals
+ * for a reason: the figure gate below would otherwise read the ask back to the
+ * human as "your asking price" on a posting that may not carry one at all.
+ */
+export const FLOOR_IS_PRIVATE_ACTION =
+  'On a best offer the floor is private: nobody is ever shown it, and a number under it is refused before it travels. Take the asking price off this one and give that figure as the floor of the private band in `price` instead, then post it again.';
+
+function assertFloorStaysPrivate(card: { sale?: unknown; ask?: unknown }): void {
+  // A want cannot carry either field — the schema forbids both on looking_for
+  // — so this reads the two that matter and asks nothing about the side.
+  if (card.sale !== 'best-offer' || !card.ask) return;
+  throw new OsbError('FLOOR_IS_PRIVATE', { human_action: FLOOR_IS_PRIVATE_ACTION });
+}
+
+/**
  * A FIGURE IS READ BACK ONCE, and then it goes up as it stands.
  *
  * The manual's rule (c), which this enforces word for word: "Before anything
@@ -522,14 +563,21 @@ export async function publishIntent(
   // written or queued, because a posting that comes back unposted should cost
   // the switchboard the same as a posting that is refused for its category.
   //
-  // The order is: DETAIL, then REACH, then FIGURE. It is fixed, and each one
-  // throws, so an assistant is handed exactly one refusal per attempt and
-  // never two different ones for the same posting. Detail first because it is
-  // about what the thing IS, and the answers to it can change the rest; reach
-  // next because it is one question with two answers; the figure last because
-  // it is the one that is read back rather than asked about, and reading a
-  // number back on a posting that is still being described would be reading it
-  // back too early.
+  // The order is: FLOOR, then DETAIL, then REACH, then FIGURE. It is fixed,
+  // and each one throws, so an assistant is handed exactly one refusal per
+  // attempt and never two different ones for the same posting. The floor first
+  // because it is the only one about a field that must not be on the posting
+  // at all, and the figure gate below would otherwise read that same number
+  // back as "your asking price"; detail next because it is about what the
+  // thing IS, and the answers to it can change the rest; reach after that
+  // because it is one question with two answers; the figure last because it is
+  // the one that is read back rather than asked about, and reading a number
+  // back on a posting that is still being described would be reading it back
+  // too early.
+  //
+  // A BEST OFFER HAS NO ASKING PRICE. See assertFloorStaysPrivate above for
+  // the rehearsal in which a seller's $10 reserve was read out to the buyer.
+  assertFloorStaysPrivate(card);
   //
   // DOES IT SAY ENOUGH TO DESCRIBE THE THING TO A STRANGER? The whole of the
   // reasoning, and the rule itself, is in domain/postingDetail.ts.
@@ -1127,6 +1175,11 @@ export async function amendIntent(
       validation: v.reasons,
     });
   }
+  // AND THE FLOOR STAYS PRIVATE ON AN AMEND TOO, read off the card as it will
+  // stand rather than off the patch: turning a straight sale into a best offer
+  // while an asking price sits on the row is the same disclosure as posting
+  // the two together, and so is adding an ask to a best offer.
+  assertFloorStaysPrivate(next);
   // A FIGURE AN AMEND ADDS OR CHANGES IS READ BACK ONCE, exactly as one on a
   // publish is. Only the figures this patch is putting there are read back: an
   // amend that leaves the money alone is nothing to ask about, and the band

@@ -75,6 +75,12 @@ interface World {
   slots: number;
   sale: 'straight' | 'best-offer';
   ask: { amount: number; ccy: string } | null;
+  /**
+   * The seller's PRIVATE reserve, sealed on the row. Since 20 September 2026 a
+   * best offer carries no asking price at all, so this is where its floor
+   * lives — see the block at the foot of this file.
+   */
+  reserve: { min: number; ccy: string } | null;
   gatherUntil: Date | null;
   gatherClosedAt: Date | null;
   priceNoteAt: Date | null;
@@ -346,6 +352,22 @@ function fakePool() {
           },
         ]);
       }
+      // The sealed reserve, read under the seller's own key (offers.ts
+      // bestOfferFloor). decryptFields is stubbed at the top of this file to
+      // hand the buffer straight back, so the band is stored here as its JSON.
+      if (/SELECT c\.account_id, c\.price_enc/.test(sql)) {
+        return rows([
+          {
+            account_id: SELLER,
+            price_enc: world.reserve
+              ? Buffer.from(
+                  JSON.stringify({ band: { min: world.reserve.min }, ccy: world.reserve.ccy }),
+                )
+              : null,
+            data_key_enc: Buffer.from('k'),
+          },
+        ]);
+      }
       if (/SELECT id, account_id, sale, category/.test(sql)) {
         return rows([
           {
@@ -485,6 +507,7 @@ beforeEach(() => {
     slots: 1,
     sale: 'straight',
     ask: null,
+    reserve: null,
     gatherUntil: null,
     gatherClosedAt: null,
     priceNoteAt: null,
@@ -738,6 +761,46 @@ describe('best offer: one sealed number each', () => {
       payload: { human_action: expect.stringContaining('below the floor') },
     });
     expect(world.offers).toHaveLength(0);
+  });
+
+  /**
+   * THE FLOOR IS THE PRIVATE RESERVE NOW (dev, 20 September 2026). It used to
+   * be the ask, which meant a seller's reserve went up as the posting's public
+   * asking price and was read out to the person bidding against it. A best
+   * offer carries no ask at all since then (domain/cards.ts), so the floor is
+   * read from the sealed band — and the refusal names no figure, because this
+   * one has never been shown to anybody.
+   */
+  describe('with no ask on it, which is every best offer now', () => {
+    beforeEach(() => {
+      world.ask = null;
+      world.reserve = { min: 420, ccy: 'AUD' };
+    });
+
+    it('refuses a number under the sealed reserve without saying what it is', async () => {
+      await expect(send(1, 400)).rejects.toMatchObject({
+        payload: { code: 'NOT_UNLOCKED_YET' },
+      });
+      const e: any = await send(1, 400).catch((x) => x);
+      expect(e.payload.human_action).toContain('below the floor');
+      expect(e.payload.human_action).toContain('never shown');
+      // The one thing it must not do: say the seller's number back.
+      expect(e.payload.human_action).not.toMatch(/420/);
+      expect(e.payload.human_action.length).toBeLessThanOrEqual(300);
+      expect(lintHumanCopy(e.payload.human_action)).toEqual([]);
+      expect(world.offers).toHaveLength(0);
+    });
+
+    it('takes a number that meets it', async () => {
+      await send(1, 420);
+      expect(world.offers).toHaveLength(1);
+    });
+
+    it('takes any number where the seller sealed no reserve at all', async () => {
+      world.reserve = null;
+      await send(1, 5);
+      expect(world.offers).toHaveLength(1);
+    });
   });
 
   it('takes exactly one number from each buyer', async () => {

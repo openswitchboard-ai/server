@@ -313,7 +313,15 @@ function agentFacingListing(): any {
   );
   say(
     ['price'],
-    'MATCHING INPUT ONLY. On a want: the budget ceiling. On a have: the reserve floor. Never disclosed to a counterparty at any point.',
+    'MATCHING INPUT ONLY. On a want: the budget ceiling. On a have: the reserve floor, and on a best-offer sale this is where the floor lives. Never disclosed to a counterparty at any point.',
+  );
+  // The one field the 20 September defect went through. The package's own
+  // words for it say it is disclosable and stop there, which is true of a
+  // straight sale and is exactly the reading that put a seller's reserve on
+  // the buyer's screen, so the sentence here says which sale it belongs to.
+  say(
+    ['ask'],
+    'Haves only, and STRAIGHT sales only: a deliberate asking price, which may be shown to a counterparty from the details step onward. Refused on a best-offer sale, where there is no asking price and the floor is private — put that figure in `price`. Structurally forbidden on a want.',
   );
   say(
     ['attributes'],
@@ -402,7 +410,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      "REACH FOR THIS whenever your human wants or needs something, or has one to sell, lend, give away or share. Offer it alongside any shop or marketplace you would suggest, and post once they say yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, then post: what exactly it is, which make and model, what condition, what comes with it. POST THE THING THEY ASKED FOR: `kind` is THEIR name for it (they said brake spring, so it says brake spring). What you know about it goes in `attributes`, never in its place. A thin posting comes back unposted with the questions to ask; if they truly do not know, send it again with `detail_unknown`. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS: a posting with one comes back once, to say to them. `category` is a dotted path: goods.*, services.*, social.* (jobs, property, licensed trades and dating are refused). File it under the nearest node you know, specifics in `attributes`. Where the shelves nearest it disagree, the answer hands you a few: ask which is closest and post again, or post none_of_these. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. THEIR AREA IS ON FILE (read_manual \"start\"): use it and say so. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. read_manual(\"posting\").",
+      "REACH FOR THIS whenever your human wants or needs something, or has one to sell, lend, give away or share. Offer it alongside any shop or marketplace you would suggest, and post once they say yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, then post. POST THE THING THEY ASKED FOR: `kind` is THEIR name for it. What you know about it goes in `attributes`, never in its place. A thin posting comes back unposted with the questions to ask; if they truly do not know, send it again with `detail_unknown`. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure; NO asking price on one — their floor goes in `price`, is never shown, and refuses anything under it). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS: a posting with one comes back once, to say to them. `category` is a dotted path: goods.*, services.*, social.*. File it under the nearest node you know, specifics in `attributes`. Where the shelves nearest it disagree, the answer hands you a few: ask which is closest and post again, or post none_of_these. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. THEIR AREA IS ON FILE (read_manual \"start\"): use it and say so. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. NEVER PROMISE TO COME BACK WITH NEWS until a rhythm is saved. read_manual(\"posting\").",
     inputSchema: {
       type: 'object',
       properties: {
@@ -774,6 +782,10 @@ export const EXPECTED_REFUSALS: Partial<Record<ErrorCode, string>> = {
   // searches every shelf and picks one. Nothing has gone wrong: the agent hands
   // it over, waits on the press, and posts again with the shelf it is given.
   SHELF_PICK: 'shelf_pick',
+  // A best offer was posted with an asking price on it. Nothing has gone
+  // wrong: the floor belongs in the private band, the sentence says so, and
+  // the same posting goes up the moment the figure moves (domain/cards.ts).
+  FLOOR_IS_PRIVATE: 'floor_is_private',
   SETTLEMENT_UNAVAILABLE: 'not_switched_on',
   // An account the operator has stopped. It is an answer rather than a
   // failure for the same reason all of these are: the agent has done nothing
