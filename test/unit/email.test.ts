@@ -714,7 +714,7 @@ describe('the email rule: a notice carries no link and no button', () => {
     expect(c.text).toContain('Mountain bike (looking for): 2 new nearby, no near misses');
     // Under the k-anonymity floor there is no count to give.
     expect(c.text).toContain(
-      'Your garden tools (offering): nothing new that clears the floor, 2 near misses',
+      'Your garden tools (offering): too few people around here to count yet, 2 near misses',
     );
     // One of anything is said as one.
     expect(c.text).toContain('Garden tools (looking for): 1 new nearby, 1 near miss');

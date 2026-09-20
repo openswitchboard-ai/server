@@ -565,14 +565,21 @@ function digestHead(it: DigestItem): string {
 
 /**
  * The counts beside it, in whole words and the right grammar for one and for
- * many. A null count is the k-anonymity floor: the cell is too small to say
- * anything about, so the line says that rather than a number.
+ * many. A null count is the k-anonymity floor: too few people in that corner
+ * to name a number without pointing at one of them, so the line says that in
+ * words a person would use.
+ *
+ * IT USED TO SAY "nothing new that clears the floor". A floor is our own
+ * machinery — the smallest group we will count out loud — and nobody reading
+ * their email has heard of it. Worse, it reads as a threshold the reader has
+ * failed to meet, which is the opposite of what it means: there is nothing
+ * wrong with their posting, there are simply not many people about.
  */
 function digestCounts(it: DigestItem): string {
   const n = it.newOpposite;
   const arrivals =
     n === null
-      ? 'nothing new that clears the floor'
+      ? 'too few people around here to count yet'
       : it.type === 'HAVE'
         ? n === 0
           ? 'nobody new looking nearby'
@@ -601,7 +608,7 @@ export function renderDigest(
     const { html, text } = notice(
       {
         heading: 'Your digest is ready.',
-        line: `There is movement around your wants and haves ${period}.`,
+        line: `Something moved on your wants and haves ${period}.`,
         accent: MATCH,
       },
       f,
@@ -622,7 +629,7 @@ export function renderDigest(
   // they do about any of it is a word to their assistant.
   const { html, text } = notice(
     {
-      heading: `Around your wants and haves ${period}.`,
+      heading: `How your wants and haves went ${period}.`,
       line: NEAR_MISS_LINE,
       accent: MATCH,
       extra: `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>`,
