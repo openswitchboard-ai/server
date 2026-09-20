@@ -66,7 +66,29 @@ const REHEARSAL_CLAUDE_CONFIG_DIR = process.env.REHEARSAL_CLAUDE_CONFIG_DIR ?? '
  * model hits first, and most people will not arrive on the largest model. And
  * it costs a fraction of Opus, which matters when a series runs six times.
  */
-const REHEARSAL_CLAUDE_MODEL = process.env.REHEARSAL_CLAUDE_MODEL ?? 'claude-sonnet-5';
+const REHEARSAL_CLAUDE_MODEL =
+  process.env.REHEARSAL_CLAUDE_MODEL ?? 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+
+/**
+ * THE THIRD ASSISTANT SIGNS IN THROUGH BEDROCK, ON THE AWS CREDENTIALS THE
+ * RUN ALREADY HOLDS.
+ *
+ * The driver runs the CLI in bare mode (CLAUDE_CODE_SIMPLE), and bare mode
+ * never reads OAuth or the keychain: authentication there is an API key or a
+ * third-party provider, nothing else. A whole afternoon of 20 September 2026
+ * went on "Not logged in · Please run /login" answers from a CLI that was
+ * signed in perfectly well — it simply was not allowed to look.
+ *
+ * Bedrock settles it without a new credential of any kind: the rehearsal
+ * already runs under AWS_PROFILE to reach the database and the logs, and
+ * Bedrock takes the same ones. Haiku 4.5 costs about two tenths of a cent a
+ * turn, so a six-run series is small change, and it is the honest test as
+ * well as the cheap one — the manual-delivery faults this suite exists to
+ * find are the ones a smaller model hits first.
+ *
+ * Set REHEARSAL_CLAUDE_BEDROCK=0 to go back to a plain ANTHROPIC_API_KEY.
+ */
+const USE_BEDROCK = (process.env.REHEARSAL_CLAUDE_BEDROCK ?? '1') !== '0';
 
 export interface ClaudeArgsInput {
   utterance: string;
@@ -251,7 +273,12 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       });
       const stdout = await spawn(
         args,
-        { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_SIMPLE: '1' },
+        {
+          ...process.env,
+          CLAUDE_CONFIG_DIR: configDir,
+          CLAUDE_CODE_SIMPLE: '1',
+          ...(USE_BEDROCK ? { CLAUDE_CODE_USE_BEDROCK: '1' } : {}),
+        },
         workDir,
       );
       const read = readClaudeJson(stdout);
