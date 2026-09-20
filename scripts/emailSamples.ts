@@ -68,9 +68,9 @@ export function sampleSet(envName = 'dev'): { name: string; content: EmailConten
           cadence: 'weekly',
           blind: false,
           items: [
-            { type: 'WANT', categoryLabel: 'Garden tools', newOpposite: 4, nearMisses: 2 },
-            { type: 'HAVE', categoryLabel: 'Mountain bikes', newOpposite: 11, nearMisses: 0 },
-            { type: 'WANT', categoryLabel: 'Keyboards & pianos', newOpposite: null, nearMisses: 1 },
+            { type: 'WANT', categoryLabel: 'Garden tools', newOpposite: 4, nearMisses: 2, matches: 0 },
+            { type: 'HAVE', categoryLabel: 'Mountain bikes', newOpposite: 11, nearMisses: 0, matches: 2 },
+            { type: 'WANT', categoryLabel: 'Keyboards & pianos', newOpposite: null, nearMisses: 1, matches: 1 },
           ],
         },
         links,
