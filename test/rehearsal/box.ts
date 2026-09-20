@@ -12,8 +12,22 @@
  *
  * An assistant carrying a self-written switchboard skill into run 4 is not the
  * assistant run 1 measured, and the fourth run's clean score is the skill's,
- * not the manual's. `~/osb-deep-clean.sh <dir> <unit>` on the box clears all of
- * it and keeps the Telegram pairing (which is configuration, not recollection).
+ * not the manual's.
+ *
+ * `~/osb-restore.sh <dir> <unit>` on the box lays the profile back down from a
+ * baseline tarball taken once, by hand, from a profile we were happy with —
+ * state, workspace, sessions and the two sqlite databases, about a quarter of a
+ * megabyte, everything an assistant can remember. The Telegram pairing is in
+ * the baseline, being configuration rather than recollection.
+ *
+ * IT REPLACED A DEEP CLEAN THAT FAILED QUIETLY. That script deleted named
+ * tables and parked named folders, and one `mv` in it could not overwrite a
+ * non-empty directory, so from the second run of every series it died there
+ * and `set -e` stopped everything below — sessions and memory un-wiped for a
+ * dozen runs, with the log line still ending "gateway active, key probe 200".
+ * A restore has no list to fall out of step and no partial success. The deep
+ * clean remains on the box as the way a NEW baseline is made.
+ *
  * This module runs it, then hands over the run's key and starts the unit again.
  *
  * THE KEY GOES OVER STDIN. Never on a command line — a command line is visible
@@ -21,7 +35,7 @@
  * a log line. `read -r H` on the far side, `input:` on this one.
  */
 import { execFile, execFileSync } from 'node:child_process';
-import { AGENT_HOMES, DEEP_CLEAN } from './config.js';
+import { AGENT_HOMES, RESTORE } from './config.js';
 
 export type AgentName = keyof typeof AGENT_HOMES;
 
@@ -59,7 +73,7 @@ export async function deepCleanAndBind(
   humanFirstName?: string,
 ): Promise<string> {
   const home = AGENT_HOMES[agent];
-  const cleaned = (await ssh(host, key, `${DEEP_CLEAN} ${home.dir} ${home.unit}`, 300_000))
+  const cleaned = (await ssh(host, key, `${RESTORE} ${home.dir} ${home.unit}`, 300_000))
     .trim()
     .split('\n')
     .slice(-1)[0];
