@@ -215,9 +215,49 @@ export function detailShortfall(card: {
   return undefined;
 }
 
-/** The one line telling the assistant what to do with the questions. */
+/**
+ * The one line telling the assistant what to do with the questions.
+ *
+ * IT NAMES THE KEYS, and that is the whole of the 20 September fix. The rule
+ * counts stated facts under the keys above; the refusal used to describe them
+ * only as "their answers", so an assistant had no way to tell which of the
+ * things it already knew would count. Three transcripts in a row show the same
+ * misreading of it — the seller's assistant went back to its human hunting for
+ * a part number, a spring rate or a colour code for a second-hand pedal spring,
+ * when `fits: ClubSport V3 pedals` alongside `brand: Fanatec` was sitting in
+ * the conversation already and would have gone straight through. Naming the
+ * keys, and saying outright that no part number is wanted, costs the gate
+ * nothing: the bar is the same count of the same facts.
+ *
+ * Every key named here MUST be one the rule actually counts. The suite asserts
+ * that, because a refusal that asks for a key the count ignores is the loop
+ * this constant was rewritten to end.
+ *
+ * WHAT WAS CUT to make room, the cap being 300 characters: the old closing
+ * line, "Put only the questions to them: that it came back, and how it is sent
+ * again, is yours to handle quietly." The manual still carries that rule in
+ * full (mcp/instructions.ts, the "posting" section), and it is about how the
+ * assistant talks rather than about what the posting is short of.
+ */
 export const DETAIL_HUMAN_ACTION =
-  'Ask your human these, then post it again with their answers in `attributes`. If they truly do not know, say so with detail_unknown and post it again as it stands. Put only the questions to them: that it came back, and how it is sent again, is yours to handle quietly.';
+  'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. What it fits or what sort it is counts; no part number is wanted. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
+
+/**
+ * And the one line for an assistant that DID reach for the escape hatch and
+ * was refused anyway.
+ *
+ * The hatch is keyed on the account and the poster's own words for the thing
+ * (`detailKey`), so it only recognises a second attempt that spells the thing
+ * the same way. That is the shape of asking and coming back — except that the
+ * questions above invite an assistant to sharpen those very words, and a
+ * posting that went from "upgraded Fanatec pedal spring" to "Fanatec ClubSport
+ * V3 brake performance spring" is a first attempt again as far as the row is
+ * concerned. It used to be refused with the ordinary questions and no word
+ * that the flag had been ignored, which is a loop an assistant cannot see the
+ * shape of, let alone escape. So it is told.
+ */
+export const DETAIL_UNKNOWN_UNMATCHED =
+  'detail_unknown takes a posting as it stands only on a second try: the same `kind`, inside ten minutes of being asked. This one reads as a first try, because the words for the thing changed or the ten minutes went by. Send it again now with detail_unknown and the same `kind`.';
 
 // ---------------------------------------------------------------------------
 // THE ESCAPE HATCH, AND WHY IT IS A ROW RATHER THAN A FLAG.
