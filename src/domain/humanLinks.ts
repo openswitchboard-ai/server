@@ -512,10 +512,21 @@ export const PRESS_SENTENCES = {
   expired: 'That page has run out. I can fetch you a fresh one whenever you are ready.',
 } as const;
 
-/** The part of a still-waiting answer that is for the agent rather than the human. */
+/**
+ * The part of a still-waiting answer that is for the agent rather than the
+ * human.
+ *
+ * THE LAST SENTENCE IS THERE BECAUSE ASSISTANTS KEEP ASKING TO BE TOLD. Both
+ * sides of a rehearsal wrote "just let me know once you've clicked through it"
+ * while holding the line on the press (dev, 20 September 2026) — the one
+ * sentence the manual names as never to write, said by an agent that was in
+ * fact doing the right thing. It asks the human to do the reporting, and the
+ * switchboard already knows. Saying so here, in the answer the agent is
+ * reading at that moment, is worth more than another line of manual.
+ */
 export const PRESS_WHAT_TO_DO = {
   waiting:
-    'Put that page in front of your human now, in the conversation you are already having, and say what it asks. Then wait again.',
+    'Put that page in front of your human now, in the conversation you are already having, and say what it asks. Then wait again. Never ask them to report back after pressing it: this call answers the instant they press, and asking makes them do your waiting for you.',
   expired:
     'There is nothing left to hand over, so fetch a fresh link, give them that one, and wait on the press that comes back with it.',
 } as const;
