@@ -95,7 +95,7 @@ import {
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
 import { bedrockSimulator, cannedSimulator, extractPresses, type HumanTurn, type Simulator } from './human.js';
-import { scoreTranscript, type ScoreResult } from './jev.js';
+import { scoreTranscript, splitSlips, type ScoreResult } from './jev.js';
 import { DEFAULT_STREAK } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
@@ -1110,14 +1110,23 @@ async function main(): Promise<number> {
 
     console.log(runTable(result));
     results.push(result);
+    const split = splitSlips(score);
     summaries.push({
       run: i,
       cast: `${cast.seller},${cast.buyer}`,
       // A TODO is not a pass, so a run carrying one is not clean either. It
       // simply is not a FAILURE — nothing is fixed by it and nothing is proved.
+      //
+      // The `S*.speech` checks are left OUT of this count on purpose. They are
+      // judgements about how an assistant spoke, and this field is supposed to
+      // mean only what the database and the transcript say HAPPENED. The speech
+      // findings arrive in the two fields below, in their own two classes. See
+      // levels.ts for why the two are held apart.
       deterministicClean: result.stages.every((s) =>
-        s.checks.every((c) => c.verdict !== 'fail' && c.verdict !== 'todo'),
+        s.checks.every((c) => c.id.endsWith('.speech') || (c.verdict !== 'fail' && c.verdict !== 'todo')),
       ),
+      criticalSlips: split.critical.length,
+      otherSlips: split.other.length,
       failedTurns: score.failedTurns.length,
       uncertainTurns: score.uncertainTurns.length,
       scoredTurns: score.scoredCount,

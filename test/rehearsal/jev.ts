@@ -28,7 +28,7 @@ import {
   type Turn,
 } from '../../scripts/eval/transcriptScore.mjs';
 import { JEV_SECRET, REGION } from './config.js';
-import { bandFor, type Band } from './levels.js';
+import { bandFor, isCritical, type Band } from './levels.js';
 
 export interface ScoredMark {
   ruleId: string;
@@ -232,6 +232,59 @@ async function scoreOne(
     });
   }
   return base;
+}
+
+/**
+ * ONE SLIP, AS THE SUMMARY PRINTS IT.
+ *
+ * Both scores travel with it, never just the first, because "0.82/0.79" and
+ * "0.82/0.51" are different findings and a reader who is being asked to accept
+ * a tolerated slip is entitled to see which one it was.
+ */
+export interface Slip {
+  ruleId: string;
+  critical: boolean;
+  speaker: string;
+  section: string;
+  /** The two probabilities, in order; the second is null where it was not had. */
+  values: (number | null)[];
+  disagreed: boolean;
+  /** The assistant's words, verbatim and uncut. */
+  text: string;
+}
+
+/**
+ * SPLIT ONE RUN'S FAILED MARKS INTO THE TWO CLASSES.
+ *
+ * A mark reaches here only when BOTH Jev calls cleared the bar (see scoreOne),
+ * so everything below is a failure the suite is already confident about. The
+ * split is the one from levels.ts: a critical rule is about harm and gates at
+ * zero; anything else is about register and is counted into the rate.
+ *
+ * Counted per MARK, not per turn: one turn that invents a figure AND says a
+ * dotted path aloud is two findings, and folding them into one turn would let
+ * an assistant slip twice for the price of once.
+ */
+export function splitSlips(score: ScoreResult): { critical: Slip[]; other: Slip[] } {
+  const critical: Slip[] = [];
+  const other: Slip[] = [];
+  for (const t of score.turns) {
+    if (t.reason) continue;
+    for (const m of t.marks) {
+      if (m.band !== 'fail') continue;
+      const slip: Slip = {
+        ruleId: m.ruleId,
+        critical: isCritical(m.ruleId),
+        speaker: t.speaker,
+        section: t.section,
+        values: m.values,
+        disagreed: m.disagreed,
+        text: t.text,
+      };
+      (slip.critical ? critical : other).push(slip);
+    }
+  }
+  return { critical, other };
 }
 
 /** Slip rate per rule per assistant, for the end-of-series table. */

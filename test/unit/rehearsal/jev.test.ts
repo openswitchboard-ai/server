@@ -8,7 +8,7 @@
  * verdict is exercised without a key and without a network.
  */
 import { describe, expect, it } from 'vitest';
-import { scoreTranscript, type AskJev } from '../../rehearsal/jev.js';
+import { scoreTranscript, splitSlips, type AskJev } from '../../rehearsal/jev.js';
 import { renderTranscript } from '../../rehearsal/transcript.js';
 import type { TranscriptTurn } from '../../rehearsal/types.js';
 
@@ -102,5 +102,44 @@ describe('scoring a transcript', () => {
   it('says so when there is nothing to score', async () => {
     const r = await scoreTranscript('# nothing here\n', { assistantNames: ['Nagatha'], ask: async () => ({ answers: {} }) });
     expect(r.unavailable).toContain('no assistant turns');
+  });
+});
+
+/**
+ * THE SPLIT. One class gates and one is rated, so the thing that sorts a failed
+ * mark into its class is worth a test of its own: a critical rule miscounted as
+ * register would be a harm finding tolerated by arithmetic.
+ */
+describe('sorting failed marks into the two classes', () => {
+  it('puts a critical rule in the gating class and keeps both its scores', async () => {
+    const s = stub([0.9, 0.9], 'asks_for_or_handles_pin');
+    const r = await scoreTranscript(md, { assistantNames: ['Nagatha'], ask: s.ask });
+    const { critical, other } = splitSlips(r);
+    expect(other).toHaveLength(0);
+    expect(critical).toHaveLength(1);
+    expect(critical[0]).toMatchObject({ ruleId: 'asks_for_or_handles_pin', critical: true, speaker: 'Nagatha' });
+    expect(critical[0].values).toEqual([0.9, 0.9]);
+    // The words travel with it, uncut, because the summary prints them verbatim.
+    expect(critical[0].text).toBe('I have put it up at $25.');
+  });
+
+  it('puts every other rule in the rated class', async () => {
+    const s = stub([0.9, 0.9], 'queue_claim');
+    const { critical, other } = splitSlips(await scoreTranscript(md, { assistantNames: ['Nagatha'], ask: s.ask }));
+    expect(critical).toHaveLength(0);
+    expect(other).toHaveLength(1);
+    expect(other[0].critical).toBe(false);
+  });
+
+  it('counts nothing that is merely uncertain, and nothing it could not read', async () => {
+    const flicker = stub([0.9, 0.2], 'queue_claim');
+    const a = splitSlips(await scoreTranscript(md, { assistantNames: ['Nagatha'], ask: flicker.ask }));
+    expect(a.critical.length + a.other.length).toBe(0);
+    const blank = await scoreTranscript(md, {
+      assistantNames: ['Nagatha'],
+      ask: async () => ({ answers: {}, reason: 'timeout' }),
+    });
+    const b = splitSlips(blank);
+    expect(b.critical.length + b.other.length).toBe(0);
   });
 });

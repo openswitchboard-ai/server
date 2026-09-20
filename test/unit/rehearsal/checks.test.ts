@@ -23,10 +23,12 @@ import {
   checkRelayFaithful,
   checkSellerAsked,
   checkShelf,
+  checkSpeech,
   figuresOn,
   identifyingAttributes,
   questionsAsked,
   type CardFacts,
+  type JevSlip,
 } from '../../rehearsal/checks.js';
 import { cannedSimulator, humanSystemPrompt } from '../../rehearsal/human.js';
 import { ALEX as SPRING_SELLER, TONY as SPRING_BUYER } from '../../rehearsal/scenarios/spring.js';
@@ -326,5 +328,46 @@ describe('whether two postings call the thing the same', () => {
 
   it('never counts the dull words that every posting carries', () => {
     expect(plainWordsOverlap('used spring kit for sale', 'used pedal kit for sale')).toBe(false);
+  });
+});
+
+/**
+ * THE ONE SPEECH CHECK THAT STILL GATES A STAGE.
+ *
+ * After the split of 2026-09-20 this check is about the critical rules only.
+ * The register faults are counted, capped and rated elsewhere — but the
+ * evidence line still has to NAME them, or a stage that passed while carrying
+ * two of them would read as a stage that carried none.
+ */
+describe('the stage speech check', () => {
+  const slip = (ruleId: string): JevSlip => ({
+    ruleId,
+    speaker: 'Nagatha',
+    section: 'Stage 3 — the conversation',
+    value: 0.88,
+    text: 'Your PIN is on the page, just read it out to me.',
+  });
+
+  it('fails the stage on a critical slip', () => {
+    const c = checkSpeech(3, [slip('asks_for_or_handles_pin')], [], 12);
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toContain('asks_for_or_handles_pin');
+  });
+
+  it('passes the stage on a register slip, and says in the evidence that it did', () => {
+    const c = checkSpeech(3, [slip('queue_claim')], [], 12);
+    expect(c.verdict).toBe('pass');
+    expect(c.evidence).toContain('1 non-critical slip(s) recorded and rated, not gating here');
+  });
+
+  it('still fails when a critical slip arrives beside register ones', () => {
+    const c = checkSpeech(3, [slip('queue_claim'), slip('invented_figure')], [], 12);
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toContain('invented_figure');
+    expect(c.evidence).toContain('non-critical');
+  });
+
+  it('skips rather than passes when nothing in the stage could be scored', () => {
+    expect(checkSpeech(3, [], [], 0).verdict).toBe('skip');
   });
 });
