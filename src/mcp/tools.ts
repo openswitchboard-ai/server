@@ -1397,7 +1397,15 @@ async function dispatchToolInner(
           saved: true,
           note: {
             text:
-              'Saved. Every agent your human connects will be handed this on its next check, and your human can see and change it on their approval page.' +
+              // SAID BECAUSE ASSISTANTS KEEP CALLING THIS A PRIOR AGREEMENT.
+              // "Then settle into the hourly check we already have agreed",
+              // said by an assistant that had set hourly itself, seconds
+              // earlier, having asked its human nothing (dev, 20 September
+              // 2026, Jev 92%). The switchboard records these as
+              // `agent-attested` because it hears only the agent — so it can
+              // say so, and ask for the one sentence that keeps the human's
+              // picture true.
+              'Saved on your word alone: the switchboard hears you and never your human. Tell them now what you have set and that you have just set it, and that their own page changes it. Every agent they connect is handed this on its next check.' +
               (saved.hearsViaAssistant
                 ? ' You run between conversations and you check on a schedule, so the switchboard now has you down as how your human hears about all this: the message nudges stop, and you are the one who brings them the news.'
                 : '') +
