@@ -323,9 +323,14 @@ function agentFacingListing(): any {
     ['ask'],
     'Haves only, and STRAIGHT sales only: a deliberate asking price, which may be shown to a counterparty from the details step onward. Refused on a best-offer sale, where there is no asking price and the floor is private — put that figure in `price`. Structurally forbidden on a want.',
   );
+  // The other field the 20 September defect went through, by its own road.
+  // Everything here crosses whole at the details step, so a figure written
+  // into it reaches the counterparty with nothing having checked it — a
+  // `budget` key on a want is the human's ceiling handed to the person they
+  // are about to haggle with (domain/moneyInWords.ts, attributeFigureRule).
   say(
     ['attributes'],
-    'Per-category typed key/values, keys in lower_snake_case. Identity keys and sensitive personal keys (health, sexuality, beliefs, ethnicity, etc.) are FORBIDDEN at the schema level: those facts live client-side only and never enter a want or a have.',
+    'Per-category typed key/values, keys in lower_snake_case. Identity keys and sensitive personal keys (health, sexuality, beliefs, ethnicity, etc.) are FORBIDDEN at the schema level: those facts live client-side only and never enter a want or a have. EVERY VALUE HERE IS SHOWN TO THE OTHER SIDE once both are keen, so NO MONEY GOES IN IT: a ceiling or a floor belongs in `price`, an asking price in `ask`, and a figure written in here comes back unposted.',
   );
   say(['visibility'], 'The one mode v1 has: anonymous until an introduction is made.');
   say(
@@ -824,7 +829,24 @@ export function protocolAnswer(payload: ProtocolError): ToolResult {
     };
   }
   const link = linkIn(payload.human_action);
-  const body = { what_happened: word, ...payload, ...(link ? { link } : {}) };
+  // NOTHING HAPPENED, SAID BEFORE ANYTHING ELSE.
+  //
+  // An expected refusal comes back as an ordinary answer rather than a
+  // failure, so a client shows the agent a sentence instead of a raw error
+  // line and the human never sees machinery. What that left out was the
+  // negative itself: `what_happened: "floor_is_private"` is a LABEL, and an
+  // agent skimming its sixth reply read the label, not the meaning.
+  //
+  // On 20 September 2026 an assistant was refused six times over and told its
+  // human "It's up, Alex" with nothing posted at all. That is the worst thing
+  // this switchboard can do — a person believing their thing is out in the
+  // world when it is not — and no wording inside the sentence would have been
+  // read any more carefully than the sentence already there.
+  //
+  // So the denial is a field of its own, and it is FIRST, because an agent
+  // that skims reads the top. It costs a line and it cannot be mistaken for a
+  // success.
+  const body = { nothing_happened: true as const, what_happened: word, ...payload, ...(link ? { link } : {}) };
   return {
     content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
     structuredContent: body,
