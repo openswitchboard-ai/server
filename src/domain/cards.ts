@@ -15,7 +15,8 @@ import {
   validatePayload,
 } from '../protocol.js';
 import { categoryDenied, categoryGate } from '../denylist.js';
-import { runIntake } from '../intake/pipe.js';
+import { decidingCheck, runIntake } from '../intake/pipe.js';
+import { attributeFields } from '../intake/checks/moneyFigure.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { SHELF_NONE_OPTION, snapCategory } from './categoryBackfill.js';
@@ -32,6 +33,7 @@ import {
 import { SHELF_PICK_ACTION, generalShelf, shelfInWords, shelfPickLink } from './shelfPick.js';
 import {
   DETAIL_HUMAN_ACTION,
+  DETAIL_UNKNOWN_UNMATCHED,
   detailAskedRecently,
   detailShortfall,
   recordDetailAsked,
@@ -543,15 +545,27 @@ export async function publishIntent(
   const intake = await runIntake(cfg, {
     door: 'posting',
     sender_account: accountId,
-    fields: { category: card.category, ...(kind ? { kind } : {}) },
+    fields: {
+      category: card.category,
+      ...(kind ? { kind } : {}),
+      // AND THE ATTRIBUTES, key by key (20 September 2026). Every value here
+      // crosses to the counterparty at the details step, so `budget: 25` on a
+      // want is a human's ceiling handed to the person they are about to
+      // haggle with. The rule is in domain/moneyInWords.ts and what it reads
+      // is written down in intake/checks/moneyFigure.ts. They go in as the
+      // agent wrote them, before canonicalisation, because what it wrote is
+      // what the check is about.
+      ...attributeFields(card.attributes),
+    },
   });
   if (intake.outcome === 'refuse') {
-    // A figure in `kind` is not a category decision, so it does not wear the
-    // category's word. It comes back the way the money check comes back
-    // everywhere else: the sentence the check wrote, and the field to fix.
+    // A figure in `kind` or in an attribute is not a category decision, so it
+    // does not wear the category's word. It comes back the way the money check
+    // comes back everywhere else: the sentence the check wrote, and the field
+    // to fix, which the check itself names.
     if (intake.reason_code === 'money-figure-in-words') {
       throw Object.assign(new Error(intake.plain_words ?? 'this cannot go up as it stands'), {
-        validation: ['kind'],
+        validation: [decidingCheck(intake)?.field ?? 'kind'],
       });
     }
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
@@ -588,7 +602,10 @@ export async function publishIntent(
       // Written down first, so the second attempt has something to recognise.
       await recordDetailAsked(accountId, kind);
       throw new OsbError('NEEDS_DETAIL', {
-        human_action: DETAIL_HUMAN_ACTION,
+        // The escape hatch was reached for and did not match: say so, rather
+        // than handing back the same questions as though it had never been
+        // sent. See DETAIL_UNKNOWN_UNMATCHED in domain/postingDetail.ts.
+        human_action: opts.detailUnknown ? DETAIL_UNKNOWN_UNMATCHED : DETAIL_HUMAN_ACTION,
         questions: shortfall.questions,
       });
     }
@@ -1174,6 +1191,37 @@ export async function amendIntent(
     throw Object.assign(new Error(`this change cannot be made as it stands: ${v.plain.join('; ')}`), {
       validation: v.reasons,
     });
+  }
+  // AND THE AMENDMENT DOOR OF THE PIPE, which had stood with its checks on it
+  // and no caller (20 September 2026). `attributes` is amendable and `kind` is
+  // not, so an amend is the one call that can put new free words on a posting
+  // that is already up — and every attribute value crosses to the counterparty
+  // at the details step, which makes `budget: 25` added by an amend the same
+  // leak as one posted on the first day. The card AS IT WILL STAND is what
+  // goes in, so an amend that leaves an attribute alone is refused for it
+  // exactly as a re-publish would be.
+  //
+  // No `category` goes in: it is not amendable, it has already been through
+  // the deny list, and assertCategoryOpen below asks the question again in the
+  // words the door has always answered it in. `kind` stays out for the same
+  // reason. What is left that can refuse here is the money check and a
+  // suspended account, and an account the operator has stopped amending a
+  // posting is a door that should be shut to it.
+  const amendIntake = await runIntake(cfg, {
+    door: 'amendment',
+    sender_account: accountId,
+    intent_id: intentId,
+    fields: attributeFields(next.attributes),
+  });
+  if (amendIntake.outcome === 'refuse') {
+    const deciding = decidingCheck(amendIntake);
+    if (amendIntake.reason_code === 'money-figure-in-words') {
+      throw Object.assign(
+        new Error(amendIntake.plain_words ?? 'this change cannot be made as it stands'),
+        { validation: [deciding?.field ?? 'attributes'] },
+      );
+    }
+    throw new OsbError('CATEGORY_PROHIBITED', { human_action: amendIntake.plain_words });
   }
   // AND THE FLOOR STAYS PRIVATE ON AN AMEND TOO, read off the card as it will
   // stand rather than off the patch: turning a straight sale into a best offer

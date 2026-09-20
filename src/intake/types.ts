@@ -56,6 +56,13 @@ export type Outcome = 'pass' | 'hold' | 'refuse';
  * `model_id` and `error` are the two things a caller sometimes has to see
  * behind the verdict: which model made the call, and the error a check threw
  * before it could answer.
+ *
+ * `field` is WHICH PART OF THE ITEM the check is talking about, where it can
+ * say: `kind`, or `attributes.budget`. It is set only by checks that read more
+ * than one field, and it is there so a door can hand the published
+ * `validation` list the field an assistant has to fix rather than guessing at
+ * one. It is a field name and never travels to a person — the sentence in
+ * `plain_words` is what a person reads.
  */
 export interface CheckResult {
   name: string;
@@ -63,6 +70,7 @@ export interface CheckResult {
   reason_code?: string;
   detail?: string;
   plain_words?: string;
+  field?: string;
   model_id?: string;
   error?: unknown;
 }
