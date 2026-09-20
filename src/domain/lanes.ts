@@ -118,12 +118,17 @@ const agreedTail = (thing: string, cadence: string): string =>
  * "your usual hourly rhythm", a rhythm that human had never been asked about
  * and never agreed (dev, 20 September 2026, Jev 81-91% on both calls).
  *
- * The wording now makes the answer the precondition rather than a step in a
- * list, and says outright that a rhythm nobody agreed is not theirs to
- * describe as theirs.
+ * The repair is one word. CONFIRM is not something an agent can do on its
+ * own: asking, suggesting and saving are three things it can do without ever
+ * hearing back, and a list of them reads as a recipe, but there is no
+ * confirming without an answer. Lachlan's wording, 20 September 2026, and
+ * better than the longer version it replaced — which had bolted a warning
+ * onto the side of the same recipe. The warning it replaced ("their answer,
+ * not yours") also broke the house rule against antithesis, which is the
+ * second time today that saying a thing twice was worse than saying it once.
  */
 const notYetTail = (thing: string): string =>
-  `Ask how often to look, suggest hourly, and WAIT for the answer — a rhythm you chose is not theirs. Save theirs with standing_arrangement, then promise ${thing}.`;
+  `Confirm with your human how often you should look, save it with standing_arrangement, and then promise ${thing}.`;
 
 /**
  * `emails` is what the switchboard genuinely sends mail about, said so it
