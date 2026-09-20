@@ -54,6 +54,14 @@ export interface TranscriptHeader {
   dry: boolean;
 }
 
+/**
+ * A tool failure the CLIENT wrote into the conversation, rather than words the
+ * assistant chose. Kept narrow on purpose: it has to carry a failure marker and
+ * name a tool failing, so an assistant TELLING its human something went wrong
+ * is still its own turn and still judged.
+ */
+const CLIENT_FAILURE = /^\s*(⚠️|🧩|\u26a0)[^\n]{0,120}\bfailed\b\s*$/iu;
+
 export function renderTranscript(header: TranscriptHeader, turns: TranscriptTurn[]): string {
   const out: string[] = [];
   out.push(`# Rehearsal run ${header.run} — ${header.runId}`);
@@ -75,6 +83,19 @@ export function renderTranscript(header: TranscriptHeader, turns: TranscriptTurn
     }
     if (t.toolActivity?.length) {
       out.push(`*(called ${t.toolActivity.join(', ')})*`);
+    }
+    // A CLIENT'S OWN FAILURE BANNER IS NOT THE ASSISTANT SPEAKING.
+    // OpenClaw renders a tool failure into the conversation as a line of its
+    // own ("⚠️ 🧩 Openswitchboard Wait For Press failed"), and it arrives here
+    // looking exactly like a turn. Scored as one, it drew 47% for reading
+    // machine detail aloud — a mark against an assistant for words its client
+    // wrote (dev, 20 September 2026). It is written into the transcript as an
+    // aside, so a person reading the run still sees the failure happen, and
+    // the assistant's RECOVERY from it is still judged like any other turn.
+    if (CLIENT_FAILURE.test(t.text)) {
+      out.push(`*(the client showed a tool failure: ${flatten(t.text)})*`);
+      out.push('');
+      continue;
     }
     out.push(`**${t.speaker}:** ${flatten(t.text)}`);
     out.push('');
