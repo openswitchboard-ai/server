@@ -52,6 +52,22 @@ import type { AgentReply, Driver } from '../types.js';
  */
 const REHEARSAL_CLAUDE_CONFIG_DIR = process.env.REHEARSAL_CLAUDE_CONFIG_DIR ?? '';
 
+/**
+ * WHICH MODEL THE THIRD ASSISTANT IS, SAID OUT LOUD.
+ *
+ * Passing no --model takes the signed-in account's default, which on 20
+ * September 2026 was Opus 5 — so the rig was quietly testing the manual
+ * against the strongest model available while recording only "claude-code",
+ * and a change to that account's default would have changed the test with
+ * nothing in any transcript to say so.
+ *
+ * Sonnet is the default here for two reasons. It is the honest test: the
+ * manual-delivery problems this suite exists to find are the ones a smaller
+ * model hits first, and most people will not arrive on the largest model. And
+ * it costs a fraction of Opus, which matters when a series runs six times.
+ */
+const REHEARSAL_CLAUDE_MODEL = process.env.REHEARSAL_CLAUDE_MODEL ?? 'claude-sonnet-5';
+
 export interface ClaudeArgsInput {
   utterance: string;
   mcpConfigPath: string;
@@ -85,6 +101,10 @@ export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
     // Nothing of this machine's own configuration.
     '--setting-sources',
     '',
+    // Named rather than defaulted, so a transcript from today stays
+    // comparable with one from next month.
+    '--model',
+    input.model,
   ];
   if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
   // The prompt is the positional argument, and it goes LAST so nothing in the
@@ -226,6 +246,7 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       const args = buildClaudeArgs({
         utterance,
         mcpConfigPath,
+        model: REHEARSAL_CLAUDE_MODEL,
         resumeSessionId: sessions.get(sessionId),
       });
       const stdout = await spawn(
@@ -238,7 +259,9 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       if (!read.text) {
         throw new Error('claude produced no text (provider failure or an empty turn)');
       }
-      return { text: read.text, toolActivity: read.toolActivity, model: 'claude-code' };
+      // The model by name: "claude-code" told a reader nothing about what was
+      // actually on the other end of the conversation.
+      return { text: read.text, toolActivity: read.toolActivity, model: REHEARSAL_CLAUDE_MODEL };
     },
 
     async teardown(): Promise<void> {
