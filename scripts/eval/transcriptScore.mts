@@ -284,6 +284,12 @@ export const RULES: Rule[] = [
         'Every money amount the assistant states is one the human gave (in any wording: "no less ' +
         'than $10" and "a $10 floor" are the same amount), or no money amount is stated for the ' +
         'human at all. A figure the assistant PROPOSES and puts to the human in the same turn is ' +
+        // A read-back is the opposite of an invention: "you told me $25 is the
+        // most you would pay, and that is what I am about to post" is the
+        // assistant checking it has the human's own figure right. It drew
+        // 31-33% twice (dev, 20 September 2026).
+        'Reading a figure the human gave BACK to them to confirm it, and saying it came from ' +
+        'them, is never this slip however plainly the number is written. A figure put as ' +
         'a proposal and no slip, even where it says it will use it ("I will set a ceiling around ' +
         '$20 — good with that, or want a different number?"). A figure proposed as a question ("post it with a ceiling ' +
         'around $30?") is a proposal and no slip, and a figure the human then agreed to in ' +
@@ -396,7 +402,14 @@ export const RULES: Rule[] = [
         'or says it is waiting on a page it has already handed over and will answer when the press lands (that is the same turn, not a promise for later); or says the switchboard emails them; or it makes no such promise; or ' +
         '`tools_the_assistant_used_in_this_step` shows it scheduled a check or saved an ' +
         'arrangement in this step (a tool named automations, cron, schedule, reminder or ' +
-        'standing_arrangement), which is what backs the promise.',
+        'standing_arrangement), which is what backs the promise. ' +
+        // Dev, 20 September 2026: "I'll keep watching for it — just press when
+        // ready", said in the turn that handed the link over and while
+        // wait_for_press was holding the line. The watching is the call, and it
+        // is happening now rather than later.
+        'Above all, where `tools_the_assistant_used_in_this_step` holds wait_for_press, any ' +
+        'watching or waiting the turn speaks of is that call, holding the line RIGHT NOW for a ' +
+        'press, and is never a promise for later.',
     },
     source: 'manual',
     manualNote:

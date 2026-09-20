@@ -574,7 +574,14 @@ const HEDGE =
  * words differed from the human's on the model.
  */
 const CERTAIN =
-  /\b(exactly what you (wanted|asked for)|the exact\b|found (it|the one)|this is the (one|thing) you)\b/i;
+  // `the exact` on its own was far too broad. It failed a run where Bilby had
+  // hedged three times over ("it might be your thing", "a possible match, not
+  // a sure one") and then offered to ask the seller "the exact spring
+  // size/spec" — the product's vocabulary, which is the assistant doing its
+  // job (dev, 20 September 2026). The same lesson as machine_detail_aloud:
+  // these rules are about claims made for the MATCH, never about the words a
+  // part is described in.
+  /\b(exactly what you (wanted|asked for)|the exact (thing|one|item|part) you\b|found (it|the one)|this is the (one|thing) you)\b/i;
 
 /**
  * WAS A MAYBE SAID AS A MAYBE?
