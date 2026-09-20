@@ -34,6 +34,32 @@ npm run rehearsal -- --stage 6 --until-green 5
 `npm run rehearsal -- <flags>` and `npx tsx test/rehearsal/run.ts <flags>` are
 the same thing.
 
+### Claude Code as the third assistant
+
+The driver runs Claude Code headless with an empty working directory, so no
+CLAUDE.md, project settings or repository are discovered. It also used to make
+a fresh `CLAUDE_CONFIG_DIR` per run — and that is where the login lives, so on
+a machine whose token sits in the Keychain the CLI answered **"Not logged in ·
+Please run /login"** and every run it was cast in died.
+
+Sign one directory in by hand, once:
+
+```
+mkdir -p ~/.osb-rehearsal-claude
+CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude claude    # then /login, then exit
+export REHEARSAL_CLAUDE_CONFIG_DIR=~/.osb-rehearsal-claude
+```
+
+That directory holds this rig's login and nothing else — it is not your own
+`~/.claude`. Everything else stays isolated: empty working directory,
+`--strict-mcp-config` so the only MCP server is the one the run writes, and
+`--setting-sources ''`. Teardown removes the MCP file it wrote and leaves the
+login alone.
+
+Leave the variable unset and the driver behaves as before: a fresh directory
+per run, properly isolated and signed in to nothing. **Turns are billed to
+whichever account you sign that directory into.**
+
 | flag | what it does |
 | --- | --- |
 | `--stage <n>` | run stages 1..n (default 6) |
@@ -65,6 +91,7 @@ npx tsx test/rehearsal/run.ts --dry --stage 6 --runs 1   # the orchestration, fr
 | --- | --- |
 | `AWS_PROFILE=openswitchboard`, `AWS_REGION=us-east-1` | the dev database (RDS Data API), Bedrock for the simulated humans, Secrets Manager for the scorer's key, CloudWatch for the tool-call log |
 | `NAGATHA_HOST`, `NAGATHA_KEY` | the OpenClaw box and the key that opens it |
+| `REHEARSAL_CLAUDE_CONFIG_DIR` | a directory holding nothing but this rig's own Claude Code login (see below) |
 | `DUET_B_HOST`, `DUET_B_KEY` | the same box; Bilby lives in its own OpenClaw home |
 | `DUET_B_PROFILE=bilby` | which profile is Bilby |
 | `OSB_RATELIMIT_BYPASS` | **read for you.** The suite fetches it from SSM `/osb/dev/ratelimit-bypass` inside the process and puts it where `test/integration/helpers.ts` reads it. It is **never printed**, never written to a report and never passed on a command line. Set it yourself only if you have a reason to |
