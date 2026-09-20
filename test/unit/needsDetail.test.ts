@@ -41,7 +41,11 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 import * as db from '../../src/db.js';
 import { amendIntent, publishIntent } from '../../src/domain/cards.js';
 import {
+  CONDITION_KEY,
+  DETAIL_HUMAN_ACTION,
+  DETAIL_UNKNOWN_UNMATCHED,
   DETAIL_UNKNOWN_WINDOW_MINUTES,
+  IDENTIFYING_KEYS,
   MAX_QUESTIONS,
   detailKey,
   detailShortfall,
@@ -198,6 +202,76 @@ describe('what counts as enough to describe the thing to a stranger', () => {
     ).toBeUndefined();
   });
 
+  /**
+   * THE ITEM THE GATE WAS BUILT FOR, TOLD PROPERLY.
+   *
+   * The same Fanatec spring, with everything a seller who has no part number
+   * can honestly say about it: who made it, what it goes on, and what state it
+   * is in. That is a posting a stranger can recognise, and it must go straight
+   * up. The 20 September rehearsals show assistants going round five times on
+   * exactly this item, which is why it is written down as a passing case as
+   * well as a refused one.
+   */
+  it('lets the Fanatec spring through on facts a seller with no part number has', () => {
+    expect(
+      detailShortfall({
+        category: 'goods.sim-racing.pedal-parts',
+        type: 'offering',
+        kind: 'Fanatec ClubSport V3 brake performance spring',
+        attributes: {
+          brand: 'Fanatec',
+          fits: 'Fanatec ClubSport V3 pedals',
+          condition: 'used about a year, good, nothing bent or broken',
+        },
+      }),
+    ).toBeUndefined();
+    // And the same again with `type` standing in for `fits`, because the
+    // refusal offers both and the count must honour both.
+    expect(
+      detailShortfall({
+        category: 'goods.sim-racing.pedal-parts',
+        type: 'offering',
+        kind: 'brake performance spring',
+        attributes: { brand: 'Fanatec', type: 'stiffer upgrade spring', condition: 'good' },
+      }),
+    ).toBeUndefined();
+  });
+
+  /**
+   * WHAT THE ASSISTANT IS TOLD TO DO ABOUT IT.
+   *
+   * Three transcripts on 20 September (realism-reports/rehearsal) show the same
+   * misreading: told only to post again "with their answers in attributes", the
+   * seller's assistant went back to its human asking for a part number, a
+   * spring rate or a colour code for a second-hand pedal spring, when the facts
+   * that would have counted were already in the conversation. So the line names
+   * the keys. Every key it names has to be one the rule counts: a refusal that
+   * asks for a field the count ignores is the loop itself.
+   */
+  it('names, in the refusal, keys the rule actually counts', () => {
+    expect(DETAIL_HUMAN_ACTION.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(DETAIL_HUMAN_ACTION)).toEqual([]);
+    // The escape hatch is still named at the point of refusal.
+    expect(DETAIL_HUMAN_ACTION).toContain('detail_unknown');
+    // And the part number that sent three assistants back to their humans for
+    // something no seller has is ruled out in as many words.
+    expect(DETAIL_HUMAN_ACTION).toContain('part number');
+
+    // The keys it lists, read off the sentence itself: the comma list between
+    // "`attributes`:" and the full stop that ends it.
+    const listed = DETAIL_HUMAN_ACTION.split('`attributes`:')[1]
+      .split('.')[0]
+      .split(',')
+      .map((w) => w.trim());
+    expect(listed.length).toBeGreaterThanOrEqual(5);
+    const counted = new Set<string>([...IDENTIFYING_KEYS, CONDITION_KEY]);
+    for (const key of listed) expect(counted.has(key), key).toBe(true);
+    // The two that decide a goods posting on offer are both on the list, so an
+    // assistant reading it can satisfy the gate without guessing.
+    expect(listed).toContain('brand');
+    expect(listed).toContain(CONDITION_KEY);
+  });
+
   it('keys the escape hatch on the thing, in any spelling of it', () => {
     expect(detailKey('  Upgraded   FANATEC pedal spring ')).toBe('upgraded fanatec pedal spring');
     expect(DETAIL_UNKNOWN_WINDOW_MINUTES).toBe(10);
@@ -209,8 +283,13 @@ describe('what counts as enough to describe the thing to a stranger', () => {
 // ---------------------------------------------------------------------------
 interface World {
   sql: { text: string; params: any[] }[];
-  /** How long ago this account was asked about this thing, in minutes. */
-  askedMinutesAgo: number | null;
+  /**
+   * How long ago this account was asked about each thing, in minutes, keyed
+   * the way the row is: by the poster's own words for it. Keyed rather than a
+   * single number because the escape hatch turns on exactly that — a second
+   * attempt is only recognised where the words for the thing have not moved.
+   */
+  asked: Map<string, number>;
   card: Record<string, any>;
 }
 let world: World;
@@ -221,12 +300,12 @@ function fakePool() {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
       if (/INSERT INTO cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
       if (/FROM posting_detail_asks/.test(sql)) {
-        const ago = world.askedMinutesAgo;
-        const inside = ago !== null && ago < DETAIL_UNKNOWN_WINDOW_MINUTES;
+        const ago = world.asked.get(String(params[1]));
+        const inside = ago !== undefined && ago < DETAIL_UNKNOWN_WINDOW_MINUTES;
         return { rows: inside ? [{ '?column?': 1 }] : [], rowCount: inside ? 1 : 0 };
       }
       if (/INSERT INTO posting_detail_asks/.test(sql)) {
-        world.askedMinutesAgo = 0;
+        world.asked.set(String(params[1]), 0);
         return { rows: [], rowCount: 1 };
       }
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
@@ -256,7 +335,7 @@ const rich = { brand: 'trek', frame_size: 'medium', condition: 'good' };
 beforeEach(() => {
   world = {
     sql: [],
-    askedMinutesAgo: null,
+    asked: new Map<string, number>(),
     card: {
       id: CARD,
       account_id: ACCOUNT,
@@ -336,9 +415,51 @@ describe('the refusal an assistant is handed', () => {
   });
 
   it('asks again once the window has gone by', async () => {
-    world.askedMinutesAgo = DETAIL_UNKNOWN_WINDOW_MINUTES + 1;
+    world.asked.set('mountain bike', DETAIL_UNKNOWN_WINDOW_MINUTES + 1);
     const p = await refusal(listing({ attributes: {} }), { detailUnknown: true });
     expect(p?.code).toBe('NEEDS_DETAIL');
+  });
+
+  /**
+   * THE LOOP NOBODY COULD SEE THE SHAPE OF.
+   *
+   * The questions ask an assistant to pin down what the thing is, and a good
+   * one comes back with sharper words for it — which is the one thing that
+   * makes the row stop recognising it. In the 20 September rehearsals the
+   * seller's assistant sent detail_unknown after its human had said "that's
+   * all I've got", got the same four questions back with no word that the flag
+   * had been read at all, and went round again. So the refusal now says what
+   * happened and what to send.
+   */
+  it('says so when detail_unknown was sent and did not match', async () => {
+    // Asked about the thing under the words it first had.
+    expect((await refusal(listing({ attributes: {} })))?.code).toBe('NEEDS_DETAIL');
+    // The assistant learns more, sharpens the words, and gives up on the rest.
+    const p = (await refusal(
+      listing({ attributes: {}, kind: 'Fanatec ClubSport V3 brake performance spring' }),
+      { detailUnknown: true },
+    ))!;
+    expect(p.code).toBe('NEEDS_DETAIL');
+    expect(p.human_action).toBe(DETAIL_UNKNOWN_UNMATCHED);
+    expect(p.human_action).toContain('same `kind`');
+    expect(p.human_action!.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(p.human_action!)).toEqual([]);
+    // The questions still ride along, so answering them is still the road out.
+    expect(p.questions!.length).toBeGreaterThan(0);
+
+    // And the way out it names works: the same words, the same flag, up it goes.
+    const r: any = await publishIntent(
+      cfg,
+      ACCOUNT,
+      listing({ attributes: {}, kind: 'Fanatec ClubSport V3 brake performance spring' }),
+      { detailUnknown: true },
+    );
+    expect(r.intent_id).toBe(CARD);
+  });
+
+  it('keeps the ordinary questions where detail_unknown was never sent', async () => {
+    const p = (await refusal(listing({ attributes: {} })))!;
+    expect(p.human_action).toBe(DETAIL_HUMAN_ACTION);
   });
 
   it('never refuses an amend, because an amend only ever adds', async () => {
