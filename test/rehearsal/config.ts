@@ -36,6 +36,21 @@ export const JEV_SECRET = process.env.REHEARSAL_JEV_SECRET ?? `osb/${ENV_NAME}/j
 
 /** The OpenClaw box, and the deep-clean script installed on it. */
 export const DEEP_CLEAN = '~/osb-deep-clean.sh';
+/**
+ * PUT A PROFILE BACK TO ITS BASELINE rather than deleting its way there.
+ *
+ * The deep clean is surgical — named tables, named cron jobs, named skill
+ * folders — and on 20 September 2026 one line of it began failing silently on
+ * the second run of every series, taking the rest of the script with it under
+ * `set -e`. Sessions and memory went un-wiped for about a dozen runs while the
+ * log still read "gateway active, key probe 200".
+ *
+ * The restore lays down a tarball taken once from a profile we were happy
+ * with. There is no list to fall out of step with what an assistant actually
+ * writes, and no partial success. The deep clean stays on the box as the way
+ * that baseline is MADE (run it, look at the profile, then osb-snapshot.sh).
+ */
+export const RESTORE = '~/osb-restore.sh';
 export const AGENT_HOMES = {
   nagatha: { dir: '.openclaw', unit: 'openclaw-gateway', profile: '', port: 18789 },
   bilby: { dir: '.openclaw-bilby', unit: 'openclaw-gateway-bilby', profile: '--profile bilby', port: 18790 },
