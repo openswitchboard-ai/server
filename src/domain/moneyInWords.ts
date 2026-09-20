@@ -85,6 +85,23 @@ const TIME_LEAD_IN = '(?:at|around|about|by|before|after|until|till|til|past|hal
 interface Rule {
   name: string;
   test: (s: string) => boolean;
+  /**
+   * Is this rule one that fires because MONEY IS NAMED, rather than because a
+   * number is the right shape or sits in the right place?
+   *
+   * A money sign, a currency code, a money word and the phrasing people wrap
+   * a price in are all somebody saying "money" out loud; a thousands comma, a
+   * pair of decimal places, a spoken round number and a number that opens a
+   * sentence are all a GUESS from shape, and a good one on a sentence somebody
+   * typed into a conversation.
+   *
+   * The distinction exists for attribute values (attributeFigureRule below),
+   * where the shape rules are wrong far too often to use: `wheel_size_in`,
+   * `ram_gb`, `shutter_count`, `year`, a model number like 1.10 and a frame
+   * size are all bare numbers in fields built to hold bare numbers. Nothing
+   * about the open conversation changes — every rule still runs there.
+   */
+  named: boolean;
 }
 
 const re = (src: string): RegExp => new RegExp(src, 'i');
@@ -173,24 +190,25 @@ const spacedDigits = /\b\d(?:\s\d){2,}\b/;
 const hedgedNumber = /(?:~\s*\d{3,}|\b\d{3,}\s*-?\s*ish\b)/i;
 
 const RULES: Rule[] = [
-  { name: 'money sign before a number', test: (s) => symbolThenNumber.test(s) },
-  { name: 'money sign after a number', test: (s) => numberThenSymbol.test(s) },
-  { name: 'money code beside a number', test: (s) => codeBesideNumber.test(s) },
-  { name: 'thousands comma', test: (s) => groupedThousands.test(s) },
-  { name: 'two decimal places', test: (s) => bigDecimal.test(s) },
+  { name: 'money sign before a number', test: (s) => symbolThenNumber.test(s), named: true },
+  { name: 'money sign after a number', test: (s) => numberThenSymbol.test(s), named: true },
+  { name: 'money code beside a number', test: (s) => codeBesideNumber.test(s), named: true },
+  { name: 'thousands comma', test: (s) => groupedThousands.test(s), named: false },
+  { name: 'two decimal places', test: (s) => bigDecimal.test(s), named: false },
   {
     name: 'two decimal places on a small number',
     test: (s) => smallDecimal.test(s) && !smallDecimalIsTime(s),
+    named: false,
   },
-  { name: 'a number and a money word', test: (s) => numberThenMoneyWord.test(s) },
-  { name: 'a number for each one', test: (s) => numberThenEach.test(s) },
-  { name: 'a spoken round number', test: (s) => spelledMagnitude.test(s) },
-  { name: 'a spoken pair of numbers', test: (s) => spelledPair(s) },
-  { name: 'a price opening', test: (s) => priceLeadIn.test(s) },
-  { name: 'a price ending', test: (s) => priceTail.test(s) },
-  { name: 'a bare number for an opening', test: (s) => opensWithBareNumber(s) },
-  { name: 'a number spread across spaces', test: (s) => spacedDigits.test(s) },
-  { name: 'a hedged number', test: (s) => hedgedNumber.test(s) },
+  { name: 'a number and a money word', test: (s) => numberThenMoneyWord.test(s), named: true },
+  { name: 'a number for each one', test: (s) => numberThenEach.test(s), named: false },
+  { name: 'a spoken round number', test: (s) => spelledMagnitude.test(s), named: false },
+  { name: 'a spoken pair of numbers', test: (s) => spelledPair(s), named: false },
+  { name: 'a price opening', test: (s) => priceLeadIn.test(s), named: true },
+  { name: 'a price ending', test: (s) => priceTail.test(s), named: true },
+  { name: 'a bare number for an opening', test: (s) => opensWithBareNumber(s), named: false },
+  { name: 'a number spread across spaces', test: (s) => spacedDigits.test(s), named: false },
+  { name: 'a hedged number', test: (s) => hedgedNumber.test(s), named: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -275,6 +293,172 @@ export function carriesMoneyFigure(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// A FIGURE IN AN ATTRIBUTE (20 September 2026).
+//
+// `attributes` is free-form: any lower_snake_case key the agent likes, and a
+// string, a number or a boolean under it. Every value on it CROSSES to the
+// counterparty the moment both sides are keen (domain/matches.ts,
+// buildAttributes). So an assistant that writes `budget: 25` or
+// `max_price: "up to $25"` onto its human's want has put that human's ceiling
+// in front of the person they are about to haggle with, and the posting door
+// never looked: it read `kind` and nothing else.
+//
+// It is the same defect as the best-offer floor read out to a buyer
+// (domain/cards.ts assertFloorStaysPrivate, 20 September 2026) arriving by a
+// different road. A price band is a field with a number in it and an asking
+// price is a number the protocol carries on purpose; an attribute is neither,
+// and nothing checks what is written there.
+//
+// TWO WAYS A FIGURE IS READ HERE, and both are deliberately narrower than the
+// rule on the open conversation:
+//
+//   THE VALUE NAMES MONEY. `$25`, `25 AUD`, `twenty five dollars`, `asking
+//   450`, `450 ono`. Only the rules flagged `named` above run, because the
+//   shape rules would refuse `wheel_size_in: 29`, `year: 2019`, `ram_gb: 16`
+//   and a model number like 1.10, which are the attributes people actually
+//   write. A bare number in a typed attribute is a spec and stays a spec.
+//
+//   THE KEY IS NAMED FOR MONEY, and there is any number under it. `budget`,
+//   `max_price`, `price_ceiling`, `hourly_rate`, `per_day`. Here a bare number
+//   IS the figure, because the key has already said what it means. No category
+//   in the catalogue defines a money-shaped attribute — the whole vocabulary is
+//   condition, brand, model, sizes, counts and years — so a key like this one
+//   was invented by the assistant on the spot, which is exactly the case this
+//   is for. `budget: "flexible"` carries no number and goes up untouched.
+//
+// WHAT A WRONG ANSWER COSTS, each way. A false refusal costs one rewrite of
+// one attribute on a posting that has not gone up yet. A miss costs a human
+// their negotiating position, permanently, to a stranger. That is why `floor`
+// on its own (a storey) and `rate` on its own (a frame rate) are left out
+// while `price`, `budget` and `hourly_rate` are in: the list is the keys that
+// are about money in almost every posting they could appear on.
+// ---------------------------------------------------------------------------
+
+/**
+ * Key segments that mean money on their own. Read as whole lower_snake_case
+ * segments, so `price_max` and `max_price` are both caught and `pricey_looking`
+ * is not a key anybody writes.
+ *
+ * DELIBERATELY ABSENT: `floor` (which storey), `ceiling` (height), `rate`
+ * (frame rate, refresh rate — but see RATE_OVER_TIME below), `value` (any kind
+ * of value), `worth` and `size`. Each is money often enough to be tempting and
+ * something else often enough that refusing it would be a nuisance with no
+ * leak behind it.
+ */
+const MONEY_KEY_WORDS = new Set([
+  'price',
+  'prices',
+  'pricing',
+  'priced',
+  'cost',
+  'costs',
+  'budget',
+  'ask',
+  'asking',
+  'reserve',
+  'rrp',
+  'msrp',
+  'fee',
+  'fees',
+  'postage',
+  'shipping',
+  'freight',
+  'deposit',
+  'pay',
+  'paid',
+  'payment',
+  'spend',
+  'quote',
+  'salary',
+  'wage',
+  'wages',
+  'rent',
+  'discount',
+  'cash',
+  'bid',
+  'bids',
+  'offer',
+  'offers',
+  'dollars',
+  'aud',
+  'usd',
+  'nzd',
+  'cad',
+  'sgd',
+  'gbp',
+  'eur',
+  'jpy',
+  'inr',
+  'chf',
+  'hkd',
+  'zar',
+]);
+
+/**
+ * A stretch of time, which is what turns the two words that are not money on
+ * their own into a price: `hourly_rate`, `day_rate`, `per_hour`, `per_night`.
+ * `frame_rate` and `refresh_rate` have no time word beside them and are left
+ * where they are.
+ */
+const TIME_KEY_WORDS = new Set([
+  'hour',
+  'hourly',
+  'day',
+  'daily',
+  'night',
+  'nightly',
+  'week',
+  'weekly',
+  'month',
+  'monthly',
+  'year',
+  'yearly',
+  'annual',
+  'session',
+  'lesson',
+  'visit',
+  'job',
+  'hr',
+]);
+/** The two words that are a price only with a stretch of time beside them. */
+const RATE_OVER_TIME = new Set(['rate', 'per']);
+
+/** Is this attribute key one whose number is a price by the name of it? */
+export function moneyShapedKey(key: string): boolean {
+  if (typeof key !== 'string' || !key) return false;
+  const parts = key.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (parts.some((p) => MONEY_KEY_WORDS.has(p))) return true;
+  return parts.some((p) => RATE_OVER_TIME.has(p)) && parts.some((p) => TIME_KEY_WORDS.has(p));
+}
+
+/** Any number at all, written either way: `25`, `twenty five`, `a hundred`. */
+const anyNumber = re(`(?:\\d|\\b${NUM_WORD}\\b)`);
+
+/**
+ * The name of the rule that fired on one attribute, or undefined where it
+ * carries no figure. `key` counts: the same `25` is a spec under `seats` and a
+ * ceiling under `budget`.
+ *
+ * Booleans are never a figure. A number is stringified first, so `budget: 25`
+ * and `budget: "25"` are the same attribute written two ways and get the same
+ * answer.
+ */
+export function attributeFigureRule(key: string, value: unknown): string | undefined {
+  if (typeof value === 'boolean' || value === null || value === undefined) return undefined;
+  const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value : '';
+  if (!raw) return undefined;
+  const s = foldForMoney(raw);
+  // The key first, because its answer is the more exact one: under a key named
+  // for money the bare number IS the finding, and saying so beats reporting
+  // whichever spelling rule happened to catch it.
+  if (moneyShapedKey(key) && anyNumber.test(s)) return 'a number under a name that means money';
+  for (const rule of RULES) {
+    if (rule.named && rule.test(s)) return rule.name;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // What an agent is told, in the register everything else here is written in.
 // Both sentences are held to the copy lint and to the banned-noun list.
 // ---------------------------------------------------------------------------
@@ -282,6 +466,24 @@ export function carriesMoneyFigure(text: string): boolean {
 /** The refusal on the open conversation: words go here, figures do not. */
 export const FIGURE_IN_WORDS_ACTION =
   "This one has not gone. It carries a figure, and a figure travels on its own road, where your human's own limits are checked before anything leaves. Send it as an offer instead, and send these words again without the number in them. Say to your human: I'll put that figure on the table properly.";
+
+/**
+ * The refusal on a posting whose attributes carry a figure, naming the one
+ * the assistant wrote so it knows which word to take the number out of.
+ *
+ * The key is the assistant's OWN word — it invented `budget` — so saying it
+ * back is not reading the machinery's field names aloud. It is truncated
+ * because a key has no length limit worth trusting and `human_action` is
+ * capped at 300 characters by the published error schema.
+ */
+export function figureInAttributeAction(key: string): string {
+  const said = key.length > 24 ? `${key.slice(0, 24)}…` : key;
+  return (
+    `This has not gone up. The words you put under '${said}' carry a figure, and a figure on a posting ` +
+    "travels on its own road, where your human's own limits stay private. Post it again with no number in " +
+    'those words, and let the posting carry the figure where it asks for one.'
+  );
+}
 
 /** The refusal on a note riding along with an offer. */
 export const FIGURE_IN_OFFER_NOTE_ACTION =
