@@ -541,15 +541,20 @@ export interface DigestItem {
    *  last digest. null when the cell is under the k-anonymity floor. */
   newOpposite: number | null;
   nearMisses: number;
+  /** Introductions made on this posting since the last digest. */
+  matches: number;
 }
 
 /**
- * The one line the digest stands on. It used to promise the counts were real
- * and say near misses stayed near misses "until the switchboard is sure",
- * which explains nothing to somebody who has never heard the phrase. This one
- * says what a near miss is.
+ * THE DIGEST SAYS WHETHER ANYTHING CAME OF IT, AND STOPS.
+ *
+ * It used to lead with a definition of a near miss, and then count near
+ * misses and strangers posting nearby. A person reading their email does not
+ * need a word explained that only exists inside our machinery, and cannot do
+ * anything with either number. Asked for plainly on 21 September 2026: say
+ * their vehicle parts have had no matches, and leave it there.
  */
-const NEAR_MISS_LINE = 'A near miss is someone close on everything but one thing.';
+const DIGEST_LINE = 'Ask your assistant about any of these.';
 
 /**
  * The head of a digest line, with the side said in words. HAVE and WANT are
@@ -576,24 +581,8 @@ function digestHead(it: DigestItem): string {
  * wrong with their posting, there are simply not many people about.
  */
 function digestCounts(it: DigestItem): string {
-  const n = it.newOpposite;
-  const arrivals =
-    n === null
-      ? 'too few people around here to count yet'
-      : it.type === 'HAVE'
-        ? n === 0
-          ? 'nobody new looking nearby'
-          : `${n} new ${n === 1 ? 'person' : 'people'} looking nearby`
-        : n === 0
-          ? 'nothing new nearby'
-          : `${n} new nearby`;
-  const misses =
-    it.nearMisses === 0
-      ? 'no near misses'
-      : it.nearMisses === 1
-        ? '1 near miss'
-        : `${it.nearMisses} near misses`;
-  return `${arrivals}, ${misses}`;
+  if (it.matches === 0) return 'no matches yet';
+  return it.matches === 1 ? '1 match' : `${it.matches} matches`;
 }
 
 const digestLine = (it: DigestItem): string => `${digestHead(it)}: ${digestCounts(it)}`;
@@ -630,14 +619,14 @@ export function renderDigest(
   const { html, text } = notice(
     {
       heading: `How your wants and haves went ${period}.`,
-      line: NEAR_MISS_LINE,
+      line: DIGEST_LINE,
       accent: MATCH,
       extra: `<tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>`,
     },
     f,
   );
   const textRows = v.items.map((it) => `- ${digestLine(it)}`).join('\n');
-  const fullText = text.replace(NEAR_MISS_LINE, `${textRows}\n\n${NEAR_MISS_LINE}`);
+  const fullText = text.replace(DIGEST_LINE, `${textRows}\n\n${DIGEST_LINE}`);
   return { subject, html, text: fullText };
 }
 

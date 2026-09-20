@@ -702,23 +702,25 @@ describe('the email rule: a notice carries no link and no button', () => {
         cadence: 'daily',
         blind: false,
         items: [
-          { type: 'HAVE', categoryLabel: LABEL, newOpposite: 3, nearMisses: 1 },
-          { type: 'WANT', categoryLabel: LABEL, newOpposite: 2, nearMisses: 0 },
-          { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 2 },
-          { type: 'WANT', categoryLabel: LABEL2, newOpposite: 1, nearMisses: 1 },
+          { type: 'HAVE', categoryLabel: LABEL, newOpposite: 3, nearMisses: 1, matches: 0 },
+          { type: 'WANT', categoryLabel: LABEL, newOpposite: 2, nearMisses: 0, matches: 2 },
+          { type: 'HAVE', categoryLabel: LABEL2, newOpposite: null, nearMisses: 2, matches: 1 },
+          { type: 'WANT', categoryLabel: LABEL2, newOpposite: 1, nearMisses: 1, matches: 0 },
         ],
       },
       links,
     );
-    expect(c.text).toContain('Your mountain bike (offering): 3 new people looking nearby, 1 near miss');
-    expect(c.text).toContain('Mountain bike (looking for): 2 new nearby, no near misses');
-    // Under the k-anonymity floor there is no count to give.
-    expect(c.text).toContain(
-      'Your garden tools (offering): too few people around here to count yet, 2 near misses',
-    );
+    // WHAT CAME OF IT, AND NOTHING ELSE. The line used to carry two counts a
+    // reader can do nothing with — strangers posting nearby, and pairs that
+    // came close — plus a definition of a word that only exists inside our
+    // own machinery.
+    expect(c.text).toContain('Your mountain bike (offering): no matches yet');
+    expect(c.text).toContain('Mountain bike (looking for): 2 matches');
     // One of anything is said as one.
-    expect(c.text).toContain('Garden tools (looking for): 1 new nearby, 1 near miss');
-    expect(c.text).toContain('A near miss is someone close on everything but one thing.');
+    expect(c.text).toContain('Your garden tools (offering): 1 match');
+    expect(c.text).toContain('Garden tools (looking for): no matches yet');
+    expect(c.text).not.toContain('near miss');
+    expect(c.text).not.toContain('nearby');
     expect(c.text).not.toContain('Counts are real and current');
     for (const part of [c.text, c.html, c.subject]) {
       expect(part).not.toContain('HAVE');

@@ -386,8 +386,25 @@ async function assembleDigestItems(
       [card.id, since],
     );
     const nearMisses: number = nm.rows[0].n;
-    if ((newOpposite ?? 0) > 0 || nearMisses > 0) {
-      items.push({ type: card.type, categoryLabel: categoryLeafLabel(card.category, card.kind), newOpposite, nearMisses });
+    // WHAT THE PERSON ACTUALLY WANTS TO KNOW: did anything come of it. The
+    // counts above are about the corner their posting sits in — other people
+    // posting the opposite side, and pairs that came close — and neither is a
+    // match. Asked for plainly on 21 September 2026: "their vehicle parts have
+    // has had no matches" is the whole of what a digest line should say.
+    const mt = await pool.query(
+      `SELECT count(*)::int AS n FROM matches
+        WHERE (card_want = $1 OR card_have = $1) AND created_at > $2`,
+      [card.id, since],
+    );
+    const matches: number = mt.rows[0].n;
+    if ((newOpposite ?? 0) > 0 || nearMisses > 0 || matches > 0) {
+      items.push({
+        type: card.type,
+        categoryLabel: categoryLeafLabel(card.category, card.kind),
+        newOpposite,
+        nearMisses,
+        matches,
+      });
     }
   }
   return items;
