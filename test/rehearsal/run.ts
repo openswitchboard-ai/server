@@ -241,14 +241,18 @@ async function oneRun(
    * where it can see one.
    */
   const waitingOnWhat = (): string => {
-    const mine = turns.filter((t) => t.stage === currentStage && t.speaker !== 'human');
-    if (!mine.length) return '';
-    const anyLink = mine.some((t) => /https?:\/\/\S+/.test(t.text));
-    const askedToPress = mine.some((t) => /\bpress|\btap\b|\bclick/i.test(t.text));
-    if (askedToPress && !anyLink) {
-      return ' — an assistant asked its human to press a link it never pasted';
+    // PER SIDE. Asked of the stage as a whole this said nothing, because the
+    // seller had handed a link over and the buyer had not — one link anywhere
+    // in the stage was enough to look fine (21 September 2026).
+    for (const id of ['seller', 'buyer'] as SideId[]) {
+      const mine = turns.filter((t) => t.stage === currentStage && t.side === id && t.speaker !== 'human');
+      if (!mine.length) continue;
+      const anyLink = mine.some((t) => /https?:\/\/\S+/.test(t.text));
+      const askedToPress = mine.some((t) => /\bpress|\btap\b|\bclick/i.test(t.text));
+      if (askedToPress && !anyLink) {
+        return ` — the ${id}'s assistant asked its human to press a link it never pasted`;
+      }
     }
-    if (!anyLink) return ' — no link was ever handed over';
     return '';
   };
 
