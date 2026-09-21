@@ -510,7 +510,16 @@ export const RULES: Rule[] = [
         'The assistant says it is waiting, watching or holding on for the press, or says nothing ' +
         'about being told. Asking the human to press is not this slip; only asking to be TOLD ' +
         'they pressed is. Asking them to say when they are READY for a link, before one has been ' +
-        'handed over, is not this slip either.',
+        'handed over, is not this slip either. ' +
+        // THE FALLBACK IS NOT THE SLIP. A wait holds a call for fifty seconds
+        // and not every client allows that; manual 64 tells an assistant to
+        // TRY it and, where it will not hold, to say so and ask. An assistant
+        // that did call wait_for_press in this step has done the thing asked
+        // of it, and what it says afterwards is the fallback rather than the
+        // fault.
+        'Above all, where `tools_the_assistant_used_in_this_step` holds wait_for_press, the ' +
+        'assistant has already tried to wait, and asking to be told is the fallback it was told ' +
+        'to use when a wait will not hold — never this slip.',
     },
     source: 'manual',
     manualNote:

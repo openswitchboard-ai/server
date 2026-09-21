@@ -1081,7 +1081,11 @@ describe('the assistant fetches the links and never acts', () => {
       expect(respondTool.description).toMatch(/THE LINK ORDER, one turn: lead with `say`, THEN wait_for_press/);
       // Hand it over FIRST, then wait: the order is unchanged, and `say` is
       // what makes step two trivial rather than what replaces it.
-      expect(respondTool.description).toMatch(/is a sentence you never write/);
+      // Manual 64: the sentence is forbidden WHILE THE WAIT IS OPEN, not
+      // absolutely — a client that cannot hold a fifty-second call has
+      // nothing else to say, and a rule that ignored that would be teaching
+      // those assistants to lie about what they can do.
+      expect(respondTool.description).toMatch(/report a press only where the wait will not hold/);
       // The cap did not move for this (test/unit/readManual.test.ts).
       expect(respondTool.description.length).toBeLessThanOrEqual(1400);
     });

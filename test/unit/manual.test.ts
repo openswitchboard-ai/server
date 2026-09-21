@@ -876,7 +876,9 @@ describe('and the body carries all six, where a fresh session reads them', () =>
     expect(para).toMatch(/never wait on a page your human has not been given/i);
     // The sentence an assistant actually wrote, quoted so it can be recognised.
     expect(para).toContain("let me know once you've pressed it");
-    expect(para).toMatch(/those are sentences you never write/i);
+    expect(para).toMatch(/those are sentences you never write while the wait is open to you/i);
+    // And the way out for a client that cannot hold the call.
+    expect(para).toMatch(/where your client will not hold a call that long/i);
   });
 
   it('says suburb everywhere it describes what crosses at the first step', () => {
@@ -1072,8 +1074,14 @@ describe('the tools carry the rehearsal wordings where they are used', () => {
 
   it('wait_for_press names the sentence that is never written', async () => {
     const d = await desc('wait_for_press');
-    expect(d).toContain('"Let me know once you\'ve pressed it" is a sentence you never write');
-    expect(d).toMatch(/where it was going to go, this call goes instead/i);
+    // Manual 64 qualifies it: never while the wait is open to you, and the
+    // fallback where a client cannot hold the call is named right here.
+    expect(d).toContain('"Let me know once you\'ve pressed it" is a sentence you never write while this call is open to you');
+    expect(d).toMatch(/call it FIRST, then say you cannot watch for it/);
+    // Manual 64 replaced "where it was going to go, this call goes instead"
+    // with the two-branch order: the call first, and the asking only where it
+    // will not hold.
+    expect(d).toMatch(/it holds inside the turn you are already in/i);
   });
 
   it('respond says suburb wherever the first step is described', async () => {

@@ -294,7 +294,8 @@ describe('the tool an agent reads', () => {
     const respond = TOOLS.find((t) => t.name === 'respond')!;
     expect(respond.description).toContain('press_id');
     expect(respond.description).toContain('wait_for_press');
-    expect(respond.description).toMatch(/is a sentence you never write/i);
+    // Manual 64: forbidden while the wait is open, not absolutely.
+    expect(respond.description).toMatch(/report a press only where the wait will not hold/i);
   });
 });
 
@@ -395,7 +396,7 @@ describe('hand it over, then wait', () => {
     expect(tool.description).toMatch(/hands you the page again/i);
     // The other half of the same order: having handed it over, you wait rather
     // than asking them to come back and say they pressed it.
-    expect(tool.description).toMatch(/never hand a link over and then ask your human to come back/i);
+    expect(tool.description).toMatch(/never hand a link over and then ask them to report a press you could have waited for/i);
   });
 
   it('carries one new note in the manual, at the version it was written for', async () => {
