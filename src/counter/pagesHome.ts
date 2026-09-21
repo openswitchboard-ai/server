@@ -99,6 +99,57 @@ swap those in the channel once you have both agreed.</p>
 // word on every line.
 // ---------------------------------------------------------------------------
 
+/**
+ * The two-way choice, drawn once. Onboarding, settings and the arrangement
+ * page all ask a question of this shape — one of two kinds, a short head and a
+ * line under it — and a person meeting the second one should recognise it from
+ * the first.
+ */
+interface ModeOption {
+  value: string;
+  head: string;
+  rest: string;
+}
+
+function modeOptions(
+  name: string,
+  idPrefix: string,
+  options: ModeOption[],
+  current: string,
+): string {
+  return options
+    .map(
+      (o) => `<label class="modeopt" for="${idPrefix}_${o.value}">
+  <input id="${idPrefix}_${o.value}" name="${name}" type="radio" value="${esc(o.value)}"${
+    o.value === current ? ' checked' : ''
+  }>
+  <strong>${esc(o.head)}</strong>
+  <span class="small muted">${esc(o.rest)}</span>
+</label>`,
+    )
+    .join('');
+}
+
+/**
+ * Whether the agent runs between conversations. This is NOT the onboarding
+ * question: that one is how the person hears about things and decides whether
+ * the switchboard writes to them; this one decides what an agent may promise.
+ * They are asked the same way because they are the same shape of question, not
+ * because they are the same answer.
+ */
+const RUNS_ON_ITS_OWN_OPTIONS: ModeOption[] = [
+  {
+    value: 'on',
+    head: 'It runs on its own.',
+    rest: 'It checks between our conversations, so it can watch for things without me asking.',
+  },
+  {
+    value: 'off',
+    head: 'It waits for me.',
+    rest: 'It only acts while we are talking.',
+  },
+];
+
 const APPETITE_LABELS: Record<string, string> = {
   keen: 'Bring me anything you spot',
   occasional: 'Mention something now and then',
@@ -136,9 +187,9 @@ ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${plain}
 <h2>Change it</h2>
 <form method="POST" action="/arrangement">
-  <label class="check"><input type="checkbox" name="runs_on_its_own" value="on"${a.runs_on_its_own ? ' checked' : ''}>
-    My assistant runs on its own between our conversations. Tick this for an always-on agent; leave it clear for a chat assistant that only acts when you talk to it, and the switchboard will email you instead.</label>
-  <label for="check_every_minutes">How often should your agents check? In minutes. Needs the box above.</label>
+  <h3>Does your assistant run on its own?</h3>
+  ${modeOptions('runs_on_its_own', 'runs', RUNS_ON_ITS_OWN_OPTIONS, a.runs_on_its_own ? 'on' : 'off')}
+  <label for="check_every_minutes">How often should your agents check? In minutes. Needs the first of those two.</label>
   <input id="check_every_minutes" name="check_every_minutes" type="number" inputmode="numeric"
     min="${CHECK_EVERY_MINUTES_MIN}" max="${CHECK_EVERY_MINUTES_MAX}" step="1"
     value="${esc(Number.isFinite(a.check_every_minutes as number) ? String(a.check_every_minutes) : '')}"
@@ -972,15 +1023,7 @@ const ZONE_SCRIPT = `<script>
 </script>`;
 
 export function helloPage(v: HelloView, error?: string): string {
-  const options = HEARS_VIA_OPTIONS.map(
-    (o) => `<label class="modeopt" for="hello_${o.value}">
-  <input id="hello_${o.value}" name="hears_via" type="radio" value="${o.value}"${
-    v.hearsVia === o.value ? ' checked' : ''
-  }>
-  <strong>${esc(o.head)}</strong>
-  <span class="small muted">${esc(o.rest)}</span>
-</label>`,
-  ).join('');
+  const options = modeOptions('hears_via', 'hello', HEARS_VIA_OPTIONS, v.hearsVia);
   return layout('Which kind of assistant do you use?', `
 <h1>Which kind of assistant do you use?</h1>
 <p class="lead">Pick one so the switchboard knows whether to email you.</p>
@@ -1035,15 +1078,7 @@ dials below does nothing while the hold is on.
     ? `<div class="err">Email to your address is bouncing — all email is on
 hold. Re-verify from the <a href="/">front page</a>.</div>`
     : '';
-  const hearsVia = HEARS_VIA_OPTIONS.map(
-    (o) => `<label class="modeopt" for="hears_${o.value}">
-  <input id="hears_${o.value}" name="hears_via" type="radio" value="${o.value}"${
-    v.hearsVia === o.value ? ' checked' : ''
-  }>
-  <strong>${esc(o.head)}</strong>
-  <span class="small muted">${esc(o.rest)}</span>
-</label>`,
-  ).join('');
+  const hearsVia = modeOptions('hears_via', 'hears', HEARS_VIA_OPTIONS, v.hearsVia);
   const zones = Intl.supportedValuesOf('timeZone');
   const zoneOptions = [
     `<option value=""${v.timezone ? '' : ' selected'}>Not set</option>`,
