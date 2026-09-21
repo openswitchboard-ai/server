@@ -1022,23 +1022,63 @@ export interface HelloView {
   hearsVia: HearsVia;
   firstName: string;
   locality: string;
+  /** Cadence in minutes as a string, when one is already on the arrangement. */
+  checkEvery?: string;
   /** IANA zone already on the account, if any. */
   timezone?: string | null;
 }
+
+/** The cadence question belongs to one of the two answers, so it comes and goes with it. */
+const CADENCE_SCRIPT = `<script>
+document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.getElementById('cadence').hidden =
+      document.querySelector('input[name="hears_via"]:checked').value !== 'assistant';
+  });
+});
+</script>
+<noscript><style>#cadence{display:block !important}</style></noscript>`;
 
 /** Fills a hidden box with the browser's zone, so nobody is asked a question the browser can answer. */
 const ZONE_SCRIPT = `<script>
 (function(){try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;var el=document.getElementById('tz');if(el&&z&&!el.value)el.value=z;}catch(e){}})();
 </script>`;
 
+/**
+ * How often an always-on agent should look, asked in words.
+ *
+ * The arrangement page keeps the minutes box, because an agent that writes an
+ * arrangement mid-conversation deals in minutes and a person editing one later
+ * has a reason to be exact. A person meeting the switchboard for the first
+ * time does not: they are picking a rhythm, not a number, and three rhythms
+ * cover it. The blank is a real answer — it leaves the question to the
+ * conversation they are about to have with their agent.
+ */
+export const HELLO_CADENCES: { value: string; label: string }[] = [
+  { value: '180', label: 'Every few hours' },
+  { value: '720', label: 'Twice a day' },
+  { value: '1440', label: 'Once a day' },
+  { value: '', label: 'Let my assistant ask me' },
+];
+
+/** The rhythm a new always-on account starts on when nobody says otherwise. */
+export const HELLO_CADENCE_DEFAULT = '720';
+
 export function helloPage(v: HelloView, error?: string): string {
   const options = modeOptions('hears_via', 'hello', HEARS_VIA_OPTIONS, v.hearsVia);
+  const cadence = HELLO_CADENCES.map(
+    (c) => `<option value="${esc(c.value)}"${c.value === (v.checkEvery ?? HELLO_CADENCE_DEFAULT) ? ' selected' : ''}>${esc(c.label)}</option>`,
+  ).join('');
   return layout('Which kind of assistant do you use?', `
 <h1>Which kind of assistant do you use?</h1>
 <p class="lead">Pick one so the switchboard knows whether to email you.</p>
 ${errBox(error)}
 <form method="POST" action="/hello">
   ${options}
+  <div id="cadence"${v.hearsVia === 'assistant' ? '' : ' hidden'}>
+    <label for="check_every_minutes">How often should it check?</label>
+    <select id="check_every_minutes" name="check_every_minutes">${cadence}</select>
+  </div>
   <h2>What your assistant may share</h2>
   <p class="small muted">A first name and a suburb, shared only after both
   people say yes. You can change them any time.</p>
@@ -1046,6 +1086,7 @@ ${errBox(error)}
   <input type="hidden" id="tz" name="timezone" value="${esc(v.timezone ?? '')}">
   <button type="submit">Save and carry on</button>
 </form>
+${CADENCE_SCRIPT}
 ${ZONE_SCRIPT}`);
 }
 

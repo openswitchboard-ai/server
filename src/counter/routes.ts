@@ -29,6 +29,7 @@ import { suggestAreas } from '../geo/suggest.js';
 import { countryOfTimeZone } from '../geo/homeCountry.js';
 import {
   arrangementInPlainWords,
+  isEmpty as arrangementIsEmpty,
   readArrangement,
   readArrangementUpdatedAt,
   saveArrangement,
@@ -949,11 +950,16 @@ in on this device and lets you approve what is waiting.</p>
         purpose: 'onboarding-view',
         actor: accountId,
       });
+      const arrangement = await readArrangement(accountId);
       return {
         hearsVia: await getHearsVia(accountId),
         firstName: profile.firstName,
         locality: profile.locality,
         timezone: await getTimezone(accountId),
+        checkEvery:
+          arrangement.check_every_minutes === undefined
+            ? undefined
+            : String(arrangement.check_every_minutes),
       };
     };
 
@@ -980,6 +986,24 @@ in on this device and lets you approve what is waiting.</p>
         const want = String(b.hears_via ?? '');
         if (want === 'email' || want === 'assistant') {
           await setHearsVia(s.accountId!, want, 'counter');
+        }
+        // An always-on agent leaves this page with a rhythm to work to, rather
+        // than an empty arrangement its agent has to negotiate from scratch.
+        // Only ever onto an EMPTY arrangement: an account that already has one
+        // has been through this decision properly, and a first-run page is no
+        // place to overwrite it. The two stay separate questions — this writes
+        // runs_on_its_own because the person just said their agent runs, not
+        // because of how they hear about things.
+        const cadence = String(b.check_every_minutes ?? '').trim();
+        if (want === 'assistant' && cadence) {
+          const existing = await readArrangement(s.accountId!);
+          if (arrangementIsEmpty(existing)) {
+            const checked = validateArrangement({
+              runs_on_its_own: 'on',
+              check_every_minutes: Number(cadence),
+            });
+            if (checked.ok) await saveArrangement(s.accountId!, checked.value, 'counter');
+          }
         }
         // The browser's zone, filled into a hidden box. A bad or missing
         // value is simply not recorded; the settings page has the picker.

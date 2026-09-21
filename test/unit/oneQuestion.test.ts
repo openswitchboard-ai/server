@@ -126,6 +126,8 @@ interface World {
   firstName: string;
   locality: string;
   savedHearsVia: string[];
+  /** What the cadence question wrote, when it wrote anything. */
+  savedArrangement?: Record<string, unknown>;
   elevatedUntil: Date | null;
   /** The humans whose names-step press has been recorded, and how each one
    *  was recorded. Only a press on their own page ever puts one here. */
@@ -249,6 +251,10 @@ function fakePool() {
               world.runsOnItsOwn === undefined ? null : { runs_on_its_own: world.runsOnItsOwn },
           },
         ]);
+      }
+      if (/UPDATE accounts SET arrangement/.test(sql)) {
+        world.savedArrangement = JSON.parse(String(params[1]));
+        return rows([]);
       }
       if (/UPDATE accounts SET hears_via/.test(sql)) {
         world.hearsVia = params[1];
@@ -453,6 +459,7 @@ beforeEach(async () => {
     firstName: 'Lachlan',
     locality: 'Franklin',
     savedHearsVia: [],
+    savedArrangement: undefined,
     elevatedUntil: null,
     optins: new Map(),
     channelId: null,
@@ -1127,6 +1134,10 @@ describe('the onboarding question, once', () => {
     expect(page.body).toContain('Which kind of assistant do you use?');
     expect(page.body).toContain('An always-on agent.');
     expect(page.body).toContain('First name');
+    // The cadence rides with the always-on answer, in words rather than minutes.
+    expect(page.body).toContain('How often should it check?');
+    expect(page.body).toContain('Twice a day');
+    expect(page.body).not.toContain('720 minutes');
   });
 
   it('saves the answer and the shared profile, then gets out of the way', async () => {
@@ -1166,6 +1177,41 @@ describe('the onboarding question, once', () => {
     expect(r.statusCode).toBe(400);
     expect(r.body).toContain('Add the suburb or area you are in.');
     expect(world.onboardedAt).toBeNull();
+  });
+
+  it('an always-on agent leaves this page with a rhythm to work to', async () => {
+    // The minutes are ours; the person picked "twice a day". An agent that
+    // arrives afterwards finds a cadence rather than an empty arrangement it
+    // has to negotiate from scratch.
+    world.onboardedAt = null;
+    world.runsOnItsOwn = undefined;
+    const r = await inject('POST', '/hello', {
+      hears_via: 'assistant',
+      check_every_minutes: '720',
+    });
+    expect(r.statusCode).toBe(303);
+    expect(world.savedArrangement).toEqual({ runs_on_its_own: true, check_every_minutes: 720 });
+  });
+
+  it('a chat assistant is never given a cadence it cannot keep', async () => {
+    world.onboardedAt = null;
+    world.runsOnItsOwn = undefined;
+    world.savedArrangement = undefined;
+    await inject('POST', '/hello', { hears_via: 'email', check_every_minutes: '720' });
+    expect(world.savedArrangement).toBeUndefined();
+  });
+
+  it('leaves an arrangement that already exists alone', async () => {
+    // A first-run page is no place to overwrite a decision somebody has
+    // already made properly.
+    world.onboardedAt = null;
+    world.runsOnItsOwn = true;
+    world.savedArrangement = undefined;
+    await inject('POST', '/hello', {
+      hears_via: 'assistant',
+      check_every_minutes: '180',
+    });
+    expect(world.savedArrangement).toBeUndefined();
   });
 
   it('an account that existed before the step never sees it', async () => {
