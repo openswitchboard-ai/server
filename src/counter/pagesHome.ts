@@ -86,9 +86,8 @@ ${wide ? `<div class="note">${esc(wide)}</div>` : ''}
   ${sharedFieldsFieldset(v)}
   <button type="submit">Save</button>
 </form>
-<p class="small muted">That is the whole of what crosses — your email, what you
-have posted and your prices stay on your side. Keep phone numbers, addresses and links out
-of these two boxes; you can swap those in the channel once you have both agreed.</p>
+<p class="small muted">Keep phone numbers, addresses and links out of these boxes —
+swap those in the channel once you have both agreed.</p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -131,8 +130,7 @@ out with you again from scratch every time it starts up.</div>`;
 
   return layout('How your agents behave', `
 <h1>How your agents behave.</h1>
-<p class="lead">This is the standing arrangement your agents work to. Change it
-here and every one of them picks the change up.</p>
+<p class="lead">Every agent you connect works to this.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
 ${plain}
@@ -1053,7 +1051,7 @@ hold. Re-verify from the <a href="/">front page</a>.</div>`
   ].join('');
   const zoneNow = v.timezone
     ? `Your assistant says times in ${v.timezone.replace(/_/g, ' ')}.`
-    : 'Not set yet. Pick your zone so your assistant says times the way you do, and "today" means your today.';
+    : 'Not set.';
   const hearsViaNow =
     v.hearsVia === 'assistant'
       ? 'Right now your assistant brings you the news, and email is a backup.'
@@ -1075,9 +1073,6 @@ ${unreachable}${complaint}
   <select id="timezone" name="timezone">${zoneOptions}</select>
   <button type="submit" class="secondary">Save my time zone</button>
 </form>
-<p class="small muted">An assistant you talk to when you feel like it cannot
-bring you a match it never saw, so the switchboard emails you every step.
-An agent that checks on its own gets there first, and the emails stand down.</p>
 <div id="email-dials"${v.hearsVia === 'assistant' ? ' hidden' : ''}>
 <h2>Email frequency</h2>
 <form method="POST" action="/settings/frequency">
@@ -1087,9 +1082,7 @@ An agent that checks on its own gets there first, and the emails stand down.</p>
   ${freqSelect('freq_digests', 'freq_digests', v.freqDigests)}
   <button type="submit" class="secondary">Save frequency</button>
 </form>
-<p class="small muted">How often the switchboard may email you. Sign-in codes
-and security notices always send. Changes apply immediately and land in your
-consent log.</p>
+<p class="small muted">Sign-in codes and security notices always send.</p>
 </div>
 <p id="email-backup" class="small muted"${v.hearsVia === 'assistant' ? '' : ' hidden'}>With your assistant bringing the news, the only emails
 you get are sign-in codes and security notices.</p>
@@ -1110,15 +1103,12 @@ document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
 <noscript><style>#hears-save{display:inline-block !important}</style></noscript>
 <h2>Blind mode</h2>
 <p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}. When on,
-every email we send you becomes a content-free pointer — "something needs your
-decision" — with all detail kept here.</p>
+every email becomes a content-free pointer — "something needs your decision".</p>
 <form method="POST" action="/settings/blind-mode">
   <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
   <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
 </form>
-<h2>How you approve things</h2>
-<p class="small muted">Your passkey and your PIN live on their own page, where you can
-add either one. <a href="/security">Go there</a>.</p>
+<p class="small muted"><a href="/security">How you approve things</a></p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -1201,8 +1191,7 @@ export function agentKeyCreatedPage(v: { name: string; token: string; expires: s
 page is the only place it is ever shown.</p>
 <div class="fact"><div class="k">${esc(v.name)}</div><div class="v" id="keybox">${esc(v.token)}</div></div>
 <button type="button" id="copybtn" class="approve">Copy the key</button>
-<p class="small muted">We keep a fingerprint of it and nothing more, so if it
-gets away from you, revoke it and make another.</p>
+<p class="small muted">Lost it? Revoke it and make another.</p>
 <p class="small muted">Your agent sends it as a header:</p>
 <div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
 <p class="small muted">It lapses on ${v.expires}. Revoke it any time from
@@ -1251,8 +1240,7 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
 <a class="btn secondary" href="/ledger">Review one by one instead</a>
 <h2>What you have open</h2>
 ${rows}
-<p class="small muted">Wants and haves lapse on their own; that rule keeps every
-one of them honest.</p>`);
+<p class="small muted">Wants and haves lapse on their own.</p>`);
 }
 
 // ---------------------------------------------------------------------------
