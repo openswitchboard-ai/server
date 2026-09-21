@@ -74,15 +74,25 @@ export interface BoardState {
  * ancestors' cards still PUBLISHED is a run whose stage-1 "they met" check can
  * pass on the wrong pair.
  */
-export async function boardIsClear(file = LEDGER_FILE): Promise<BoardState> {
-  const { accounts } = readLedger(file);
-  if (!accounts.length) return { clear: true, live: [] };
+export async function boardIsClear(_file = LEDGER_FILE): Promise<BoardState> {
+  // THE WHOLE BOARD, NOT JUST THE ACCOUNTS WE WROTE DOWN.
+  //
+  // This asked only about accounts in the ledger, which made it blind to
+  // exactly the card it exists to catch: one from a run older than the ledger
+  // itself. A "upgraded Fanatec pedal spring" posted on 19 September, filed
+  // under goods.motoring before that was fixed, stayed live for two days. The
+  // sweep did not retire it because it belonged to no account we knew, the
+  // guard did not see it for the same reason, and every seller since was put
+  // IN LINE behind it — one at a time by fit — so the names step never came
+  // and the run failed on a link that was never offered (21 September 2026).
+  //
+  // Dev has no humans on it. Any live card at the start of a run is a
+  // leftover, whoever made it, and the guard refuses rather than retires: a
+  // card belonging to nobody we recorded is not ours to withdraw.
   const rows = await dbExec(
     `SELECT id::text, account_id::text, lifecycle_state
        FROM cards
-      WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
-        AND lifecycle_state IN ('PUBLISHED','PENDING_SCREENING')`,
-    [{ name: 'ids', value: accounts.join(',') }],
+      WHERE lifecycle_state IN ('PUBLISHED','PENDING_SCREENING')`,
   );
   const live = rows.map((r) => ({
     cardId: String(r[0]),
