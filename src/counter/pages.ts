@@ -217,6 +217,9 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .navlist .nav-t { display:block; font-family:var(--sans); font-weight:600; font-size:var(--t-md); }
 .navlist .nav-t::after { content:' →'; color:var(--muted); }
 .navlist .nav-d { display:block; font-size:var(--t-sm); color:var(--muted); margin-top:2px; line-height:1.4; }
+/* A row that is a fact rather than a door: same rule, no arrow, no hover. */
+.navlist .row { display:block; border-bottom:1px solid var(--line); padding:var(--s3) 0; color:var(--ink); }
+.navlist .row .nav-t::after { content:none; }
 
 /* ---- Collapsible supporting detail ---- */
 details.more { border:1px solid var(--line); border-radius:var(--r); background:var(--card);
@@ -749,37 +752,30 @@ ${ceremonyScript(v)}`);
 }
 
 /**
- * How you approve things, on your own page: what this account holds now, and
- * the two doors to add or change either one.
+ * How you approve things, on your own page.
+ *
+ * A passkey that is set is a FACT, not a door: one approves everything here,
+ * and a second only ever exists because a second device needs one. So it is
+ * stated with the date it was set, and the way to enrol another device sits
+ * inside that row rather than standing as a choice of its own.
  */
 export function securityPage(
-  v: { hasPin: boolean; passkeyCount: number },
+  v: { hasPin: boolean; passkeyCount: number; passkeySetOn?: string },
   notice?: string,
 ): string {
-  const lead = v.passkeyCount && v.hasPin
-    ? 'You have a passkey and a PIN. Either one approves everything here, and the device in your hand decides which you are asked for.'
-    : v.passkeyCount
-      ? 'Your passkey approves everything here.'
-      : v.hasPin
-        ? 'Your PIN approves everything here.'
-        : 'Nothing is set yet.';
   return layout('How you approve things', `
 <h1>How you approve things.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
-<p class="lead">${esc(lead)}</p>
-${v.passkeyCount
-    ? `<div class="note"><strong>Passkey set.</strong> The fingerprint or face check your device
-already has. One is enough.</div>
-<p class="small muted">On a new device, <a href="/passkey">set one up there too</a>.</p>`
-    : ''}
 <div class="navlist">
-${v.passkeyCount ? '' : `<a href="/passkey"><span class="nav-t">Add a passkey</span>
-<span class="nav-d">The fingerprint or face check your device already has. Nothing to remember.</span></a>`}
+${v.passkeyCount
+    ? `<div class="row"><span class="nav-t">Passkey set</span>
+<span class="nav-d">${v.passkeySetOn ? `${esc(v.passkeySetOn)}. ` : ''}<a href="/passkey">Add one on another device</a>.</span></div>`
+    : `<a href="/passkey"><span class="nav-t">Add a passkey</span>
+<span class="nav-d">Face, fingerprint or device passcode. Nothing to remember.</span></a>`}
 <a href="/pin"><span class="nav-t">${v.hasPin ? 'Change your PIN' : 'Set a PIN'}</span>
-<span class="nav-d">Six digits you type. Useful on a device your passkey has never seen.</span></a>
+<span class="nav-d">Six digits you type.</span></a>
 </div>
-<p class="small muted">Signing in on a new device uses a code we email you, whichever of these
-you hold. That emailed code is also the way back in if you lose the lot.</p>
+<p class="small muted">Lost both? A code we email you signs you back in.</p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 

@@ -712,11 +712,28 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const s = await requireSession(req, reply);
       if (!s) return;
       const a: any = await getAccount(s.accountId!);
+      const keys = await wa.listCredentials(s.accountId!);
+      // The only detail this account holds about a passkey is when it was set,
+      // and a date said in someone else's zone is a date that can be a day out.
+      const setOn = keys
+        .map((k: any) => new Date(k.created_at))
+        .sort((x, y) => x.getTime() - y.getTime())[0];
+      const tz = (await getTimezone(s.accountId!)) ?? 'UTC';
       return html(
         reply,
         pages.securityPage({
           hasPin: !!a?.pin_hash,
-          passkeyCount: (await wa.listCredentials(s.accountId!)).length,
+          passkeyCount: keys.length,
+          passkeySetOn: setOn
+            ? new Intl.DateTimeFormat('en-AU', {
+                timeZone: tz,
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+                .format(setOn)
+                .replace('Sept', 'Sep')
+            : undefined,
         }),
       );
     });
