@@ -41,6 +41,10 @@ done
 
 # The profile dirs start with a dot, and a baseline named .openclaw.tar.gz
 # is a file plain `ls` does not show — a poor thing to hide.
+# The key is stripped BEFORE the tar, so no baseline ever holds one. See
+# osb-blank-key.py for what that cost when it did.
+python3 "$HOME/osb-blank-key.py" "$DIR" || true
+
 NAME="${DIR#.}"
 tar czf "$BASE/$NAME.tar.gz" "${PATHS[@]}"
 [ -n "$UNIT" ] && systemctl --user start "$UNIT" 2>/dev/null || true
