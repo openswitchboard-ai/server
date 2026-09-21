@@ -613,7 +613,7 @@ async function oneRun(
      * swept up a stage-1 advice answer — "many people find it a bit soft" —
      * and the queue-claim rule read that as a claim about who else is waiting.
      */
-    const introAtMs = Date.parse(match.createdAt.replace(' ', 'T'));
+    const introAtMs = db.pgTimeMs(match.createdAt);
     for (const id of ['seller', 'buyer'] as SideId[]) {
       const side = sides[id];
       const from = turns.length;
@@ -637,7 +637,7 @@ async function oneRun(
       // introduction existed. Turns before that are still excluded, because an
       // assistant cannot truthfully announce a match that does not exist yet.
       const sinceIntro = turnsText(
-        turns.filter((t) => Date.parse(t.at) >= introAtMs),
+        turns.filter((t) => db.pgTimeMs(t.at) >= introAtMs),
         { side: id, role: 'assistant' },
       );
       record(checkIntroductionTold(id, sinceIntro));

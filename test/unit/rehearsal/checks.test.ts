@@ -8,6 +8,7 @@
  * reading nobody will ever fix.
  */
 import { describe, expect, it } from 'vitest';
+import { pgTimeMs } from '../../rehearsal/db.js';
 import {
   checkManual,
   checkMeets,
@@ -418,5 +419,37 @@ describe('telling them somebody came forward', () => {
       'Someone came forward. Press here: https://my-dev.openswitchboard.ai/a/8e32f637-1111-4111-8111-aaaaaaaaaaaa.tok',
     );
     expect(c.verdict).toBe('pass');
+  });
+});
+
+/**
+ * The one value that produced two opposite wrong answers in a day: an
+ * introduction's timestamp, as Postgres writes it.
+ */
+describe('reading a timestamp out of the database', () => {
+  it('reads what Postgres actually writes', () => {
+    expect(pgTimeMs('2026-09-21 12:10:33.123456+00')).toBe(
+      Date.parse('2026-09-21T12:10:33.123Z'),
+    );
+  });
+
+  it('reads an ISO string from a transcript turn', () => {
+    expect(pgTimeMs('2026-09-21T12:10:33.123Z')).toBe(
+      Date.parse('2026-09-21T12:10:33.123Z'),
+    );
+  });
+
+  // The repair that broke it: a T put in by hand leaves "+00", which is not a
+  // valid ISO offset, and Date.parse returns NaN. NaN compares false against
+  // everything, so the window held nothing and an assistant was recorded as
+  // having said nothing at all.
+  it('still reads a half-repaired string rather than returning NaN', () => {
+    expect(pgTimeMs('2026-09-21T12:10:33.123456+00')).toBe(
+      Date.parse('2026-09-21T12:10:33.123Z'),
+    );
+  });
+
+  it('throws on a timestamp it cannot read, rather than silently emptying a window', () => {
+    expect(() => pgTimeMs('not a time')).toThrow(/unreadable timestamp/);
   });
 });

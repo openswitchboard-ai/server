@@ -336,3 +336,31 @@ export async function matchState(matchId: string): Promise<string | undefined> {
   ]);
   return rows[0]?.[0] ? String(rows[0][0]) : undefined;
 }
+
+/**
+ * A `created_at::text` from Postgres, in milliseconds.
+ *
+ * TWO WRONG ANSWERS ALREADY CAME OUT OF THIS ONE VALUE. Postgres writes it as
+ * "2026-09-21 12:10:33.123456+00": a SPACE where ISO has a T, and a two-digit
+ * offset where ISO wants four. Compared as a string against a transcript's ISO
+ * timestamp, the space sorts below the T and every turn of the day looks later
+ * than the introduction. Repaired to a T and handed to Date.parse, the "+00"
+ * is no longer a valid offset and the whole thing comes back NaN — and a NaN
+ * comparison is false for everything, so the window goes from holding the
+ * entire run to holding nothing at all. Both of those failed a run and read as
+ * a finding about an assistant.
+ *
+ * So: the raw string first, because V8 parses it correctly as it stands, and
+ * the repair only as a fallback. A value that survives neither throws, because
+ * a clock nobody can read must stop the run as a harness fault rather than
+ * quietly empty a window and accuse an assistant of silence.
+ */
+export function pgTimeMs(text: string): number {
+  const raw = Date.parse(text);
+  if (Number.isFinite(raw)) return raw;
+  const repaired = Date.parse(
+    text.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'),
+  );
+  if (Number.isFinite(repaired)) return repaired;
+  throw new Error(`unreadable timestamp from the database: ${JSON.stringify(text)}`);
+}
