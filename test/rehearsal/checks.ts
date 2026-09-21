@@ -146,8 +146,13 @@ export const SELLER_QUESTIONS = {
   // a firm price or are you open to offers?" and, a turn later, "for
   // best-offer, do you want a reserve?" (the hyphen alone defeated the old
   // pattern). These are the ways people actually put the question.
+  // Widened again after Claude asked it as plainly as anybody could — "Is
+  // there a price you have in mind, or would you prefer to see what offers
+  // come in and negotiate?" — and Alex answered "I'd rather go by best offer"
+  // (dev, 21 September 2026). The question is whether the kind of sale was
+  // PUT to them, not whether it was put in our vocabulary.
   kind_of_sale:
-    /\b(best[- ]offer|straight|asking price|price you want|how.{0,15}sell|sealed|one at a time|(fixed|firm|set|straight) price|open to offers|take offers|make (you )?offers|name a price|highest offer)\b/i,
+    /\b(best[- ]offer|straight|asking price|price you want|how.{0,15}sell|sealed|one at a time|(fixed|firm|set|straight) price|open to offers|take offers|make (you )?offers|name a price|highest offer|offers come in|what offers|negotiate)\b/i,
 };
 
 export interface AskedResult {
