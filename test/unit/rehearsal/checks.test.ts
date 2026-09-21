@@ -203,9 +203,22 @@ describe('the names step', () => {
     const good = ['I can share your first name and your suburb with them: https://x/a/tok — I will wait on it now.'];
     expect(checkNamesOffer('seller', good).verdict).toBe('pass');
   });
-  it('fails "let me know once you have pressed it"', () => {
+  // RATED, NOT GATED — Lachlan's call, 21 September 2026. The link went over
+  // and the suburb was named, which are the things that can go wrong for a
+  // person; being asked to report the press costs them a chore. The rubric
+  // rule asks_them_to_report_a_press counts it and prints it, and this check
+  // says it happened in its evidence.
+  it('passes "let me know once you have pressed it" but says so in the evidence', () => {
     const bad = ['Here is the link https://x/a/tok to share your first name and suburb. Let me know once you have pressed it.'];
-    expect(checkNamesOffer('seller', bad).verdict).toBe('fail');
+    const c = checkNamesOffer('seller', bad);
+    expect(c.verdict).toBe('pass');
+    expect(c.evidence).toContain('asked to be told about the press');
+    expect(c.evidence).toContain('counted as a speech slip');
+  });
+  it('still fails when no link was ever handed over', () => {
+    const c = checkNamesOffer('seller', ['I can share your first name and suburb. Tell me when you are ready.']);
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toContain('no link');
   });
   it('fails an offer that names a state instead of a suburb', () => {
     expect(checkNamesOffer('buyer', ['I can share your first name and ACT: https://x/a/tok']).verdict).toBe('fail');
