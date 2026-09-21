@@ -430,8 +430,32 @@ export function checkMeets(facts: MeetFacts, limitMs: number): Check {
 // Stage 2 — the introduction and the names step.
 // ---------------------------------------------------------------------------
 
-const COUNT_CLAIM =
-  /\b(\d+|one|two|three|several|a few|a couple|lots|many)\s+(people|others|buyers|sellers|interested|in (the )?(line|queue)|ahead of you|waiting)\b/i;
+/**
+ * A COUNT OF WHO ELSE IS ABOUT — and only that.
+ *
+ * The rule exists because the switchboard never tells an assistant how many
+ * others are interested, so any number is invented, and an invented crowd
+ * pushes a person to move faster than they otherwise would.
+ *
+ * "many people find the stock pedal a bit soft" is not that. It was said in a
+ * stage-1 advice answer, about the world rather than about this posting, and
+ * it failed a run on 21 September 2026. So a bare count of PEOPLE now has to
+ * be about interest in the thing — interested, waiting, after it, asking —
+ * while the phrases that can only mean a queue ("two ahead of you", "three in
+ * the line") still stand on their own.
+ */
+const COUNTED = String.raw`(\d+|one|two|three|several|a few|a couple|lots|many)`;
+const COUNT_CLAIM = new RegExp(
+  [
+    // A queue, said as a queue. No further context needed.
+    String.raw`\b${COUNTED}\s+((people|others?|buyers?|sellers?)\s+)?(are\s+|is\s+)?(in (the )?(line|queue)|ahead of you|waiting)\b`,
+    // A count of people, but only where the sentence says they want THIS.
+    String.raw`\b${COUNTED}\s+(people|others|buyers|sellers)\b[^.!?]{0,60}\b(interested|keen|after (it|one|this)|want(s|ed|ing)? (it|one|this)|asking|enquir|bidding|offers?)\b`,
+    // The same thing said the other way round: "interested — three of them".
+    String.raw`\b(interested|keen|waiting)\b[^.!?]{0,30}\b${COUNTED}\s+(people|others|buyers|sellers)\b`,
+  ].join('|'),
+  'i',
+);
 const ID_LIKE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
 // "let me know once you've pressed it" and "tell me when that's done" are the
 // one shape step three goes missing in, and the manual names them as sentences
