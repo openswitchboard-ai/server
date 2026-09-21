@@ -825,7 +825,7 @@ function linkIn(sentence?: string): string | undefined {
  * answers: the plain word first, then everything the payload already carried,
  * then the link if the sentence held one.
  */
-export function protocolAnswer(payload: ProtocolError): ToolResult {
+export function protocolAnswer(payload: ProtocolError, tool?: string): ToolResult {
   const word = EXPECTED_REFUSALS[payload.code];
   if (!word) {
     return {
@@ -840,7 +840,21 @@ export function protocolAnswer(payload: ProtocolError): ToolResult {
   // guessing from the transcript (20 September 2026). The CODE only: never the
   // sentence, which can carry a link, and never an account id.
   // eslint-disable-next-line no-console
-  console.log(JSON.stringify({ level: 30, time: Date.now(), msg: 'refused', code: String(payload.code).slice(0, 40) }));
+  // AND WHICH TOOL ASKED. The code alone left a QUOTA_EXCEEDED that fitted no
+  // quota — the account had no cards and no publishes — and no way to tell
+  // whether it came from the posting at all or from somewhere else entirely
+  // (21 September 2026). Two guesses, both wrong, when the log could simply
+  // have said. Still the code and the tool name only: never the sentence,
+  // which can carry a link, and never an account id.
+  console.log(
+    JSON.stringify({
+      level: 30,
+      time: Date.now(),
+      msg: 'refused',
+      code: String(payload.code).slice(0, 40),
+      ...(tool ? { tool: String(tool).slice(0, 40) } : {}),
+    }),
+  );
   const link = linkIn(payload.human_action);
   // NOTHING HAPPENED, SAID BEFORE ANYTHING ELSE.
   //
@@ -1728,7 +1742,7 @@ async function dispatchToolInner(
         return invalidInput(`unknown tool '${name}'`);
     }
   } catch (e: any) {
-    if (e instanceof OsbError) return protocolAnswer(e.payload);
+    if (e instanceof OsbError) return protocolAnswer(e.payload, name);
     if (e?.notFound) return invalidInput(e.message);
     if (e?.validation) return invalidInput(e.message);
     throw e;
