@@ -24,7 +24,7 @@
  * human, on their own signed-in session, with their own PIN. The assistant
  * never sees the token and never sees a PIN.
  */
-import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { InvokeModelCommand, type InvokeModelCommandOutput } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { HUMAN_MODEL_ID, REGION } from './config.js';
 import type { FactSheet } from './scenarios/spring.js';
@@ -84,6 +84,23 @@ export interface Simulator {
   reply(history: HumanTurn[], assistantSaid: string): Promise<string>;
 }
 
+/**
+ * HOW LONG THE PERSON MAY TAKE TO ANSWER, AND HOW OFTEN WE ASK AGAIN.
+ *
+ * Every other leg of a turn had a timeout — the OpenClaw gateway over ssh, the
+ * Claude driver's spawn — and this one did not. On 21 September 2026 a run sat
+ * for seventeen minutes: the assistant had answered at 12:33:59, the gateway
+ * log then showed nothing but idle polling, and the harness was inside a
+ * Bedrock call that never came back. Nothing was wrong with either assistant.
+ *
+ * Two minutes is many times the second or so this model normally takes. One
+ * retry covers a dropped connection; after that the run is a VOID, because a
+ * simulated human who cannot speak is the rig breaking and says nothing
+ * whatever about the assistants.
+ */
+const HUMAN_TIMEOUT_MS = Number(process.env.REHEARSAL_HUMAN_TIMEOUT_MS ?? 120_000);
+const HUMAN_TRIES = 2;
+
 /** The real thing: one Bedrock call per human turn. */
 export function bedrockSimulator(sheet: FactSheet): Simulator {
   const system = humanSystemPrompt(sheet);
@@ -96,20 +113,38 @@ export function bedrockSimulator(sheet: FactSheet): Simulator {
         })),
         { role: 'user' as const, content: assistantSaid },
       ];
-      const r = await bedrock.send(
-        new InvokeModelCommand({
-          modelId: HUMAN_MODEL_ID,
-          contentType: 'application/json',
-          accept: 'application/json',
-          body: JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 160,
-            temperature: 0.4,
-            system,
-            messages: messages.length ? messages : [{ role: 'user', content: 'Hello?' }],
-          }),
+      const command = new InvokeModelCommand({
+        modelId: HUMAN_MODEL_ID,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify({
+          anthropic_version: 'bedrock-2023-05-31',
+          max_tokens: 160,
+          temperature: 0.4,
+          system,
+          messages: messages.length ? messages : [{ role: 'user', content: 'Hello?' }],
         }),
-      );
+      });
+      let r: InvokeModelCommandOutput | undefined;
+      let last: unknown;
+      for (let attempt = 1; attempt <= HUMAN_TRIES; attempt++) {
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), HUMAN_TIMEOUT_MS);
+        try {
+          r = await bedrock.send(command, { abortSignal: abort.signal });
+          break;
+        } catch (e) {
+          last = e;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      if (!r) {
+        throw new Error(
+          `the simulated human did not answer within ${Math.round(HUMAN_TIMEOUT_MS / 1000)}s, ` +
+            `${HUMAN_TRIES} attempts: ${last instanceof Error ? last.message : String(last)}`,
+        );
+      }
       const parsed = JSON.parse(new TextDecoder().decode(r.body));
       const text: string = (parsed.content ?? []).map((c: any) => c?.text ?? '').join('').trim();
       // A model that says nothing is a mechanical failure, not a silent human.
