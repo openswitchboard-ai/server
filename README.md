@@ -25,6 +25,12 @@ consent gates and the no-leak rule for themselves. The protocol repos
 (`schema`, `sdk-ts`, `openclaw-skill`) are Apache-2.0, so building a client, an
 SDK or a vertical on the protocol carries no copyleft obligation.
 
+The name is separate from the code licence. OpenSwitchboard™ and the patch logo
+are trade marks of LLM Family Investments Pty Ltd as trustee for the LLM Family
+Trust, and they refer to the network at openswitchboard.ai. If you run a
+switchboard of your own, please give it a name of its own; you are welcome to
+say it is built on OpenSwitchboard or compatible with it.
+
 Place data in `data/gazetteer.json.gz` comes from GeoNames under CC BY 4.0 — see
 [NOTICE](NOTICE).
 
