@@ -228,3 +228,79 @@ describe('the rubric', () => {
     expect(noulBand(0.04)).toBe('no');
   });
 });
+
+/**
+ * A PERSON'S OWN FIGURE DOES NOT EXPIRE AT A STEP BOUNDARY.
+ *
+ * `human_said_so_far` is scoped to the step on purpose — a turn is judged
+ * against what was said before it in that step. But money is different: the
+ * door asks a buyer for his ceiling while his want is being written, and his
+ * assistant carries that ceiling to the other side two steps later. Scored
+ * against the step alone, the human had said nothing, and the run failed
+ * twice on invented_figure over the human's own $25 (21 September 2026).
+ */
+describe('the money this human has already said', () => {
+  const CROSS_STEP = `# Run 13 transcript (rehearsal)
+
+## Step 1 — the want side
+
+**Tony:** looking for a brake spring
+
+**Nagatha:** What is the most you would pay?
+
+**Tony:** most I'd go is $25
+
+**Nagatha:** Posted, with $25 as your ceiling.
+
+## Step 2 — the introduction
+
+**Tony:** any luck?
+
+**Nagatha:** Someone came forward. Want me to put your $25 to him?
+`;
+
+  const t = parseTranscript(CROSS_STEP);
+  const carried = t.turns.filter((x) => x.speaker === 'Nagatha').at(-1)!;
+
+  it('carries a figure the human gave in an earlier step', () => {
+    const state = buildTurnState(t, carried);
+    expect(state.money_this_human_has_said).toEqual(['$25']);
+    // The step-scoped field still holds only this step, which is what the
+    // other rules are written against.
+    expect(state.human_said_so_far).toEqual(['any luck?']);
+  });
+
+  it('gathers nothing where the human never said a figure', () => {
+    const quiet = parseTranscript(`# Run 14
+
+## Step 1 — the have side
+
+**Lachlan:** I have a spare pump
+
+**Assistant:** Posted it at $40.
+`);
+    const turn = quiet.turns.find((x) => x.speaker === 'Assistant')!;
+    expect(buildTurnState(quiet, turn).money_this_human_has_said).toBeUndefined();
+  });
+
+  it('does not lend one person a figure the other person said', () => {
+    const bothSides = parseTranscript(`# Run 15
+
+## Step 1 — the have side
+
+**Lachlan:** I would not take less than $10
+
+**Assistant:** Noted.
+
+## Step 2 — the want side
+
+**Tony:** looking for one
+
+**Nagatha:** I will offer him $10 from you.
+`);
+    const nagatha = bothSides.turns.find((x) => x.speaker === 'Nagatha')!;
+    // Lachlan's tenner is Lachlan's. Nagatha works for Tony, who has said
+    // nothing, so the $10 in her turn is still hers to answer for.
+    expect(buildTurnState(bothSides, nagatha).money_this_human_has_said).toBeUndefined();
+  });
+});

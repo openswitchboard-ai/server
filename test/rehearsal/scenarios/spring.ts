@@ -118,6 +118,27 @@ export const TONY_WANT =
 export const WRONG_THING =
   "had a look at that one and it's not the right part, close it off for me please";
 
+/**
+ * WHAT EACH PERSON SAYS WHEN THE TWO OF THEM ARE FIRST CONNECTED.
+ *
+ * Stage 3 used to open with the neutral nudge, which is a nudge and not a
+ * question. Both people are told to volunteer nothing and answer only what
+ * they are asked, so a neutral nudge got "ok, thanks" and neither assistant
+ * had a single thing to carry: on 21 September 2026 the stage failed with
+ * zero messages sent either way, which was the scenario's fault and not the
+ * assistants'. The buyer's assistant, left to find something to do, went
+ * straight to an offer.
+ *
+ * So the buyer asks the question a person would actually ask — the one whose
+ * answer is on the seller's sheet and nowhere on the card — and the seller
+ * answers it. That is a conversation with a reason to exist, and it is still
+ * the HUMAN starting it, which is the rule everywhere else in this suite.
+ */
+export const FIRST_WORDS = {
+  buyer: 'ask him if it is just the spring or whether the elastomers come with it',
+  seller: 'tell him what he asked and see what he says',
+} as const;
+
 export const SHEETS = { seller: ALEX, buyer: TONY } as const;
 
 /**
