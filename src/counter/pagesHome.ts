@@ -100,6 +100,15 @@ swap those in the channel once you have both agreed.</p>
 // ---------------------------------------------------------------------------
 
 /**
+ * "Always-on" is our words, not anyone else's, so every question of this shape
+ * names the products a person would recognise instead. Kept here once: two
+ * pages ask about this and a list that drifts between them is a list that
+ * tells two different stories.
+ */
+const ALWAYS_ON_EXAMPLES = 'such as OpenClaw, Grok Bot, Hermes and Meta Muse';
+const CHAT_EXAMPLES = 'such as ChatGPT, Antigravity and Claude';
+
+/**
  * The two-way choice, drawn once. Onboarding, settings and the arrangement
  * page all ask a question of this shape — one of two kinds, a short head and a
  * line under it — and a person meeting the second one should recognise it from
@@ -141,12 +150,12 @@ const RUNS_ON_ITS_OWN_OPTIONS: ModeOption[] = [
   {
     value: 'on',
     head: 'It runs on its own.',
-    rest: 'It checks between our conversations, so it can watch for things without me asking.',
+    rest: `It checks between our conversations, so it can watch for things without me asking — ${ALWAYS_ON_EXAMPLES}.`,
   },
   {
     value: 'off',
     head: 'It waits for me.',
-    rest: 'It only acts while we are talking.',
+    rest: `It only acts while we are talking — ${CHAT_EXAMPLES}.`,
   },
 ];
 
@@ -985,12 +994,12 @@ const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   {
     value: 'assistant',
     head: 'An always-on agent.',
-    rest: 'My assistant checks on its own and brings me the news. I only need email as a backup. For always-on agents such as OpenClaw, Grok Bot, Hermes and Meta Muse.',
+    rest: `My assistant checks on its own and brings me the news. I only need email as a backup. For always-on agents ${ALWAYS_ON_EXAMPLES}.`,
   },
   {
     value: 'email',
     head: 'A chat assistant.',
-    rest: 'My assistant can only act when I talk to it. Each match and reply needs to reach me by email. For chat assistants such as ChatGPT, Antigravity and Claude.',
+    rest: `My assistant can only act when I talk to it. Each match and reply needs to reach me by email. For chat assistants ${CHAT_EXAMPLES}.`,
   },
 ];
 
