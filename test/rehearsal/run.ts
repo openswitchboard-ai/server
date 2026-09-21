@@ -595,8 +595,26 @@ async function oneRun(
         },
       });
       const said = turnsText(turns.slice(from), { role: 'assistant' });
-      record(checkIntroductionTold(id, said));
-      record(checkNamesOffer(id, said, sides[id].sheet.suburb));
+      // TELLING THEM IS NOT A STAGE, IT IS A MOMENT. The stages here are the
+      // harness's bookkeeping, not anything the assistant can see: when the
+      // two postings meet instantly — 0s apart, which is the common case — the
+      // assistant finds the introduction waiting on its very next tool call
+      // and says "someone nearby already has one going" while the harness is
+      // still inside stage 1. A run was failed for exactly that on 21
+      // September 2026: the buyer HAD told its human, one window too early.
+      // So this check reads every assistant turn from the moment the
+      // introduction existed. Turns before that are still excluded, because an
+      // assistant cannot truthfully announce a match that does not exist yet.
+      const sinceIntro = turnsText(
+        turns.filter((t) => t.at >= match!.createdAt),
+        { side: id, role: 'assistant' },
+      );
+      record(checkIntroductionTold(id, sinceIntro));
+      // Same window, for the same reason: the offer ("shall I share your first
+      // name and suburb?") lands in the turn that announces the introduction,
+      // and the link follows once the human says go on. Split those two across
+      // a stage boundary and the check sees a link with no offer before it.
+      record(checkNamesOffer(id, sinceIntro, sides[id].sheet.suburb));
       // A MAYBE HAS TO BE SAID AS A MAYBE. Only asked where the switchboard
       // really made one: on a sure introduction there is nothing to hedge.
       record(checkPossibleSaidAsPossible(id, said, match!.certainty));
