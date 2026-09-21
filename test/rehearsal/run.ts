@@ -370,7 +370,14 @@ async function oneRun(
         : await side.driver.ask(side.session, humanText);
       side.lastReply = reply.text;
       side.toolActivity.push(reply.toolActivity);
-      side.history.push({ role: 'assistant', text: reply.text });
+      // AN EMPTY TURN IS NOT A TURN, and it must not reach the history: the
+      // simulated human is a model too, and an empty assistant message in the
+      // exchange it is handed comes back "messages.N: user messages must have
+      // non-empty content" and voids the run. The loop above already nudges
+      // when an assistant says nothing; this keeps the silence out of what the
+      // person is shown. Both guards are needed — that one stops it being
+      // SPOKEN, this one stops it being REMEMBERED (21 September 2026).
+      if (reply.text.trim()) side.history.push({ role: 'assistant', text: reply.text });
       turns.push({
         stage,
         side: side.id,
