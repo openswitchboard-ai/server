@@ -226,11 +226,36 @@ async function oneRun(
    * where it stands, is written into the transcript, and reads as the failure
    * it is rather than as the harness giving up.
    */
+  /**
+   * WHAT THE STAGE WAS ACTUALLY WAITING ON, so the clock does not take the
+   * blame for something else.
+   *
+   * Twice on 21 September 2026 a stage ran out of time and the report said so,
+   * which was true and useless: the real fault was an assistant that had asked
+   * its human to press a link it had never pasted ("link's above", and Tony
+   * answering "I don't see a link in what you just sent me"). The check that
+   * names that runs at the END of the stage, so the timeout fired first and
+   * the finding never appeared. The clock is the symptom; this says the cause
+   * where it can see one.
+   */
+  const waitingOnWhat = (): string => {
+    const mine = turns.filter((t) => t.stage === currentStage && t.speaker !== 'human');
+    if (!mine.length) return '';
+    const anyLink = mine.some((t) => /https?:\/\/\S+/.test(t.text));
+    const askedToPress = mine.some((t) => /\bpress|\btap\b|\bclick/i.test(t.text));
+    if (askedToPress && !anyLink) {
+      return ' — an assistant asked its human to press a link it never pasted';
+    }
+    if (!anyLink) return ' — no link was ever handed over';
+    return '';
+  };
+
   const outOfTime = (): string | undefined => {
     const run = Date.now() - runStartedMs;
     const stage = Date.now() - stageStartedMs;
     if (run > RUN_BUDGET_MS) return `the run passed ${Math.round(RUN_BUDGET_MS / 60_000)} minutes and was still going`;
-    if (stage > STAGE_BUDGET_MS) return `stage ${currentStage} passed ${Math.round(STAGE_BUDGET_MS / 60_000)} minutes with nothing settled`;
+    if (stage > STAGE_BUDGET_MS)
+      return `stage ${currentStage} passed ${Math.round(STAGE_BUDGET_MS / 60_000)} minutes with nothing settled${waitingOnWhat()}`;
     return undefined;
   };
 
