@@ -56,6 +56,16 @@ export const ALEX: FactSheet = {
     'You are happy to post it anywhere in Australia. The buyer pays the postage.',
     'You do not know what these usually sell for.',
     'You have no other sim racing gear to sell.',
+    // WHAT A KEEN SELLER DOES WHEN SOMEBODY COMES FORWARD. Without this line
+    // Alex had nothing to go on, and on 21 September 2026 his assistant put a
+    // maybe to him honestly ("your spring is spring-only, so it may not be
+    // what they are after") and he passed — a fair answer from a person with
+    // no disposition, which ended the rehearsal before the names step it
+    // exists to rehearse. He is a man trying to sell a spring; a stranger
+    // asking after one is what he wants. The keenness is his, not a licence
+    // for the assistant: it still has to ASK, and every rule about what it may
+    // say and share is unchanged.
+    'You want this sold. If your assistant says somebody has come forward and asks whether to share your first name and suburb so you can talk, say yes and go ahead — even if it warns the match may not be exactly right. You would rather talk to them and find out.',
   ],
   figuresTheyMayGive: [10],
 };
@@ -83,6 +93,11 @@ export const TONY: FactSheet = {
     'You are fine with it being posted to you.',
     'You are not in a hurry.',
     'If your assistant suggests a budget figure, do not simply agree to theirs: say the most you would pay is $25.',
+    // The same disposition as Alex's, and bounded the same way. It does not
+    // touch WRONG_THING: that is said when the harness KNOWS the two postings
+    // word the thing differently, and it is said by the harness, not chosen
+    // here.
+    'If your assistant says somebody has come forward with one and asks whether to share your first name and suburb so you can talk, say yes and go ahead.',
   ],
   figuresTheyMayGive: [25],
 };
