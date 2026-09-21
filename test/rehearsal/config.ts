@@ -79,7 +79,23 @@ export const GAP_MS = Number(process.env.REHEARSAL_GAP_MS ?? 20_000);
  * the assistant rather than about us. A person watching would have stopped it
  * long before, and the suite should too.
  */
-export const STAGE_BUDGET_MS = Number(process.env.REHEARSAL_STAGE_BUDGET_MS ?? 480_000);
+/**
+ * TWELVE, NOT EIGHT, AND THE REASON MATTERS BECAUSE THIS IS A LIMIT BEING
+ * RELAXED BY THE PERSON WHO SET IT.
+ *
+ * Eight was picked to stop a run that sat in a wait loop for half an hour, and
+ * it did that. But stage 2 is two sides, each handing over a link, holding the
+ * line up to fifty seconds a wait, with twenty seconds between nudges — eight
+ * minutes is tight for it even when nothing goes wrong. On 21 September 2026 a
+ * run passed EVERY deterministic check and carried no speech slip at all, got
+ * as far as the buyer being offered the introduction, and was cut off by this
+ * number after the OpenClaw client dropped one wait and cost the recovery.
+ *
+ * The thing it was written to catch still gets caught: half an hour is nowhere
+ * near twelve minutes, and the whole-run budget is unchanged. What is bought
+ * is that one transient client failure no longer throws away a clean run.
+ */
+export const STAGE_BUDGET_MS = Number(process.env.REHEARSAL_STAGE_BUDGET_MS ?? 720_000);
 /** And the whole run, so six patient stages cannot add up to an afternoon. */
 export const RUN_BUDGET_MS = Number(process.env.REHEARSAL_RUN_BUDGET_MS ?? 2_700_000);
 
