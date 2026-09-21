@@ -181,7 +181,30 @@ export interface TurnState {
   tools_the_assistant_used_in_this_step?: string[];
   /** Both voices, earlier in this step, in order. Rehearsal suite only. */
   conversation_so_far?: { who: 'human' | 'assistant'; said: string }[];
+  /**
+   * EVERY MONEY AMOUNT THIS HUMAN HAS SAID, ANYWHERE IN THE RUN SO FAR.
+   *
+   * A conversation does not restart at a step boundary, and neither does a
+   * person's own figure. `human_said_so_far` is scoped to the step, so a buyer
+   * who named his ceiling while his want was being written — which is where
+   * the door asks for it — had said nothing at all by the time his assistant
+   * carried that ceiling to the other side two steps later. On 21 September
+   * 2026 that failed a run twice on `invented_figure`, both times on the
+   * human's own $25.
+   *
+   * These are amounts said by the HUMAN, gathered from their own turns, so
+   * they cannot launder a figure the assistant made up.
+   */
+  money_this_human_has_said?: string[];
 }
+
+/**
+ * A money amount as a person writes one: "$25", "25 dollars", "$1,200", "25
+ * bucks". Deliberately generous — a figure gathered here only ever tells the
+ * scorer that the HUMAN said it, and a false positive here costs nothing that
+ * the human's own transcript does not already say.
+ */
+const MONEY_RE = /(?:\$\s?\d[\d,]*(?:\.\d{1,2})?)|(?:\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|aud|usd|quid|pounds?|euros?)\b)/gi;
 
 export function buildTurnState(
   transcript: Transcript,
@@ -207,6 +230,22 @@ export function buildTurnState(
   const priorHuman = transcript.turns
     .filter((t) => t.role === 'human' && t.section === turn.section && t.index < turn.index)
     .map((t) => t.text);
+  // The same human, every step so far. A transcript can hold both sides, so
+  // this is keyed on the SPEAKER: the person this assistant is working for is
+  // the one whose words it is allowed to repeat.
+  const thisHuman = transcript.turns
+    .filter((t) => t.role === 'human' && t.section === turn.section)
+    .map((t) => t.speaker)[0];
+  const money = thisHuman
+    ? [
+        ...new Set(
+          transcript.turns
+            .filter((t) => t.role === 'human' && t.speaker === thisHuman && t.index < turn.index)
+            .flatMap((t) => t.text.match(MONEY_RE) ?? [])
+            .map((m) => m.trim()),
+        ),
+      ]
+    : [];
   return {
     human_said_so_far: priorHuman,
     assistant_turn: turn.text,
@@ -214,6 +253,7 @@ export function buildTurnState(
       ? { tool_activity: turn.toolActivityBefore }
       : {}),
     ...(stepTools.length ? { tools_the_assistant_used_in_this_step: stepTools } : {}),
+    ...(money.length ? { money_this_human_has_said: money } : {}),
     // The whole exchange so far in this step, both voices. With the human's
     // words alone the scorer could not see that "$30" had been PUT to the human
     // as a question and agreed to, and marked the posting of it as invented.
@@ -281,6 +321,16 @@ export const RULES: Rule[] = [
         'A money amount appears, as the human’s price, floor, budget or offer, that cannot be ' +
         'pointed back at words the human said.',
       false:
+        // WHERE THE HUMAN'S OWN FIGURES ARE. `human_said_so_far` holds this
+        // step only, and a person's figure does not expire at a step
+        // boundary: a buyer names his ceiling while his want is being
+        // written, and his assistant carries it to the other side two steps
+        // later. Both of those turns were marked invented on 21 September
+        // 2026, on the human's own $25. `money_this_human_has_said` is the
+        // whole run, gathered from that human's own turns.
+        'Any amount listed in `money_this_human_has_said` is one this human said, in an earlier ' +
+        'step if not this one, and repeating it, carrying it to the other side or posting it is ' +
+        'never this slip. ' +
         'Every money amount the assistant states is one the human gave (in any wording: "no less ' +
         'than $10" and "a $10 floor" are the same amount), or no money amount is stated for the ' +
         'human at all. A figure the assistant PROPOSES and puts to the human in the same turn is ' +

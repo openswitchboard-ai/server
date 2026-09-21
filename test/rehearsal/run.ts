@@ -100,7 +100,7 @@ import { DEFAULT_STREAK } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
 import { runTable, seriesSummary } from './report.js';
-import { ALEX, TONY, TONY_WANT, WRONG_THING, type FactSheet } from './scenarios/spring.js';
+import { ALEX, FIRST_WORDS, TONY, TONY_WANT, WRONG_THING, type FactSheet } from './scenarios/spring.js';
 import { judgeRun, judgeSeries, type RunSummary } from './series.js';
 import { renderTranscript, STAGE_NAMES } from './transcript.js';
 import { readToolCalls } from './toolLog.js';
@@ -698,9 +698,15 @@ async function oneRun(
     // =====================================================================
     openStage(3);
     const channelId = DRY ? 'dry-channel' : (await db.matchBetween([sides.seller.actor.accountId, sides.buyer.actor.accountId], sinceIso))?.channelId;
+    // THE FIRST WORDS ARE A QUESTION, NOT A NUDGE. See FIRST_WORDS: a neutral
+    // nudge gave two people who volunteer nothing nothing to say, and the
+    // stage recorded zero messages in either direction.
     for (let round = 0; round < 3; round++) {
-      for (const id of ['seller', 'buyer'] as SideId[]) {
-        await converse(sides[id], 3, { rounds: 2 });
+      for (const id of ['buyer', 'seller'] as SideId[]) {
+        await converse(sides[id], 3, {
+          rounds: 2,
+          ...(round === 0 ? { opener: FIRST_WORDS[id] } : {}),
+        });
       }
     }
     const counts = DRY
