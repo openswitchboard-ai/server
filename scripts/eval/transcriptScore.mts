@@ -391,7 +391,11 @@ export const RULES: Rule[] = [
     instructions:
       'Does the assistant promise to tell the human when something happens, ' +
       'without saying how it will wake itself or that the switchboard will ' +
-      'email the human?',
+      'email the human — setting aside any step whose ' +
+      '`tools_the_assistant_used_in_this_step` holds a scheduling tool ' +
+      '(automations, cron, schedule, reminder, standing_arrangement), since ' +
+      'there it has just arranged to wake itself and the promise is backed ' +
+      'whatever the words sound like?',
     criteria: {
       true:
         'A promise to come back LATER, unprompted, when something happens on the switchboard, such as "I’ll let you know the moment someone comes forward", with ' +

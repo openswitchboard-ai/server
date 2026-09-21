@@ -405,7 +405,14 @@ async function oneRun(
           next = NUDGE;
           continue;
         }
-        next = await side.simulator.reply(side.history, said);
+        // AND THE SAME GUARD ON THE HUMAN'S SIDE. An empty ASSISTANT turn was
+        // already handled above; an empty turn from the SIMULATED HUMAN was
+        // not, and it goes straight back out as the next user message —
+        // "messages.12: user messages must have non-empty content", which
+        // voided two runs of three on 21 September 2026. A person who has
+        // nothing to add asks again rather than saying nothing.
+        const reply = await side.simulator.reply(side.history, said);
+        next = reply.trim() ? reply : NUDGE;
         if (!DRY) await sleep(GAP_MS);
       }
     };
