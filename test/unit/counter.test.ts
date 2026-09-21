@@ -668,7 +668,7 @@ describe('counter pages: copy-cull render suite', () => {
         { notice: 'Saved. This is what a match sees once you both say yes.' },
       ),
     },
-    { name: 'oauth-authorize', html: cpages.authorizePage('Claude for Chores', '/authorize', {}) },
+    { name: 'oauth-authorize', html: cpages.authorizePage('Claude for Chores', '/authorize', {}, 'c-1', undefined, 'https://claude.ai/api/mcp/auth_callback') },
     { name: 'registration-closed', html: cpages.registrationClosedPage() },
     {
       name: 'dashboard',

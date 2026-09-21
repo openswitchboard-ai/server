@@ -1453,12 +1453,29 @@ ${restHtml}
 ${ceremonyScript(v)}`);
 }
 
+/**
+ * Where this agent's key will be sent, written for a person to read: the host
+ * of the redirect it registered. An agent picks its own name at registration
+ * and anyone may register one, so the name on this page proves nothing. The
+ * address is the part nobody else can choose, which is why it is shown.
+ */
+function redirectHost(uri: string): string {
+  try {
+    const h = new URL(uri).hostname.replace(/^\[|\]$/g, '');
+    if (h === '127.0.0.1' || h === 'localhost' || h === '::1') return 'your own machine';
+    return h;
+  } catch {
+    return uri;
+  }
+}
+
 export function authorizePage(
   clientName: string,
   postPath: string,
   hidden: Record<string, string>,
   clientId = '',
   c: CeremonyView = { hasPin: false, hasPasskey: false, elevated: true },
+  redirectUri = '',
 ): string {
   const hiddenInputs = Object.entries(hidden)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
@@ -1469,6 +1486,13 @@ export function authorizePage(
   return layout('Authorize your agent', `
 <h1>Let this agent work the switchboard for you?</h1>
 <div class="headline"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
+${
+  redirectUri
+    ? `<p class="small muted">Its key goes to <strong>${esc(redirectHost(redirectUri))}</strong>.
+Any agent can register under any name, so check that address is the one you meant
+to connect. If you do not recognise it, press Cancel.</p>`
+    : ''
+}
 <form method="POST" action="${esc(postPath)}" id="authorize-form" data-client="${esc(clientId)}">
 ${hiddenInputs}
   ${ceremonyField(c, 'authorize')}
