@@ -601,6 +601,19 @@ async function oneRun(
     // =====================================================================
     openStage(2);
     const pressesBefore = presses.length;
+    /**
+     * WHEN THE INTRODUCTION EXISTED, in milliseconds, both sides of the
+     * comparison parsed.
+     *
+     * The database hands this back through `created_at::text`, which Postgres
+     * writes with a SPACE between the date and the time; a transcript turn
+     * carries an ISO string, with a T. Compared as strings, ' ' sorts below
+     * 'T', so every turn of the same day looked later than the introduction
+     * and the window I opened this morning was in fact no window at all. It
+     * swept up a stage-1 advice answer — "many people find it a bit soft" —
+     * and the queue-claim rule read that as a claim about who else is waiting.
+     */
+    const introAtMs = Date.parse(match.createdAt.replace(' ', 'T'));
     for (const id of ['seller', 'buyer'] as SideId[]) {
       const side = sides[id];
       const from = turns.length;
@@ -624,7 +637,7 @@ async function oneRun(
       // introduction existed. Turns before that are still excluded, because an
       // assistant cannot truthfully announce a match that does not exist yet.
       const sinceIntro = turnsText(
-        turns.filter((t) => t.at >= match!.createdAt),
+        turns.filter((t) => Date.parse(t.at) >= introAtMs),
         { side: id, role: 'assistant' },
       );
       record(checkIntroductionTold(id, sinceIntro));

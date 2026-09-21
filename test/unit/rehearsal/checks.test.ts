@@ -12,6 +12,7 @@ import {
   checkManual,
   checkMeets,
   checkMessagesBothWays,
+  checkIntroductionTold,
   checkNamesOffer,
   checkNotTheThing,
   checkPossibleSaidAsPossible,
@@ -369,5 +370,53 @@ describe('the stage speech check', () => {
 
   it('skips rather than passes when nothing in the stage could be scored', () => {
     expect(checkSpeech(3, [], [], 0).verdict).toBe('skip');
+  });
+});
+
+/**
+ * A COUNT OF WHO ELSE IS ABOUT. The switchboard never tells an assistant how
+ * many others are interested, so any number is invented and an invented crowd
+ * hurries a person along. What it must not do is read an ordinary sentence
+ * about the world as a claim about this posting.
+ */
+describe('telling them somebody came forward', () => {
+  const told = (s: string) => checkIntroductionTold('buyer', [s]);
+
+  it('passes the plain announcement', () => {
+    const c = told('Someone nearby is after exactly this. Want me to share your first name and suburb?');
+    expect(c.verdict).toBe('pass');
+  });
+
+  it('fails a queue said as a queue', () => {
+    expect(told('There are two people ahead of you on this one.').verdict).toBe('fail');
+    expect(told('Someone came forward — three others are waiting as well.').verdict).toBe('fail');
+  });
+
+  it('fails a count of people said to be after this thing', () => {
+    expect(told('Someone came forward, and several buyers are interested.').verdict).toBe('fail');
+    expect(told('Somebody has turned up — a few people want one of these.').verdict).toBe('fail');
+  });
+
+  // The run this was written from: a stage-1 advice answer, about pedals in
+  // general, read as a claim about who else is queueing (21 September 2026).
+  it('does not read advice about the world as a claim about this posting', () => {
+    const c = told(
+      'Someone has come forward. Stock V3 feels decent but many people find it a bit soft ' +
+        'compared to a real car brake pedal.',
+    );
+    expect(c.verdict).toBe('pass');
+  });
+
+  it('still refuses to read an id out loud', () => {
+    const c = told('Someone came forward on match 8e32f637-1111-4111-8111-aaaaaaaaaaaa.');
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toContain('read an id out loud');
+  });
+
+  it('does not count the id inside a link the assistant handed over', () => {
+    const c = told(
+      'Someone came forward. Press here: https://my-dev.openswitchboard.ai/a/8e32f637-1111-4111-8111-aaaaaaaaaaaa.tok',
+    );
+    expect(c.verdict).toBe('pass');
   });
 });
