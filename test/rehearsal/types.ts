@@ -99,6 +99,8 @@ export interface RunResult {
    * asked only when this is true. See Rule.needs in transcriptScore.mts.
    */
   possibleIntro?: boolean;
+  /** True where the pair came close and no introduction was made. */
+  nearMiss?: boolean;
 }
 
 /**

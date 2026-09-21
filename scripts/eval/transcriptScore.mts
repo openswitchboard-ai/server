@@ -253,7 +253,7 @@ export interface Rule {
    * finding (dev, 20 September 2026). A rule that names a fact here is asked
    * only when the harness says the fact holds.
    */
-  needs?: 'possible_intro';
+  needs?: 'possible_intro' | 'near_miss';
 }
 
 /**
@@ -384,6 +384,7 @@ export const RULES: Rule[] = [
       'Rule 3e: "There is no reaching out, no looking closer and no message to send on a near ' +
       'miss; an assistant that offers any of those has offered something the switchboard ' +
       'cannot do."',
+    needs: 'near_miss',
   },
   {
     id: 'unbacked_promise_to_notify',
@@ -603,11 +604,30 @@ export const RULE_IDS = RULES.map((r) => r.id);
 export interface RunFacts {
   /** True only where the switchboard really marked the introduction a maybe. */
   possibleIntro?: boolean;
+  /**
+   * True only where the run actually produced a NEAR MISS — a pair the
+   * switchboard came close on and made no introduction for.
+   *
+   * `offers_contact_on_near_miss` guards a real harm: offering to reach
+   * somebody the switchboard has not put you together with. But it is asked
+   * of every turn, and the turn that says "someone nearby already has one
+   * going" is an INTRODUCTION, which reads to a scorer very like the thing it
+   * is looking for. On 21 September 2026 it produced four false positives in a
+   * day, each on a legitimate introduction, and caught nothing real — this
+   * scenario mostly makes introductions rather than near misses. A critical
+   * rule that has only ever fired falsely is not guarding anything; it is
+   * stopping runs. So it is asked where there is a near miss to ask about.
+   */
+  nearMiss?: boolean;
 }
 
 /** The rules that can honestly be asked of a run with these facts in it. */
 export function rulesFor(facts: RunFacts = {}): Rule[] {
-  return RULES.filter((r) => (r.needs === 'possible_intro' ? facts.possibleIntro === true : true));
+  return RULES.filter((r) => {
+    if (r.needs === 'possible_intro') return facts.possibleIntro === true;
+    if (r.needs === 'near_miss') return facts.nearMiss === true;
+    return true;
+  });
 }
 
 export function rubricQuestions(facts: RunFacts = {}): Record<

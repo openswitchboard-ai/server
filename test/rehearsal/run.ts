@@ -216,6 +216,8 @@ async function oneRun(
   let runError: string | undefined;
   /** Set the moment the introduction is read, so finish() can pass it on. */
   let possibleIntro = false;
+  /** Set where the pair came close and no introduction was made. */
+  let hadNearMiss = false;
   /** When this run began, for the wall-clock budgets. */
   const runStartedMs = Date.now();
   /** When the stage now open began. Reset by openStage. */
@@ -522,6 +524,9 @@ async function oneRun(
       [sides.seller.actor.accountId, sides.buyer.actor.accountId],
       sinceIso,
     );
+    // Whether there is a near miss to ask the near-miss rule about at all.
+    // Asked of every run it flagged four legitimate introductions in a day.
+    hadNearMiss = nearMiss !== undefined;
     record(
       checkMeets(
         {
@@ -1096,7 +1101,10 @@ async function main(): Promise<number> {
       ? { turns: [], failedTurns: [], uncertainTurns: [], scoredCount: 0, meanLatencyMs: 0, tokensIn: 0, tokensOut: 0, unavailable: 'dry run: the speech rules were not read' }
       : await scoreTranscript(md, {
           assistantNames: [result.cast.seller, result.cast.buyer],
-          facts: { possibleIntro: result.possibleIntro === true },
+          facts: {
+            possibleIntro: result.possibleIntro === true,
+            nearMiss: result.nearMiss === true,
+          },
         });
     scores.push(score);
 
