@@ -35,7 +35,11 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 import * as db from '../../src/db.js';
 import { amendIntent, publishIntent, whatHappensNextNote } from '../../src/domain/cards.js';
 import { SENTENCES } from '../../src/domain/lanes.js';
-import { figureQuestions, figuresOnPosting } from '../../src/domain/postingFigure.js';
+import {
+  figureAmountsKey,
+  figureQuestions,
+  figuresOnPosting,
+} from '../../src/domain/postingFigure.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
@@ -71,6 +75,31 @@ describe('which figures a posting carries', () => {
     expect(figuresOnPosting({ type: 'offering' })).toEqual([]);
     expect(figuresOnPosting({ type: 'offering', ask: null, price: null })).toEqual([]);
     expect(figuresOnPosting({ type: 'offering', price: { band: {}, ccy: 'AUD' } })).toEqual([]);
+  });
+
+  it('keys on the figures as they were read back, and never on the words', () => {
+    const at = (max: number) =>
+      figuresOnPosting({ type: 'looking_for', price: { band: { max }, ccy: 'AUD' } });
+    expect(figureAmountsKey(at(45))).toBe('the most they will pay|45|AUD');
+    // A changed number is a changed key, which is the whole of what the
+    // read-back is for: nobody has confirmed forty dollars.
+    expect(figureAmountsKey(at(45))).not.toBe(figureAmountsKey(at(40)));
+    // So is a changed currency: "$45 AUD" and "$45 USD" are not one question.
+    expect(figureAmountsKey(at(45))).not.toBe(
+      figureAmountsKey(figuresOnPosting({ type: 'looking_for', price: { band: { max: 45 }, ccy: 'USD' } })),
+    );
+    // The order two figures arrive in is not a difference.
+    const two = [
+      { what: 'asking price', amount: 620, currency: 'AUD' },
+      { what: 'the least they will take', amount: 500, currency: 'AUD' },
+    ];
+    expect(figureAmountsKey(two)).toBe(figureAmountsKey([...two].reverse()));
+    // AND NOT ONE WORD OF THE THING IS IN IT. The detail gate beside this one
+    // asks the assistant to say more exactly what the thing is, so the words
+    // move between one attempt and the next; keying on them made the read-back
+    // unanswerable and looped four times with nothing posted (21 September
+    // 2026). Which posting this is, is the reference's job, not this key's.
+    expect(figureAmountsKey(at(45))).not.toMatch(/spring|bike/i);
   });
 
   it('asks the human in their own words, one question per figure', () => {
@@ -235,14 +264,17 @@ describe('a figure on a posting is read back once', () => {
     expect(world.sql.some((s) => /posting_references/.test(s.text))).toBe(false);
   });
 
-  it('writes down the account and the gate, and never the amount', async () => {
+  it('writes down the number, the account, the gate and the figure it read back', async () => {
     const p = (await publishRefusal(listing({ ask: { amount: 620, ccy: 'AUD' } })))!;
     const asked = world.sql.find((s) => /INSERT INTO posting_references/.test(s.text))!;
     expect(asked.params[0]).toBe(p.reference);
     expect(asked.params[1]).toBe(ACCOUNT);
     expect(asked.params[2]).toEqual(['figure']);
-    // The amounts are the human's own business: not in the row, not in the log.
-    expect(JSON.stringify(asked.params)).not.toContain('620');
+    // The figure as it was said to the human, so a changed one is asked about
+    // again. The thing's own words are the one thing that is never in here.
+    expect(asked.params[3]).toBe('asking price|620|AUD');
+    expect(asked.params[3]).not.toContain('mountain bike');
+    // And the amounts stay out of the log, wherever else they go.
     expect(world.logs.join('\n')).not.toContain('620');
   });
 });

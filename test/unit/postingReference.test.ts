@@ -17,12 +17,21 @@
  * Four rounds, and then the agent told its human the thing was posted when
  * nothing had gone up at all.
  *
+ * WHAT LEFT THE KEY, AND WHAT DID NOT. The thing's NAME had to go: the other
+ * questions in the same flow explicitly ask the agent to change it, which is
+ * the whole of the bug above. The AMOUNT never had to. Nothing in the flow asks
+ * an agent to change a price, and the amount is precisely what the read-back is
+ * checking. So the reference sits BESIDE the figures rather than in place of
+ * them: same reference and the same figures, and nobody is asked twice; same
+ * reference carrying a different figure, and the question is put again.
+ *
  * What this suite holds the door to:
  *
  *   - the reword above goes through, and NOTHING is asked twice;
  *   - the reference is minted on the FIRST thing said back about an attempt,
  *     and every later answer about that attempt carries the same one;
- *   - it is the only key: no words, no amounts, no time window;
+ *   - a CHANGED figure under that same reference is still read back;
+ *   - no words and no time window are ever consulted;
  *   - it becomes the posting's own id, so there is never a second number;
  *   - somebody else's reference reads as no reference at all;
  *   - the row is forgotten the moment the attempt succeeds, on a publish and
@@ -196,6 +205,66 @@ describe('the pedal spring, posted the way the rehearsal posted it', () => {
     expect(third.posted.intent_id).toBe(reference);
   });
 
+  /**
+   * THE OTHER HALF OF THE RULE, and the hole that keying on the reference alone
+   * would have left open. An assistant asked about a ten-dollar spring could
+   * have sent back a four-hundred-dollar bicycle under the same number and had
+   * the read-back skipped — nobody has confirmed four hundred dollars of
+   * anything. The figures are half the key, so it is asked.
+   */
+  it('reads a changed figure back again under the very same reference', async () => {
+    const first = (await post(spring())).refusal!;
+    expect(first.code).toBe('NEEDS_DETAIL');
+    const reference = first.reference!;
+
+    // Ten dollars, read back and confirmed.
+    const ten = (await post(spring({ attributes: KNOWN }), { reference })).refusal!;
+    expect(ten.code).toBe('CONFIRM_FIGURE');
+    expect(ten.figures![0].amount).toBe(10);
+
+    // The number moves. Same reference, same posting, and it is asked again —
+    // with the NEW figure to say, never the old one.
+    const four = (
+      await post(spring({ attributes: KNOWN, price: { band: { min: 400 }, ccy: 'AUD' } }), {
+        reference,
+      })
+    ).refusal!;
+    expect(four.code).toBe('CONFIRM_FIGURE');
+    expect(four.figures).toEqual([
+      { what: 'the least they will take', amount: 400, currency: 'AUD' },
+    ]);
+    expect(four.reference).toBe(reference);
+    // And the detail question, which turns on the reference alone, is not
+    // asked again: only the figure moved.
+    expect(four.questions!.join(' ')).not.toContain('make and model');
+
+    // Confirmed at four hundred, it goes up — and the old ten dollars is not
+    // excused by what stood on the row before, because the figures REPLACE.
+    const up = await post(
+      spring({ attributes: KNOWN, price: { band: { min: 400 }, ccy: 'AUD' } }),
+      { reference },
+    );
+    expect(up.refusal?.code).toBeUndefined();
+    expect(up.posted.intent_id).toBe(reference);
+  });
+
+  it('reads the old figure back again if the posting goes back to it', async () => {
+    const first = (await post(spring())).refusal!;
+    const reference = first.reference!;
+    expect((await post(spring({ attributes: KNOWN }), { reference })).refusal!.code).toBe(
+      'CONFIRM_FIGURE',
+    );
+    // Ten confirmed, then four hundred asked about: the row now remembers four
+    // hundred and nothing else, so ten is a question again rather than a thing
+    // somebody said once.
+    await post(spring({ attributes: KNOWN, price: { band: { min: 400 }, ccy: 'AUD' } }), {
+      reference,
+    });
+    const back = (await post(spring({ attributes: KNOWN }), { reference })).refusal!;
+    expect(back.code).toBe('CONFIRM_FIGURE');
+    expect(back.figures![0].amount).toBe(10);
+  });
+
   it('asks the same questions again where nothing carried the number back', async () => {
     // The fallback, and the whole of it: no reference, so this is a new
     // attempt and every question is put again. No time window softens it.
@@ -226,18 +295,32 @@ describe('the reference', () => {
     expect(world.refs.asked(p.reference)).toEqual([]);
   });
 
-  it('holds nothing about the thing and nothing about the money', async () => {
-    const p = (await post(spring())).refusal!;
+  it('holds not one word about the thing, whichever gate wrote it', async () => {
+    // The detail gate first: the number, the account, the gate, and no figure.
+    const thin = (await post(spring())).refusal!;
+    expect(world.sql.filter((s) => /INTO posting_references/.test(s.text))).toEqual([
+      expect.objectContaining({ params: [thin.reference, ACCOUNT, ['detail'], null] }),
+    ]);
+
+    // And the figure gate, which writes the one thing about the posting that is
+    // ever kept here: the figure as it was said to the human.
+    const figure = (
+      await post(spring({ attributes: KNOWN }), { reference: thin.reference })
+    ).refusal!;
+    expect(figure.code).toBe('CONFIRM_FIGURE');
     const writes = world.sql.filter((s) => /INTO posting_references/.test(s.text));
-    expect(writes.length).toBeGreaterThan(0);
-    for (const w of writes) {
-      // The number, the account, and the gates that asked. That is the row.
-      expect(w.params).toEqual([p.reference, ACCOUNT, ['detail']]);
-    }
-    // The old row carried the poster's own words for the thing, because the
-    // words WERE the key. Nothing here does, and nothing here ever sees a price.
+    expect(writes[1].params).toEqual([
+      thin.reference,
+      ACCOUNT,
+      ['figure'],
+      'the least they will take|10|AUD',
+    ]);
+
+    // THE WORDS FOR THE THING ARE NEVER IN HERE. The old row carried them,
+    // because the words WERE the key, and that is the whole of the defect.
     const text = JSON.stringify(writes.map((w) => w.params));
-    expect(text).not.toMatch(/spring|Fanatec|pedal/i);
+    expect(text).not.toMatch(/spring|Fanatec|pedal|upgraded/i);
+    // Nor in a log line, wherever else a figure goes.
     expect(world.logs.join('\n')).not.toMatch(/Fanatec/i);
   });
 

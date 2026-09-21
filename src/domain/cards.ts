@@ -38,6 +38,7 @@ import {
 } from './postingDetail.js';
 import {
   FIGURE_HUMAN_ACTION,
+  figureAmountsKey,
   figureQuestions,
   figuresOnPosting,
   type PostingFigure,
@@ -405,22 +406,37 @@ interface Attempt {
   reference?: string;
   /** The gates that have already asked on it. */
   asked: Set<PostingGate>;
+  /** The figures the figure gate last read back on it, if it has. */
+  amounts?: string;
 }
 
 /** The attempt an agent is continuing, or a fresh one with no number yet. */
 async function openAttempt(accountId: string, sent: unknown): Promise<Attempt> {
   const open = await readPostingRef(accountId, sent);
-  return { reference: open?.reference, asked: new Set(open?.asked ?? []) };
+  return {
+    reference: open?.reference,
+    asked: new Set(open?.asked ?? []),
+    amounts: open?.amounts,
+  };
 }
 
 /**
  * Write down that this gate has asked, minting the number on first contact.
  * The attempt carries it from here on, so the next gate in the same call and
  * every later attempt the agent makes are all talking about the same thing.
+ *
+ * `amounts` rides along from the one gate that reads figures back, so the row
+ * remembers WHAT was confirmed as well as which posting it was confirmed on.
  */
-async function askOnce(accountId: string, attempt: Attempt, gate: PostingGate): Promise<string> {
-  attempt.reference = await noteAsked(accountId, attempt.reference, gate);
+async function askOnce(
+  accountId: string,
+  attempt: Attempt,
+  gate: PostingGate,
+  amounts?: string,
+): Promise<string> {
+  attempt.reference = await noteAsked(accountId, attempt.reference, gate, amounts);
   attempt.asked.add(gate);
+  if (amounts !== undefined) attempt.amounts = amounts;
   return attempt.reference;
 }
 
@@ -435,14 +451,22 @@ async function askOnce(accountId: string, attempt: Attempt, gate: PostingGate): 
  * these usually go for?"
  *
  * So the first attempt comes back unposted with the figures on it, and the
- * second — carrying the reference that refusal handed over — goes through
- * untouched, because by then somebody has been asked. A posting with no figure
- * never comes here at all.
+ * second — carrying the reference that refusal handed over, and the same
+ * figures — goes through untouched, because by then somebody has been asked. A
+ * posting with no figure never comes here at all.
  *
- * WHAT THE AGENT WROTE IS NOT CONSULTED. The old key carried the amounts and
- * the poster's own words for the thing, and the detail gate above asks for
- * sharper words, so an assistant doing as it was told was asked the same
- * question for ever (21 September 2026, four rounds, nothing posted).
+ * TWO THINGS DECIDE IT, AND NEITHER IS SOMETHING THE AGENT WROTE. The reference
+ * says which posting attempt this is; the figures say what was confirmed on it.
+ * A changed number under the same reference is asked about again, because a
+ * changed number is exactly what this read-back exists to catch — a posting
+ * asked about at ten dollars that comes back at four hundred has not been
+ * confirmed by anybody.
+ *
+ * The poster's own words for the thing used to be in that key as well, and they
+ * are what made it unanswerable: the detail gate above asks for sharper words,
+ * so an assistant doing as it was told was asked the same question for ever
+ * (21 September 2026, four rounds, nothing posted). The name had to go. The
+ * amount never did, because nothing in the flow asks an agent to change it.
  *
  * Nothing is logged: the amounts are the human's own business, which is why
  * the band is encrypted on the row in the first place.
@@ -453,8 +477,9 @@ async function confirmFigures(
   figures: PostingFigure[],
 ): Promise<void> {
   if (!figures.length) return;
-  if (attempt.asked.has('figure')) return;
-  const reference = await askOnce(accountId, attempt, 'figure');
+  const amounts = figureAmountsKey(figures);
+  if (attempt.asked.has('figure') && attempt.amounts === amounts) return;
+  const reference = await askOnce(accountId, attempt, 'figure', amounts);
   throw new OsbError('CONFIRM_FIGURE', {
     human_action: FIGURE_HUMAN_ACTION,
     questions: figureQuestions(figures),

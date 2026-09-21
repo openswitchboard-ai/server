@@ -14,14 +14,24 @@
  *
  * Two mechanisms, each sensible alone, that together make a posting impossible.
  *
- * SO NOTHING THE AGENT WROTE IS A KEY ANY MORE. The first time a posting
- * attempt comes back with anything, a reference is minted and handed over with
- * the refusal. Every later question about that same attempt carries it, the
- * agent sends it back on its next attempt, and every "have I already asked
- * this?" decision reads the reference and nothing else. No name, no amounts, no
- * time window — a time window was considered and rejected as needless
- * complication. No reference means a genuinely new attempt, so the questions
- * are asked, and that is the whole of the fallback.
+ * SO THE THING'S NAME IS NOT A KEY ANY MORE. The first time a posting attempt
+ * comes back with anything, a reference is minted and handed over with the
+ * refusal. Every later question about that same attempt carries it, the agent
+ * sends it back on its next attempt, and that is what ties a question to the
+ * posting it belongs to. No time window softens it — one was considered and
+ * rejected as needless complication. No reference means a genuinely new
+ * attempt, so the questions are asked, and that is the whole of the fallback.
+ *
+ * THE AMOUNT STAYED, AND THE DISTINCTION IS THE POINT. The name had to go
+ * because the other questions explicitly ask the agent to change it. Nothing in
+ * the flow ever asks an agent to change a price, and the amount is precisely
+ * what the figure gate is checking, so the reference sits BESIDE the figures
+ * rather than in place of them: the same reference with the same figures is a
+ * question already answered, and the same reference with a different figure is
+ * asked again (`amounts` below, and confirmFigures in domain/cards.ts). The
+ * detail and reach gates key on the reference alone, because what they ask
+ * about has no equivalent worth holding — the detail gate's answer IS the
+ * sharpened words, which are the one thing that must never be a key.
  *
  * THE REFERENCE IS THE POSTING'S ID. It is minted as a uuid and, when the
  * posting finally goes up, it is the id the posting is given (domain/cards.ts
@@ -34,10 +44,13 @@
  * already carries for a posting's id — which, being the same number, is the
  * same rule. Nothing the gates write invites an agent to say it out loud.
  *
- * AND IT HOLDS NOTHING ABOUT THE THING. The account, and the names of the gates
- * that have already asked. That is strictly less than the table it replaces
- * held, which carried the poster's own words for the thing because the words
- * were the key.
+ * AND IT HOLDS NOT ONE WORD ABOUT THE THING. The account, the names of the
+ * gates that have already asked, and the figures the figure gate read back. The
+ * table it replaces carried the poster's own words for the thing, because the
+ * words were the key; nothing here does. The figures are the same plaintext
+ * that table held, so they are no new disclosure — and they are still somebody's
+ * private business, so the row is deleted the moment the posting goes up, an
+ * abandoned attempt is swept after a week, and no log line ever carries one.
  */
 import { randomUUID } from 'node:crypto';
 import { getPool } from '../db.js';
@@ -51,6 +64,14 @@ export interface PostingRef {
   reference: string;
   /** The gates that have already asked on this attempt. */
   asked: PostingGate[];
+  /**
+   * The figures the figure gate last read back on this attempt, as
+   * figureAmountsKey writes them (domain/postingFigure.ts). Undefined until it
+   * has asked. The reference says which posting; this says what was confirmed
+   * on it, and the figure gate needs both — see the note on that function for
+   * why the amounts stayed when the thing's name had to go.
+   */
+  amounts?: string;
 }
 
 /** A uuid and nothing else. Anything else the agent sends is not a reference. */
@@ -80,18 +101,28 @@ export async function readPostingRef(
   if (!ref) return undefined;
   try {
     const r = await getPool().query(
-      `SELECT reference, asked FROM posting_references
+      `SELECT reference, asked, asked_amounts FROM posting_references
         WHERE reference = $1 AND account_id = $2`,
       [ref, accountId],
     );
-    const row = r.rows[0] as { reference: string; asked: string[] } | undefined;
+    const row = r.rows[0] as
+      | { reference: string; asked: string[]; asked_amounts: string | null }
+      | undefined;
     if (!row) return undefined;
-    return { reference: row.reference, asked: (row.asked ?? []) as PostingGate[] };
+    return {
+      reference: row.reference,
+      asked: (row.asked ?? []) as PostingGate[],
+      amounts: row.asked_amounts ?? undefined,
+    };
   } catch {
     // The table is unreachable. Believing the agent is the kinder failure, and
     // the same one the old row made: the alternative is trapping a human behind
     // a question nobody can answer. The reference is a uuid this switchboard
     // minted and handed to this agent, so there is nothing here to guess at.
+    //
+    // `amounts` is deliberately left out: there is no figure to claim was
+    // confirmed, so the figure gate falls to its own comparison and asks. A
+    // read-back that cannot prove it happened is one worth doing again.
     return { reference: ref, asked: ['detail', 'reach', 'figure'] };
   }
 }
@@ -108,6 +139,9 @@ export async function noteAsked(
   accountId: string,
   known: string | undefined,
   gate?: PostingGate,
+  /** The figures just read back, where the gate doing the asking is the one
+   *  that reads figures back. Written as they were said to the human. */
+  amounts?: string,
 ): Promise<string> {
   // An amend hands in the posting's own id, which IS its reference; a publish
   // hands in the one the agent sent back, or nothing at all on a first contact.
@@ -115,13 +149,18 @@ export async function noteAsked(
   const asked = gate ? [gate] : [];
   try {
     await getPool().query(
-      `INSERT INTO posting_references (reference, account_id, asked)
-       VALUES ($1, $2, $3::text[])
+      // The figures REPLACE what stood there rather than joining it: what an
+      // attempt is excused for is the last set somebody was actually asked
+      // about, so reading $45 back after $10 must not leave the $10 excused.
+      // A gate that carries no figures (detail, reach) leaves the column alone.
+      `INSERT INTO posting_references (reference, account_id, asked, asked_amounts)
+       VALUES ($1, $2, $3::text[], $4)
        ON CONFLICT (reference) DO UPDATE
           SET asked = (SELECT coalesce(array_agg(DISTINCT g), '{}'::text[])
-                         FROM unnest(posting_references.asked || $3::text[]) AS g)
+                         FROM unnest(posting_references.asked || $3::text[]) AS g),
+              asked_amounts = COALESCE($4, posting_references.asked_amounts)
         WHERE posting_references.account_id = $2`,
-      [reference, accountId, asked],
+      [reference, accountId, asked, amounts ?? null],
     );
   } catch {
     /* the record is a courtesy to the next attempt; the refusal is the point */

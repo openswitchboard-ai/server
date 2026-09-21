@@ -387,8 +387,9 @@ describe('the refusal an assistant is handed', () => {
     const asked = world.sql.find((s) => /INSERT INTO posting_references/.test(s.text))!;
     expect(asked).toBeDefined();
     // The number, the account and the gate that asked — and nothing about the
-    // posting at all, which is what makes the words free to change.
-    expect(asked.params).toEqual([p.reference, ACCOUNT, ['detail']]);
+    // posting at all, which is what makes the words free to change. The last
+    // slot is for figures, and the detail gate reads none, so it stays null.
+    expect(asked.params).toEqual([p.reference, ACCOUNT, ['detail'], null]);
     expect(JSON.stringify(asked.params)).not.toContain('mountain bike');
   });
 
