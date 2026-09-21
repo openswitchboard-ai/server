@@ -3857,6 +3857,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
           {},
           v.client!.client_id,
           await ceremonyFor(s.accountId, sess.isElevated(s as Session), a),
+          ctx.redirect_uri,
         ),
       );
     });

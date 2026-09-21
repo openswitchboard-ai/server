@@ -159,7 +159,16 @@ describe('the pages those doors are pressed from carry the box', () => {
   });
 
   it('authorising an agent — and cancelling still takes nothing', () => {
-    const html = cpages.authorizePage('Claude for Chores', '/authorize', {}, 'c-1', ASKS);
+    const html = cpages.authorizePage(
+      'Claude for Chores',
+      '/authorize',
+      {},
+      'c-1',
+      ASKS,
+      'https://claude.ai/api/mcp/auth_callback',
+    );
+    // A name is whatever the agent typed at registration; the address is not.
+    expect(html).toContain('claude.ai');
     expect(html).toContain(PIN_BOX);
     // Refusing is never gated, so the Cancel button skips the box's validation.
     expect(html).toContain('value="deny"');
