@@ -2182,7 +2182,7 @@ in on this device and lets you approve what is waiting.</p>
               'Not yet',
               `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
               '/',
-              'Back to your approval page',
+              'Back',
             ),
             409,
           );
@@ -3726,7 +3726,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!cards.rowCount) {
         return html(
           reply,
-          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/', 'To your approval page'),
+          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/', 'Back'),
         );
       }
       return html(
