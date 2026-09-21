@@ -41,5 +41,14 @@ rm -f "$DIR"/agents/main/agent/openclaw-agent.sqlite*
 
 tar xzf "$BASE"
 
-systemctl --user start "$UNIT" 2>/dev/null || true
-echo "restored $DIR from baseline"
+# THE UNIT STAYS DOWN, and that is the whole of why this script does not start
+# it. The baseline's openclaw.json carries the switchboard's MCP config,
+# Authorization header and all, so a restore puts a STALE AGENT KEY back on
+# disk. deepCleanAndBind writes the run's own key straight afterwards and then
+# starts the unit — but a unit already running ignores `systemctl start`, so it
+# would go on serving the key it read at boot. The old deep-clean left it
+# stopped for exactly this reason; starting it here undid that, and Nagatha
+# spent a day posting as an account from an earlier run until that account hit
+# its ten-a-day ceiling and every posting after it was refused (21 September
+# 2026).
+echo "restored $DIR from baseline (unit left down for the key)"
