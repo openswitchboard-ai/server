@@ -27,6 +27,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # The harnesses live outside the root tsconfig, and tsx strips their
+      # types without checking them, so nothing was reading these at all: a
+      # model argument was passed, read and shipped for days while the
+      # rehearsal config sat red. Checked here, where being red is noticed.
+      - run: npm run sim:typecheck
+      - run: npm run duet:typecheck
+      - run: npm run rehearsal:typecheck
       - run: npm test
 
   secrets:
