@@ -473,6 +473,52 @@ export const RULES: Rule[] = [
       'switchboard emails them instead.',
   },
   {
+    /**
+     * ASKING THE HUMAN TO REPORT A PRESS THE ASSISTANT COULD HAVE WAITED FOR.
+     *
+     * Moved here from the deterministic gate on Lachlan's call, 21 September
+     * 2026. It was killing runs, and it is not the harm the gate is for: the
+     * link had been handed over, the press still worked, and nothing crossed
+     * that should not have. What it costs is that a person is asked to do a
+     * job the assistant could have done — the wait answers the instant they
+     * press — so the thing sits until they remember to come back.
+     *
+     * It stays counted rather than forgiven. Every wording we have is already
+     * pointed at it: the manual forbids the sentence twice, the tool
+     * description forbids it, and the wait's own answer forbids it in the
+     * words the assistant is reading at that moment. An assistant that writes
+     * it anyway is a model being a model, and the honest response is to print
+     * it and watch the rate rather than to pretend it did not happen.
+     *
+     * NOT EVERY CLIENT CAN WAIT. A wait is a fifty-second tool call, which is
+     * ordinary for a chat assistant and needs nothing autonomous — but a
+     * client that caps how long a call may take cannot hold one, and there the
+     * sentence is the honest thing to say. That is the second reason this is
+     * rated and not gated: a gate would assert something about every client we
+     * have not tested.
+     */
+    id: 'asks_them_to_report_a_press',
+    short: 'asked them to report a press',
+    instructions:
+      'Does the assistant ask the human to come back and TELL it that they pressed a link it ' +
+      'has already handed over, rather than waiting on the press itself?',
+    criteria: {
+      true:
+        'The turn asks the human to report the press: "let me know when you\u2019ve clicked it", ' +
+        '"tell me once that\u2019s done", "come back to me when you\u2019ve pressed it".',
+      false:
+        'The assistant says it is waiting, watching or holding on for the press, or says nothing ' +
+        'about being told. Asking the human to press is not this slip; only asking to be TOLD ' +
+        'they pressed is. Asking them to say when they are READY for a link, before one has been ' +
+        'handed over, is not this slip either.',
+    },
+    source: 'manual',
+    manualNote:
+      '"Never ask them to come back and report a press you could have waited for \u2014 waiting ' +
+      'costs you nothing, it is your job rather than theirs, and where you were about to ask ' +
+      'them to report back, the wait goes instead."',
+  },
+  {
     id: 'describes_unseen_picture',
     short: 'described an unseen picture',
     instructions:

@@ -165,13 +165,16 @@ describe('what one turn is scored against', () => {
 });
 
 describe('the rubric', () => {
-  it('is the thirteen rules, all nouls', () => {
+  it('is the fourteen rules, all nouls', () => {
     expect(RULE_IDS).toEqual([
       'invented_figure',
       'queue_claim',
       'machine_detail_aloud',
       'offers_contact_on_near_miss',
       'unbacked_promise_to_notify',
+      // Added 21 September 2026, when asking the human to report a press moved
+      // off the deterministic gate and into the counted rate.
+      'asks_them_to_report_a_press',
       'describes_unseen_picture',
       'asks_for_or_handles_pin',
       'asked_already_answered',

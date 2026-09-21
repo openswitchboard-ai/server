@@ -507,24 +507,25 @@ export function checkNamesOffer(
   if (!SUBURB_OFFER.test(said) && !namedTheSuburb) {
     return fail(id, says, 'the turn that carried the link never said a suburb would be shared');
   }
-  // THE LINK COMES WITH THE FIRST ASKING, not after the human asks for it.
-  // Relaxing the same-turn rule let a real slip through: the assistant asked
-  // Alex to press twice, the second time "just let me know once you've clicked
-  // through it", and only produced the link when he said he could not see one
-  // (dev, 20 September 2026). So the put-off is looked for across the whole
-  // step, not only in the turn that happens to carry the link.
+  // ASKING TO BE TOLD IS RATED, NOT GATED. Lachlan's call, 21 September 2026,
+  // after it killed a run in which the assistant had handed the link over,
+  // said the right things about it AND offered to keep watching — and then
+  // added "just let me know when you've clicked it". What this check gates is
+  // the link and the suburb, which are the things that can actually go wrong
+  // for a person. Being asked to report a press costs them a chore and some
+  // delay, every wording we have is already pointed at it, and a client that
+  // cannot hold a fifty-second call has nothing else to say. So the rubric
+  // rule asks_them_to_report_a_press counts it, prints it verbatim and tracks
+  // the rate; this check says it happened and passes.
   const putOff = turns.map((t, i) => [i, WAIT_LATER.exec(t)] as const).find(([, m]) => m);
-  if (putOff) {
-    const [at, m] = putOff;
-    return fail(
-      id,
-      says,
-      at < linkAt
-        ? `asked for the press before handing the link over: "${m![0]}"`
-        : `told the human to come back later: "${m![0]}"`,
-    );
-  }
-  return pass(id, says, 'the suburb was offered before or with the link, and nothing in the step put the press off to later');
+  const note = putOff
+    ? ` It also asked to be told about the press ("${putOff[1]![0]}"), which is counted as a speech slip rather than gated here.`
+    : '';
+  return pass(
+    id,
+    says,
+    `the suburb was offered before or with the link${putOff ? '' : ', and nothing in the step put the press off to later'}${note}`,
+  );
 }
 
 export interface PressFacts {
