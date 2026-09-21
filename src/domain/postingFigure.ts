@@ -112,12 +112,26 @@ export function figuresOnPosting(card: {
 export const figureWords = (f: PostingFigure): string => `$${f.amount} ${f.currency}`;
 
 /**
- * The key the question is remembered under: the thing's own words and the
- * amounts on it, sorted, so changing the number asks again and re-sending the
- * same posting does not.
+ * The key the question is remembered under: the AMOUNTS on it, sorted, so
+ * changing the number asks again and re-sending the same posting does not.
+ *
+ * THE THING'S OWN WORDS USED TO BE IN THIS KEY, and that made the question
+ * unanswerable. The detail gate beside it asks an assistant to say more
+ * exactly what the thing is, so "upgraded Fanatec pedal spring" becomes
+ * "Fanatec ClubSport V3 brake performance spring" between one attempt and the
+ * next — a new key, an unmatched confirmation, and the same question again.
+ * Four in a row on 21 September 2026, with nothing posted at the end of it.
+ *
+ * What the human confirmed was the FIGURE: they said ten dollars, and ten
+ * dollars is still theirs when the words around it are sharpened. The cost of
+ * dropping `kind` is that two postings carrying the same amount share one
+ * confirmation, so confirming a $10 floor on one would excuse a $10 ask on
+ * another made within the window. That is a smaller wrong than a posting that
+ * can never be made, and the figure gate is a read-back rather than a consent
+ * gate — the consent gates are pressed by a human.
  */
 export const figureAskKey = (kind: unknown, figures: PostingFigure[]): string =>
-  `${kind ?? ''}#figure:${[...figures.map((f) => f.amount)].sort((a, b) => a - b).join(',')}`;
+  `figure:${[...figures.map((f) => f.amount)].sort((a, b) => a - b).join(',')}`;
 
 /** The most questions one refusal carries, the same as the detail gate's. */
 export const MAX_FIGURE_QUESTIONS = 4;
