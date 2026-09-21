@@ -64,6 +64,7 @@ import { runIntake } from '../../src/intake/pipe.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
+import { refsFake, type RefsFake } from './postingRefsFake.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -354,7 +355,7 @@ describe('the check at the posting and amendment doors', () => {
 interface World {
   sql: { text: string; params: any[] }[];
   /** Every figure-confirmation key this account has already been asked about. */
-  asked: Set<string>;
+  refs: RefsFake;
   card: Record<string, any>;
 }
 let world: World;
@@ -363,18 +364,16 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
-      if (/INSERT INTO cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
+      // The posting takes the attempt's own reference as its id where there is
+      // one, which is the last thing the statement binds (domain/cards.ts).
+      if (/INSERT INTO cards/.test(sql)) {
+        return { rows: [{ id: params[params.length - 1] ?? CARD }], rowCount: 1 };
+      }
       if (/UPDATE cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
       // The figure gate's ten-minute memory: asked once, and the same posting
       // sent again goes up (domain/postingFigure.ts).
-      if (/FROM posting_detail_asks/.test(sql)) {
-        const hit = world.asked.has(String(params[1]));
-        return { rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 };
-      }
-      if (/INSERT INTO posting_detail_asks/.test(sql)) {
-        world.asked.add(String(params[1]));
-        return { rows: [], rowCount: 1 };
-      }
+      const refs = world.refs.handle(sql, params);
+      if (refs) return refs;
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
       if (/SELECT arrangement FROM accounts/.test(sql)) {
         return { rows: [{ arrangement: null }], rowCount: 1 };
@@ -406,8 +405,14 @@ const refusal = async (fn: () => Promise<unknown>) => {
     await fn();
     return undefined;
   } catch (e: any) {
-    if (e instanceof OsbError) return { human_action: e.payload.human_action, validation: [] };
-    return { human_action: e.message, validation: e.validation ?? [] };
+    if (e instanceof OsbError) {
+      return {
+        human_action: e.payload.human_action,
+        validation: [] as string[],
+        reference: e.payload.reference,
+      };
+    }
+    return { human_action: e.message, validation: e.validation ?? [], reference: undefined };
   }
 };
 
@@ -415,7 +420,7 @@ describe('the posting door', () => {
   beforeEach(() => {
     world = {
       sql: [],
-      asked: new Set(),
+      refs: refsFake(),
       card: {
         id: CARD,
         account_id: ACCOUNT,
@@ -461,11 +466,10 @@ describe('the posting door', () => {
     // and by nobody else. The figure gate asks about it once, and the same
     // posting sent again goes up.
     const card = { ...want(rich), price: { band: { max: 25 }, ccy: 'AUD' } };
-    expect((await refusal(() => publishIntent(cfg, ACCOUNT, card)))!.human_action).toMatch(
-      /Nothing has gone up yet/i,
-    );
-    const r: any = await publishIntent(cfg, ACCOUNT, card);
-    expect(r.intent_id).toBe(CARD);
+    const asked = (await refusal(() => publishIntent(cfg, ACCOUNT, card)))!;
+    expect(asked.human_action).toMatch(/Nothing has gone up yet/i);
+    const r: any = await publishIntent(cfg, ACCOUNT, card, { reference: asked.reference });
+    expect(r.intent_id).toBe(asked.reference);
   });
 
   it('takes a posting whose numbers are all specs', async () => {
@@ -482,7 +486,7 @@ describe('the amendment door, which ran no money check at all', () => {
   beforeEach(() => {
     world = {
       sql: [],
-      asked: new Set(),
+      refs: refsFake(),
       card: {
         id: CARD,
         account_id: ACCOUNT,

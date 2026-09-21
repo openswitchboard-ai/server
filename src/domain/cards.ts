@@ -34,17 +34,20 @@ import { SHELF_PICK_ACTION, generalShelf, shelfInWords, shelfPickLink } from './
 import {
   DETAIL_HUMAN_ACTION,
   DETAIL_UNKNOWN_UNMATCHED,
-  detailAskedRecently,
   detailShortfall,
-  recordDetailAsked,
 } from './postingDetail.js';
 import {
   FIGURE_HUMAN_ACTION,
-  figureAskKey,
   figureQuestions,
   figuresOnPosting,
   type PostingFigure,
 } from './postingFigure.js';
+import {
+  closePostingRef,
+  noteAsked,
+  readPostingRef,
+  type PostingGate,
+} from './postingRef.js';
 import { type Arrangement } from './arrangement.js';
 import { readLaneFacts, sayFor } from './lanes.js';
 import type { HearsVia } from './accounts.js';
@@ -389,6 +392,39 @@ function assertFloorStaysPrivate(card: { sale?: unknown; ask?: unknown }): void 
 }
 
 /**
+ * ONE ATTEMPT AT PUTTING A THING UP, AND ITS NUMBER.
+ *
+ * Every gate below that can send a posting back asks the same question — "have
+ * I already asked this?" — and every one of them now answers it from here, off
+ * the attempt's reference and nothing else. The whole of why is in
+ * domain/postingRef.ts: the keys this replaces were built out of the agent's
+ * own prose, and the questions beside them ask the agent to change that prose.
+ */
+interface Attempt {
+  /** The number, once there is one: sent back by the agent, or minted here. */
+  reference?: string;
+  /** The gates that have already asked on it. */
+  asked: Set<PostingGate>;
+}
+
+/** The attempt an agent is continuing, or a fresh one with no number yet. */
+async function openAttempt(accountId: string, sent: unknown): Promise<Attempt> {
+  const open = await readPostingRef(accountId, sent);
+  return { reference: open?.reference, asked: new Set(open?.asked ?? []) };
+}
+
+/**
+ * Write down that this gate has asked, minting the number on first contact.
+ * The attempt carries it from here on, so the next gate in the same call and
+ * every later attempt the agent makes are all talking about the same thing.
+ */
+async function askOnce(accountId: string, attempt: Attempt, gate: PostingGate): Promise<string> {
+  attempt.reference = await noteAsked(accountId, attempt.reference, gate);
+  attempt.asked.add(gate);
+  return attempt.reference;
+}
+
+/**
  * A FIGURE IS READ BACK ONCE, and then it goes up as it stands.
  *
  * The manual's rule (c), which this enforces word for word: "Before anything
@@ -398,27 +434,32 @@ function assertFloorStaysPrivate(card: { sale?: unknown; ask?: unknown }): void 
  * human whose whole word about money was "not sure what my budget is, what do
  * these usually go for?"
  *
- * So the first attempt inside the window comes back unposted with the figures
- * on it, and the second with the SAME figures goes through untouched, because
- * by then somebody has been asked. The key carries the amounts, so a changed
- * number is a new question. A posting with no figure never comes here at all.
+ * So the first attempt comes back unposted with the figures on it, and the
+ * second — carrying the reference that refusal handed over — goes through
+ * untouched, because by then somebody has been asked. A posting with no figure
+ * never comes here at all.
+ *
+ * WHAT THE AGENT WROTE IS NOT CONSULTED. The old key carried the amounts and
+ * the poster's own words for the thing, and the detail gate above asks for
+ * sharper words, so an assistant doing as it was told was asked the same
+ * question for ever (21 September 2026, four rounds, nothing posted).
  *
  * Nothing is logged: the amounts are the human's own business, which is why
  * the band is encrypted on the row in the first place.
  */
 async function confirmFigures(
   accountId: string,
-  kind: string | null,
+  attempt: Attempt,
   figures: PostingFigure[],
 ): Promise<void> {
   if (!figures.length) return;
-  const key = figureAskKey(kind, figures);
-  if (await detailAskedRecently(accountId, key)) return;
-  await recordDetailAsked(accountId, key);
+  if (attempt.asked.has('figure')) return;
+  const reference = await askOnce(accountId, attempt, 'figure');
   throw new OsbError('CONFIRM_FIGURE', {
     human_action: FIGURE_HUMAN_ACTION,
     questions: figureQuestions(figures),
     figures,
+    reference,
   });
 }
 
@@ -470,24 +511,57 @@ const slotsOf = (card: any): number => {
 const saleOf = (card: any): 'straight' | 'best-offer' =>
   card?.type === 'offering' && card?.sale === 'best-offer' ? 'best-offer' : 'straight';
 
+/** What a publish attempt may carry beside the posting itself. */
+export interface PublishOpts {
+  /**
+   * The human genuinely does not know the rest. Honoured only on a second
+   * attempt at the same thing — see domain/postingDetail.ts.
+   */
+  detailUnknown?: boolean;
+  /**
+   * The attempt's own number, as the last refusal handed it over. It is the
+   * only thing that says "this is the posting you already asked me about", and
+   * if the posting goes up it becomes its id (domain/postingRef.ts).
+   */
+  reference?: unknown;
+}
+
 /**
  * Publish an intent card.
  * Order of gates: schema validation -> schema_version -> taxonomy/deny-list
  * (CATEGORY_PROHIBITED) -> quota (QUOTA_EXCEEDED) -> stored PENDING_SCREENING
  * with the price band envelope-encrypted -> screening queue. The card is NOT
  * matchable until the screening pipeline passes it.
+ *
+ * THE NUMBER RIDES ON EVERY REFUSAL, minted at first contact. The gates below
+ * put it on the answers they write; this wrapper puts it on every other refusal
+ * that leaves here, so an attempt that came back for its category or its shelf
+ * carries the same number as one that came back for its figure, and the agent
+ * never has to work out which of its questions belong together.
  */
 export async function publishIntent(
   cfg: Config,
   accountId: string,
   card: any,
-  opts: {
-    /**
-     * The human genuinely does not know the rest. Honoured only on a second
-     * attempt at the same thing, inside the window — see domain/postingDetail.ts.
-     */
-    detailUnknown?: boolean;
-  } = {},
+  opts: PublishOpts = {},
+): Promise<PublishResult> {
+  const attempt = await openAttempt(accountId, opts.reference);
+  try {
+    return await runPublish(cfg, accountId, card, opts, attempt);
+  } catch (e) {
+    if (e instanceof OsbError && !e.payload.reference) {
+      e.payload.reference = await noteAsked(accountId, attempt.reference);
+    }
+    throw e;
+  }
+}
+
+async function runPublish(
+  cfg: Config,
+  accountId: string,
+  card: any,
+  opts: PublishOpts,
+  attempt: Attempt,
 ): Promise<PublishResult> {
   // THE ANSWER "NONE OF THESE" (Lachlan, 20 September 2026). After
   // SHELF_UNCLEAR an assistant whose human recognised none of the shelves sends
@@ -597,16 +671,18 @@ export async function publishIntent(
   // reasoning, and the rule itself, is in domain/postingDetail.ts.
   const shortfall = detailShortfall(card);
   if (shortfall) {
-    const excused = opts.detailUnknown && (await detailAskedRecently(accountId, kind));
+    const excused = opts.detailUnknown && attempt.asked.has('detail');
     if (!excused) {
-      // Written down first, so the second attempt has something to recognise.
-      await recordDetailAsked(accountId, kind);
+      // Minted or written down first, so the next attempt has something to
+      // recognise — and something no rewording of the posting can move.
+      const reference = await askOnce(accountId, attempt, 'detail');
       throw new OsbError('NEEDS_DETAIL', {
         // The escape hatch was reached for and did not match: say so, rather
         // than handing back the same questions as though it had never been
         // sent. See DETAIL_UNKNOWN_UNMATCHED in domain/postingDetail.ts.
         human_action: opts.detailUnknown ? DETAIL_UNKNOWN_UNMATCHED : DETAIL_HUMAN_ACTION,
         questions: shortfall.questions,
+        reference,
       });
     }
   }
@@ -627,6 +703,7 @@ export async function publishIntent(
   const offering = card.type === 'offering';
   if (isGoods && !card.geo?.reach) {
     throw new OsbError('NEEDS_DETAIL', {
+      reference: await askOnce(accountId, attempt, 'reach'),
       human_action: offering
         ? 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.'
         : 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they are happy to have it posted to them, "radius" with a distance if they will only collect it.',
@@ -643,15 +720,15 @@ export async function publishIntent(
   // asking, and one did (a parcel-sized spring, "about 8 km around Queanbeyan",
   // from a human who would have posted it anywhere). Pick-up only is a fair
   // answer for a sofa, so it is never refused outright: the first attempt comes
-  // back with the question, and the second, within the window, goes up as it
-  // is, because by then somebody has been asked.
-  if (
-    isGoods &&
-    card.geo?.reach === 'radius' &&
-    !(await detailAskedRecently(accountId, `${kind ?? ''}#reach`))
-  ) {
-    await recordDetailAsked(accountId, `${kind ?? ''}#reach`);
+  // back with the question, and the second, carrying the reference that refusal
+  // handed over, goes up as it is, because by then somebody has been asked.
+  //
+  // IT USED TO BE KEYED ON `${kind}#reach`, which is the poster's own words for
+  // the thing with a word stuck on the end — the same defect as the other two,
+  // never hit only because the detail gate in front of it usually asked first.
+  if (isGoods && card.geo?.reach === 'radius' && !attempt.asked.has('reach')) {
     throw new OsbError('NEEDS_DETAIL', {
+      reference: await askOnce(accountId, attempt, 'reach'),
       human_action: offering
         ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
         : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
@@ -666,7 +743,7 @@ export async function publishIntent(
   // AND A FIGURE IS READ BACK ONCE, before it can decide anything. See
   // domain/postingFigure.ts for the rehearsal that bought this and for the
   // manual rule it enforces.
-  await confirmFigures(accountId, kind, figuresOnPosting(card));
+  await confirmFigures(accountId, attempt, figuresOnPosting(card));
 
   // SNAP AT THE DOOR. The gate above decided whether this may go up at all,
   // on the path the assistant wrote; this decides where it goes. A path the
@@ -815,12 +892,22 @@ export async function publishIntent(
   // The open-cards ceiling, asked in the statement that changes the count
   // rather than in a question some distance before it (domain/quotas.ts). The
   // check at the top of this function is the courtesy; this is the rail.
+  //
+  // AND THE POSTING TAKES THE ATTEMPT'S OWN NUMBER AS ITS ID. Where this
+  // posting was asked about before, the number the agent has been carrying
+  // since the first question is the number it keeps for everything that
+  // follows: one reference, first question to last conversation, and never a
+  // moment where two numbers mean the same want or have. Where nothing was ever
+  // asked there is no number yet, and the row makes its own as it always did.
+  // $23 can only be a reference this switchboard minted for THIS account, since
+  // that is the only thing readPostingRef will hand back (domain/postingRef.ts).
   const r = await getPool().query(
-    `INSERT INTO cards (account_id, schema_version, type, category, geo, geo_lat, geo_lon,
+    `INSERT INTO cards (id, account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
                         protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind,
                         category_as_posted)
-     SELECT $1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
+     SELECT COALESCE($23::uuid, gen_random_uuid()),
+             $1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
              $18::int, $19, $20, $22
       WHERE ${OPEN_CARDS_GUARD_SQL('$21::int')}
@@ -857,6 +944,7 @@ export async function publishIntent(
       // the answer to a shelf question: that is what was actually sent for the
       // thing, and the shelf it went on is the human's choice.
       answering?.as_posted ?? filed.from,
+      attempt.reference ?? null,
     ],
   );
   if (!r.rows[0]) {
@@ -868,6 +956,11 @@ export async function publishIntent(
     });
   }
   const id = r.rows[0].id as string;
+  // THE ATTEMPT IS OVER, so what it was asked is forgotten. The number lives on
+  // as the posting's id, which is the point; the going-back-and-forth it stood
+  // for is finished, and a row left standing would excuse a question on a
+  // posting that no longer needs excusing.
+  await closePostingRef(attempt.reference);
   // The shelf gap log (domain/shelfGaps.ts), written once the posting is up so
   // a refused insert leaves no row claiming it went anywhere.
   if (answering) {
@@ -1111,7 +1204,20 @@ function assertOwnUsableCard(card: CardRow | undefined, accountId: string): Card
   return card;
 }
 
-/** Amend = re-validate + re-screen. Amendable fields only; type/category fixed. */
+/**
+ * Amend = re-validate + re-screen. Amendable fields only; type/category fixed.
+ *
+ * AN AMEND NEEDS NO NUMBER OF ITS OWN. The posting already has one, and
+ * `intent_id` IS that number — the very reference the first question about this
+ * posting was minted under. So the figure gate below reads and writes it
+ * directly, and an agent amending a posting has nothing extra to send or to
+ * keep track of.
+ *
+ * What it does need is for the memory to be cleared when the amend goes
+ * through, which closePostingRef does at the end. A posting's id outlives any
+ * one attempt at amending it, so without that, one figure read back in
+ * September would excuse every figure put on it afterwards.
+ */
 export async function amendIntent(
   cfg: Config,
   accountId: string,
@@ -1119,6 +1225,9 @@ export async function amendIntent(
   patch: any,
 ): Promise<PublishResult> {
   const card = assertOwnUsableCard(await getCard(intentId), accountId);
+  const attempt = await openAttempt(accountId, intentId);
+  // The posting's own id is the reference, whether or not a row exists yet.
+  attempt.reference = intentId;
   if (card.lifecycle_state === 'WITHDRAWN') {
     throw Object.assign(new Error('intent is withdrawn'), { notFound: true });
   }
@@ -1240,7 +1349,7 @@ export async function amendIntent(
     'ask' in p && JSON.stringify(p.ask ?? null) !== JSON.stringify(card.ask ?? null);
   await confirmFigures(
     accountId,
-    card.kind,
+    attempt,
     figuresOnPosting({
       type: next.type,
       ask: askChanged ? p.ask : undefined,
@@ -1339,6 +1448,10 @@ export async function amendIntent(
     ],
   );
   await recordPublishWithinQuota(accountId, intentId, cfg.quotas);
+  // The attempt is over: what it was asked is forgotten, so the NEXT amend with
+  // a different figure on it is a question that gets asked. See the note on
+  // this function for why an amend must clear what a publish consumes.
+  await closePostingRef(attempt.reference);
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,

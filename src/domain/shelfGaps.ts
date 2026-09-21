@@ -24,7 +24,33 @@
  */
 import { getPool } from '../db.js';
 import { KIND_MAX_CHARS } from './matchRules.js';
-import { detailKey } from './postingDetail.js';
+
+/**
+ * A SHELF QUESTION IS STILL KEYED ON THE THING'S OWN WORDS, and this is the key.
+ *
+ * It used to be borrowed from the detail gate next door. That gate's key is
+ * gone — it was the defect of 21 September 2026, where the questions asked an
+ * assistant to sharpen the very words the key was built from, and the same
+ * question came back for ever (domain/postingRef.ts). This one is kept and
+ * moved here rather than deleted with it, because the shelf question is a
+ * different shape: the human answers it on a page of their own, out of band,
+ * and the posting that comes back afterwards has to be recognised as the answer
+ * without the switchboard having handed anything to the agent in between.
+ *
+ * It is exposed to the same wrong, in a smaller way: the shelf answer asks
+ * which SHELF, never for sharper words for the thing, so an assistant has no
+ * reason to reword between the question and the answer. Putting this question on
+ * the attempt's reference too is the honest next step; it is a larger change
+ * (the page, its press and the gap log all hold the attempt), and it is written
+ * down here rather than half-made.
+ */
+const kindKey = (kind: unknown): string =>
+  String(kind ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
 
 /** How the door's uncertainty ended, in the words the table checks. */
 export type ShelfGapOutcome =
@@ -144,7 +170,7 @@ export async function openShelfAttempt(
          SET attempt = gen_random_uuid(), as_posted = EXCLUDED.as_posted, kind = EXCLUDED.kind,
              asked_at = now(), none_at = NULL, picked = NULL, picked_at = NULL
        RETURNING attempt`,
-      [accountId, detailKey(kind), asPosted, kindForGap(kind)],
+      [accountId, kindKey(kind), asPosted, kindForGap(kind)],
     );
     const attempt = r.rows[0]?.attempt as string | undefined;
     return attempt ? { attempt, fresh: true } : undefined;
@@ -164,7 +190,7 @@ export async function readShelfAttempt(
       `SELECT attempt, as_posted, kind, none_at, picked FROM shelf_attempts
         WHERE account_id = $1 AND kind_key = $2
           AND asked_at > now() - make_interval(mins => $3::int)`,
-      [accountId, detailKey(kind), SHELF_ATTEMPT_WINDOW_MINUTES],
+      [accountId, kindKey(kind), SHELF_ATTEMPT_WINDOW_MINUTES],
     );
     return r.rows[0] ?? undefined;
   } catch {

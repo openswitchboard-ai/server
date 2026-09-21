@@ -647,10 +647,15 @@ describe('what the switchboard calls things, in front of a model', () => {
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     expect(publish.inputSchema.required).toEqual(['listing']);
-    // `detail_unknown` rides beside the posting rather than inside it: the
-    // protocol document closes a want or a have to anything it does not name,
-    // and this is a fact about the posting ATTEMPT rather than about the thing.
-    expect(Object.keys(publish.inputSchema.properties)).toEqual(['listing', 'detail_unknown']);
+    // `detail_unknown` and `reference` ride beside the posting rather than
+    // inside it: the protocol document closes a want or a have to anything it
+    // does not name, and both are facts about the posting ATTEMPT rather than
+    // about the thing.
+    expect(Object.keys(publish.inputSchema.properties)).toEqual([
+      'listing',
+      'detail_unknown',
+      'reference',
+    ]);
   });
 
   it('carries a changelog note telling a returning agent the words changed', () => {

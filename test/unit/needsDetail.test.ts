@@ -44,15 +44,14 @@ import {
   CONDITION_KEY,
   DETAIL_HUMAN_ACTION,
   DETAIL_UNKNOWN_UNMATCHED,
-  DETAIL_UNKNOWN_WINDOW_MINUTES,
   IDENTIFYING_KEYS,
   MAX_QUESTIONS,
-  detailKey,
   detailShortfall,
 } from '../../src/domain/postingDetail.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
+import { refsFake, type RefsFake } from './postingRefsFake.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -272,10 +271,6 @@ describe('what counts as enough to describe the thing to a stranger', () => {
     expect(listed).toContain(CONDITION_KEY);
   });
 
-  it('keys the escape hatch on the thing, in any spelling of it', () => {
-    expect(detailKey('  Upgraded   FANATEC pedal spring ')).toBe('upgraded fanatec pedal spring');
-    expect(DETAIL_UNKNOWN_WINDOW_MINUTES).toBe(10);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -284,12 +279,12 @@ describe('what counts as enough to describe the thing to a stranger', () => {
 interface World {
   sql: { text: string; params: any[] }[];
   /**
-   * How long ago this account was asked about each thing, in minutes, keyed
-   * the way the row is: by the poster's own words for it. Keyed rather than a
-   * single number because the escape hatch turns on exactly that — a second
-   * attempt is only recognised where the words for the thing have not moved.
+   * The open posting attempts, and the gates that have asked on each. Keyed on
+   * the attempt's own reference and on nothing the poster wrote, which is the
+   * whole of the escape hatch: a second attempt is recognised by the number the
+   * first refusal handed over, however the words for the thing have moved.
    */
-  asked: Map<string, number>;
+  refs: RefsFake;
   card: Record<string, any>;
 }
 let world: World;
@@ -298,16 +293,13 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
-      if (/INSERT INTO cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
-      if (/FROM posting_detail_asks/.test(sql)) {
-        const ago = world.asked.get(String(params[1]));
-        const inside = ago !== undefined && ago < DETAIL_UNKNOWN_WINDOW_MINUTES;
-        return { rows: inside ? [{ '?column?': 1 }] : [], rowCount: inside ? 1 : 0 };
+      // The posting takes the attempt's own reference as its id where there is
+      // one, which is the last thing the statement binds (domain/cards.ts).
+      if (/INSERT INTO cards/.test(sql)) {
+        return { rows: [{ id: params[params.length - 1] ?? CARD }], rowCount: 1 };
       }
-      if (/INSERT INTO posting_detail_asks/.test(sql)) {
-        world.asked.set(String(params[1]), 0);
-        return { rows: [], rowCount: 1 };
-      }
+      const refs = world.refs.handle(sql, params);
+      if (refs) return refs;
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
       if (/FROM accounts/.test(sql)) {
         return {
@@ -335,7 +327,7 @@ const rich = { brand: 'trek', frame_size: 'medium', condition: 'good' };
 beforeEach(() => {
   world = {
     sql: [],
-    asked: new Map<string, number>(),
+    refs: refsFake(),
     card: {
       id: CARD,
       account_id: ACCOUNT,
@@ -364,7 +356,10 @@ beforeEach(() => {
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
 
-const refusal = async (card: any, opts?: { detailUnknown?: boolean }) => {
+const refusal = async (
+  card: any,
+  opts?: { detailUnknown?: boolean; reference?: unknown },
+) => {
   try {
     await publishIntent(cfg, ACCOUNT, card, opts ?? {});
     return undefined;
@@ -388,17 +383,19 @@ describe('the refusal an assistant is handed', () => {
   });
 
   it('writes down that it asked, so the second attempt has something to see', async () => {
-    await refusal(listing({ attributes: {} }));
-    const asked = world.sql.find((s) => /INSERT INTO posting_detail_asks/.test(s.text))!;
+    const p = (await refusal(listing({ attributes: {} })))!;
+    const asked = world.sql.find((s) => /INSERT INTO posting_references/.test(s.text))!;
     expect(asked).toBeDefined();
-    // The account and the thing's own words, and nothing else about the posting.
-    expect(asked.params).toEqual([ACCOUNT, 'mountain bike']);
+    // The number, the account and the gate that asked — and nothing about the
+    // posting at all, which is what makes the words free to change.
+    expect(asked.params).toEqual([p.reference, ACCOUNT, ['detail']]);
+    expect(JSON.stringify(asked.params)).not.toContain('mountain bike');
   });
 
   it('lets a rich posting straight through, untouched', async () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ attributes: rich }));
     expect(r.intent_id).toBe(CARD);
-    expect(world.sql.some((s) => /INSERT INTO posting_detail_asks/.test(s.text))).toBe(false);
+    expect(world.sql.some((s) => /INSERT INTO posting_references/.test(s.text))).toBe(false);
   });
 
   it('refuses detail_unknown on a first attempt, because nobody has been asked yet', async () => {
@@ -406,55 +403,83 @@ describe('the refusal an assistant is handed', () => {
     expect(p?.code).toBe('NEEDS_DETAIL');
   });
 
-  it('takes the posting as it stands on a second attempt inside the window', async () => {
-    expect((await refusal(listing({ attributes: {} })))?.code).toBe('NEEDS_DETAIL');
+  it('takes the posting as it stands on a second attempt with the reference', async () => {
+    const asked = (await refusal(listing({ attributes: {} })))!;
+    expect(asked.code).toBe('NEEDS_DETAIL');
     const r: any = await publishIntent(cfg, ACCOUNT, listing({ attributes: {} }), {
       detailUnknown: true,
+      reference: asked.reference,
     });
-    expect(r.intent_id).toBe(CARD);
+    // And it goes up under the number it was asked about, never a second one.
+    expect(r.intent_id).toBe(asked.reference);
   });
 
-  it('asks again once the window has gone by', async () => {
-    world.asked.set('mountain bike', DETAIL_UNKNOWN_WINDOW_MINUTES + 1);
+  it('asks again where the reference belongs to somebody else', async () => {
+    // THE ONLY THING THAT STOPS A BORROWED NUMBER. The read is by reference and
+    // account together, so another account's reference matches nothing here and
+    // the attempt reads as a first try, which is exactly right.
+    const asked = (await refusal(listing({ attributes: {} })))!;
+    expect(asked.code).toBe('NEEDS_DETAIL');
+    // The same number, now standing against a different account.
+    world.refs.rows.get(asked.reference!)!.account_id = 'cccccccc-3333-4333-8333-cccccccccccc';
+    const again = await refusal(listing({ attributes: {} }), {
+      detailUnknown: true,
+      reference: asked.reference,
+    });
+    expect(again?.code).toBe('NEEDS_DETAIL');
+    expect(again?.human_action).toBe(DETAIL_UNKNOWN_UNMATCHED);
+  });
+
+  it('asks again where no reference came back at all', async () => {
+    expect((await refusal(listing({ attributes: {} })))?.code).toBe('NEEDS_DETAIL');
     const p = await refusal(listing({ attributes: {} }), { detailUnknown: true });
     expect(p?.code).toBe('NEEDS_DETAIL');
+    expect(p?.human_action).toBe(DETAIL_UNKNOWN_UNMATCHED);
   });
 
   /**
-   * THE LOOP NOBODY COULD SEE THE SHAPE OF.
+   * THE LOOP NOBODY COULD SEE THE SHAPE OF, AND THE ONE WAY BACK INTO IT.
    *
    * The questions ask an assistant to pin down what the thing is, and a good
-   * one comes back with sharper words for it — which is the one thing that
-   * makes the row stop recognising it. In the 20 September rehearsals the
-   * seller's assistant sent detail_unknown after its human had said "that's
-   * all I've got", got the same four questions back with no word that the flag
-   * had been read at all, and went round again. So the refusal now says what
-   * happened and what to send.
+   * one comes back with sharper words for it — which used to be the one thing
+   * that made the row stop recognising it. The reference ended that: nothing
+   * the assistant writes is a key any more, so rewording cannot cost it the
+   * escape hatch (see the reword test in postingReference.test.ts).
+   *
+   * What is left is an attempt that carries no reference at all — dropped by a
+   * client, or a genuinely new posting. That one is a first try, and saying so
+   * is the whole of this sentence: in the 20 September rehearsals the seller's
+   * assistant sent detail_unknown, got the same four questions back with no
+   * word that the flag had been read at all, and went round again.
    */
-  it('says so when detail_unknown was sent and did not match', async () => {
-    // Asked about the thing under the words it first had.
-    expect((await refusal(listing({ attributes: {} })))?.code).toBe('NEEDS_DETAIL');
-    // The assistant learns more, sharpens the words, and gives up on the rest.
-    const p = (await refusal(
-      listing({ attributes: {}, kind: 'Fanatec ClubSport V3 brake performance spring' }),
-      { detailUnknown: true },
-    ))!;
+  it('says so when detail_unknown was sent with no reference', async () => {
+    // Asked once, and the answer carried the number.
+    const asked = (await refusal(listing({ attributes: {} })))!;
+    expect(asked.code).toBe('NEEDS_DETAIL');
+    // The assistant gives up on the rest but sends the flag on its own.
+    const p = (await refusal(listing({ attributes: {} }), { detailUnknown: true }))!;
     expect(p.code).toBe('NEEDS_DETAIL');
     expect(p.human_action).toBe(DETAIL_UNKNOWN_UNMATCHED);
-    expect(p.human_action).toContain('same `kind`');
+    expect(p.human_action).toContain('`reference`');
     expect(p.human_action!.length).toBeLessThanOrEqual(300);
     expect(lintHumanCopy(p.human_action!)).toEqual([]);
     // The questions still ride along, so answering them is still the road out.
     expect(p.questions!.length).toBeGreaterThan(0);
+    // And a number rides along, so the way out it names is in the agent's hand.
+    // It is a NEW one: an attempt that carried nothing back is a new attempt,
+    // and the first number went nowhere because the agent did not send it.
+    expect(p.reference).toBeTruthy();
+    expect(p.reference).not.toBe(asked.reference);
 
-    // And the way out it names works: the same words, the same flag, up it goes.
+    // The way out it names works — and the words for the thing may move as far
+    // as the questions asked them to in the meantime.
     const r: any = await publishIntent(
       cfg,
       ACCOUNT,
       listing({ attributes: {}, kind: 'Fanatec ClubSport V3 brake performance spring' }),
-      { detailUnknown: true },
+      { detailUnknown: true, reference: p.reference },
     );
-    expect(r.intent_id).toBe(CARD);
+    expect(r.intent_id).toBe(p.reference);
   });
 
   it('keeps the ordinary questions where detail_unknown was never sent', async () => {

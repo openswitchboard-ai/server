@@ -40,8 +40,13 @@
  * AMEND NEVER COMES HERE. An amend only ever adds to a posting that is already
  * up, and refusing one would take a thing off the board for being what it
  * already was.
+ *
+ * WHAT WAS ASKED IS REMEMBERED ELSEWHERE, on the attempt's own reference number
+ * (domain/postingRef.ts). It used to be remembered here, keyed on the poster's
+ * own words for the thing — and the questions below ask for sharper words, so
+ * the key moved every time an assistant did as it was told. This file decides
+ * what a posting is short of and says it in plain words; it remembers nothing.
  */
-import { getPool } from '../db.js';
 
 /**
  * The facts that say WHICH ONE it is. Ordered by how often a posting has one,
@@ -117,13 +122,6 @@ export const WANT_IDENTIFYING_MIN = 1;
 
 /** The most questions one refusal carries. Past four it is a form to fill in. */
 export const MAX_QUESTIONS = 4;
-
-/**
- * How long the escape hatch stays open after a posting has been asked about.
- * Long enough for an assistant to put the questions to its human and hear
- * "I honestly don't know", short enough that it is never the ordinary road.
- */
-export const DETAIL_UNKNOWN_WINDOW_MINUTES = 10;
 
 /** A stated fact: a scalar with something in it. Same reading as projectionText. */
 function stated(attributes: unknown, key: string): boolean {
@@ -246,21 +244,24 @@ export const DETAIL_HUMAN_ACTION =
  * And the one line for an assistant that DID reach for the escape hatch and
  * was refused anyway.
  *
- * The hatch is keyed on the account and the poster's own words for the thing
- * (`detailKey`), so it only recognises a second attempt that spells the thing
- * the same way. That is the shape of asking and coming back — except that the
- * questions above invite an assistant to sharpen those very words, and a
+ * The hatch used to be keyed on the poster's own words for the thing, so it
+ * only recognised a second attempt that spelled the thing the same way — and
+ * the questions above invite an assistant to sharpen exactly those words. A
  * posting that went from "upgraded Fanatec pedal spring" to "Fanatec ClubSport
- * V3 brake performance spring" is a first attempt again as far as the row is
- * concerned. It used to be refused with the ordinary questions and no word
- * that the flag had been ignored, which is a loop an assistant cannot see the
- * shape of, let alone escape. So it is told.
+ * V3 brake performance spring" was a first attempt again as far as the row was
+ * concerned, and the loop closed. It is keyed on the attempt's reference now
+ * (domain/postingRef.ts), which nothing the assistant writes can move, so this
+ * sentence is only ever reached by an attempt that carried no reference at all
+ * — a genuinely new one, or one whose reference was dropped along the way.
+ *
+ * The reference is machinery. The sentence names the field to send back and
+ * never suggests saying it to anybody.
  */
 export const DETAIL_UNKNOWN_UNMATCHED =
-  'detail_unknown takes a posting as it stands only on a second try: the same `kind`, inside ten minutes of being asked. This one reads as a first try, because the words for the thing changed or the ten minutes went by. Send it again now with detail_unknown and the same `kind`.';
+  'detail_unknown takes a posting as it stands only on a second try, once the questions have actually been put to your human. This one reads as a first try, because it carried no `reference` from a refusal. Ask them, then send it again with detail_unknown and the `reference` below.';
 
 // ---------------------------------------------------------------------------
-// THE ESCAPE HATCH, AND WHY IT IS A ROW RATHER THAN A FLAG.
+// THE ESCAPE HATCH, AND WHY IT TURNS ON A SECOND ATTEMPT.
 //
 // Somebody really may not know. A spring came off a pedal set they no longer
 // own; a box of cables came out of a cupboard. Refusing that posting for ever
@@ -268,51 +269,11 @@ export const DETAIL_UNKNOWN_UNMATCHED =
 // it is, so `detail_unknown` takes it as it stands.
 //
 // What the flag alone must not do is let an assistant skip the asking. So it
-// only works on a SECOND attempt: the same account, the same words for the
-// thing, inside ten minutes of being asked. That is the shape of an assistant
-// that put the questions to its human and was told nobody knows.
+// only works on a SECOND attempt at the same thing: the reference the first
+// refusal handed over, sent back. That is the shape of an assistant that put
+// the questions to its human and was told nobody knows.
 //
-// It is a row rather than a number in this process because the process is one
-// of several, and an agent that reaches a different replica on its second call
-// would otherwise be trapped by a rule meant to stop nobody.
+// The reference lives in a row rather than in this process because the process
+// is one of several, and an agent that reaches a different replica on its
+// second call would otherwise be trapped by a rule meant to stop nobody.
 // ---------------------------------------------------------------------------
-
-/** The key a shortfall is remembered under: the account and the thing's words. */
-export const detailKey = (kind: unknown): string =>
-  String(kind ?? '')
-    .normalize('NFKC')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .slice(0, 60);
-
-/** Write down that this posting was asked about. Never fails a publish. */
-export async function recordDetailAsked(accountId: string, kind: unknown): Promise<void> {
-  try {
-    await getPool().query(
-      `INSERT INTO posting_detail_asks (account_id, kind_key, asked_at)
-       VALUES ($1, $2, now())
-       ON CONFLICT (account_id, kind_key) DO UPDATE SET asked_at = now()`,
-      [accountId, detailKey(kind)],
-    );
-  } catch {
-    /* the record is a courtesy to the next call; the refusal is the point */
-  }
-}
-
-/** Whether this account was asked about this same thing a moment ago. */
-export async function detailAskedRecently(accountId: string, kind: unknown): Promise<boolean> {
-  try {
-    const r = await getPool().query(
-      `SELECT 1 FROM posting_detail_asks
-        WHERE account_id = $1 AND kind_key = $2
-          AND asked_at > now() - make_interval(mins => $3::int)`,
-      [accountId, detailKey(kind), DETAIL_UNKNOWN_WINDOW_MINUTES],
-    );
-    return (r.rowCount ?? 0) > 0;
-  } catch {
-    // The table is unreachable. Believing the agent is the kinder failure: the
-    // alternative is trapping a human behind a question nobody can answer.
-    return true;
-  }
-}

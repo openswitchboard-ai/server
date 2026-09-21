@@ -436,6 +436,23 @@ export interface ProtocolError {
    * additive and optional, so an agent holding the older schema ignores it.
    */
   press_id?: string;
+  /**
+   * THE POSTING ATTEMPT'S OWN NUMBER, on every refusal a posting attempt gets.
+   *
+   * Minted the first time the switchboard says anything back about an attempt
+   * and carried by every question after it; the agent sends it back on its next
+   * try, and it is the only thing any "have I already asked this?" decision
+   * reads (domain/postingRef.ts). If the posting goes up, this IS its id, so
+   * there is never a second number for the same want or have.
+   *
+   * MACHINERY, and never said to a human — the same rule the manual already
+   * carries for a posting's id, which is the same number.
+   *
+   * Added after the schema check, like press_id above and for the same reason:
+   * the published error document closes itself to unknown properties. Additive
+   * and optional, so an agent holding the older schema ignores it.
+   */
+  reference?: string;
   docs_url: string;
 }
 
@@ -454,6 +471,8 @@ export class OsbError extends Error {
       figures?: ErrorFigure[];
       /** The approval link row this refusal handed over, to wait on. */
       press_id?: string;
+      /** The posting attempt's own number, to be sent back on the next try. */
+      reference?: string;
     } = {},
   ) {
     super(code);
@@ -473,6 +492,8 @@ export class OsbError extends Error {
       : assertOutbound('error', payload);
     // After the check, deliberately: see the note on ProtocolError.press_id.
     if (opts.press_id) this.payload.press_id = opts.press_id;
+    // And the attempt's number, for the same reason and on the same terms.
+    if (opts.reference) this.payload.reference = opts.reference;
   }
 }
 
