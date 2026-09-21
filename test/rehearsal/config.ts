@@ -66,42 +66,31 @@ export const ROUND_CAP = Number(process.env.REHEARSAL_ROUND_CAP ?? 8);
 export const GAP_MS = Number(process.env.REHEARSAL_GAP_MS ?? 20_000);
 
 /**
- * HOW LONG ONE SIDE OF ONE STAGE MAY TAKE, IN WALL-CLOCK TIME.
+ * HOW LONG THE SUITE WAITS FOR THE NEXT TURN TO ARRIVE.
  *
- * ROUND_CAP counts turns, not minutes, and the two are not the same thing: an
- * assistant that holds the line on a press for fifty seconds and then does it
- * again spends five minutes inside ONE round. On 20 September 2026 a run sat
- * in that loop for thirty minutes — the assistant waiting, its human never
- * pressing, nothing moving either way — and nothing in the suite was counting.
+ * THIS NUMBER HAS MOVED THREE TIMES AND THE SHAPE WAS WRONG EVERY TIME. Eight
+ * minutes on the stage, then twelve on the stage, then eight per side — and
+ * each time a run died that had done nothing wrong. The last of them was a
+ * seller working steadily through a NEEDS_DETAIL round and reading its human's
+ * figure back, cut off mid-sentence at eight minutes because the exchanges
+ * happened to be slow that afternoon.
  *
- * Running out of this is a FAILURE and not a void: the rig did not break, an
- * assistant spent half an hour getting nowhere, and that is a finding about
- * the assistant rather than about us. A person watching would have stopped it
- * long before, and the suite should too.
+ * A wall clock cannot tell slow from stuck. The thing this was written to
+ * catch — on 20 September 2026, a run that sat in a wait loop for half an hour
+ * with nothing moving either way — is a STALL, and a stall is measured from
+ * the last thing that happened, not from the start.
+ *
+ * So the clock now starts again every time an assistant says anything. Five
+ * minutes without a single turn is a hang: the longest legitimate turn holds a
+ * press wait of fifty seconds and a handful of tool calls, nowhere near this.
+ * A run that is merely slow is left alone, which is the whole point, and the
+ * half-hour wait loop still dies at five minutes rather than thirty.
+ *
+ * The other two bounds are unchanged and do the rest of the work: ROUND_CAP
+ * stops a side ping-ponging for ever even while turns keep arriving, and
+ * RUN_BUDGET_MS stops six patient stages adding up to an afternoon.
  */
-/**
- * EIGHT MINUTES, PER SIDE, AND THE HISTORY MATTERS BECAUSE THIS NUMBER HAS
- * MOVED TWICE.
- *
- * Eight was the original, kept on the STAGE, and it stopped a run that sat in
- * a wait loop for half an hour. On 21 September 2026 it was raised to twelve
- * because a clean run was cut off mid-stage — and then a run was cut off at
- * twelve as well. Raising it a third time would have been chasing the runs,
- * which is the one thing test/rehearsal/levels.ts says a bar must never do.
- *
- * The number was never the fault. The two sides of a stage are driven one
- * after the other and shared one clock, so the first side could spend the
- * second side's time: the seller took seven and a half legitimate minutes and
- * the buyer was cut off four and a half minutes in, on a budget it never had.
- *
- * So the clock moved rather than the number. It is now kept per SIDE, and back
- * at eight. That is TIGHTER than either stage budget on the thing this was
- * written to catch — one side stuck getting nowhere is caught by its own eight
- * minutes instead of by whatever the other side left behind — and it stops
- * punishing a side for its partner being slow. The whole-run budget is
- * unchanged and still bounds the lot.
- */
-export const SIDE_BUDGET_MS = Number(process.env.REHEARSAL_SIDE_BUDGET_MS ?? 480_000);
+export const STALL_BUDGET_MS = Number(process.env.REHEARSAL_STALL_BUDGET_MS ?? 300_000);
 /** And the whole run, so six patient stages cannot add up to an afternoon. */
 export const RUN_BUDGET_MS = Number(process.env.REHEARSAL_RUN_BUDGET_MS ?? 2_700_000);
 
