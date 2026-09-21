@@ -19,14 +19,18 @@
  * untouched, because by then somebody has been asked.
  *
  * This is the same shape as the thin-posting rule next door
- * (domain/postingDetail.ts) and it borrows that rule's memory: the same table,
- * the same ten-minute window, keyed on the account and a key of its own. The
- * key carries the amounts, so a posting that comes back with a DIFFERENT number
- * on it is a new question and is asked again.
+ * (domain/postingDetail.ts), and it remembers what it asked the same way: on
+ * the attempt's own reference number (domain/postingRef.ts), and on nothing
+ * else. The key used to carry the amounts, so a posting that came back with a
+ * different number on it was a new question — and, because the key also carried
+ * the poster's words for the thing, a posting whose words were sharpened
+ * between one attempt and the next was a new question too, which is the loop of
+ * 21 September 2026 that ended in nothing being posted at all.
  *
- * THE AMOUNTS ARE NEVER LOGGED. What somebody will pay for a thing is theirs;
- * the band is encrypted on the row for exactly that reason, and a refusal on
- * the way to that row is no place to write it down in plaintext.
+ * THE AMOUNTS ARE NEVER LOGGED, and now they are never a key either. What
+ * somebody will pay for a thing is theirs; the band is encrypted on the row for
+ * exactly that reason, and a refusal on the way to that row is no place to
+ * write it down in plaintext.
  */
 
 /** One figure a posting carries, in the plain words for what it is. */
@@ -110,28 +114,6 @@ export function figuresOnPosting(card: {
 
 /** A figure as a person says it out loud: "$45 AUD". */
 export const figureWords = (f: PostingFigure): string => `$${f.amount} ${f.currency}`;
-
-/**
- * The key the question is remembered under: the AMOUNTS on it, sorted, so
- * changing the number asks again and re-sending the same posting does not.
- *
- * THE THING'S OWN WORDS USED TO BE IN THIS KEY, and that made the question
- * unanswerable. The detail gate beside it asks an assistant to say more
- * exactly what the thing is, so "upgraded Fanatec pedal spring" becomes
- * "Fanatec ClubSport V3 brake performance spring" between one attempt and the
- * next — a new key, an unmatched confirmation, and the same question again.
- * Four in a row on 21 September 2026, with nothing posted at the end of it.
- *
- * What the human confirmed was the FIGURE: they said ten dollars, and ten
- * dollars is still theirs when the words around it are sharpened. The cost of
- * dropping `kind` is that two postings carrying the same amount share one
- * confirmation, so confirming a $10 floor on one would excuse a $10 ask on
- * another made within the window. That is a smaller wrong than a posting that
- * can never be made, and the figure gate is a read-back rather than a consent
- * gate — the consent gates are pressed by a human.
- */
-export const figureAskKey = (kind: unknown, figures: PostingFigure[]): string =>
-  `figure:${[...figures.map((f) => f.amount)].sort((a, b) => a - b).join(',')}`;
 
 /** The most questions one refusal carries, the same as the detail gate's. */
 export const MAX_FIGURE_QUESTIONS = 4;

@@ -187,9 +187,13 @@ function fakePool() {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
-      // A figure has been read back already, so it goes up as it stands: this
-      // suite is about the shelf (domain/postingFigure.ts is tested elsewhere).
-      if (/FROM posting_detail_asks/.test(sql)) return rows([{ ok: 1 }]);
+      // Every gate has asked on this attempt already, so the posting goes up as
+      // it stands: this suite is about the shelf (the reference itself is
+      // tested in postingReference.test.ts).
+      if (/FROM posting_references/.test(sql)) {
+        return rows([{ reference: params[0], asked: ['detail', 'reach', 'figure'] }]);
+      }
+      if (/INTO posting_references|DELETE FROM posting_references/.test(sql)) return rows([]);
       // ---- shelf_attempts ----
       if (/INSERT INTO shelf_attempts/.test(sql)) {
         const existing = world.attempts.find((a) => a.account_id === params[0] && a.kind_key === params[1]);
@@ -347,9 +351,9 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
   });
 
-const refusal = async (card: any) => {
+const refusal = async (card: any, reference?: unknown) => {
   try {
-    await publishIntent(cfg, ANA, card);
+    await publishIntent(cfg, ANA, card, { reference });
     return undefined;
   } catch (e) {
     if (e instanceof OsbError) return e.payload;
@@ -562,8 +566,13 @@ describe('what a gap row never holds', () => {
     const priced = listing({
       price: { band: { max: SECRET_AMOUNT }, ccy: 'AUD' },
     });
-    await refusal(priced);
-    await refusal({ ...priced, category: SHELF_NONE_OPTION });
+    // The figure is read back first, which is where this attempt gets its
+    // reference; everything after it carries that number (domain/postingRef.ts).
+    const figure = (await refusal(priced))!;
+    expect(figure.code).toBe('CONFIRM_FIGURE');
+    const ref = figure.reference;
+    await refusal(priced, ref);
+    await refusal({ ...priced, category: SHELF_NONE_OPTION }, ref);
     suggestions = { categories: [], scored: [], source: 'embedding' };
     await refusal(listing({ category: 'goods.zz-nothing-near.thing', kind: 'another thing' }));
     const writes = world.sql.filter((s) => /INSERT INTO shelf_gaps/.test(s.text));

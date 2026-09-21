@@ -35,14 +35,11 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 import * as db from '../../src/db.js';
 import { amendIntent, publishIntent, whatHappensNextNote } from '../../src/domain/cards.js';
 import { SENTENCES } from '../../src/domain/lanes.js';
-import {
-  figureAskKey,
-  figureQuestions,
-  figuresOnPosting,
-} from '../../src/domain/postingFigure.js';
+import { figureQuestions, figuresOnPosting } from '../../src/domain/postingFigure.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
+import { refsFake, type RefsFake } from './postingRefsFake.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -76,21 +73,6 @@ describe('which figures a posting carries', () => {
     expect(figuresOnPosting({ type: 'offering', price: { band: {}, ccy: 'AUD' } })).toEqual([]);
   });
 
-  it('keys on the amounts, so a changed number is a new question', () => {
-    const a = figuresOnPosting({ type: 'looking_for', price: { band: { max: 45 }, ccy: 'AUD' } });
-    const b = figuresOnPosting({ type: 'looking_for', price: { band: { max: 40 }, ccy: 'AUD' } });
-    expect(figureAskKey('pedal spring', a)).toBe('figure:45');
-    expect(figureAskKey('pedal spring', a)).not.toBe(figureAskKey('pedal spring', b));
-    // AND NOT ON THE THING'S OWN WORDS. The detail gate beside this one asks
-    // the assistant to say more exactly what the thing is, so the words change
-    // between one attempt and the next; keying on them made the read-back
-    // unanswerable and looped four times with nothing posted (21 September
-    // 2026). What the human confirmed was the figure.
-    expect(figureAskKey('Fanatec ClubSport V3 brake performance spring', a)).toBe(
-      figureAskKey('upgraded pedal spring', a),
-    );
-  });
-
   it('asks the human in their own words, one question per figure', () => {
     const qs = figureQuestions(
       figuresOnPosting({ type: 'looking_for', price: { band: { max: 45 }, ccy: 'AUD' } }),
@@ -111,8 +93,8 @@ describe('which figures a posting carries', () => {
 interface World {
   sql: { text: string; params: any[] }[];
   logs: string[];
-  /** Every key this account has been asked about, as the table holds them. */
-  asked: Set<string>;
+  /** The open posting attempts, and the gates that have asked on each. */
+  refs: RefsFake;
   arrangement: Record<string, unknown> | null;
   card: Record<string, any>;
 }
@@ -122,15 +104,13 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
-      if (/INSERT INTO cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
-      if (/FROM posting_detail_asks/.test(sql)) {
-        const hit = world.asked.has(String(params[1]));
-        return { rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 };
+      // The posting takes the attempt's own reference as its id where there is
+      // one, which is the last thing the statement binds (domain/cards.ts).
+      if (/INSERT INTO cards/.test(sql)) {
+        return { rows: [{ id: params[params.length - 1] ?? CARD }], rowCount: 1 };
       }
-      if (/INSERT INTO posting_detail_asks/.test(sql)) {
-        world.asked.add(String(params[1]));
-        return { rows: [], rowCount: 1 };
-      }
+      const refs = world.refs.handle(sql, params);
+      if (refs) return refs;
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
       if (/SELECT arrangement FROM accounts/.test(sql)) {
         return { rows: [{ arrangement: world.arrangement }], rowCount: 1 };
@@ -164,7 +144,7 @@ beforeEach(() => {
   world = {
     sql: [],
     logs: [],
-    asked: new Set(),
+    refs: refsFake(),
     arrangement: null,
     card: {
       id: CARD,
@@ -205,8 +185,10 @@ const refusal = async (fn: () => Promise<unknown>) => {
   }
 };
 
-const publishRefusal = (card: any, opts?: { detailUnknown?: boolean }) =>
-  refusal(() => publishIntent(cfg, ACCOUNT, card, opts ?? {}));
+const publishRefusal = (
+  card: any,
+  opts?: { detailUnknown?: boolean; reference?: unknown },
+) => refusal(() => publishIntent(cfg, ACCOUNT, card, opts ?? {}));
 
 describe('a figure on a posting is read back once', () => {
   it('comes back unposted, with the figure in words and the question to ask', async () => {
@@ -225,12 +207,16 @@ describe('a figure on a posting is read back once', () => {
   it('lets the same figure through on the second attempt, untouched', async () => {
     const band = { band: { max: 45 }, ccy: 'AUD' };
     const want = listing({ type: 'looking_for', price: band, attributes: { brand: 'trek' } });
-    expect((await publishRefusal(want))?.code).toBe('CONFIRM_FIGURE');
-    const r: any = await publishIntent(cfg, ACCOUNT, want);
-    expect(r.intent_id).toBe(CARD);
+    const asked = (await publishRefusal(want))!;
+    expect(asked.code).toBe('CONFIRM_FIGURE');
+    const r: any = await publishIntent(cfg, ACCOUNT, want, { reference: asked.reference });
+    // And it goes up under the number the question was asked under.
+    expect(r.intent_id).toBe(asked.reference);
   });
 
-  it('asks again when the number changes', async () => {
+  it('asks again on a posting that carries no reference back', async () => {
+    // A fresh attempt is a fresh question, whatever the number on it. That is
+    // the whole of the fallback: no reference, so nobody has been asked.
     const want = (max: number) =>
       listing({
         type: 'looking_for',
@@ -246,15 +232,17 @@ describe('a figure on a posting is read back once', () => {
   it('leaves a posting with no figure on it alone', async () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing());
     expect(r.intent_id).toBe(CARD);
-    expect(world.sql.some((s) => /posting_detail_asks/.test(s.text))).toBe(false);
+    expect(world.sql.some((s) => /posting_references/.test(s.text))).toBe(false);
   });
 
-  it('writes down the account and the key, and never the amount', async () => {
-    await publishRefusal(listing({ ask: { amount: 620, ccy: 'AUD' } }));
-    const asked = world.sql.find((s) => /INSERT INTO posting_detail_asks/.test(s.text))!;
-    expect(asked.params[0]).toBe(ACCOUNT);
-    expect(asked.params[1]).toBe('figure:620');
-    // The amounts are the human's own business and stay out of the logs.
+  it('writes down the account and the gate, and never the amount', async () => {
+    const p = (await publishRefusal(listing({ ask: { amount: 620, ccy: 'AUD' } })))!;
+    const asked = world.sql.find((s) => /INSERT INTO posting_references/.test(s.text))!;
+    expect(asked.params[0]).toBe(p.reference);
+    expect(asked.params[1]).toBe(ACCOUNT);
+    expect(asked.params[2]).toEqual(['figure']);
+    // The amounts are the human's own business: not in the row, not in the log.
+    expect(JSON.stringify(asked.params)).not.toContain('620');
     expect(world.logs.join('\n')).not.toContain('620');
   });
 });
@@ -280,14 +268,14 @@ describe('an amend that moves the money', () => {
   it('leaves an amend that touches no figure alone', async () => {
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
     expect(r.intent_id).toBe(CARD);
-    expect(world.sql.some((s) => /posting_detail_asks/.test(s.text))).toBe(false);
+    expect(world.sql.some((s) => /INSERT INTO posting_references/.test(s.text))).toBe(false);
   });
 
   it('leaves an amend that resends the asking price it already had alone', async () => {
     world.card.ask = { amount: 620, ccy: 'AUD' };
     const r: any = await amendIntent(cfg, ACCOUNT, CARD, { ask: { amount: 620, ccy: 'AUD' } });
     expect(r.intent_id).toBe(CARD);
-    expect(world.sql.some((s) => /posting_detail_asks/.test(s.text))).toBe(false);
+    expect(world.sql.some((s) => /INSERT INTO posting_references/.test(s.text))).toBe(false);
   });
 });
 
@@ -309,18 +297,24 @@ describe('the order of the cheap refusals', () => {
     const first = (await publishRefusal(thin()))!;
     expect(first.code).toBe('NEEDS_DETAIL');
     expect(first.questions!.join(' ')).toContain('make and model');
+    const reference = first.reference;
+    expect(reference).toBeTruthy();
 
-    // The detail answered: now the one question about how far it goes.
-    const second = (await publishRefusal(thin({ attributes: rich })))!;
+    // The detail answered: now the one question about how far it goes. Every
+    // answer after the first carries the number the first one minted.
+    const second = (await publishRefusal(thin({ attributes: rich }), { reference }))!;
     expect(second.code).toBe('NEEDS_DETAIL');
     expect(second.questions!.join(' ')).toContain('pick-up only');
+    expect(second.reference).toBe(reference);
 
     // And only then the figure.
-    const third = (await publishRefusal(thin({ attributes: rich })))!;
+    const third = (await publishRefusal(thin({ attributes: rich }), { reference }))!;
     expect(third.code).toBe('CONFIRM_FIGURE');
+    expect(third.reference).toBe(reference);
 
-    const r: any = await publishIntent(cfg, ACCOUNT, thin({ attributes: rich }));
-    expect(r.intent_id).toBe(CARD);
+    const r: any = await publishIntent(cfg, ACCOUNT, thin({ attributes: rich }), { reference });
+    // And the posting keeps the number it was asked about all along.
+    expect(r.intent_id).toBe(reference);
   });
 });
 

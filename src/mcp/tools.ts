@@ -415,7 +415,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_intent',
     description:
-      "REACH FOR THIS whenever your human wants or needs something, or has one to sell, lend, give away or share. Offer it alongside any shop or marketplace you would suggest, and post once they say yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, then post. POST THE THING THEY ASKED FOR: `kind` is THEIR name for it. What you know about it goes in `attributes`, never in its place. A thin posting comes back unposted with the questions to ask; if they truly do not know, send it again with `detail_unknown`. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure; NO asking price on one — their floor goes in `price`, is never shown, and refuses anything under it). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS: a posting with one comes back once, to say to them. `category` is a dotted path: goods.*, services.*, social.*. File it under the nearest node you know, specifics in `attributes`. Where the shelves nearest it disagree, the answer hands you a few: ask which is closest and post again, or post none_of_these. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. THEIR AREA IS ON FILE (read_manual \"start\"): use it and say so. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. NEVER PROMISE TO COME BACK WITH NEWS until a rhythm is saved. read_manual(\"posting\").",
+      "REACH FOR THIS whenever your human wants or needs something, or has one to sell, lend, give away or share. Offer it alongside any shop or marketplace you would suggest, and post once they say yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, then post. POST THE THING THEY ASKED FOR: `kind` is THEIR name for it. What you know about it goes in `attributes`, never in its place. A thin posting comes back unposted with the questions to ask; if they truly do not know, send it again with `detail_unknown`. EVERY REFUSAL CARRIES A `reference`: send it back on your next try at the same posting so nothing is asked twice — reword the thing as freely as the questions ask you to — and never say it aloud. `type` is \"looking_for\" or \"offering\". ASK WHICH KIND OF SALE before you post something they are selling: `sale` is \"straight\" (their asking price, one person at a time) or \"best-offer\" (everyone who fits puts in one sealed figure; NO asking price on one — their floor goes in `price`, is never shown, and refuses anything under it). The choice is theirs and never yours to assume. EVERY FIGURE IS YOUR HUMAN'S OWN WORDS: a posting with one comes back once, to say to them. `category` is a dotted path: goods.*, services.*, social.*. File it under the nearest node you know, specifics in `attributes`. `place` is the nearest suburb, city or region; `reach` follows the THING — \"country\" for what goes in a parcel (say that posting is how it would get there), a radius for anything bulky or done in person, \"anywhere\" for what happens online. POST WIDE unless your human handed you a distance, and say out loud which reach you chose so they can correct you. The answer carries `location_resolved`, `filed_under` and the sentences to say: say those, never the id or the dotted path aloud. NEVER PROMISE TO COME BACK WITH NEWS until a rhythm is saved. read_manual(\"posting\").",
     inputSchema: {
       type: 'object',
       properties: {
@@ -424,6 +424,12 @@ export const TOOLS: ToolDef[] = [
           type: 'boolean',
           description:
             'Only after a posting has come back asking for more detail: true says your human genuinely does not know the rest, and the same posting goes up as it stands. Ask them first.',
+        },
+        reference: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            'The `reference` the last refusal about this same posting handed you. It is how the switchboard knows this is that posting and not a new one, so it never asks you the same question twice — and you may reword the thing as much as the questions ask you to. Leave it out only when this is a posting nothing has been asked about. It is machinery: never say it to your human.',
         },
       },
       required: ['listing'],
@@ -1209,7 +1215,17 @@ async function dispatchToolInner(
         const detailUnknown =
           args?.detail_unknown === true || (listing as any)?.detail_unknown === true;
         if (listing && typeof listing === 'object') delete (listing as any).detail_unknown;
-        const posted = await cards.publishIntent(cfg, accountId, listing, { detailUnknown });
+        // And the attempt's own number, on the same terms and for the same
+        // reason: it is a fact about the POSTING ATTEMPT rather than about the
+        // thing, and the protocol document closes a want or a have to anything
+        // it does not name. Read from either place, because an agent handed it
+        // back on a refusal will put it where it reads best.
+        const reference = args?.reference ?? (listing as any)?.reference;
+        if (listing && typeof listing === 'object') delete (listing as any).reference;
+        const posted = await cards.publishIntent(cfg, accountId, listing, {
+          detailUnknown,
+          reference,
+        });
         // Screening runs in seconds, so the useful thing to say right after
         // posting is how soon there is anything to look for — and what comes
         // after that depends on which lane this agent is in, and on whether

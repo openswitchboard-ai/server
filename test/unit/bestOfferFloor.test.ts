@@ -56,6 +56,7 @@ import { EXPECTED_REFUSALS, protocolAnswer } from '../../src/mcp/tools.js';
 import { OsbError, SCHEMA_VERSION, validatePayload } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
+import { refsFake, type RefsFake } from './postingRefsFake.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -82,8 +83,8 @@ const listing = (over: Record<string, unknown> = {}) => ({
 
 interface World {
   sql: { text: string; params: any[] }[];
-  /** Every figure-confirmation key this account has been asked about. */
-  asked: Set<string>;
+  /** The open posting attempts, and the gates that have asked on each. */
+  refs: RefsFake;
   card: Record<string, any>;
 }
 let world: World;
@@ -92,15 +93,13 @@ function fakePool() {
   return {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
-      if (/INSERT INTO cards/.test(sql)) return { rows: [{ id: CARD }], rowCount: 1 };
-      if (/FROM posting_detail_asks/.test(sql)) {
-        const hit = world.asked.has(String(params[1]));
-        return { rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 };
+      // The posting takes the attempt's own reference as its id where there is
+      // one, which is the last thing the statement binds (domain/cards.ts).
+      if (/INSERT INTO cards/.test(sql)) {
+        return { rows: [{ id: params[params.length - 1] ?? CARD }], rowCount: 1 };
       }
-      if (/INSERT INTO posting_detail_asks/.test(sql)) {
-        world.asked.add(String(params[1]));
-        return { rows: [], rowCount: 1 };
-      }
+      const refs = world.refs.handle(sql, params);
+      if (refs) return refs;
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
       if (/SELECT arrangement FROM accounts/.test(sql)) {
         return { rows: [{ arrangement: null }], rowCount: 1 };
@@ -119,7 +118,7 @@ function fakePool() {
 beforeEach(() => {
   world = {
     sql: [],
-    asked: new Set(),
+    refs: refsFake(),
     card: {
       id: CARD,
       account_id: ACCOUNT,
@@ -198,9 +197,11 @@ describe('a best offer carries no asking price', () => {
     const card = listing({ sale: 'best-offer', price: { band: { min: 10 }, ccy: 'AUD' } });
     // The figure gate first, as it is for any posting carrying a number: the
     // assistant says it to its human and sends the same posting again.
-    expect((await refusal(() => publishIntent(cfg, ACCOUNT, card)))?.code).toBe('CONFIRM_FIGURE');
-    const r: any = await publishIntent(cfg, ACCOUNT, card);
-    expect(r.intent_id).toBe(CARD);
+    const asked = (await refusal(() => publishIntent(cfg, ACCOUNT, card)))!;
+    expect(asked.code).toBe('CONFIRM_FIGURE');
+    const r: any = await publishIntent(cfg, ACCOUNT, card, { reference: asked.reference });
+    // The posting keeps the number the question was asked under.
+    expect(r.intent_id).toBe(asked.reference);
     // And the band went to the encrypted column rather than to `ask`.
     const insert = world.sql.find((s) => /INSERT INTO cards/.test(s.text))!;
     expect(insert.params).toContain('best-offer');
@@ -209,9 +210,10 @@ describe('a best offer carries no asking price', () => {
 
   it('leaves a straight sale with an asking price exactly as it was', async () => {
     const card = listing({ sale: 'straight', ask: { amount: 620, ccy: 'AUD' } });
-    expect((await refusal(() => publishIntent(cfg, ACCOUNT, card)))?.code).toBe('CONFIRM_FIGURE');
-    const r: any = await publishIntent(cfg, ACCOUNT, card);
-    expect(r.intent_id).toBe(CARD);
+    const asked = (await refusal(() => publishIntent(cfg, ACCOUNT, card)))!;
+    expect(asked.code).toBe('CONFIRM_FIGURE');
+    const r: any = await publishIntent(cfg, ACCOUNT, card, { reference: asked.reference });
+    expect(r.intent_id).toBe(asked.reference);
   });
 
   it('holds a posting that says nothing about the sale, which is a straight one', async () => {
@@ -232,9 +234,11 @@ describe('a best offer carries no asking price', () => {
     expect(p.code).toBe('FLOOR_IS_PRIVATE');
     expect(p.figures).toBeUndefined();
     expect(p.questions).toBeUndefined();
-    // And nothing was remembered about the attempt, so answering the real
-    // question later is not silently excused by this refusal.
-    expect(world.sql.some((s) => /posting_detail_asks/.test(s.text))).toBe(false);
+    // The attempt has its number, as every refusal does — but NO gate is
+    // written down against it, so answering the real question later is not
+    // silently excused by this refusal.
+    expect(p.reference).toBeTruthy();
+    expect(world.refs.asked(p.reference)).toEqual([]);
   });
 });
 
@@ -313,9 +317,10 @@ describe('a budget ceiling has no route of its own', () => {
       price: { band: { max: 25 }, ccy: 'AUD' },
     });
     delete (want as any).sale;
-    expect((await refusal(() => publishIntent(cfg, ACCOUNT, want)))?.code).toBe('CONFIRM_FIGURE');
-    const r: any = await publishIntent(cfg, ACCOUNT, want);
-    expect(r.intent_id).toBe(CARD);
+    const asked = (await refusal(() => publishIntent(cfg, ACCOUNT, want)))!;
+    expect(asked.code).toBe('CONFIRM_FIGURE');
+    const r: any = await publishIntent(cfg, ACCOUNT, want, { reference: asked.reference });
+    expect(r.intent_id).toBe(asked.reference);
     // It went to the encrypted column and to nothing else: `ask` on the insert
     // is null, and the band itself is a sealed buffer.
     const insert = world.sql.find((s) => /INSERT INTO cards/.test(s.text))!;

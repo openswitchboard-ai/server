@@ -209,9 +209,9 @@ describe('the details step says whose words the attributes are', () => {
 
 // ---------------------------------------------------------------------------
 describe('and the manual says all of it', () => {
-  it('is at version 62, and the last entry is 62', () => {
-    expect(MANUAL.version).toBe(62);
-    expect(MANUAL.changelog[MANUAL.changelog.length - 1].version).toBe(62);
+  it('is at version 63, and the last entry is 63', () => {
+    expect(MANUAL.version).toBe(63);
+    expect(MANUAL.changelog[MANUAL.changelog.length - 1].version).toBe(63);
   });
 
   it('the provenance line names the fields that now carry a label', () => {

@@ -237,7 +237,9 @@ describe('the counting rails ride inside the statement they guard', () => {
     expect(src).toContain('OPEN_CARDS_GUARD_SQL');
     // An INSERT … SELECT … WHERE, not an INSERT … VALUES: the count and the
     // row that changes it are one statement.
-    expect(src).toMatch(/INSERT INTO cards[\s\S]{0,400}SELECT \$1/);
+    // (The first thing selected is the posting's id, which is the attempt's own
+    // reference where there is one — domain/postingRef.ts.)
+    expect(src).toMatch(/INSERT INTO cards[\s\S]{0,400}SELECT[\s\S]{0,120}\$1,\$2,\$3/);
   });
 
   it('counts the day\'s posting in the statement that records it', () => {

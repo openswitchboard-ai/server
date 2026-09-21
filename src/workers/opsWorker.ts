@@ -16,6 +16,7 @@ import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
 import { sweepLedgerEntries } from '../safety/ledger.js';
 import { sweepShelfGaps } from '../domain/shelfGaps.js';
+import { sweepPostingRefs } from '../domain/postingRef.js';
 import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
 import {
   notifyMatchCreated,
@@ -126,6 +127,17 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   }
                 } catch (e: any) {
                   log('ttl-expiry: shelf gap sweep failed', { error: e?.message });
+                }
+                // And the posting references, on the same tick: an attempt
+                // nobody ever came back to finish goes after a week
+                // (domain/postingRef.ts). A reference that reached a posting is
+                // already gone — it became that posting's id. Counts only, and
+                // the row holds nothing about the thing to begin with.
+                try {
+                  const refs = await sweepPostingRefs();
+                  if (refs.references > 0) log('ttl-expiry: posting reference sweep', refs);
+                } catch (e: any) {
+                  log('ttl-expiry: posting reference sweep failed', { error: e?.message });
                 }
                 // And photo quarantine, on the same tick — with one rule the
                 // other sweeps do not have. It may take only what an operator
