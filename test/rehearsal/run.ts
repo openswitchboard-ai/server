@@ -61,7 +61,7 @@ import {
   MEET_WAIT_MS,
   NUDGE,
   ROUND_CAP,
-  SIDE_BUDGET_MS,
+  STALL_BUDGET_MS,
   RUN_BUDGET_MS,
   SCREEN_WAIT_MS,
   assertDev,
@@ -223,21 +223,13 @@ async function oneRun(
   /** When the stage now open began. Reset by openStage. */
   let stageStartedMs = Date.now();
   /**
-   * WHEN THE SIDE NOW TALKING STARTED TALKING.
+   * WHEN THE LAST TURN ARRIVED — the clock that tells stuck from slow.
    *
-   * The two sides of a stage are driven one after the other, so a clock kept
-   * on the STAGE is a clock the first side can spend. On 21 September 2026 the
-   * seller's half of stage 2 took seven and a half minutes of the twelve — all
-   * of it legitimate, every check passed — and the buyer was cut off four and
-   * a half minutes in, having done nothing wrong, on a budget it never had.
-   *
-   * The thing the budget was written to catch is ONE side stuck in a wait loop
-   * getting nowhere. That is a fact about a side, so this is the clock that
-   * should hold it, and holding it here is tighter than the stage clock was:
-   * the stuck side is caught by its own eight minutes rather than by whatever
-   * the other side happened to leave behind.
+   * A budget measured from the start of a side punishes a side for being slow;
+   * this one only fires when nothing has happened at all. Reset by drive() on
+   * every assistant turn.
    */
-  let sideStartedMs = Date.now();
+  let lastTurnMs = Date.now();
 
   /**
    * TIME IS A CHECK LIKE ANY OTHER. Thrown as a FailFast so it stops the run
@@ -274,10 +266,10 @@ async function oneRun(
 
   const outOfTime = (): string | undefined => {
     const run = Date.now() - runStartedMs;
-    const side = Date.now() - sideStartedMs;
+    const sinceTurn = Date.now() - lastTurnMs;
     if (run > RUN_BUDGET_MS) return `the run passed ${Math.round(RUN_BUDGET_MS / 60_000)} minutes and was still going`;
-    if (side > SIDE_BUDGET_MS)
-      return `one side of stage ${currentStage} passed ${Math.round(SIDE_BUDGET_MS / 60_000)} minutes with nothing settled${waitingOnWhat()}`;
+    if (sinceTurn > STALL_BUDGET_MS)
+      return `stage ${currentStage} heard nothing at all for ${Math.round(STALL_BUDGET_MS / 60_000)} minutes${waitingOnWhat()}`;
     return undefined;
   };
 
@@ -417,6 +409,11 @@ async function oneRun(
         : await side.driver.ask(side.session, humanText);
       side.lastReply = reply.text;
       side.toolActivity.push(reply.toolActivity);
+      // SOMETHING HAPPENED, so the stall clock starts again. An EMPTY reply
+      // counts: the assistant answered, the harness will nudge, and that is a
+      // conversation going badly rather than a rig that has hung. ROUND_CAP is
+      // what ends a side that keeps answering and settling nothing.
+      lastTurnMs = Date.now();
       // AN EMPTY TURN IS NOT A TURN, and it must not reach the history: the
       // simulated human is a model too, and an empty assistant message in the
       // exchange it is handed comes back "messages.N: user messages must have
@@ -446,8 +443,8 @@ async function oneRun(
     ): Promise<void> => {
       let next = opts.opener ?? NUDGE;
       const rounds = opts.rounds ?? ROUND_CAP;
-      // This side's clock starts when this side starts talking.
-      sideStartedMs = Date.now();
+      // A side that has only just been handed the floor has not stalled.
+      lastTurnMs = Date.now();
       for (let i = 0; i < rounds; i++) {
         const late = outOfTime();
         if (late) throw new FailFast(`took too long — ${late}`);
