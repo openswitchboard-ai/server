@@ -252,10 +252,17 @@ describe('adding either credential later', () => {
     const passkeyOnly = cpages.securityPage({
       hasPin: false,
       passkeyCount: 1,
-      passkeySetOn: '18 Sep 2026',
+      passkeySetOn: 'set 18 Sep 2026 at 2:32pm',
+      passkeyKind: 'On this device',
     });
-    expect(passkeyOnly).toContain('Passkey set');
-    expect(passkeyOnly).toContain('18 Sep 2026');
+    expect(passkeyOnly).toContain('Passkey saved');
+    expect(passkeyOnly).toContain('On this device, set 18 Sep 2026 at 2:32pm');
+    // The stray full stop: a link inside the row used to take the navlist's
+    // own row styling and push the text after it onto a line of its own.
+    expect(passkeyOnly).not.toMatch(/>\s*\.\s*</);
+    // An account whose authenticator said nothing shows the head alone.
+    const bare = cpages.securityPage({ hasPin: false, passkeyCount: 1 });
+    expect(bare).toContain('Passkey saved');
     expect(passkeyOnly).not.toContain('Add another passkey');
     expect(passkeyOnly).not.toContain('>Add a passkey<');
     expect(passkeyOnly).toContain('>Set a PIN<');
@@ -266,7 +273,7 @@ describe('adding either credential later', () => {
     const pinOnly = cpages.securityPage({ hasPin: true, passkeyCount: 0 });
     expect(pinOnly).toContain('>Add a passkey<');
     expect(pinOnly).toContain('>Change your PIN<');
-    expect(pinOnly).not.toContain('Passkey set');
+    expect(pinOnly).not.toContain('Passkey saved');
   });
 
   it('the PIN page names the difference between setting one and changing one', () => {

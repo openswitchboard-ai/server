@@ -720,20 +720,43 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         .map((k: any) => new Date(k.created_at))
         .sort((x, y) => x.getTime() - y.getTime())[0];
       const tz = (await getTimezone(s.accountId!)) ?? 'UTC';
+      // What the authenticator told us at enrolment, said the way a person
+      // would recognise it. Unknown or missing transports say nothing rather
+      // than guess: a wrong description of where somebody's key lives is worse
+      // than no description.
+      const PASSKEY_KINDS: Record<string, string> = {
+        internal: 'On this device',
+        hybrid: 'On a phone or tablet',
+        usb: 'On a security key',
+        nfc: 'On a security key',
+        ble: 'On a security key',
+      };
+      const first: any = setOn
+        ? keys.slice().sort((x: any, y: any) => +new Date(x.created_at) - +new Date(y.created_at))[0]
+        : undefined;
+      const passkeyKind = (first?.transports ?? [])
+        .map((t: string) => PASSKEY_KINDS[t])
+        .find(Boolean);
       return html(
         reply,
         pages.securityPage({
           hasPin: !!a?.pin_hash,
           passkeyCount: keys.length,
+          passkeyKind,
           passkeySetOn: setOn
-            ? new Intl.DateTimeFormat('en-AU', {
+            ? `set ${new Intl.DateTimeFormat('en-AU', {
                 timeZone: tz,
                 day: 'numeric',
                 month: 'short',
                 year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
               })
                 .format(setOn)
                 .replace('Sept', 'Sep')
+                .replace(', ', ' at ')
+                .replace(' am', 'am')
+                .replace(' pm', 'pm')}`
             : undefined,
         }),
       );

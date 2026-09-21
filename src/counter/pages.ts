@@ -211,9 +211,9 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 
 /* ---- Quiet navigation, below the decisions ---- */
 .navlist { border-top:1px solid var(--line); margin:var(--s5) 0 0; }
-.navlist a { display:block; border-bottom:1px solid var(--line); padding:var(--s3) 0;
+.navlist > a { display:block; border-bottom:1px solid var(--line); padding:var(--s3) 0;
   text-decoration:none; color:var(--ink); }
-.navlist a:hover .nav-t { text-decoration:underline; text-underline-offset:3px; }
+.navlist > a:hover .nav-t { text-decoration:underline; text-underline-offset:3px; }
 .navlist .nav-t { display:block; font-family:var(--sans); font-weight:600; font-size:var(--t-md); }
 .navlist .nav-t::after { content:' →'; color:var(--muted); }
 .navlist .nav-d { display:block; font-size:var(--t-sm); color:var(--muted); margin-top:2px; line-height:1.4; }
@@ -760,16 +760,18 @@ ${ceremonyScript(v)}`);
  * inside that row rather than standing as a choice of its own.
  */
 export function securityPage(
-  v: { hasPin: boolean; passkeyCount: number; passkeySetOn?: string },
+  v: { hasPin: boolean; passkeyCount: number; passkeySetOn?: string; passkeyKind?: string },
   notice?: string,
 ): string {
+  const detail = [v.passkeyKind, v.passkeySetOn].filter(Boolean).join(', ');
   return layout('How you approve things', `
 <h1>How you approve things.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 <div class="navlist">
 ${v.passkeyCount
-    ? `<div class="row"><span class="nav-t">Passkey set</span>
-<span class="nav-d">${v.passkeySetOn ? `${esc(v.passkeySetOn)}. ` : ''}<a href="/passkey">Add one on another device</a>.</span></div>`
+    ? `<div class="row"><span class="nav-t">Passkey saved</span>
+${detail ? `<span class="nav-d">${esc(detail)}</span>` : ''}
+<span class="nav-d"><a href="/passkey">Add one on another device</a></span></div>`
     : `<a href="/passkey"><span class="nav-t">Add a passkey</span>
 <span class="nav-d">Face, fingerprint or device passcode. Nothing to remember.</span></a>`}
 <a href="/pin"><span class="nav-t">${v.hasPin ? 'Change your PIN' : 'Set a PIN'}</span>
