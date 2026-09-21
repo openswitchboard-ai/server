@@ -89,7 +89,7 @@ ${wide ? `<div class="note">${esc(wide)}</div>` : ''}
 <p class="small muted">That is the whole of what crosses — your email, what you
 have posted and your prices stay on your side. Keep phone numbers, addresses and links out
 of these two boxes; you can swap those in the channel once you have both agreed.</p>
-<a class="btn secondary" href="/">Back to your approval page</a>`);
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ ${
   <button type="submit" class="secondary">Clear the whole arrangement</button>
 </form>`
 }
-<a class="btn secondary" href="/">Back to your approval page</a>`);
+<a class="btn secondary" href="/">Back</a>`);
 }
 
 export interface PendingApprovalItem {
@@ -919,7 +919,7 @@ ${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
 <a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
-<a class="btn secondary" href="/">Back to your approval page</a>
+<a class="btn secondary" href="/">Back</a>
 ${verdictLine(v)}
 ${reportLine(v)}`);
 }

@@ -849,7 +849,7 @@ and haves have come down.</p>
 and a person will read it.</p>`);
 }
 
-export function messagePage(title: string, html: string, backHref = '/', backLabel = 'Back to your approval page'): string {
+export function messagePage(title: string, html: string, backHref = '/', backLabel = 'Back'): string {
   return layout(title, `<h1>${esc(title)}</h1>${html}
 <a class="btn secondary" href="${esc(backHref)}">${esc(backLabel)}</a>`);
 }
