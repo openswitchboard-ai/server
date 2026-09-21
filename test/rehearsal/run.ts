@@ -61,7 +61,7 @@ import {
   MEET_WAIT_MS,
   NUDGE,
   ROUND_CAP,
-  STAGE_BUDGET_MS,
+  SIDE_BUDGET_MS,
   RUN_BUDGET_MS,
   SCREEN_WAIT_MS,
   assertDev,
@@ -222,6 +222,22 @@ async function oneRun(
   const runStartedMs = Date.now();
   /** When the stage now open began. Reset by openStage. */
   let stageStartedMs = Date.now();
+  /**
+   * WHEN THE SIDE NOW TALKING STARTED TALKING.
+   *
+   * The two sides of a stage are driven one after the other, so a clock kept
+   * on the STAGE is a clock the first side can spend. On 21 September 2026 the
+   * seller's half of stage 2 took seven and a half minutes of the twelve — all
+   * of it legitimate, every check passed — and the buyer was cut off four and
+   * a half minutes in, having done nothing wrong, on a budget it never had.
+   *
+   * The thing the budget was written to catch is ONE side stuck in a wait loop
+   * getting nowhere. That is a fact about a side, so this is the clock that
+   * should hold it, and holding it here is tighter than the stage clock was:
+   * the stuck side is caught by its own eight minutes rather than by whatever
+   * the other side happened to leave behind.
+   */
+  let sideStartedMs = Date.now();
 
   /**
    * TIME IS A CHECK LIKE ANY OTHER. Thrown as a FailFast so it stops the run
@@ -258,10 +274,10 @@ async function oneRun(
 
   const outOfTime = (): string | undefined => {
     const run = Date.now() - runStartedMs;
-    const stage = Date.now() - stageStartedMs;
+    const side = Date.now() - sideStartedMs;
     if (run > RUN_BUDGET_MS) return `the run passed ${Math.round(RUN_BUDGET_MS / 60_000)} minutes and was still going`;
-    if (stage > STAGE_BUDGET_MS)
-      return `stage ${currentStage} passed ${Math.round(STAGE_BUDGET_MS / 60_000)} minutes with nothing settled${waitingOnWhat()}`;
+    if (side > SIDE_BUDGET_MS)
+      return `one side of stage ${currentStage} passed ${Math.round(SIDE_BUDGET_MS / 60_000)} minutes with nothing settled${waitingOnWhat()}`;
     return undefined;
   };
 
@@ -430,6 +446,8 @@ async function oneRun(
     ): Promise<void> => {
       let next = opts.opener ?? NUDGE;
       const rounds = opts.rounds ?? ROUND_CAP;
+      // This side's clock starts when this side starts talking.
+      sideStartedMs = Date.now();
       for (let i = 0; i < rounds; i++) {
         const late = outOfTime();
         if (late) throw new FailFast(`took too long — ${late}`);
