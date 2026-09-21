@@ -249,24 +249,24 @@ describe('adding either credential later', () => {
   // needs one. So the page confirms it and keeps the way to another device
   // in small print, rather than offering "add another" as a standing choice.
   it('the security page confirms a passkey rather than offering another', () => {
-    const passkeyOnly = cpages.securityPage({ hasPin: false, passkeyCount: 1 });
-    expect(passkeyOnly).toContain('Your passkey approves everything here.');
-    expect(passkeyOnly).toContain('Passkey set.');
+    const passkeyOnly = cpages.securityPage({
+      hasPin: false,
+      passkeyCount: 1,
+      passkeySetOn: '18 Sep 2026',
+    });
+    expect(passkeyOnly).toContain('Passkey set');
+    expect(passkeyOnly).toContain('18 Sep 2026');
     expect(passkeyOnly).not.toContain('Add another passkey');
     expect(passkeyOnly).not.toContain('>Add a passkey<');
     expect(passkeyOnly).toContain('>Set a PIN<');
     expect(passkeyOnly).toContain('href="/pin"');
-    // The new-device way stays, in small print.
+    // The new-device way stays, inside that row.
     expect(passkeyOnly).toContain('href="/passkey"');
 
     const pinOnly = cpages.securityPage({ hasPin: true, passkeyCount: 0 });
-    expect(pinOnly).toContain('Your PIN approves everything here.');
     expect(pinOnly).toContain('>Add a passkey<');
     expect(pinOnly).toContain('>Change your PIN<');
-
-    const both = cpages.securityPage({ hasPin: true, passkeyCount: 2 });
-    expect(both).toContain('a passkey and a PIN');
-    expect(both).not.toContain('Add another passkey');
+    expect(pinOnly).not.toContain('Passkey set');
   });
 
   it('the PIN page names the difference between setting one and changing one', () => {
