@@ -376,7 +376,7 @@ hold. Re-verify your address to switch it back on.
       : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
   }</span></a>
 <a href="/agent-keys"><span class="nav-t">Agent keys</span><span class="nav-d">Long passwords for agents that cannot sign in through a browser.</span></a>
-<a href="/security"><span class="nav-t">How you approve things</span><span class="nav-d">Your passkey, your PIN, and adding either one.</span></a>
+<a href="/security"><span class="nav-t">How you approve things</span><span class="nav-d">Your passkey and your PIN.</span></a>
 <a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How you hear about things, how often we may email you, and blind mode.</span></a>
 </div>`;
 

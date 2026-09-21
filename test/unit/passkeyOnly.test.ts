@@ -244,20 +244,29 @@ describe('the way through on a device the passkey has never seen', () => {
 });
 
 describe('adding either credential later', () => {
-  it('the security page says what is held and offers both doors', () => {
+  // A passkey set is a state to confirm, not a door to walk through again:
+  // one is enough, and a second only ever exists because a second DEVICE
+  // needs one. So the page confirms it and keeps the way to another device
+  // in small print, rather than offering "add another" as a standing choice.
+  it('the security page confirms a passkey rather than offering another', () => {
     const passkeyOnly = cpages.securityPage({ hasPin: false, passkeyCount: 1 });
-    expect(passkeyOnly).toContain('You have a passkey');
+    expect(passkeyOnly).toContain('Your passkey approves everything here.');
+    expect(passkeyOnly).toContain('Passkey set.');
+    expect(passkeyOnly).not.toContain('Add another passkey');
+    expect(passkeyOnly).not.toContain('>Add a passkey<');
     expect(passkeyOnly).toContain('>Set a PIN<');
     expect(passkeyOnly).toContain('href="/pin"');
+    // The new-device way stays, in small print.
     expect(passkeyOnly).toContain('href="/passkey"');
 
     const pinOnly = cpages.securityPage({ hasPin: true, passkeyCount: 0 });
-    expect(pinOnly).toContain('You have a PIN');
+    expect(pinOnly).toContain('Your PIN approves everything here.');
     expect(pinOnly).toContain('>Add a passkey<');
     expect(pinOnly).toContain('>Change your PIN<');
 
     const both = cpages.securityPage({ hasPin: true, passkeyCount: 2 });
-    expect(both).toContain('a PIN and 2 passkeys');
+    expect(both).toContain('a passkey and a PIN');
+    expect(both).not.toContain('Add another passkey');
   });
 
   it('the PIN page names the difference between setting one and changing one', () => {
