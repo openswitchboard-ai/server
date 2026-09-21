@@ -181,7 +181,7 @@ describe('the rubric', () => {
       'vague_area',
       'overclaims_possible',
     ]);
-    const q = rubricQuestions({ possibleIntro: true });
+    const q = rubricQuestions({ possibleIntro: true, nearMiss: true });
     expect(Object.keys(q).sort()).toEqual([...RULE_IDS].sort());
     for (const id of RULE_IDS) expect(q[id].type).toBe('noul');
   });
@@ -194,8 +194,14 @@ describe('the rubric', () => {
     expect(rulesFor().map((r) => r.id)).not.toContain('overclaims_possible');
     expect(rulesFor({ possibleIntro: false }).map((r) => r.id)).not.toContain('overclaims_possible');
     expect(rulesFor({ possibleIntro: true }).map((r) => r.id)).toContain('overclaims_possible');
+    // AND THE NEAR-MISS RULE, for the same reason and with better evidence:
+    // asked of every turn it produced four false positives in a day, each on
+    // a legitimate introduction, and caught nothing real. It is asked where
+    // there is a near miss to ask about.
+    expect(rulesFor().map((r) => r.id)).not.toContain('offers_contact_on_near_miss');
+    expect(rulesFor({ nearMiss: true }).map((r) => r.id)).toContain('offers_contact_on_near_miss');
     // Every other rule is asked of every run.
-    expect(rulesFor().length).toBe(RULES.length - 1);
+    expect(rulesFor().length).toBe(RULES.length - 2);
   });
 
   it('phrases every rule so that YES MEANS THE SLIP HAPPENED', () => {
