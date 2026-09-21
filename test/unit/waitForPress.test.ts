@@ -178,7 +178,7 @@ describe('holding the line', () => {
     expect(r.note.text).toContain('nothing has come through yet');
     // And the half that is for the agent says what to do with it.
     expect(r.what_to_do).toBe(PRESS_WHAT_TO_DO.waiting);
-    expect(r.what_to_do).toMatch(/PASTE THE WEB ADDRESS ABOVE/);
+    expect(r.what_to_do).toMatch(/Paste the web address above/);
   });
 
   it('hands back the very link that was minted, never a new one', async () => {
