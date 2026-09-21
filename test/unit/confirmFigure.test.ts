@@ -79,8 +79,16 @@ describe('which figures a posting carries', () => {
   it('keys on the amounts, so a changed number is a new question', () => {
     const a = figuresOnPosting({ type: 'looking_for', price: { band: { max: 45 }, ccy: 'AUD' } });
     const b = figuresOnPosting({ type: 'looking_for', price: { band: { max: 40 }, ccy: 'AUD' } });
-    expect(figureAskKey('pedal spring', a)).toBe('pedal spring#figure:45');
+    expect(figureAskKey('pedal spring', a)).toBe('figure:45');
     expect(figureAskKey('pedal spring', a)).not.toBe(figureAskKey('pedal spring', b));
+    // AND NOT ON THE THING'S OWN WORDS. The detail gate beside this one asks
+    // the assistant to say more exactly what the thing is, so the words change
+    // between one attempt and the next; keying on them made the read-back
+    // unanswerable and looped four times with nothing posted (21 September
+    // 2026). What the human confirmed was the figure.
+    expect(figureAskKey('Fanatec ClubSport V3 brake performance spring', a)).toBe(
+      figureAskKey('upgraded pedal spring', a),
+    );
   });
 
   it('asks the human in their own words, one question per figure', () => {
@@ -245,7 +253,7 @@ describe('a figure on a posting is read back once', () => {
     await publishRefusal(listing({ ask: { amount: 620, ccy: 'AUD' } }));
     const asked = world.sql.find((s) => /INSERT INTO posting_detail_asks/.test(s.text))!;
     expect(asked.params[0]).toBe(ACCOUNT);
-    expect(asked.params[1]).toBe('mountain bike#figure:620');
+    expect(asked.params[1]).toBe('figure:620');
     // The amounts are the human's own business and stay out of the logs.
     expect(world.logs.join('\n')).not.toContain('620');
   });
