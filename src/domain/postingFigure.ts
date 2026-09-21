@@ -19,18 +19,25 @@
  * untouched, because by then somebody has been asked.
  *
  * This is the same shape as the thin-posting rule next door
- * (domain/postingDetail.ts), and it remembers what it asked the same way: on
- * the attempt's own reference number (domain/postingRef.ts), and on nothing
- * else. The key used to carry the amounts, so a posting that came back with a
- * different number on it was a new question — and, because the key also carried
- * the poster's words for the thing, a posting whose words were sharpened
- * between one attempt and the next was a new question too, which is the loop of
- * 21 September 2026 that ended in nothing being posted at all.
+ * (domain/postingDetail.ts), and it remembers what it asked in two parts: the
+ * attempt's own reference number (domain/postingRef.ts), which says WHICH
+ * posting is being talked about, and the figures themselves (figureAmountsKey
+ * below), which say what was confirmed on it. Same reference and same figures,
+ * and nobody is asked twice. Same reference, different figure, and the question
+ * is put again.
  *
- * THE AMOUNTS ARE NEVER LOGGED, and now they are never a key either. What
- * somebody will pay for a thing is theirs; the band is encrypted on the row for
- * exactly that reason, and a refusal on the way to that row is no place to
- * write it down in plaintext.
+ * THE POSTER'S WORDS FOR THE THING USED TO BE IN THAT KEY, and they are what
+ * made the question unanswerable: the detail gate next door asks an assistant
+ * to say more exactly what the thing is, so "upgraded Fanatec pedal spring"
+ * became "Fanatec ClubSport V3 brake performance spring" between one attempt
+ * and the next, and the same question came back four times with nothing posted
+ * at the end of it (21 September 2026). The reference is what replaced them.
+ * The amounts stayed, because nothing in the flow ever asks an assistant to
+ * change the price.
+ *
+ * THE AMOUNTS ARE NEVER LOGGED. What somebody will pay for a thing is theirs;
+ * the band is encrypted on the row for exactly that reason, and a refusal on
+ * the way to that row is no place to write it into a log line.
  */
 
 /** One figure a posting carries, in the plain words for what it is. */
@@ -114,6 +121,34 @@ export function figuresOnPosting(card: {
 
 /** A figure as a person says it out loud: "$45 AUD". */
 export const figureWords = (f: PostingFigure): string => `$${f.amount} ${f.currency}`;
+
+/**
+ * THE FIGURES AS THEY WERE READ BACK, in one line, to sit beside the reference.
+ *
+ * The reference says WHICH ATTEMPT this is. This says WHAT WAS CONFIRMED on it,
+ * and the two together are the figure gate's memory: the same reference and the
+ * same figures means somebody has already been asked and is not asked twice;
+ * the same reference carrying a DIFFERENT figure is asked again, because a
+ * changed number is precisely what this read-back exists to catch.
+ *
+ * THE THING'S OWN WORDS ARE NOT IN HERE, and that distinction is the whole of
+ * the 21 September 2026 fix. The name had to leave the key because the other
+ * questions in the same flow explicitly ask an assistant to change it — reword
+ * the thing and the question came back for ever. Nothing in the flow ever asks
+ * an assistant to change the price, so the amount never had to leave, and
+ * taking it out would have thrown away what the question was checking.
+ *
+ * Each figure is written exactly as it was said to the human: which figure it
+ * is, the amount, the money. Sorted, so the order two figures arrive in is not
+ * a difference, and capped, because four figures of plain digits cannot
+ * honestly need more room than this.
+ */
+export const figureAmountsKey = (figures: PostingFigure[]): string =>
+  [...figures]
+    .map((f) => `${f.what}|${f.amount}|${f.currency}`)
+    .sort()
+    .join(';')
+    .slice(0, 200);
 
 /** The most questions one refusal carries, the same as the detail gate's. */
 export const MAX_FIGURE_QUESTIONS = 4;

@@ -13,6 +13,8 @@ export interface RefRow {
   reference: string;
   account_id: string;
   asked: string[];
+  /** The figures the figure gate last read back, or null until it has asked. */
+  asked_amounts: string | null;
 }
 
 export interface RefsFake {
@@ -38,11 +40,23 @@ export function refsFake(): RefsFake {
         return answer(row && row.account_id === params[1] ? [row] : []);
       }
       if (/^\s*INSERT/i.test(sql)) {
-        const [reference, account_id, asked] = params as [string, string, string[]];
+        const [reference, account_id, asked, amounts] = params as [
+          string,
+          string,
+          string[],
+          string | null,
+        ];
         const row = rows.get(reference);
         if (row && row.account_id !== account_id) return answer([]);
         const merged = [...new Set([...(row?.asked ?? []), ...(asked ?? [])])];
-        rows.set(reference, { reference, account_id, asked: merged });
+        rows.set(reference, {
+          reference,
+          account_id,
+          asked: merged,
+          // The figures REPLACE what stood there; a gate carrying none leaves
+          // the column alone, which is the COALESCE in the real statement.
+          asked_amounts: amounts ?? row?.asked_amounts ?? null,
+        });
         return answer([]);
       }
       if (/^\s*DELETE/i.test(sql)) {

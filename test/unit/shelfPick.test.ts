@@ -58,6 +58,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { sqs } from '../../src/aws.js';
 import * as db from '../../src/db.js';
+import { refsFake, type RefsFake } from './postingRefsFake.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { publishIntent } from '../../src/domain/cards.js';
 import { waitForPress } from '../../src/domain/humanLinks.js';
@@ -177,6 +178,9 @@ interface World {
   attempts: Attempt[];
   gaps: { attempt: string | null; as_posted: string; kind: string | null; shortlist: any[]; outcome: string; picked: string | null }[];
   inserted: any[][];
+  /** The open posting attempts (domain/postingRef.ts), kept honestly so the
+   *  figure gate behaves here exactly as it does at the real door. */
+  refs: RefsFake;
 }
 let world: World;
 let seq = 0;
@@ -187,13 +191,10 @@ function fakePool() {
     query: async (sql: string, params: any[] = []) => {
       world.sql.push({ text: sql.replace(/\s+/g, ' ').trim(), params });
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
-      // Every gate has asked on this attempt already, so the posting goes up as
-      // it stands: this suite is about the shelf (the reference itself is
-      // tested in postingReference.test.ts).
-      if (/FROM posting_references/.test(sql)) {
-        return rows([{ reference: params[0], asked: ['detail', 'reach', 'figure'] }]);
-      }
-      if (/INTO posting_references|DELETE FROM posting_references/.test(sql)) return rows([]);
+      // The posting attempt's own number, which this suite only has to carry:
+      // the reference itself is tested in postingReference.test.ts.
+      const refs = world.refs.handle(sql, params);
+      if (refs) return refs;
       // ---- shelf_attempts ----
       if (/INSERT INTO shelf_attempts/.test(sql)) {
         const existing = world.attempts.find((a) => a.account_id === params[0] && a.kind_key === params[1]);
@@ -327,7 +328,7 @@ let app: FastifyInstance;
 beforeEach(async () => {
   suggestions = SCATTERED;
   seq = 0;
-  world = { sql: [], links: [], attempts: [], gaps: [], inserted: [] };
+  world = { sql: [], links: [], attempts: [], gaps: [], inserted: [], refs: refsFake() };
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
   vi.spyOn(sqs, 'send').mockResolvedValue({} as never);
   process.env.COUNTER_LINK_HMAC_KEY = 'a'.repeat(64);
