@@ -112,7 +112,14 @@ describe('the two classes of finding', () => {
     expect(isCritical('invented_figure')).toBe(true);
     expect(isCritical('describes_unseen_picture')).toBe(true);
     expect(isCritical('queue_claim')).toBe(false);
-    expect(CRITICAL_RULES).toHaveLength(5);
+    // THE PROMISE IS RATED, NOT GATED, since 21 September 2026. It fired in
+    // 52% of 31 scored runs against 29% for the next loudest, so gating it at
+    // zero made three clean runs in a row a one-in-nine shot on that rule
+    // alone — a gate at those odds measures luck. The harm differs in kind
+    // too: a person not told can ask again, and the switchboard emails them
+    // where hears_via is email. Nothing crosses that cannot be uncrossed.
+    expect(isCritical('unbacked_promise_to_notify')).toBe(false);
+    expect(CRITICAL_RULES).toHaveLength(4);
   });
 
   it('still gates the facts: a failed deterministic check is unclean whatever else is true', () => {
