@@ -714,7 +714,7 @@ export function passkeyOfferPage(v?: { hasPasskey?: boolean; skipLabel?: string 
 <h1>Add a passkey${v?.hasPasskey ? '' : '?'}</h1>
 <p class="lead">${
     v?.hasPasskey
-      ? 'You already have one on this account. Adding another lets a second device approve things on its own.'
+      ? 'You already have one. Do this on a device that does not, so that device can approve things too.'
       : 'Sign in and approve with Face ID, a fingerprint, or your device passcode. There is nothing to remember and nothing to type.'
   }</p>
 <div id="pkerr"></div>
@@ -756,19 +756,25 @@ export function securityPage(
   v: { hasPin: boolean; passkeyCount: number },
   notice?: string,
 ): string {
-  const held = [
-    v.hasPin ? 'a PIN' : undefined,
-    v.passkeyCount === 1 ? 'a passkey' : v.passkeyCount > 1 ? `${v.passkeyCount} passkeys` : undefined,
-  ].filter(Boolean);
+  const lead = v.passkeyCount && v.hasPin
+    ? 'You have a passkey and a PIN. Either one approves everything here, and the device in your hand decides which you are asked for.'
+    : v.passkeyCount
+      ? 'Your passkey approves everything here.'
+      : v.hasPin
+        ? 'Your PIN approves everything here.'
+        : 'Nothing is set yet.';
   return layout('How you approve things', `
 <h1>How you approve things.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
-<p class="lead">You have ${held.length ? esc(held.join(' and ')) : 'nothing set yet'}. Either one
-approves everything on this page; holding both means the device in your hand decides which
-you use.</p>
+<p class="lead">${esc(lead)}</p>
+${v.passkeyCount
+    ? `<div class="note"><strong>Passkey set.</strong> The fingerprint or face check your device
+already has. One is enough.</div>
+<p class="small muted">On a new device, <a href="/passkey">set one up there too</a>.</p>`
+    : ''}
 <div class="navlist">
-<a href="/passkey"><span class="nav-t">${v.passkeyCount ? 'Add another passkey' : 'Add a passkey'}</span>
-<span class="nav-d">The fingerprint or face check your device already has. Nothing to remember.</span></a>
+${v.passkeyCount ? '' : `<a href="/passkey"><span class="nav-t">Add a passkey</span>
+<span class="nav-d">The fingerprint or face check your device already has. Nothing to remember.</span></a>`}
 <a href="/pin"><span class="nav-t">${v.hasPin ? 'Change your PIN' : 'Set a PIN'}</span>
 <span class="nav-d">Six digits you type. Useful on a device your passkey has never seen.</span></a>
 </div>
