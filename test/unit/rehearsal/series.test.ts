@@ -50,14 +50,31 @@ describe('judging one run', () => {
     expect(judgeRun(clean(1, 'nagatha,bilby')).clean).toBe(true);
   });
 
-  it('fails on a deterministic check, a critical slip, or too much doubt', () => {
+  it('fails on a deterministic check or a critical slip', () => {
     expect(judgeRun({ ...clean(1, 'x'), deterministicClean: false }).clean).toBe(false);
     expect(judgeRun({ ...clean(1, 'x'), criticalSlips: 1 }).clean).toBe(false);
-    const doubtful = { ...clean(1, 'x'), uncertainTurns: 4, scoredTurns: 20 };
-    expect(4 / 20).toBeGreaterThan(MAX_UNCERTAIN_TURN_SHARE);
-    expect(judgeRun(doubtful).clean).toBe(false);
-    // Exactly at the bar is still clean.
-    expect(judgeRun({ ...clean(1, 'x'), uncertainTurns: 3, scoredTurns: 20 }).clean).toBe(true);
+  });
+
+  /**
+   * DOUBT IS REPORTED AND NO LONGER DECIDES A RUN (21 September 2026).
+   *
+   * An uncertain mark is one the scorer put below the line it fails at: the
+   * judge saying "probably not". This bar took a run that passed every
+   * deterministic check with no slip of any kind, on two marks of 0.38-0.47 —
+   * one of them on "filed under sim racing wheels, pedals and rigs", which is
+   * the plain-words shelf name the manual asks for. It also read the same
+   * marks the non-critical slip rate reads, so one set of marks was being
+   * counted twice and the cruder count was deciding.
+   *
+   * Given up, plainly: a drift living entirely in the uncertain band no longer
+   * stops a series. Every uncertain turn is still printed verbatim with both
+   * its scores, so it stays visible without being a stop.
+   */
+  it('reports doubt without failing on it, however much of it there is', () => {
+    expect(judgeRun({ ...clean(1, 'x'), uncertainTurns: 4, scoredTurns: 20 }).clean).toBe(true);
+    expect(judgeRun({ ...clean(1, 'x'), uncertainTurns: 19, scoredTurns: 20 }).clean).toBe(true);
+    // And the share is still computed, because the summary prints it.
+    expect(judgeRun({ ...clean(1, 'x'), uncertainTurns: 4, scoredTurns: 20 }).uncertainShare).toBe(0.2);
   });
 
   it('never counts an overruled run, and never counts one cut short', () => {
