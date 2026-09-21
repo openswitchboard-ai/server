@@ -10,8 +10,9 @@ That keeps the copyright in the work consolidated in one place, so the Project
 can change licence or offer a commercial licence later without having to trace
 and re-ask every past contributor.
 
-"The Project" means OpenSwitchboard, represented by the owner of the
-`openswitchboard-ai` GitHub organisation. "You" means the individual agreeing to
+"The Project" means LLM Family Investments Pty Ltd (ACN 610 504 482) as trustee
+for the LLM Family Trust (ABN 27 213 698 865), trading as openswitchboard.ai,
+and its successors and assigns. "You" means the individual agreeing to
 this. "Contribution" means any work of authorship you submit to this repository.
 
 ## 1. Copyright licence
@@ -54,13 +55,17 @@ Except for the representations in section 3, the Contribution is provided
 
 ## How to sign
 
-Until a CLA bot is wired up, agree in the pull request by leaving a comment with
-this line, filled in:
+When you open a pull request, a bot comments with a link back to this file. To
+agree, reply on the pull request with exactly this line:
 
 ```
-I have read CLA.md and I agree to it.
-Signed: Your Name <you@example.com>  GitHub: @yourhandle  Date: YYYY-MM-DD
+I have read the CLA Document and I hereby sign the CLA
 ```
 
-A CLA bot will replace this manual step before the first external contribution
-is merged.
+The bot records your GitHub account, the pull request and the time in
+`signatures/cla.json` on the `cla-signatures` branch of this repository, which
+is public. You sign once, and it covers every later pull request from the same
+account. A pull request with an unsigned author shows a failing `cla` check.
+
+You are signing for yourself. If your employer owns what you write, sort that
+out with them first — see section 3.
