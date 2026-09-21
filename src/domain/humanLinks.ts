@@ -606,8 +606,20 @@ export const PRESS_SENTENCES = {
  * reading at that moment, is worth more than another line of manual.
  */
 export const PRESS_WHAT_TO_DO = {
+  // PASTE THE ADDRESS, said in those words because "put the page in front of
+  // your human" was read as satisfied by MENTIONING a link.
+  //
+  // Two assistants, two runs, the same failure: holding the line on a press
+  // while telling their human "the link's above" and "it's good for fifteen
+  // minutes", having pasted nothing. One human said so outright — "I don't see
+  // a link in what you just sent me, can you paste it?" — and was answered
+  // "still waiting on the press" (21 September 2026). Both talked as though
+  // the link had gone. Neither had sent it.
+  //
+  // So this says what to PASTE rather than what to do, and says what a link is
+  // not, because that is the step being skipped.
   waiting:
-    'Put that page in front of your human now, in the conversation you are already having, and say what it asks. Then wait again. Never ask them to report back after pressing it: this call answers the instant they press, and asking makes them do your waiting for you.',
+    'PASTE THE WEB ADDRESS ABOVE into your next message to your human, on its own line, exactly as it is written. A sentence about a link is not a link — if they cannot see the address there is nothing for them to press. Say what the page asks, then wait again. Never ask them to report back: this call answers the instant they press.',
   expired:
     'There is nothing left to hand over, so fetch a fresh link, give them that one, and wait on the press that comes back with it.',
 } as const;
