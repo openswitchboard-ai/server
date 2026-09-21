@@ -93,6 +93,13 @@ const USE_BEDROCK = (process.env.REHEARSAL_CLAUDE_BEDROCK ?? '1') !== '0';
 export interface ClaudeArgsInput {
   utterance: string;
   mcpConfigPath: string;
+  /**
+   * Named on every call, never defaulted, so a transcript from today stays
+   * comparable with one from next month. This was passed and read for days
+   * before it was declared here: tsx strips types without checking them, so
+   * the rehearsal tsconfig went on compiling nothing while it was red.
+   */
+  model: string;
   /** Present on every turn after the first: the id the first turn printed. */
   resumeSessionId?: string;
 }
