@@ -3670,8 +3670,8 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         home.settingsPage(
           await settingsView(s.accountId!),
           want === 'assistant'
-            ? 'Saved. Your assistant brings you the news, and email is a backup.'
-            : 'Saved. Every match, reply and step reaches you by email.',
+            ? 'Saved. Match and reply emails are off.'
+            : 'Saved. Matches and replies reach you by email.',
         ),
       );
     });
