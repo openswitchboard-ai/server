@@ -619,7 +619,7 @@ export const PRESS_WHAT_TO_DO = {
   // So this says what to PASTE rather than what to do, and says what a link is
   // not, because that is the step being skipped.
   waiting:
-    'PASTE THE WEB ADDRESS ABOVE into your next message to your human, on its own line, exactly as it is written. A sentence about a link is not a link — if they cannot see the address there is nothing for them to press. Say what the page asks, then wait again. Never ask them to report back: this call answers the instant they press.',
+    'Paste the web address above into your next message, on its own line. A sentence about a link is not a link. Say what the page asks, then wait again. Never ask them to report back: this call answers the instant they press.',
   expired:
     'There is nothing left to hand over, so fetch a fresh link, give them that one, and wait on the press that comes back with it.',
 } as const;
