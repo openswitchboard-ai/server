@@ -44,6 +44,14 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
     [accountId],
   );
   if (open.rows[0].n >= q.maxOpenCards) {
+    // WHICH CEILING, IN THE LOG. Three places throw QUOTA_EXCEEDED on the
+    // posting path and the log could not tell them apart, so an hour went on
+    // working out which one had fired (21 September 2026). Counts only: no
+    // account, nothing about the thing.
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({ level: 30, time: Date.now(), msg: 'quota', which: 'open-cards', n: open.rows[0].n, limit: q.maxOpenCards }),
+    );
     throw new OsbError('QUOTA_EXCEEDED', {
       human_action: `You have ${open.rows[0].n} open wants and haves (limit ${q.maxOpenCards}). Withdraw one to post another.`,
     });
@@ -54,6 +62,10 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
     [accountId],
   );
   if (day.rows[0].n >= q.maxPublishesPerDay) {
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({ level: 30, time: Date.now(), msg: 'quota', which: 'publishes-today', n: day.rows[0].n, limit: q.maxPublishesPerDay }),
+    );
     throw new OsbError('QUOTA_EXCEEDED', {
       retry_after: 3600,
       human_action: `That is the day's posting done. Try again ${roughWait(3600)} — nothing your human needs to do, and no clock time to pass on.`,
@@ -82,7 +94,38 @@ export async function recordPublishWithinQuota(
   cardId: string,
   q: Quotas,
 ): Promise<void> {
-  const r = await getPool().query(
+  // NO ROW MEANT "THE DAY IS DONE", WHATEVER HAD ACTUALLY GONE WRONG.
+  //
+  // An insert that put nothing in was reported to the human as their day's
+  // posting being finished, and an insert fails for plenty of reasons that
+  // have nothing to do with a ceiling. On 21 September 2026 a posting was
+  // refused QUOTA_EXCEEDED on an account holding no cards and no publishes at
+  // all, against limits of five and ten — and the message sent us looking at
+  // quotas for an hour, because the message was the only thing we had.
+  //
+  // So the room is counted FIRST and on its own. Only a genuine ceiling says
+  // the day is done; an insert that then puts nothing in is something else
+  // entirely, and it says so and is logged rather than wearing the quota's
+  // clothes.
+  const pool = getPool();
+  const used = await pool.query(
+    `SELECT count(*)::int AS n FROM publish_events
+      WHERE account_id = $1 AND created_at > now() - interval '24 hours'`,
+    [accountId],
+  );
+  if (used.rows[0].n >= q.maxPublishesPerDay) {
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({ level: 30, time: Date.now(), msg: 'quota', which: 'publishes-today-on-record', n: used.rows[0].n, limit: q.maxPublishesPerDay }),
+    );
+    throw new OsbError('QUOTA_EXCEEDED', {
+      retry_after: 3600,
+      human_action: `That is the day's posting done. Try again ${roughWait(3600)} — nothing your human needs to do, and no clock time to pass on.`,
+    });
+  }
+  // The ceiling is still enforced in the statement, so two publishes racing
+  // cannot both pass the count above and both get in.
+  const r = await pool.query(
     `INSERT INTO publish_events (account_id, card_id)
      SELECT $1, $2
       WHERE (SELECT count(*) FROM publish_events
@@ -91,6 +134,19 @@ export async function recordPublishWithinQuota(
     [accountId, cardId, q.maxPublishesPerDay],
   );
   if (r.rowCount) return;
+  // Room a moment ago and no row now: either another publish took the last
+  // place between the two statements, or the insert failed for a reason of its
+  // own. Both are worth seeing; neither is the human's doing.
+  // eslint-disable-next-line no-console
+  console.error(
+    JSON.stringify({
+      level: 50,
+      time: Date.now(),
+      msg: 'publish-event-insert-put-nothing-in',
+      used: used.rows[0].n,
+      limit: q.maxPublishesPerDay,
+    }),
+  );
   throw new OsbError('QUOTA_EXCEEDED', {
     retry_after: 3600,
     human_action: `That is the day's posting done. Try again ${roughWait(3600)} — nothing your human needs to do, and no clock time to pass on.`,
