@@ -36,8 +36,8 @@ issue instead.
 
 Anything that does get accepted requires a signed CLA — see [CLA.md](CLA.md).
 It keeps copyright consolidated with the project, which is what makes future
-relicensing or dual-licensing possible. A CLA bot will be wired up before the
-first external contribution is merged.
+relicensing or dual-licensing possible. A bot asks for it on your first pull
+request, and signing is one comment.
 
 ## Running the checks
 
