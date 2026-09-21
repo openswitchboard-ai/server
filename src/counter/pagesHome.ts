@@ -994,7 +994,7 @@ const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
   {
     value: 'assistant',
     head: 'An always-on agent.',
-    rest: `My assistant checks on its own and brings me the news. I only need email as a backup. For always-on agents ${ALWAYS_ON_EXAMPLES}.`,
+    rest: `My assistant checks on its own and provides updates back to me. For always-on agents ${ALWAYS_ON_EXAMPLES}.`,
   },
   {
     value: 'email',
@@ -1090,6 +1090,28 @@ ${CADENCE_SCRIPT}
 ${ZONE_SCRIPT}`);
 }
 
+/**
+ * The same account setting as the onboarding question, asked on the settings
+ * page as what it is: who brings the news. The kind of assistant is asked once
+ * at onboarding and again on the arrangement page (runs_on_its_own), so here
+ * it is never asked a third time. This stays because it is the only place a
+ * person can go back to email after an agent's cadence has switched them to
+ * their assistant, and because an always-on agent with email as well is a
+ * fair thing to want.
+ */
+const HEARS_VIA_SETTINGS_OPTIONS: ModeOption[] = [
+  {
+    value: 'assistant',
+    head: 'Through my assistant.',
+    rest: 'My assistant checks on its own and provides updates back to me. Best suited to always-on agents.',
+  },
+  {
+    value: 'email',
+    head: 'By email.',
+    rest: 'Each match and reply reaches me by email. Best suited to chat assistants.',
+  },
+];
+
 export interface EmailSettingsView {
   /** Which of the two ways this account hears about things right now. */
   hearsVia: HearsVia;
@@ -1128,7 +1150,7 @@ dials below does nothing while the hold is on.
     ? `<div class="err">Email to your address is bouncing — all email is on
 hold. Re-verify from the <a href="/">front page</a>.</div>`
     : '';
-  const hearsVia = modeOptions('hears_via', 'hears', HEARS_VIA_OPTIONS, v.hearsVia);
+  const hearsVia = modeOptions('hears_via', 'hears', HEARS_VIA_SETTINGS_OPTIONS, v.hearsVia);
   const zones = Intl.supportedValuesOf('timeZone');
   const zoneOptions = [
     `<option value=""${v.timezone ? '' : ' selected'}>Not set</option>`,
@@ -1137,16 +1159,11 @@ hold. Re-verify from the <a href="/">front page</a>.</div>`
   const zoneNow = v.timezone
     ? `Your assistant says times in ${v.timezone.replace(/_/g, ' ')}.`
     : 'Not set.';
-  const hearsViaNow =
-    v.hearsVia === 'assistant'
-      ? 'Right now your assistant brings you the news, and email is a backup.'
-      : 'Right now everything reaches you by email.';
   return layout('Settings', `
 <h1>Settings.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
-<h2>Which kind of assistant do you use?</h2>
-<p class="small muted">${esc(hearsViaNow)}</p>
+<h2>How are you notified by OpenSwitchboard?</h2>
 <form method="POST" action="/settings/hears-via">
   ${hearsVia}
   <button type="submit" class="secondary" id="hears-save" hidden>Save how I hear about things</button>
