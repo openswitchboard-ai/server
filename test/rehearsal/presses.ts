@@ -45,7 +45,19 @@ export interface PressOutcome {
   asked?: boolean;
 }
 
-const strip = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+/**
+ * A page's words, for evidence. STYLE AND SCRIPT GO FIRST, because their
+ * contents are not markup and survived the tag strip: every failure this
+ * returned came back as two hundred characters of CSS about PIN boxes, and
+ * the sentence that said what had actually gone wrong was never in the part
+ * we kept (22 September 2026).
+ */
+const strip = (html: string) =>
+  html
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 /**
  * Press a one-question page: the names step, the report, the keep-talking
