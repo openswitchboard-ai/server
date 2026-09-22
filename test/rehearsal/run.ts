@@ -1338,7 +1338,18 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (e) => {
-    console.error(`rehearsal suite failed: ${(e as Error).message}`);
+    // AN AGGREGATE ERROR SAYS NOTHING BY ITSELF. Node's AggregateError prints
+    // as the bare words "AggregateError", so a suite that failed on its first
+    // call told me only that it had failed — twice in a row, at 03:19 on 22
+    // September 2026, while the network was in fact healthy. The causes are
+    // where the answer is.
+    const parts = [(e as Error).message];
+    for (const inner of ((e as { errors?: unknown[] }).errors ?? []) as Error[]) {
+      parts.push(`  cause: ${inner?.message ?? String(inner)}`);
+    }
+    if ((e as { cause?: Error }).cause) parts.push(`  cause: ${(e as { cause?: Error }).cause?.message}`);
+    console.error(`rehearsal suite failed: ${parts.join('\n')}`);
+    if (process.env.REHEARSAL_STACK) console.error((e as Error).stack);
     process.exit(1);
   },
 );
