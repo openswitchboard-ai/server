@@ -762,6 +762,9 @@ async function oneRun(
         turnsText(turns, { stage: 3, side: 'seller', role: 'assistant' }),
         refusedAtDoor,
         assistantRefused,
+        // Whether the BUYER'S HUMAN asked for it. A number the human gave may
+        // cross; one they never gave may not (Lachlan, 22 September 2026).
+        turnsText(turns, { stage: 3, side: 'buyer', role: 'human' }),
       ),
     );
     // "$40" is a figure Tony never decided on; it was put in his mouth by the
