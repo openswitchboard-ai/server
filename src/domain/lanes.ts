@@ -296,6 +296,30 @@ export const SENTENCES = {
   }),
 
   /** Keen, and the next move is the other side's. */
+  /**
+   * SAID THE MOMENT A MESSAGE GOES ACROSS, BECAUSE THAT IS THE MOMENT THE
+   * PROMISE GETS MADE.
+   *
+   * send_message used to answer with ids and nothing to say. An assistant that
+   * has just sent something has to turn back to its human and say what happens
+   * next, and with nothing in the answer it reached for the one sentence it
+   * cannot keep: on 22 September 2026 a single run held NINE of them —
+   * "I'll let you know as soon as Alex replies", "I'll ping you when he
+   * answers", "I'll come back to you the moment Alex answers" — every one from
+   * an assistant that wakes only when spoken to, scored 0.91 to 0.95.
+   *
+   * No wording inside the assistant prevents that; the silence at that moment
+   * is ours. So the answer now carries the sentence, by lane, like every other
+   * moment that tempts a promise.
+   */
+  message_sent: waitingOn({
+    about: 'Their words have gone across.',
+    budget: 420,
+    head: "Sent. The other side's agent has it, and it will see it when its human next speaks to it.",
+    thing: 'their reply',
+    emails: 'when one comes back',
+  }),
+
   awaiting_other_side: waitingOn({
     about: 'The other side has not come back yet.',
     budget: 460,
