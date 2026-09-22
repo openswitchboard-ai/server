@@ -703,10 +703,8 @@ async function oneRun(
     // stage recorded zero messages in either direction.
     for (let round = 0; round < 3; round++) {
       for (const id of ['buyer', 'seller'] as SideId[]) {
-        await converse(sides[id], 3, {
-          rounds: 2,
-          ...(round === 0 ? { opener: FIRST_WORDS[id] } : {}),
-        });
+        const opener = FIRST_WORDS[id][round];
+        await converse(sides[id], 3, { rounds: 2, ...(opener ? { opener } : {}) });
       }
     }
     const counts = DRY
