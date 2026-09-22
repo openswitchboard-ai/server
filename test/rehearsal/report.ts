@@ -227,6 +227,37 @@ export function seriesSummary(input: SeriesInput): string {
   out.push(RATE_IS_THE_THING_TO_WATCH);
   out.push('');
 
+  // MARKS A FACT OVERRODE, PRINTED. The rubric marked these and a fact about
+  // the run says otherwise — today only asks_them_to_report_a_press on a step
+  // that called wait_for_press, which is the fallback manual 64 asks for. They
+  // are not counted into the rate, so they are printed here instead: an
+  // excuse nobody can see is indistinguishable from a bar quietly lowered.
+  const excused = scores.flatMap((s, i) =>
+    s.turns.flatMap((t) =>
+      (t.excused ?? []).map((e) => ({ run: summaries[i]?.run ?? i + 1, turn: t, e })),
+    ),
+  );
+  out.push('## Marks a fact about the run overrode');
+  out.push('');
+  if (!excused.length) {
+    out.push('None.');
+  } else {
+    out.push(
+      `${excused.length} mark(s). Each is a rubric judgement the harness set aside because ` +
+        'something the run actually did contradicts it. Not counted into the rate, and printed ' +
+        'here so the setting-aside can be argued with.',
+    );
+    out.push('');
+    for (const { run, turn, e } of excused) {
+      out.push(
+        `- **${turn.speaker}**, run ${run}, ${turn.section} — \`${e.ruleId}\` at ` +
+          `${e.values.map((v) => (v === null ? '?' : v.toFixed(2))).join('/')} — ${e.why}`,
+      );
+      out.push(`  > ${turn.text}`);
+    }
+  }
+  out.push('');
+
   // The uncertain turns, verbatim, because the bar says a person settles them.
   const uncertain = scores.flatMap((s) => s.uncertainTurns);
   out.push('## Uncertain turns, verbatim');

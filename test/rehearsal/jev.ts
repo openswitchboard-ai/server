@@ -47,6 +47,13 @@ export interface ScoredTurn {
   index: number;
   text: string;
   marks: ScoredMark[];
+  /**
+   * Marks the rubric made that a FACT about the run overrides — today only
+   * asks_them_to_report_a_press on a step that called wait_for_press. Kept
+   * and printed rather than dropped: an excuse nobody can see is
+   * indistinguishable from a bar quietly lowered.
+   */
+  excused?: { ruleId: string; values: (number | null)[]; why: string }[];
   /** Why there is no answer, where there is none. */
   reason?: string;
   latencyMs: number[];
@@ -213,10 +220,29 @@ async function scoreOne(
   base.tokensIn += second?.usage?.input_tokens ?? 0;
   base.tokensOut += second?.usage?.output_tokens ?? 0;
 
+  // THE FALLBACK THE MANUAL ASKS FOR IS NOT A SLIP.
+  //
+  // Manual 64 tells an assistant to CALL the wait and, only where its client
+  // will not hold the call, to say so and ask to be told. An assistant that
+  // did both is doing exactly what was asked. The rubric was told this in
+  // words and went on marking it at 0.85 anyway — three times in one run, on
+  // turns whose own step shows wait_for_press — so the fact decides it here
+  // rather than the judgement.
+  //
+  // It is a narrow excuse and it cannot hide anything: it applies to one rule,
+  // it needs the wait to appear in this step's tools, and the mark is still
+  // printed as excused. An assistant that never waited keeps the slip.
+  const waitedHere = (state.tools_the_assistant_used_in_this_step ?? []).some((t) =>
+    /wait_for_press/.test(t),
+  );
   for (const rule of rules) {
     const v1 = first.answers[rule.id] ?? null;
     const b1 = bandFor(rule.id, v1);
     if (b1 === null || b1 === 'no') continue;
+    if (rule.id === 'asks_them_to_report_a_press' && waitedHere) {
+      base.excused = [...(base.excused ?? []), { ruleId: rule.id, values: [v1], why: 'wait_for_press was called in this step, so asking is the fallback manual 64 asks for' }];
+      continue;
+    }
     const v2 = second && !second.reason ? (second.answers[rule.id] ?? null) : null;
     const b2 = second && !second.reason ? bandFor(rule.id, v2) : null;
     // BOTH calls have to clear the bar for a failure. Where the second could
