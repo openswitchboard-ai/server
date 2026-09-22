@@ -462,6 +462,15 @@ describe('the wordings themselves, one sentence at a time', () => {
       /check with you whenever they like/,
       /emails them when their turn comes/,
     ],
+    // Added 22 September 2026, after a single run held nine promises to notify
+    // made at exactly this moment.
+    [
+      'message_sent',
+      /bring them their reply/,
+      /Confirm with your human how often/,
+      /never say you will come back on your own/,
+      /emails them when one comes back/,
+    ],
     [
       'awaiting_other_side',
       /bring them their reply/,

@@ -165,7 +165,12 @@ export async function sendMessage(
   matchId: string,
   text: unknown,
   cfg?: Config,
-): Promise<{ conversation_id: string; message_id: string; sent_at: string }> {
+): Promise<{
+  conversation_id: string;
+  message_id: string;
+  sent_at: string;
+  note?: { text: string; provenance: 'switchboard-system' };
+}> {
   if (typeof text !== 'string' || text.trim().length === 0) {
     throw Object.assign(new Error('send_message requires text to carry'), { validation: ['text'] });
   }
@@ -291,10 +296,19 @@ export async function sendMessage(
     // construction: the message is already committed.
     const { noteMovement } = await import('./sequencer.js');
     await noteMovement(matchId);
+    // AND THE SENTENCE TO SAY, because this is the moment the promise gets
+    // made. An assistant that has just sent something turns back to its human
+    // and has to say what happens next; with ids and nothing else in the
+    // answer it reaches for "I'll let you know when they reply", which an
+    // assistant that wakes only when spoken to cannot keep. One run held nine
+    // of those (22 September 2026). Best-effort and cheap: an unreadable row
+    // is the prompted lane, which claims nothing.
+    const facts = await readLaneFacts(accountId);
     return {
       conversation_id: ch.channelId,
       message_id: r.rows[0].id as string,
       sent_at: new Date(r.rows[0].created_at).toISOString(),
+      note: sbNote(sayFor('message_sent', facts.arrangement, { hearsVia: facts.hearsVia })),
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
