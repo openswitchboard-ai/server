@@ -806,8 +806,18 @@ async function oneRun(
       const side = sides[id];
       const other = sides[id === 'seller' ? 'buyer' : 'seller'];
       const from = turns.length;
+      // ASK AS A PERSON ASKS, THEN SAY YES. "Can I send them a photo of it?"
+      // is a question about whether such a thing is possible, and an assistant
+      // that explains the page and asks "want me to open that now?" has
+      // answered it properly — it was failed for exactly that on 22 September
+      // 2026. So the person answers, as a person would, and the link is looked
+      // for across both turns.
       await drive(side, 'can I send them a photo of it?', 4);
-      const link = linkIn(side.lastReply);
+      let link = linkIn(side.lastReply);
+      if (!link) {
+        await drive(side, 'yes please, open it for me', 4);
+        link = linkIn(side.lastReply);
+      }
       if (!link) {
         record(fail(`S4.link.${id}`, `${id}'s assistant fetched the photo page and handed it over.`, 'no photo page link in its reply'));
         continue;
