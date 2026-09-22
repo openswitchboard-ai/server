@@ -353,7 +353,7 @@ describe('agent keys reach the MCP surface and nothing else', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('an agent key gets 403 on the approval pages, its own issuance route included', async () => {
+  it('an agent key gets 403 on the main pages, its own issuance route included', async () => {
     const { token } = await agentKeys.createAgentKey(ACCOUNT, 'the laptop agent');
     for (const [method, url] of [
       ['GET', '/'],

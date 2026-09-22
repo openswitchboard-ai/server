@@ -12,7 +12,7 @@
  *  - nothing about the draft reaches the counterparty, and no offer row exists;
  *  - the human's own offer box opens prefilled with it, under one line saying
  *    where it came from — on the match page, on the card's numbers page, and
- *    on the offer approval page's third door;
+ *    on the offer main page's third door;
  *  - sending a figure clears the draft;
  *  - a draft past its TTL is treated as absent;
  *  - a figure never travels in a URL.
@@ -484,8 +484,8 @@ describe('the pages that show a carried figure', () => {
     }
   });
 
-  it('the offer approval page carries no door and no draft: a number of your own goes through the assistant', () => {
-    const html = cpages.approvalPage({
+  it('the offer main page carries no door and no draft: a number of your own goes through the assistant', () => {
+    const html = cpages.mainPage({
       action: 'offer-accept',
       refId: offerId(1),
       facts: [{ k: 'You are agreeing to', v: '400 AUD' }],

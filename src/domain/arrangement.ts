@@ -25,7 +25,7 @@
  * happens: the human says "check twice a day and leave me alone after nine"
  * mid-sentence, and their agent writes it down. Anyone holding this account's
  * bearer token can therefore write one, which is acceptable because the human
- * sees the whole thing in plain words on their own approval page and can edit
+ * sees the whole thing in plain words on their own main page and can edit
  * or clear it there. What an arrangement can never do is stand in for consent:
  * the gates (stage-3 sharing, accepting an offer, approving a settlement) are
  * enforced elsewhere and read nothing from here.
@@ -411,7 +411,7 @@ async function quietMatchEmailsForCadence(
 }
 
 // ---------------------------------------------------------------------------
-// Saying it back in plain words — used by the approval page and by the note
+// Saying it back in plain words — used by the main page and by the note
 // an agent gets alongside the object.
 // ---------------------------------------------------------------------------
 

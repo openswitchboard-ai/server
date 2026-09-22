@@ -80,7 +80,7 @@ const REASON_SENTENCES: Record<string, string> = {
     'This is not something the switchboard carries, whatever it was filed under. It cannot go back on the board as it stands.',
 };
 
-// True wherever it renders: the approval page shows the raw code beneath it,
+// True wherever it renders: the main page shows the raw code beneath it,
 // an email does not, so this sentence never promises one.
 const REASON_FALLBACK =
   'Screening held this back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit what you posted and save it to send it through again.';

@@ -349,7 +349,7 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
 
 /**
  * Cards of this account's that screening turned away and that are still
- * sitting rejected. These are attention items on the approval page: a card in
+ * sitting rejected. These are attention items on the main page: a card in
  * this state is off the board until the person edits it.
  */
 export interface RejectedCard {
@@ -559,7 +559,7 @@ export interface AgreedMatch {
 
 /**
  * Matches where a human accepted an offer. 'accepted-by-human' is reachable
- * from one place only (the approval page's ceremony), so a row here is a deal
+ * from one place only (the main page's ceremony), so a row here is a deal
  * a person agreed to with their PIN, on one side or the other.
  */
 export async function agreedOnMatches(accountId: string): Promise<AgreedMatch[]> {

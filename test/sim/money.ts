@@ -22,7 +22,7 @@
  * pre-verified through Stripe's test-mode API (real sellers walk the hosted
  * account-link flow, which no harness can click), and the platform balance is
  * topped up so a release has funds to draw on. Nothing else is shortcut: the
- * approvals are pressed on the real approval pages with the real PIN, the
+ * approvals are pressed on the real main pages with the real PIN, the
  * buyer's payment is the real hosted Checkout Session the server created,
  * completed in a browser with a test card, and every transition arrives on the
  * live webhook.
@@ -194,7 +194,7 @@ async function consentApprovals(settlementId: string): Promise<string[]> {
   return [...new Set(found)];
 }
 
-/** Approve on the real approval page, with the real PIN. */
+/** Approve on the real main page, with the real PIN. */
 async function approveOnPage(actor: SimActor, settlementId: string): Promise<number> {
   const res = await counterFetch(
     actor.jar,

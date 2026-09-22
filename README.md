@@ -93,7 +93,7 @@ These are the invariants worth reading the code to check:
 - The only offer-accept state reachable through any agent API is
   `awaiting-human`. `accepted-by-human` is set exclusively by
   `acceptOfferByHuman()`, which has no public route — it is reachable from the
-  human approval pages and the IAM-gated internal ops queue.
+  human main pages and the IAM-gated internal ops queue.
 - Declines carry no reason (schema-level `additionalProperties: false`).
 - Every free-text field bound for a counterparty is provenance-labelled.
 - Locations are resolved server-side. A want or a have names a suburb, city or region in
@@ -196,7 +196,7 @@ The one human-facing surface, served from its own hostname
 (`my.openswitchboard.ai`; same service, host separation enforced in-app):
 registration (email code → a passkey or a PIN, the person's pick → 18+ and consent,
 WORM-logged),
-login (email code or passkey), approval pages for stage-3 disclosure and offer
+login (email code or passkey), main pages for stage-3 disclosure and offer
 acceptance, the ledger (edit re-screens, withdraw is immediate), the kill switch
 (one tap pauses every want and have and suspends every agent token; un-pausing needs login
 plus the account's own ceremony), and the blind-mode toggle.

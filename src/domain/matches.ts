@@ -1143,7 +1143,7 @@ export async function buildMutual(
       // has already pressed to go and press is the run-8 defect in one line.
       human_action: mine
         ? await waitingOnTheirGoAhead(accountId)
-        : 'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their approval page.',
+        : 'First names are shared only once both humans have said yes. Ask your human to give the go-ahead on their main page.',
     });
   }
   const side = sideOf(m, accountId);
@@ -1760,7 +1760,7 @@ export async function checkMatches(
     }
     // BOTH sides of the table, most recent first. An agent that only ever saw
     // the other side's figures had no way to know its own human had typed one
-    // on their approval page, and told them their number never went out.
+    // on their main page, and told them their number never went out.
     const { offerTable, offerTableNote } = await import('./offers.js');
     const table = await offerTable(accountId, m.id);
     if (table.length) {

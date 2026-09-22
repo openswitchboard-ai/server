@@ -860,7 +860,7 @@ describe('the pages say it in plain words', () => {
     },
     {
       name: 'offer-approval',
-      html: cpages.approvalPage({
+      html: cpages.mainPage({
         action: 'offer-accept',
         refId: offerId(1),
         facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
@@ -886,7 +886,7 @@ describe('the pages say it in plain words', () => {
     );
   });
 
-  it('the offer approval page is one question: yes, not now, and nothing else', () => {
+  it('the offer main page is one question: yes, not now, and nothing else', () => {
     const html = rendered.find((r) => r.name === 'offer-approval')!.html;
     expect(html).not.toContain('Or reply with a number of your own');
     expect(html).not.toContain(`/matches/${MATCH}/offer`);
@@ -932,7 +932,7 @@ describe('the operating manual', () => {
     expect(MANUAL_BODY).toContain('Never invent a figure of your own');
     expect(MANUAL_BODY).toContain('Pass on');
     expect(MANUAL_BODY).toContain('Auto-negotiate');
-    expect(MANUAL_BODY).toContain('approval page');
+    expect(MANUAL_BODY).toContain('main page');
   });
 
   it('keeps the acceptance guidance it already had, and says the human never needs a gate', () => {
@@ -960,7 +960,7 @@ describe('the operating manual', () => {
 /**
  * THE NOTE BESIDE THE FIGURE, AND THE DOOR IT NOW GOES THROUGH.
  *
- * Two findings from the 2026-09-17 audit. First, the approval page had always
+ * Two findings from the 2026-09-17 audit. First, the main page had always
  * held a human's note to one rule — two hundred characters, no way of reaching
  * anybody, no angle brackets (validateOfferNote) — and an agent calling
  * propose_offer directly walked straight past it, putting up to two thousand

@@ -36,7 +36,7 @@ export interface OfferRow {
   expiry: Date;
   state: 'proposed' | 'awaiting-human' | 'accepted-by-human' | 'declined' | 'withdrawn';
   message: any;
-  /** 'human' when typed on an approval page, 'agent' when sent from inside a
+  /** 'human' when typed on a main page, 'agent' when sent from inside a
    *  mandate. Own-side bookkeeping: the offer schema has no slot for it. */
   authored_by?: 'human' | 'agent';
 }
@@ -126,7 +126,7 @@ async function ownOfferAmounts(accountId: string, matchId: string): Promise<numb
  * Put a figure on the table.
  *
  * `author` is the whole of the new rule. A figure authored by the human — typed
- * on their own approval page — goes straight through, because the point of the
+ * on their own main page — goes straight through, because the point of the
  * page is that they wrote it. A figure an agent wants to send has to get past
  * the card's negotiation mode first: refused outright in relay ("Pass on"), and
  * in mandate ("Auto-negotiate") allowed only inside the box the human drew.
@@ -161,7 +161,7 @@ export async function proposeOffer(
   // as a standing claim on somebody. A date, in the future, and inside a month.
   assertOfferExpiry(input.expiry);
   // THE NOTE, HELD TO ONE RULE WHATEVER WROTE IT. Two hundred characters, no
-  // way of reaching anybody, no angle brackets — the rule the approval page has
+  // way of reaching anybody, no angle brackets — the rule the main page has
   // always applied to a note a human typed (domain/negotiation.ts,
   // validateOfferNote, reached through humanLinks.sendNumberLink). An agent
   // calling this directly was walking past it and putting up to 2,000
@@ -924,7 +924,7 @@ async function notifyProposerOfAcceptance(cfg: Config, o: OfferRow): Promise<voi
 //
 // The gap this closes: an agent could see a figure the OTHER side had sent and
 // nothing at all about its own human's, because a human types their number on
-// their own approval page and the agent that never saw it typed has no way to
+// their own main page and the agent that never saw it typed has no way to
 // learn it happened. In the 2026-09-09 rehearsal that produced an agent
 // telling its human their $420 "never went out" and describing the other
 // side's $415 as unprompted, with the whole exchange sitting in the table all
@@ -1041,13 +1041,13 @@ export function offerTableNote(
     const later = earlier === newestMine ? newestTheirs : newestMine;
     const clause = (l: OfferLine, isLater: boolean) =>
       l.side === 'yours'
-        ? `your human ${isLater ? 'came back with' : 'offered'} ${said(l)}${l.authored_by === 'human' ? ' on their approval page' : ''}`
+        ? `your human ${isLater ? 'came back with' : 'offered'} ${said(l)}${l.authored_by === 'human' ? ' on their main page' : ''}`
         : `the other side ${isLater ? 'has answered with' : 'offered'} ${said(l)}`;
     const both = `${clause(earlier, false)}; ${clause(later, true)}`;
     return `${both[0].toUpperCase()}${both.slice(1)}. Nothing is agreed until one of the two humans says yes on their own page.`;
   }
   if (newestMine) {
-    return `Your human's ${said(newestMine)}${newestMine.authored_by === 'human' ? ', typed on their approval page,' : ''} is on the table${about}. The other side answers when they next hear from their own assistant.`;
+    return `Your human's ${said(newestMine)}${newestMine.authored_by === 'human' ? ', typed on their main page,' : ''} is on the table${about}. The other side answers when they next hear from their own assistant.`;
   }
   const l = newestTheirs!;
   // THE NOTE ITSELF DOES NOT GO IN HERE. This sentence is signed

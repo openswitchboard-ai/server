@@ -2,12 +2,12 @@
  * The SCRIPTED counterparty side of the realism eval. Nagatha (the real agent
  * under test) is driven conversationally over SSH; everything on the OTHER side
  * of each match — posting the card that pairs with hers, reciprocating interest,
- * opting in on the approval page, opening the channel, sending a message,
+ * opting in on the main page, opening the channel, sending a message,
  * making an offer, declining — is scripted here, over MCP against dev, exactly
  * the way the protocol sim harness drives a synthetic actor. We reuse the sim
  * Harness for its live-match observation (waitMatchDB, off the read ceiling),
  * card/match tracking and teardown, and the integration helpers for the
- * human-page steps (shared profile, approval-page opt-in, auto-negotiate).
+ * human-page steps (shared profile, main-page opt-in, auto-negotiate).
  */
 import {
   approveDisclosure,
@@ -205,7 +205,7 @@ export class Counterpart {
   /**
    * Opt in from the counterpart side, the way its human would: put the first
    * name + area on the shared-profile page, then record the opt-in through the
-   * approval page (the path we fully control via the counterpart's session).
+   * main page (the path we fully control via the counterpart's session).
    */
   async optIn(matchId: string): Promise<void> {
     await setSharedProfile(this.actor.jar, this.firstName, this.locality);

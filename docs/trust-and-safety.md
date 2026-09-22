@@ -72,7 +72,7 @@ figure is the same free text a message is, sent between the same two people, so
 `proposeOffer` runs the pipe over it and the message classifier stands at that
 door alongside the message door — and the note is held to `validateOfferNote`,
 the two-hundred-character, no-contact-details, no-angle-brackets rule the
-approval page had always applied and an agent calling `propose_offer` directly
+main page had always applied and an agent calling `propose_offer` directly
 had been walking past. A hold there behaves as a hold on a message does: the
 figure still goes on the table and a person is told. **`shared_identity`**:
 `saveSharedProfile` runs the pipe, so a suspended account cannot hand a first
@@ -209,7 +209,7 @@ stated everywhere it would be read.
 - **The PIN set-up page**: "Keep this PIN to yourself. Do not give it to your
   assistant; the PIN is how we know it is you."
 - **The terms and the public safety page**: you must keep your PIN and passkey
-  to yourself and must not let an assistant press an approval page for you; a
+  to yourself and must not let an assistant press a main page for you; a
   press made with them is treated as yours.
 
 ## Reporting
@@ -234,7 +234,7 @@ answers the reporter with the sentence to say to their human.
 - **Suspend**: the account flag. Nothing in, nothing out, at every door. Their
   postings come down. Onboarding a new account from the same email is refused.
   Suspending also ends the credentials already out in the world: the account's
-  browser sessions on the approval pages are deleted, and its agents' OAuth
+  browser sessions on the main pages are deleted, and its agents' OAuth
   refresh tokens are suspended, so neither goes on working after the flag.
 
 **Telling their assistant.** We cannot make an assistant remember, so the

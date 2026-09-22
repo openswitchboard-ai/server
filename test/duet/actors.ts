@@ -20,7 +20,7 @@
  * stage-3 opt-in and the offer acceptance both happen on the HUMAN's approval
  * page, behind an email-code sign-in, and that account's email address is not
  * recoverable (the column is encrypted; nothing in the repo or the box records
- * it). A duet that cannot click either approval page stalls at exactly the wall
+ * it). A duet that cannot click either main page stalls at exactly the wall
  * the realism report already documented.
  *
  * So the duet provisions a fresh dev account for EACH side and points the
@@ -48,7 +48,7 @@ export interface DuetActor {
   pin: string;
   /** The agent key the agent's MCP client presents (osb_ak_…). */
   agentKey: string;
-  /** The handle the approval page revokes that key by. */
+  /** The handle the main page revokes that key by. */
   agentKeyId: string;
   /** An OAuth access token for this account — the harness's own MCP door,
    *  used ONLY for teardown (withdrawing this account's leftover cards) and the
@@ -87,7 +87,7 @@ export function writeActors(a: DuetActors, file = ACTORS_FILE): void {
  * Re-establish a signed-in counter session for one side, the way its human
  * would: email code sign-in, then the PIN. Sessions do not survive between
  * processes, so the run does this once per side at start-up and holds the jar
- * for the approval-page steps it performs later.
+ * for the main-page steps it performs later.
  */
 export async function signIn(actor: DuetActor): Promise<Jar> {
   const jar = new Jar();

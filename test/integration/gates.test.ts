@@ -327,7 +327,7 @@ d('integration gates against live deployment', () => {
     expect(raw).not.toContain('prompt-injection');
     expect(raw).not.toContain('reason_code');
 
-    // 3. His approval page carries the attention item, linking to the edit
+    // 3. His main page carries the attention item, linking to the edit
     //    page, and that page says why in plain words.
     const dash = await counterFetch(bob.jar, '/');
     expect(dash.status).toBe(200);
@@ -620,7 +620,7 @@ d('integration gates against live deployment', () => {
     expect(results.slice(0, MAX_OPEN_CARDS).filter((r) => r.result?.code)).toHaveLength(0);
   });
 
-  it('GATE (f): an agent key issued by hand works on MCP, dies on revoke, and is refused at the approval pages', async () => {
+  it('GATE (f): an agent key issued by hand works on MCP, dies on revoke, and is refused at the main pages', async () => {
     const { token, keyId } = await createAgentKey(alice.jar, alice.pin, 'gate-f key');
     expect(token.startsWith('osb_ak_')).toBe(true);
 
@@ -641,7 +641,7 @@ d('integration gates against live deployment', () => {
     expect(atCounter.status).toBe(403);
     expect((await atCounter.json()).error).toBe('agent_credentials_rejected');
 
-    // Revoking on the approval page kills it immediately.
+    // Revoking on the main page kills it immediately.
     await revokeAgentKey(alice.jar, keyId);
     const afterRevoke = await fetch(`${BASE_URL}/mcp`, {
       method: 'POST',

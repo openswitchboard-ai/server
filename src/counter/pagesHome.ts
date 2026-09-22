@@ -205,7 +205,7 @@ ${plain}
     placeholder="720">
   <p class="field-help">${esc(CHECK_EVERY_MINUTES_HELP)}</p>
   <label for="interrupt_for">What is worth interrupting you for? One per line.</label>
-  <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my approval page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
+  <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my main page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
   <label for="summarize">Everything else waits for&hellip;</label>
   <input id="summarize" name="summarize" type="text" maxlength="${SHORT_FIELD_MAX}"
     value="${esc(a.summarize ?? '')}" placeholder="a round-up on Sunday evening">
@@ -438,8 +438,8 @@ hold. Re-verify your address to switch it back on.
 <a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How you hear about things, how often we may email you, and blind mode.</span></a>
 </div>`;
 
-  return layout('Your approval page', `
-<h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your approval page.'}</h1>
+  return layout('Your main page', `
+<h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your main page.'}</h1>
 <p class="lead">${esc(FRONT_PAGE_LEAD)}</p>
 ${v.notice ? `<div class="note">${esc(v.notice)}</div>` : ''}
 ${v.awaitingConnect ? `<script>

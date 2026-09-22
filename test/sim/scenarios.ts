@@ -216,12 +216,12 @@ const fullLadder: Scenario = {
     check.sweep(i2.raw, 'hB express_interest');
     assert(i2.result.next === 'details_unlocked', `hB next != details_unlocked (${i2.result.next})`);
 
-    // stage-3 opt-in through the HUMAN approval page (both sides), the way a
+    // stage-3 opt-in through the HUMAN main page (both sides), the way a
     // person actually consents — not an invented MCP accept.
     const apA = await approveDisclosure(wA.jar, matchId, wA.pin);
-    assert(apA.status === 200 && /Approved/.test(apA.body), `wA approval page failed (${apA.status})`);
+    assert(apA.status === 200 && /Approved/.test(apA.body), `wA main page failed (${apA.status})`);
     const apB = await approveDisclosure(hB.jar, matchId, hB.pin);
-    assert(apB.status === 200 && /Approved/.test(apB.body), `hB approval page failed (${apB.status})`);
+    assert(apB.status === 200 && /Approved/.test(apB.body), `hB main page failed (${apB.status})`);
 
     // both opted in -> stage-3 mutual to each side (identity legitimate now)
     const mutual = await h.mcp(wA.accessToken, 'check_in', { intro_id: matchId, step: 'names' });

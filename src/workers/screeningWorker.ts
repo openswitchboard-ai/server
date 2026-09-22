@@ -16,7 +16,7 @@ import type { Config } from '../config.js';
  * directions: the verdict is already written when this runs, and a send that
  * throws is logged and swallowed so it can never undo or re-run the screening
  * decision. An account with no reachable address is simply not mailed — the
- * rejection is on their approval page either way.
+ * rejection is on their main page either way.
  */
 export async function notifyScreeningRejection(
   cfg: Config,

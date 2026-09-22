@@ -9,7 +9,7 @@
  *  'relay' — "Pass on". The default, on every card, including every card that
  *      existed before this file did. respond(propose_offer) is refused outright
  *      with CONSENT_REQUIRED and the human's own approval link. The human types
- *      the amount on their approval page and the switchboard sends it as their
+ *      the amount on their main page and the switchboard sends it as their
  *      side's offer through the ordinary offer machinery.
  *
  *  'mandate' — "Auto-negotiate". The human writes a box: where to open, where
@@ -352,7 +352,7 @@ export const RELAY_ACTION =
   'Your numbers come from you. Here is the page that asks whether to send the figure you gave me — one press and it goes:';
 
 export const NO_MANDATE_ACTION =
-  'What you posted is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your approval page:';
+  'What you posted is set to Auto-negotiate with no numbers written yet. Set your opening figure and your limit on your main page:';
 
 /**
  * relay mode: the agent may not author a figure at all.
@@ -388,7 +388,7 @@ export function noMandateRefusal(cfg: Config, cardId: string): OsbError {
  */
 export function outsideMandateRefusal(cfg: Config, cardId: string, reason: string): OsbError {
   return new OsbError('CONSENT_REQUIRED', {
-    human_action: withLink(`${reason} Bring it to your human on their approval page:`, numbersPageUrl(cfg, cardId)),
+    human_action: withLink(`${reason} Bring it to your human on their main page:`, numbersPageUrl(cfg, cardId)),
   });
 }
 

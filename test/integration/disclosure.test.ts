@@ -16,7 +16,7 @@
  *  - pressing that link is what records the opt-in, and the page asks for the
  *    two fields at the consent moment where there are none on file, storing
  *    them under the account's envelope key;
- *  - the approval page is the second road to the same question;
+ *  - the main page is the second road to the same question;
  *  - the same two fields can be viewed and changed any time on the profile
  *    page, with a signed-in session alone;
  *  - once both sides have them, the stage-3 fetch returns a conformant
@@ -120,12 +120,12 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     expect(await optinCount(matchId)).toBe(0);
   });
 
-  it('the approval page asks for both fields and records the opt-in once given', async () => {
+  it('the main page asks for both fields and records the opt-in once given', async () => {
     const r = await approveDisclosure(ana.jar, matchId, ana.pin, {
       firstName: 'Ana',
       locality: 'Fremantle',
     });
-    expect(r.asked, 'the approval page should ask for the two fields').toBe(true);
+    expect(r.asked, 'the main page should ask for the two fields').toBe(true);
     expect(r.status).toBe(200);
     expect(r.body).toContain('Approved');
     expect(await optinCount(matchId)).toBe(1);
@@ -135,7 +135,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     });
   });
 
-  it('a filled profile stops the approval page asking again', async () => {
+  it('a filled profile stops the main page asking again', async () => {
     const page = await approveDisclosure(ana.jar, matchId, ana.pin);
     expect(page.asked).toBe(false);
   });

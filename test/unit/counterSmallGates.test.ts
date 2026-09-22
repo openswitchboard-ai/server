@@ -245,7 +245,7 @@ describe('the renew-all link may be pressed once', () => {
 describe('a settlement approval burns on the press', () => {
   it('the page carries its link back, so the press is what spends it', async () => {
     const cpages = await import('../../src/counter/pages.js');
-    const html = cpages.approvalPage({
+    const html = cpages.mainPage({
       action: 'settlement-approve',
       refId: '00000000-0000-4000-8000-000000000000',
       facts: [{ k: 'Amount', v: '400 AUD' }],
@@ -260,9 +260,9 @@ describe('a settlement approval burns on the press', () => {
     expect(html).toContain('value="a-one-use-token"');
   });
 
-  it('a page reached from the approval page carries none, because that road is not one-use', async () => {
+  it('a page reached from the main page carries none, because that road is not one-use', async () => {
     const cpages = await import('../../src/counter/pages.js');
-    const html = cpages.approvalPage({
+    const html = cpages.mainPage({
       action: 'settlement-approve',
       refId: '00000000-0000-4000-8000-000000000000',
       facts: [],

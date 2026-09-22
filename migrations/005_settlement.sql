@@ -21,7 +21,7 @@ ALTER TABLE approval_links ADD CONSTRAINT approval_links_action_check
 --                                         -> disputed  -> refunded
 --   either human may decline while unfunded; declined/released/refunded are
 --   TERMINAL. Every transition out of 'proposed' happens ONLY from a signed
---   human action on the approval page or from a verified Stripe webhook
+--   human action on the main page or from a verified Stripe webhook
 --   event (asserted structurally in domain/settlements.ts and its tests).
 -- Buyer = the WANT side's human (pays); seller = the HAVE side's human.
 -- Stripe object ids are operational references (not identity data): the
@@ -60,7 +60,7 @@ CREATE INDEX IF NOT EXISTS settlements_buyer_idx ON settlements (buyer_account, 
 CREATE INDEX IF NOT EXISTS settlements_seller_idx ON settlements (seller_account, created_at);
 CREATE INDEX IF NOT EXISTS settlements_pi_idx ON settlements (stripe_payment_intent);
 
--- Evidence objects (photos) uploaded from the approval page; the manifest
+-- Evidence objects (photos) uploaded from the main page; the manifest
 -- snapshot at evidence-lock lists these keys + hashes in the WORM bucket.
 CREATE TABLE IF NOT EXISTS settlement_evidence (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),

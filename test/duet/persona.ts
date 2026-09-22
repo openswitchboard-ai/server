@@ -81,7 +81,7 @@ const PAGE_RE = /\b(approvals?\s+page|your (own )?page|offer page|the page|appro
 const AUTHOR_FIGURE_RE = [
   // The money half is `\b`-anchored on the words and NOT on the dollar sign:
   // "$400" is preceded by a space, so a \b in front of it can never match and
-  // "waiting on you to enter $400 on that approval page" would slip through.
+  // "waiting on you to enter $400 on that main page" would slip through.
   /\b(you|you'll|you will|you'd|you can|you need to|you have to|you'll need to|please|if you)\b[^.?!\n]{0,110}\b(type|enter|put|input|author|write|submit|fill|confirm|approve)\b[^.?!\n]{0,80}(?:\b(?:figure|number|amount|price|offer)\b|\$\s?\d)/i,
   /\b(figure|number|amount|price|offer)\b[^.?!\n]{0,110}\b(has to|have to|needs? to|must)\b[^.?!\n]{0,60}\b(come from|be entered|be typed|be authored|be put)\b/i,
   /\b(type|enter|put|write|author)\b[^.?!\n]{0,60}\b(it|the figure|the number|the amount|the price)\b[^.?!\n]{0,40}\b(in|on)\b[^.?!\n]{0,30}\bpage\b/i,

@@ -115,7 +115,7 @@ can ask ahead of time rather than in the middle of carrying something across.
 ## Keep your PIN to yourself
 
 Your PIN and your passkey are yours alone. Never give either to an assistant,
-and never let one press an approval page for you. The press is how the
+and never let one press a main page for you. The press is how the
 switchboard knows a person agreed rather than a program, and a press made with
 your PIN or passkey is treated as yours. The agent manual tells every
 assistant the same thing: never ask for it, never store it, never type it into

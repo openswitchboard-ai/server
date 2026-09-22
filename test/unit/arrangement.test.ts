@@ -586,7 +586,7 @@ describe('the manual section for agents that can act unattended', () => {
   it('names what interrupts and what waits', () => {
     expect(section).toContain('someone newly come forward');
     expect(section).toContain('patched through');
-    expect(section).toContain('approval page');
+    expect(section).toContain('main page');
   });
 
   it('gives the chat-only agent the exact words about email', () => {

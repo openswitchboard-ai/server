@@ -773,8 +773,8 @@ describe('the email rule: a notice carries no link and no button', () => {
 
   it('the kill-switch mail sends people to a page they have', () => {
     const c = byName()['kill-switch-on'];
-    expect(c.text).toContain('Sign in when you can and look over your approval page.');
-    expect(c.html).toContain('look over your approval page');
+    expect(c.text).toContain('Sign in when you can and look over your main page.');
+    expect(c.html).toContain('look over your main page');
     expect(c.text).not.toContain('ledger');
   });
 

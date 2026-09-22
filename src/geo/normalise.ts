@@ -108,7 +108,7 @@ export function geoOf(row: {
 }
 
 /**
- * How a stored card's location reads on its owner's approval page: the place
+ * How a stored card's location reads on its owner's main page: the place
  * written out in full, so someone who knows the area can see at a glance that
  * the card is where they meant it to be. A place the gazetteer no longer
  * answers to keeps its own string, and a card carrying only a bucket shows
@@ -125,7 +125,7 @@ export function describeStoredGeo(geo: any): string {
 
 /**
  * The second half of a card's location line: how far its owner will meet
- * someone, in the same plain words on the approval page and in the publish
+ * someone, in the same plain words on the main page and in the publish
  * echo. A country the switchboard can name is named — "reaching all of
  * Australia" — because a code is not something to read out to a human.
  */
