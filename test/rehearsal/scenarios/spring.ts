@@ -135,8 +135,16 @@ export const WRONG_THING =
  * the HUMAN starting it, which is the rule everywhere else in this suite.
  */
 export const FIRST_WORDS = {
-  buyer: 'ask him if it is just the spring or whether the elastomers come with it',
-  seller: 'tell him what he asked and see what he says',
+  buyer: [
+    'ask him if it is just the spring or whether the elastomers come with it',
+    // A SECOND EXCHANGE, BECAUSE ONE IS NOT A CONVERSATION. The check wants
+    // three messages each way and a single question and answer produces two.
+    // Rather than lower the bar to meet the scenario, the scenario asks the
+    // other thing a person buying a posted part actually asks. Both answers
+    // are on Alex's sheet and neither is on the card.
+    'ask him how long he used it and who pays the postage',
+  ],
+  seller: ['tell him what he asked and see what he says', 'answer that one too'],
 } as const;
 
 export const SHEETS = { seller: ALEX, buyer: TONY } as const;
