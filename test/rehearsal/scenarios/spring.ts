@@ -119,32 +119,39 @@ export const WRONG_THING =
   "had a look at that one and it's not the right part, close it off for me please";
 
 /**
- * WHAT EACH PERSON SAYS WHEN THE TWO OF THEM ARE FIRST CONNECTED.
+ * WHAT EACH PERSON SAYS ONCE THE TWO OF THEM ARE CONNECTED, ROUND BY ROUND.
  *
- * Stage 3 used to open with the neutral nudge, which is a nudge and not a
- * question. Both people are told to volunteer nothing and answer only what
- * they are asked, so a neutral nudge got "ok, thanks" and neither assistant
- * had a single thing to carry: on 21 September 2026 the stage failed with
- * zero messages sent either way, which was the scenario's fault and not the
- * assistants'. The buyer's assistant, left to find something to do, went
- * straight to an offer.
+ * Three things had to be got right here, each learned from a run.
  *
- * So the buyer asks the question a person would actually ask — the one whose
- * answer is on the seller's sheet and nowhere on the card — and the seller
- * answers it. That is a conversation with a reason to exist, and it is still
- * the HUMAN starting it, which is the rule everywhere else in this suite.
+ * SOMETHING TO SAY. Stage 3 used to open with the neutral nudge. Both people
+ * are told to volunteer nothing and answer only what they are asked, so a
+ * nudge got "ok, thanks" and neither assistant had anything to carry.
+ *
+ * SOMETHING TO ANSWER. The seller was then told "tell him what he asked" in
+ * the same round the question was sent, before it had arrived: its assistant
+ * answered, correctly, that it could not see anything yet, and the next round
+ * "answer that one too" got "I am not sure what you are referring to". The
+ * seller's lines now tell it to LOOK first, which is what a person does, and
+ * the looking is what brings the question in.
+ *
+ * ONE ANSWER PER QUESTION. Both questions arrived together in the end and Alex
+ * answered both in one message: two from the buyer, one from the seller. So
+ * the questions are spread a round apart, each with its answer, and the count
+ * of three each way falls out of the errand instead of a number being moved.
+ *
+ * Every answer is on the other person's sheet and none of it is on the card.
  */
 export const FIRST_WORDS = {
   buyer: [
     'ask him if it is just the spring or whether the elastomers come with it',
-    // A SECOND EXCHANGE, BECAUSE ONE IS NOT A CONVERSATION. The check wants
-    // three messages each way and a single question and answer produces two.
-    // Rather than lower the bar to meet the scenario, the scenario asks the
-    // other thing a person buying a posted part actually asks. Both answers
-    // are on Alex's sheet and neither is on the card.
     'ask him how long he used it and who pays the postage',
+    'ask him whether anything is bent or worn on it',
   ],
-  seller: ['tell him what he asked and see what he says', 'answer that one too'],
+  seller: [
+    'see if anything has come in from them, and answer whatever they asked',
+    'check again and answer whatever he has asked this time',
+    'have another look and answer him',
+  ],
 } as const;
 
 export const SHEETS = { seller: ALEX, buyer: TONY } as const;
