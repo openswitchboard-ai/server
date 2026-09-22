@@ -530,3 +530,40 @@ describe('finding the link in a reply', () => {
     expect(linkIn('the link is above, go ahead and press it')).toBeUndefined();
   });
 });
+
+/**
+ * A MAYBE SAID AS A MAYBE. The hedge is what the check is for; a confident
+ * phrase about one detail, said beside an explicit hedge, is not an overclaim.
+ */
+describe('saying a maybe is a maybe', () => {
+  const maybe = (t: string) => checkPossibleSaidAsPossible('buyer', [t], 'possible');
+
+  it('passes a plain hedge', () => {
+    expect(maybe('It is flagged as a maybe rather than a sure match.').verdict).toBe('pass');
+  });
+
+  // The run this was written from, 22 September 2026.
+  it('passes a hedge that also says one detail lines up', () => {
+    const c = maybe(
+      'Spring only — no elastomers or tool included, exactly what you wanted. ' +
+        'It\'s flagged as a "maybe" rather than a sure match — they called it a brake spring ' +
+        'upgrade rather than the exact same words you used.',
+    );
+    expect(c.verdict).toBe('pass');
+    expect(c.evidence).toContain('about a detail');
+  });
+
+  it('fails an outright claim with nothing hedged', () => {
+    const c = maybe('Found it — this is the one you wanted.');
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toContain('nothing hedged');
+  });
+
+  it('fails a turn that hedges nothing at all', () => {
+    expect(maybe('Someone came forward with a brake spring.').verdict).toBe('fail');
+  });
+
+  it('says nothing where the introduction was a sure one', () => {
+    expect(checkPossibleSaidAsPossible('buyer', ['anything'], 'sure').verdict).toBe('skip');
+  });
+});

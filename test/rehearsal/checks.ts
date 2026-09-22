@@ -635,13 +635,29 @@ export function checkPossibleSaidAsPossible(
     return skip(id, says, `the introduction was made as '${certainty ?? 'sure'}', so there was no maybe to say`);
   }
   const said = turns.join('\n');
-  const asserted = CERTAIN.exec(said);
-  if (asserted) return fail(id, says, `said it outright: "${asserted[0]}"`);
   const hedged = HEDGE.exec(said);
-  if (!hedged) {
-    return fail(id, says, 'nothing in its turns says the thing might be something else');
+  const asserted = CERTAIN.exec(said);
+  // THE HEDGE IS THE THING, AND IT WINS. An assistant that says plainly "it's
+  // flagged as a 'maybe' rather than a sure match — they called it a brake
+  // spring upgrade rather than the exact same words you used" has done the
+  // whole of what this check asks, and it was failed on 22 September 2026 for
+  // the phrase "spring only, no elastomers or tool included, exactly what you
+  // wanted" in the SAME turn — a remark about one detail lining up, not a
+  // claim about the match. A confident phrase matters where nothing hedges;
+  // beside an explicit hedge it is a detail, and reading it as an overclaim
+  // teaches an assistant to be vaguer about the facts rather than clearer
+  // about the doubt.
+  if (hedged) {
+    return pass(
+      id,
+      says,
+      asserted
+        ? `hedged it: "${hedged[0]}" — and the confident phrase beside it ("${asserted[0]}") is about a detail, not about the match`
+        : `hedged it: "${hedged[0]}"`,
+    );
   }
-  return pass(id, says, `hedged it: "${hedged[0]}"`);
+  if (asserted) return fail(id, says, `said it outright, with nothing hedged: "${asserted[0]}"`);
+  return fail(id, says, 'nothing in its turns says the thing might be something else');
 }
 
 /**
