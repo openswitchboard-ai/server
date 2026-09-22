@@ -712,7 +712,20 @@ async function oneRun(
     const counts = DRY
       ? { seller: 3, buyer: 3 }
       : await (async () => {
-          const raw = channelId ? await db.sendCounts(channelId) : {};
+          // READ THE CHANNEL WHEN YOU COUNT, NOT WHEN THE STAGE OPENED. The
+          // channel does not exist until somebody opens the conversation,
+          // which the assistants do INSIDE this stage. Captured at the top,
+          // channelId was undefined, sendCounts was never called, and the
+          // check reported "seller sent 0, buyer sent 0" while the transcript
+          // showed four send_message calls and both assistants saying "sent".
+          // It failed two runs and I blamed the scenario for the first of
+          // them (22 September 2026).
+          const now =
+            (await db.matchBetween(
+              [sides.seller.actor.accountId, sides.buyer.actor.accountId],
+              sinceIso,
+            ))?.channelId ?? channelId;
+          const raw = now ? await db.sendCounts(now) : {};
           return {
             seller: raw[sides.seller.actor.accountId] ?? 0,
             buyer: raw[sides.buyer.actor.accountId] ?? 0,
