@@ -145,7 +145,13 @@ export const FIRST_WORDS = {
   buyer: [
     'ask him if it is just the spring or whether the elastomers come with it',
     'ask him how long he used it and who pays the postage',
-    'ask him whether anything is bent or worn on it',
+    // NOT A QUESTION THE CARD ALREADY ANSWERS. This was "is anything bent or
+    // worn on it", and the buyer's assistant declined to send it — rightly:
+    // "his listing says used, good condition, not bent or broken. No need to
+    // ask that one again." A scenario that asks an assistant to waste a
+    // message is testing nothing, so the third question is one only Alex can
+    // answer and the card does not carry.
+    'ask him if he has any other sim racing gear he is selling',
   ],
   seller: [
     'see if anything has come in from them, and answer whatever they asked',
