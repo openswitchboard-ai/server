@@ -23,7 +23,18 @@ const form = (o: Record<string, string>) => ({
 
 /** The first switchboard link in something the assistant said. */
 export function linkIn(text: string): string | undefined {
-  return text.match(/https?:\/\/[^\s)>\]"']+\/a\/[A-Za-z0-9_-]+/)?.[0];
+  // THE TOKEN IS AFTER A DOT, AND THE DOT WAS NOT IN THE CLASS. A page address
+  // is /a/<id>.<token>, and this pattern stopped at the dot: it handed back
+  // the id alone, which is not a link, and the press came home "404 Not a
+  // valid link". It only ever bit where the harness presses by fetching a URL
+  // it read out of a reply — the photo step — because the human simulator's
+  // own [[PRESS …]] marker is parsed by a different pattern that allows dots.
+  // Stage 4 failed on it twice on 22 September 2026 and read, both times, as
+  // an assistant handing over a broken link (see checks S4.link, S4.sent).
+  // Trailing punctuation is trimmed rather than matched, so a link at the end
+  // of a sentence does not carry the full stop with it.
+  const m = text.match(/https?:\/\/[^\s)>\]"']+\/a\/[A-Za-z0-9_.-]+/)?.[0];
+  return m?.replace(/[.,;:]+$/, '');
 }
 
 export interface PressOutcome {
