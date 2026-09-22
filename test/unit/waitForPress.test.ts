@@ -171,7 +171,12 @@ describe('holding the line', () => {
     // The page itself rides back with it, so even an agent that waited before
     // it handed anything over ends the turn holding the link.
     expect(r.link).toBe(pageOf(links[0]));
-    expect(r.note.text).toBe(`${PRESS_SENTENCES.waiting} ${r.link}`);
+    // THE ADDRESS ON ITS OWN LINE. An assistant dropped it off the end of this
+    // sentence while relaying the rest (22 September 2026), and a trim takes
+    // the tail; a line of its own is what the manual asks for in front of a
+    // human anyway.
+    expect(r.note.text).toBe(`${PRESS_SENTENCES.waiting}\n${r.link}`);
+    expect(r.note.text.split('\n').at(-1)).toBe(r.link);
     expect(r.note.text).toMatch(/here is the page again/i);
     // It puts the page in front of the human rather than reporting a state,
     // and it reads sanely whether or not they were handed it a minute ago.

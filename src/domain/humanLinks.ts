@@ -588,8 +588,19 @@ export const PRESS_SENTENCES = {
   approved: sayFor('press_approved', {}),
   declined:
     'You pressed Not now, so nothing went ahead. Say the word whenever you want to look at it again.',
-  /** Lead-in only: the link itself follows it, which is the whole point. */
-  waiting: 'Here is the page again — nothing has come through yet:',
+  /**
+   * Lead-in only: the link itself follows it, which is the whole point, and it
+   * follows ON ITS OWN LINE.
+   *
+   * On 22 September 2026 an assistant fetched the photo page, waited on it,
+   * and told its human "Still nothing through yet on that press — take your
+   * time." It had rewritten this sentence and dropped the address off the end.
+   * The manual asks for the note relayed as it stands or trimmed to fit, and a
+   * trim takes the tail; a line of its own is the hardest thing to trim by
+   * accident, and it is also what the manual asks an assistant to put in front
+   * of its human — an address on a line, not a sentence about one.
+   */
+  waiting: 'Here is the page again — nothing has come through yet. The address is the whole of what they need:',
   expired: 'That page has run out. I can fetch you a fresh one whenever you are ready.',
 } as const;
 
@@ -747,7 +758,7 @@ export async function waitForPress(
         pressed: false,
         link,
         what_to_do: PRESS_WHAT_TO_DO.waiting,
-        note: pressNote(`${PRESS_SENTENCES.waiting} ${link}`),
+        note: pressNote(`${PRESS_SENTENCES.waiting}\n${link}`),
       };
     }
     await sleep(pollMs);
