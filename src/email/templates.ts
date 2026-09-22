@@ -459,7 +459,7 @@ export function renderYourMove(
 
 // ---------------------------------------------------------------------------
 // (c4) A number is on the table. The other person typed a figure on their own
-// approval page, and this human hears about the switchboard by email — their
+// main page, and this human hears about the switchboard by email — their
 // assistant only wakes when they speak to it, so without this mail the figure
 // sits on a page nobody has been told to open. Non-blind names the figure and
 // the thing, because an offer is a deliberate disclosure meant to be seen;
@@ -728,7 +728,7 @@ export function renderKillSwitch(
         ) +
         center(button(v.counterUrl, 'Open your account')) +
         small(
-          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and look over your approval page.',
+          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and look over your main page.',
         ),
       f,
       '#a3271f',
@@ -739,7 +739,7 @@ export function renderKillSwitch(
       `Nothing will match, be disclosed, or be accepted while it is on.\n\n` +
       `To turn things back on, sign in at ${v.counterUrl} and confirm with your PIN.\n\n` +
       `If you did not do this, your account is already safe — everything is paused. ` +
-      `Sign in when you can and look over your approval page.\n\n` +
+      `Sign in when you can and look over your main page.\n\n` +
       footerText(f);
     return { subject, html, text };
   }
@@ -870,7 +870,7 @@ export function renderSecurityNotice(
 
 // ---------------------------------------------------------------------------
 // (h) Settlement lifecycle (phase 1.A safe hands). Every one of these is a
-// notice: a held payment moves only through someone's own approval page, and
+// notice: a held payment moves only through someone's own main page, and
 // their assistant is what carries them to it. Non-blind copy stays
 // category/amount-free below the approval gate; blind is a pure pointer.
 // ---------------------------------------------------------------------------

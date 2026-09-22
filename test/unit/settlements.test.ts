@@ -738,7 +738,7 @@ describe('the auto-release window', () => {
     const note = settlements.autoReleaseNote(handedOver(7))!;
     expect(note).toContain('Handed over on Saturday 5 September');
     expect(note).toContain('releases to the seller on Saturday 12 September');
-    expect(note).toContain('their own approval page');
+    expect(note).toContain('their own main page');
     // No clock, no note.
     expect(settlements.autoReleaseNote({ ...handedOver(7), auto_release_at: null })).toBeUndefined();
   });

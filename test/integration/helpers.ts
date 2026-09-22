@@ -201,7 +201,7 @@ export async function completeOnboarding(jar: Jar): Promise<void> {
 /**
  * Issue an agent key the way a human does: a signed-in counter session plus a
  * PIN ceremony on /agent-keys. Returns the plaintext key (shown once)
- * and the handle the approval page revokes it by.
+ * and the handle the main page revokes it by.
  */
 export async function createAgentKey(
   jar: Jar,
@@ -267,7 +267,7 @@ export async function humanOffer(
   );
 }
 
-/** Revoke an agent key from the approval page. */
+/** Revoke an agent key from the main page. */
 export async function revokeAgentKey(jar: Jar, keyId: string): Promise<void> {
   const res = await counterFetch(jar, '/agent-keys/revoke', form({ key_id: keyId }));
   if (res.status !== 200) throw new Error(`agent key revoke failed: ${res.status}`);
@@ -427,7 +427,7 @@ export async function setSharedProfile(
 }
 
 /**
- * Approve a stage-3 disclosure at the approval page, supplying the first name
+ * Approve a stage-3 disclosure at the main page, supplying the first name
  * and area in the same submission when the page is asking for them.
  */
 export async function approveDisclosure(

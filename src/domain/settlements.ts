@@ -228,7 +228,7 @@ export function deadlockOutcome(s: {
 /**
  * A split is two figures that add up to the agreed amount, and never a cent
  * more. Either may be zero; both may not be. Throws a validation error the
- * approval page renders as it stands.
+ * main page renders as it stands.
  */
 export function validateSplit(
   agreedMinor: number,
@@ -489,7 +489,7 @@ export function autoReleaseNote(s: SettlementRow): string | undefined {
     `Handed over on ${plainDate(new Date(s.handed_over_at))}; ` +
     'unless your human confirms or raises a problem, the payment releases to the seller on ' +
     `${plainDate(new Date(s.auto_release_at))}. Confirming and raising a problem both happen ` +
-    'on their own approval page.'
+    'on their own main page.'
   );
 }
 
@@ -500,7 +500,7 @@ export function autoReleaseNote(s: SettlementRow): string | undefined {
  * agent's human and where they do it, and it never suggests the agent can do
  * any of it. Raising a problem, adding a tracking reference, marking something
  * sent back, agreeing a split — all of them are the human's, on their own
- * approval page, the same as every other gate on the switchboard.
+ * main page, the same as every other gate on the switchboard.
  *
  * `link` is the human's page for this settlement, so the sentence can end
  * somewhere they can actually go.
@@ -517,7 +517,7 @@ export function disputeNote(
   const tail = by
     ? ` If the two of them agree on nothing by ${by}, the payment goes to whichever side can show where the item went.`
     : '';
-  const page = ` It happens on their own approval page: ${link}.`;
+  const page = ` It happens on their own main page: ${link}.`;
 
   // A split is on the table and it is this human's turn to say yes or no.
   const mine = side === 'buyer' ? s.split_buyer_approved_at : s.split_seller_approved_at;
@@ -886,7 +886,7 @@ async function notifyHumansOfProposal(
   for (const accountId of [s.buyer_account, s.seller_account] as const) {
     const email = await accountEmail(accountId, 'settlement-approval-notification');
     if (email) {
-      // Best-effort: the approval also appears on the person's approval page;
+      // Best-effort: the approval also appears on the person's main page;
       // a failed email must not roll back the proposed settlement.
       try {
       await sendSettlementEmail(cfg, {
@@ -904,7 +904,7 @@ async function notifyHumansOfProposal(
 }
 
 // ---------------------------------------------------------------------------
-// Human transitions (approval page only).
+// Human transitions (main page only).
 // ---------------------------------------------------------------------------
 
 /** Approve, from either human. Both approvals => 'approved'. */

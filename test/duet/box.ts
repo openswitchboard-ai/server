@@ -5,7 +5,7 @@
  * not touch.
  *
  * WHY THE KEY SWAP. Two of the steps this eval exists to exercise — the stage-3
- * opt-in and accepting an offer — happen on the HUMAN's approval page, behind an
+ * opt-in and accepting an offer — happen on the HUMAN's main page, behind an
  * email-code sign-in. Nagatha's long-lived dev account is not one this harness
  * can sign in to (the address is encrypted at rest and recorded nowhere), which
  * is exactly why the realism eval had to stop at stage 2. So for the run she is

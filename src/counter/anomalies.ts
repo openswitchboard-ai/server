@@ -1,5 +1,5 @@
 /**
- * Anomaly emphasis for approval pages. Rules (0.D):
+ * Anomaly emphasis for main pages. Rules (0.D):
  *  - amount anomaly: offer amount > 3x the median amount of the account's
  *    other historical offers (either side of its matches);
  *  - counterparty anomaly: counterparty account is younger than 7 days.

@@ -40,7 +40,7 @@ let ada: TestActor;
 const ARRANGEMENT = {
   runs_on_its_own: true,
   check_every_minutes: 720,
-  interrupt_for: ['a new match', 'anything waiting on my approval page'],
+  interrupt_for: ['a new match', 'anything waiting on my main page'],
   summarize: 'a round-up on Sunday evening',
   suggestion_appetite: 'occasional',
   quiet_hours: 'after 9pm and before 7am',
@@ -113,14 +113,14 @@ d('standing arrangement against live deployment', () => {
     expect(got.result.arrangement).toEqual(ARRANGEMENT);
   });
 
-  it('the human sees it in plain words on their approval page', async () => {
+  it('the human sees it in plain words on their main page', async () => {
     const res = await counterFetch(ada.jar, '/arrangement');
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('How your agents behave');
     expect(body).toContain('It runs on its own and brings you the news.');
     expect(body).toContain('every 12 hours');
-    expect(body).toContain('anything waiting on my approval page');
+    expect(body).toContain('anything waiting on my main page');
   });
 
   it('an agent bearer token is turned away from that page', async () => {

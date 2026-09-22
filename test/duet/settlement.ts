@@ -2,7 +2,7 @@
  * THE DUET FINALE — the money, driven the whole way, by the two humans.
  *
  * The duet used to stop where the deal was struck: an offer accepted on an
- * approval page, and a settlement occasionally proposed by one of the agents
+ * main page, and a settlement occasionally proposed by one of the agents
  * off its own bat. That is the interesting half of the product finishing one
  * step before the part where somebody actually pays.
  *
@@ -12,7 +12,7 @@
  *               few runs did unprompted. Where neither offers it, the buyer's
  *               human says "let's do the protected payment" ONCE, in their own
  *               register, and the agents take it from there.
- *   approved  — both humans, on their own approval pages, with their own PINs.
+ *   approved  — both humans, on their own main pages, with their own PINs.
  *   funded    — the buyer's human pays the real hosted Checkout Session the
  *               server created, in a browser, with a Stripe test card. The
  *               state lands from the signature-verified webhook.
@@ -292,7 +292,7 @@ export async function runFinale(opts: {
     fin.timeline.push({
       at: nowIso(),
       state: row?.state ?? 'unknown',
-      by: `${side.human} approved on their own approval page`,
+      by: `${side.human} approved on their own main page`,
       detail: `HTTP ${res.status}${body ? ` — ${body}` : ''}`,
     });
     log(`  [settlement] ${side.human} approved: HTTP ${res.status}, state now ${row?.state}`);

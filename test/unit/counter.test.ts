@@ -292,7 +292,7 @@ describe('Patch, served from the pages that show him', () => {
 describe('consent statement', () => {
   it('is the exact agreed text', () => {
     expect(CONSENT_STATEMENT).toBe(
-      'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my approval page.',
+      'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my main page.',
     );
   });
 });
@@ -489,7 +489,7 @@ describe('counter pages: copy-cull render suite', () => {
     { name: 'link-dead-invalid', html: cpages.linkDeadPage('invalid') },
     {
       name: 'approval-offer',
-      html: cpages.approvalPage({
+      html: cpages.mainPage({
         action: 'offer-accept',
         refId: 'ref-1',
         facts: [
@@ -539,7 +539,7 @@ describe('counter pages: copy-cull render suite', () => {
     },
     {
       name: 'approval-stage3-collect',
-      html: cpages.approvalPage({
+      html: cpages.mainPage({
         action: 'stage3-disclosure',
         refId: 'm-1',
         facts: [
@@ -557,7 +557,7 @@ describe('counter pages: copy-cull render suite', () => {
     },
     {
       name: 'approval-settlement',
-      html: cpages.approvalPage({
+      html: cpages.mainPage({
         action: 'settlement-approve',
         refId: 's-1',
         facts: [

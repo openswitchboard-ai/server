@@ -166,7 +166,7 @@ export async function sendScreeningRejectedEmail(
 }
 
 /**
- * A figure landed on this person's approval page and their assistant is not
+ * A figure landed on this person's main page and their assistant is not
  * the sort that will bring it to them (hears_via = 'email'). The caller checks
  * that; this only renders and sends.
  *

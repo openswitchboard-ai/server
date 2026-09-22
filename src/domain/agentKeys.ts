@@ -1,6 +1,6 @@
 /**
  * Agent keys (1.C) — static bearer tokens a human issues by hand on their
- * approval page, for MCP clients that cannot run the OAuth flow.
+ * main page, for MCP clients that cannot run the OAuth flow.
  *
  * The key is `osb_ak_` + 32 random bytes, base64url. Only its sha256 hash is
  * stored, in oauth_tokens with kind 'api-key', so the plaintext exists once:
@@ -58,7 +58,7 @@ export class AgentKeyLimitError extends Error {
 
 /**
  * Mint one key. Returns the plaintext token — the ONLY time it exists — plus
- * the row the approval page lists it by. Callers must have elevated the
+ * the row the main page lists it by. Callers must have elevated the
  * human's session first; this function does not check that.
  */
 export async function createAgentKey(

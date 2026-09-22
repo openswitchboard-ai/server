@@ -411,7 +411,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
   it('G2: proposed -> approved -> funded -> evidence-locked -> confirmed -> released', async () => {
     const sid = await proposeSettlement();
 
-    // Both humans approve on their approval pages (PIN ceremony).
+    // Both humans approve on their main pages (PIN ceremony).
     await approveOnCounter(buyer, sid);
     expect(await settleState(buyer.accessToken, sid)).toBe('approved-by-buyer');
     await approveOnCounter(seller, sid);
@@ -553,7 +553,7 @@ d('phase 1.A settlements against live dev + Stripe sandbox', () => {
     expect(read.deadlock_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(read.note.provenance).toBe('switchboard-system');
     expect(read.note.text).toContain('frozen');
-    expect(read.note.text).toContain('approval page');
+    expect(read.note.text).toContain('main page');
     // Pressing it again changes nothing.
     const again = await counterFetch(
       buyer.jar,

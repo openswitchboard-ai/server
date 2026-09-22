@@ -1,5 +1,5 @@
 /**
- * The approval pages — server-rendered HTML, no framework, no build step.
+ * The main pages — server-rendered HTML, no framework, no build step.
  *
  * PHONE FIRST. Almost everyone who lands here has tapped a link in an email on
  * a phone, and they are here to make one decision. So every page in this file
@@ -23,7 +23,7 @@
  *
  * Those three faces used to be pulled from Google Fonts. They are not any
  * more, and nothing on these pages reaches any origin but our own. The URL of
- * an approval page carries a one-use token in its path, and a stylesheet link
+ * a main page carries a one-use token in its path, and a stylesheet link
  * hands that URL to a third party in the Referer of every page load. The type
  * stacks below fall back to the reader's own system faces, which cost a
  * round trip to nobody.
@@ -38,7 +38,7 @@ export function esc(s: string): string {
 }
 
 export const CONSENT_STATEMENT =
-  'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my approval page.';
+  'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my main page.';
 
 /** Where the two Patch images are served from. Long-cached and immutable. */
 export const PATCH_HEADER_URL = '/assets/patch.png';
@@ -349,7 +349,7 @@ export function layout(title: string, body: string, opts: { head?: string } = {}
 <div class="wrap">
 <header class="site">
   <img class="patch" src="${PATCH_HEADER_URL}" width="63" height="48" alt="" aria-hidden="true">
-  <a href="/"><span class="brand">OpenSwitchboard</span><span class="sub">your approval page</span></a>
+  <a href="/"><span class="brand">OpenSwitchboard</span><span class="sub">your main page</span></a>
 </header>
 <main id="page">
 ${body}
@@ -372,8 +372,8 @@ export function foldedDetail(summary: string, inner: string, open = false): stri
 // ---------------------------------------------------------------------------
 
 export function landingPage(): string {
-  return layout('Your approval page', `
-<h1>Your approval page.</h1>
+  return layout('Your main page', `
+<h1>Your main page.</h1>
 <p class="lead">Your agent works the switchboard. This page is where you do
 everything it never can.</p>
 <div class="actions">
@@ -1401,7 +1401,7 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
   <p class="field-help">${AREA_HELP}</p>${AREA_SUGGEST_SCRIPT}`;
 }
 
-export function approvalPage(v: ApprovalView, error?: string): string {
+export function mainPage(v: ApprovalView, error?: string): string {
   const title = {
     'offer-accept': 'Accept this number?',
     'stage3-disclosure': 'Share your first name and area?',
@@ -1515,9 +1515,9 @@ ${ceremonyAlt(c, 'authorize-form', { name: 'decision', value: 'approve', formTar
 ${ceremonyNote(c)}
 <p class="small muted">It can post wants &amp; haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
-waits for you, here on your approval page.</p>
+waits for you, here on your main page.</p>
 <p class="small muted">Authorising hands the agent its key in a new tab, which you can close;
-this tab comes back to your approval page.</p>
+this tab comes back to your main page.</p>
 <script>
 // The agent's callback (often a localhost page the agent is listening on)
 // lands in the new tab the Authorize button opens; this tab has nothing left

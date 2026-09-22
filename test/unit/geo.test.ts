@@ -512,7 +512,7 @@ describe('card location normalisation', () => {
     expect(normaliseGeo({ bucket: 'qd66' }).resolved).toBeUndefined();
   });
 
-  it('reads a stored card location back for the approval page', () => {
+  it('reads a stored card location back for the main page', () => {
     expect(describeStoredGeo({ place: 'Canberra', bucket: 'r3dp', radius_km: 25 })).toBe(
       'Canberra, Australian Capital Territory, Australia',
     );

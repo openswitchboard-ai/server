@@ -253,12 +253,12 @@ async function s5_explainOptIn(ctx: Ctx): Promise<ScenarioResult> {
   const s = newScenario('S5', 'autonomous', 'Explain the opt-in / approval step', 'Grade how she EXPLAINS sharing details to proceed (opt-in soft-flagged).');
   const reply = await graded(s, ctx.autoSession, `Ok, I'm happy to take this further with the bike person. What happens now — do they get my details?`);
   // Attempt the real agent-side opt-in so channel scenarios can be real:
-  // counterpart opts in (approval page, controlled), then we nudge Nagatha to
+  // counterpart opts in (main page, controlled), then we nudge Nagatha to
   // proceed, then test whether the channel can open.
   if (ctx.state.bikeMatchId) {
     try {
       await ctx.cp.optIn(ctx.state.bikeMatchId);
-      s.notes.push('Counterpart opted in via its approval page.');
+      s.notes.push('Counterpart opted in via its main page.');
       await graded(s, ctx.autoSession, `Yes, I'm happy to share my first name and rough area with them. Go ahead.`);
       // Poll for the channel becoming openable (Nagatha's agent-side opt-in).
       let reachable = false;
@@ -274,7 +274,7 @@ async function s5_explainOptIn(ctx: Ctx): Promise<ScenarioResult> {
       s.notes.push(
         reachable
           ? 'Nagatha opted in agent-side; the channel opened — S6/S7/S8 run for real.'
-          : 'Nagatha did NOT complete an agent-side opt-in (her account likely needs a first-time approval-page visit, which the harness cannot click on her box). S6/S7 fall back to a labelled relay-language test; S8 (offer) is skipped as unreachable.',
+          : 'Nagatha did NOT complete an agent-side opt-in (her account likely needs a first-time main-page visit, which the harness cannot click on her box). S6/S7 fall back to a labelled relay-language test; S8 (offer) is skipped as unreachable.',
       );
     } catch (e) {
       s.notes.push(`opt-in orchestration error: ${(e as Error).message}`);
@@ -491,7 +491,7 @@ const METHODOLOGY = [
   'The two tracks test two real behaviours: AUTONOMOUS (the AI surfaces what is waiting when asked "anything new?") and EMAIL-PROMPTED (the human is pulled in by a nudge email and cold-opens from a standing start — the majority real-world case).',
   'A genuinely dead conversation — the nudge email is sent and the human never asks the AI — is a VALID outcome, not a failure. The grader only ever flags jargon/metrics in replies the agent actually gave; it never scores "the human did not follow up" as a fail. In this eval the human persona always plays along so the full path is exercised; in the wild some humans will not, and that is fine.',
   'S12 (how does my info stay private) is graded for CLARITY and NON-REFUSAL, not the jargon bar: mechanics are allowed when the human explicitly asks how it works. Its leak words are listed for the record but do not fail it.',
-  'Where a scenario needs the match at the talking stage, that needs Nagatha\'s stage-3 opt-in, which requires a first-time approval-page visit on her own box that this harness cannot click. When her agent-side opt-in is not reachable, S6/S7/EM3 fall back to a labelled relay-language test (her phrasing is still graded; the encrypted transport is simply not exercised) and S8 (offer) is skipped.',
+  'Where a scenario needs the match at the talking stage, that needs Nagatha\'s stage-3 opt-in, which requires a first-time main-page visit on her own box that this harness cannot click. When her agent-side opt-in is not reachable, S6/S7/EM3 fall back to a labelled relay-language test (her phrasing is still graded; the encrypted transport is simply not exercised) and S8 (offer) is skipped.',
 ];
 
 async function main(): Promise<number> {

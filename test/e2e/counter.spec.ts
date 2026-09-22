@@ -117,7 +117,7 @@ async function shot(page: Page, name: string): Promise<void> {
 
 test('register: email -> code -> PIN -> consent -> account live', async () => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Your approval page.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your main page.' })).toBeVisible();
   await shot(page, '01-landing');
 
   await page.getByRole('link', { name: 'Open an account' }).click();
@@ -151,7 +151,7 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   ).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
   await page
-    .getByLabel('My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my approval page.')
+    .getByLabel('My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my main page.')
     .check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
@@ -295,7 +295,7 @@ test('offer arrives: approval link is single-use', async () => {
   expect(sent.result.state).toBe('awaiting-human');
 
   const { token } = await latestLinkToken(aliceAccountId);
-  // First authenticated GET renders the approval page and burns the link.
+  // First authenticated GET renders the main page and burns the link.
   await page.goto(`/a/${token}`);
   await expect(page.getByRole('heading', { name: 'Approve this settlement?' })).toBeVisible();
   await expect(page.getByText('100 AUD')).toBeVisible();

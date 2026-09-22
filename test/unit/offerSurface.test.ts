@@ -8,7 +8,7 @@
  *     { text, provenance } and the sweep was dropping the whole object into a
  *     sentence written for a human.
  *  2. An agent could see only the OTHER side's figures. Its human had typed
- *     $420 on their own approval page, which no agent ever saw happen, so the
+ *     $420 on their own main page, which no agent ever saw happen, so the
  *     agent told them their number "never went out" and described the other
  *     side's $415 as unprompted. Both sides of the table cross now.
  *  3. When the other side accepted, nothing said so. check_in now carries the
@@ -250,7 +250,7 @@ describe('both sides of the table', () => {
     expect(entry.offers.map((o: any) => o.side)).toEqual(['theirs', 'yours']);
     expect(entry.offers[1]).toMatchObject({ side: 'yours', authored_by: 'human', ccy: 'AUD' });
     expect(entry.offer_note.text).toBe(
-      'Your human offered 420 AUD on their approval page; the other side has answered with 415 AUD. Nothing is agreed until one of the two humans says yes on their own page.',
+      'Your human offered 420 AUD on their main page; the other side has answered with 415 AUD. Nothing is agreed until one of the two humans says yes on their own page.',
     );
   });
 
@@ -258,7 +258,7 @@ describe('both sides of the table', () => {
     world.offers = [offer({ at: 1, proposer_account: ANA, amount: '420', authored_by: 'human' })];
     const entry = await sweep();
     expect(entry.offer_note.text).toContain("Your human's 420 AUD");
-    expect(entry.offer_note.text).toContain('typed on their approval page');
+    expect(entry.offer_note.text).toContain('typed on their main page');
     // Never described as something that never went out.
     expect(entry.offer_note.text).toContain('is on the table');
   });

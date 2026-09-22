@@ -584,7 +584,7 @@ describe('saveSharedProfile', () => {
 
 // ---------------------------------------------------------------------------
 describe('the pages that collect it', () => {
-  const approvalWithCollection = cpages.approvalPage({
+  const approvalWithCollection = cpages.mainPage({
     action: 'stage3-disclosure',
     refId: MATCH,
     facts: [
@@ -600,7 +600,7 @@ describe('the pages that collect it', () => {
     postPath: '/approve',
   });
 
-  it('asks for both fields on the approval page, in the same form as the decision', () => {
+  it('asks for both fields on the main page, in the same form as the decision', () => {
     expect(approvalWithCollection).toContain('What should we share?');
     expect(approvalWithCollection).toContain('name="first_name"');
     expect(approvalWithCollection).toContain('name="locality"');
@@ -620,7 +620,7 @@ describe('the pages that collect it', () => {
   });
 
   it('asks for nothing extra once the profile is on file', () => {
-    const plain = cpages.approvalPage({
+    const plain = cpages.mainPage({
       action: 'stage3-disclosure',
       refId: MATCH,
       facts: [{ k: 'What gets shared', v: 'first name + locality' }],
@@ -707,7 +707,7 @@ describe('the area box asks for a suburb without insisting on one', () => {
     ],
     [
       'approval',
-      cpages.approvalPage({
+      cpages.mainPage({
         action: 'stage3-disclosure',
         refId: MATCH,
         facts: [{ k: 'What gets shared', v: 'first name + locality' }],

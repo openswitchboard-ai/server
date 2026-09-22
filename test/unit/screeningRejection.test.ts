@@ -1,7 +1,7 @@
 /**
  * A card that fails screening now says so out loud, in three places:
  *
- *  - the approval-page dashboard carries an attention item for it;
+ *  - the main-page dashboard carries an attention item for it;
  *  - the ledger edit page shows the reason in plain words (raw code small);
  *  - the screening worker mails the human, best-effort and de-duped, and the
  *    verdict stands whatever the send does.
@@ -177,7 +177,7 @@ const get = (url: string) =>
 // ---------------------------------------------------------------------------
 // (1) The dashboard says something is waiting.
 // ---------------------------------------------------------------------------
-describe('approval-page dashboard: something that failed screening', () => {
+describe('main-page dashboard: something that failed screening', () => {
   it('shows an attention item linking to its edit page', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(
       fakePool({
@@ -396,3 +396,25 @@ describe('who may see a rejection reason', () => {
     ).toThrow(/validation/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A save on settings, the arrangement or the shared profile comes back here
+// with one line saying so. The line is picked from a fixed list by a code in
+// the address, so a made-up code shows nothing and nothing typed there renders.
+describe('main page: the line after a save', () => {
+  it('says what was saved', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue(fakePool({}));
+    const res = await get('/?saved=hears-email');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Saved. Matches and replies reach you by email.');
+  });
+
+  it('shows nothing for a code nobody minted', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue(fakePool({}));
+    const res = await get('/?saved=%3Cscript%3Ealert(1)%3C/script%3E');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('<div class="note">');
+    expect(res.body).not.toContain('alert(1)');
+  });
+});
+

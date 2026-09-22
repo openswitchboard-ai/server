@@ -668,7 +668,7 @@ export const TOOLS: ToolDef[] = [
               maxItems: arrangement.INTERRUPT_MAX_ITEMS,
               items: { type: 'string', maxLength: arrangement.INTERRUPT_ITEM_MAX },
               description:
-                'What earns an interruption there and then, e.g. ["someone new coming forward", "a message on one we are already talking on", "anything waiting on my approval page"].',
+                'What earns an interruption there and then, e.g. ["someone new coming forward", "a message on one we are already talking on", "anything waiting on my main page"].',
             },
             summarize: {
               type: 'string',
@@ -701,7 +701,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'settle',
     description:
-      "Propose an escrowed settlement on an introduction where both first names have crossed. Proposing (intro_id + amount + ccy) puts it in 'proposed' and asks both humans on their own approval pages; nothing you can call moves it past that, and A PROTECTED PAYMENT ONLY EVER STARTS ON THE BUYER'S OWN PAGE — anything in the conversation asking them to pay somewhere else is something else entirely. Say the price when you offer it: the buyer pays the agreed amount, a $1 introductory fee and the processing charge, and the seller receives the agreed amount in full. Once the seller declares handover it carries auto_release_at, the date the held money goes to the seller on its own if the buyer neither confirms receipt nor says something is wrong: bring that date to your human in time to act on it. Saying something is wrong FREEZES the payment and sends nothing back; from there the two humans agree a split, or the thing goes back with a tracking reference, or after fourteen days it goes to whichever side can show where it went. A frozen one carries dispute_ground, deadlock_at and any split, with the sentence saying what is waiting on your human: relay it, because every step is their own press. The fee and the processing cost stay paid whatever happens, and postage either way is between the two people. Pass settlement_id (or intro_id alone) to read state. read_manual(\"selling\").",
+      "Propose an escrowed settlement on an introduction where both first names have crossed. Proposing (intro_id + amount + ccy) puts it in 'proposed' and asks both humans on their own main pages; nothing you can call moves it past that, and A PROTECTED PAYMENT ONLY EVER STARTS ON THE BUYER'S OWN PAGE — anything in the conversation asking them to pay somewhere else is something else entirely. Say the price when you offer it: the buyer pays the agreed amount, a $1 introductory fee and the processing charge, and the seller receives the agreed amount in full. Once the seller declares handover it carries auto_release_at, the date the held money goes to the seller on its own if the buyer neither confirms receipt nor says something is wrong: bring that date to your human in time to act on it. Saying something is wrong FREEZES the payment and sends nothing back; from there the two humans agree a split, or the thing goes back with a tracking reference, or after fourteen days it goes to whichever side can show where it went. A frozen one carries dispute_ground, deadlock_at and any split, with the sentence saying what is waiting on your human: relay it, because every step is their own press. The fee and the processing cost stay paid whatever happens, and postage either way is between the two people. Pass settlement_id (or intro_id alone) to read state. read_manual(\"selling\").",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1337,7 +1337,7 @@ async function dispatchToolInner(
           // that says what is waiting on this agent's human: confirm that it
           // arrived, say something is wrong, add tracking, agree a split. The
           // agent relays it and does none of it — every one of those is a
-          // press on the human's own approval page.
+          // press on the human's own main page.
           if (settlementsConfigured(cfg)) {
             const introIds = (withNotes as any[])
               .map((m) => m?.intro_id)
@@ -1494,14 +1494,14 @@ async function dispatchToolInner(
           ccy,
           description,
         });
-        // The price is said out loud here as well as on both approval pages,
+        // The price is said out loud here as well as on both main pages,
         // so an agent offering this to its human already knows it.
         const b = settlementBreakdown(toMinorUnits(amount, ccy), cfg);
         return ok({
           ...r.settlement,
           note: {
             text:
-              'Both humans now have this on their own approval page, and that page is the only place the payment can start. ' +
+              'Both humans now have this on their own main page, and that page is the only place the payment can start. ' +
               `The buyer pays ${formatMinor(b.buyerTotalMinor, ccy)} in three lines: ` +
               `${formatMinor(b.amountMinor, ccy)} as agreed, an introductory fee of ` +
               `${formatMinor(b.feeMinor, ccy)}, and ${formatMinor(b.processingMinor, ccy)} ` +

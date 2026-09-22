@@ -28,7 +28,7 @@
  *
  * NOTE these functions move money but never settlement STATE: state changes
  * live exclusively in settlements.ts behind human/webhook contexts. Transfer
- * and refund are called only from the approval page's session-authenticated
+ * and refund are called only from the main page's session-authenticated
  * routes, right after the human transition that authorises them, and the
  * funded/released/refunded states land from verified webhooks.
  */

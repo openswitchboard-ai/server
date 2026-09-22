@@ -446,7 +446,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // Sent here by the Authorize page after the agent's callback opened in
       // its own tab. The agent proves it finished by exchanging its code for a
       // token, so a fresh token for this client is the "connected" signal.
-      let notice: string | undefined;
+      // A save on settings, the arrangement or the shared profile lands back
+      // here with one line saying so. The line is chosen from a fixed list by
+      // a short code, so nothing typed into the address bar reaches the page.
+      let notice: string | undefined = SAVED_NOTICES[String((req.query as any)?.saved ?? '')];
       let awaitingConnect = false;
       const authorized = String((req.query as any)?.authorized ?? '');
       if (/^[0-9a-f-]{36}$/i.test(authorized)) {
@@ -1736,7 +1739,7 @@ in on this device and lets you approve what is waiting.</p>
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
       if (burnsOnPress) v.linkToken = token;
-      return html(reply, pages.approvalPage(v));
+      return html(reply, pages.mainPage(v));
     });
 
     /** The press. Verify, check the PIN, burn the link, then act. */
@@ -2103,7 +2106,7 @@ in on this device and lets you approve what is waiting.</p>
       const v = await approvalView(s.accountId!, 'offer-accept', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
-      return html(reply, pages.approvalPage(v));
+      return html(reply, pages.mainPage(v));
     });
 
     counter.get('/approvals/match/:id', async (req, reply) => {
@@ -2112,7 +2115,7 @@ in on this device and lets you approve what is waiting.</p>
       const v = await approvalView(s.accountId!, 'stage3-disclosure', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
-      return html(reply, pages.approvalPage(v));
+      return html(reply, pages.mainPage(v));
     });
 
     counter.get('/approvals/settlement/:id', async (req, reply) => {
@@ -2121,7 +2124,7 @@ in on this device and lets you approve what is waiting.</p>
       const v = await approvalView(s.accountId!, 'settlement-approve', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
       v.elevated = sess.isElevated(s);
-      return html(reply, pages.approvalPage(v));
+      return html(reply, pages.mainPage(v));
     });
 
     counter.post('/approve', async (req, reply) => {
@@ -2176,7 +2179,7 @@ in on this device and lets you approve what is waiting.</p>
               firstName: String(b.first_name ?? ''),
               locality: String(b.locality ?? ''),
             };
-            return html(reply, pages.approvalPage(view, checked.error), 400);
+            return html(reply, pages.mainPage(view, checked.error), 400);
           }
           profileToSave = checked.value;
         }
@@ -2186,7 +2189,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!okNow) return;
       // The link this page came from, spent here rather than when the page was
       // opened. After the ceremony, so a mistyped PIN costs a retype and not
-      // the link. Absent when the person came from their own approval page,
+      // the link. Absent when the person came from their own main page,
       // which is not a one-use road.
       const linkToken = String(b.link_token ?? '');
       if (linkToken) {
@@ -3526,6 +3529,24 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         .send({ places: suggestAreas(q, undefined, hint) });
     });
 
+    // Saving a preference goes back to the main page rather than staying
+    // on the form: the person came from the menu, and a save is the end of
+    // the errand. Errors stay on the form, where the fix is.
+    const SAVED_NOTICES: Record<string, string> = {
+      profile: 'Saved. This is what a match sees once you both say yes.',
+      arrangement: 'Saved. Every agent you have connected picks this up on its next check.',
+      'arrangement-cleared': 'Cleared. Your agents will ask you afresh how you want this to go.',
+      'hears-assistant': 'Saved. Match and reply emails are off.',
+      'hears-email': 'Saved. Matches and replies reach you by email.',
+      timezone: 'Saved your time zone.',
+      'blind-on': 'Blind mode is on.',
+      'blind-off': 'Blind mode is off.',
+      frequency: 'Saved. Effective immediately.',
+      'email-resumed': 'Email is back on.',
+    };
+    const savedTo = (reply: any, code: keyof typeof SAVED_NOTICES) =>
+      reply.redirect(`/?saved=${code}`, 303);
+
     counter.post('/profile', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
@@ -3542,12 +3563,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       await saveSharedProfile(s.accountId!, checked.value, 'counter', cfg);
-      return html(
-        reply,
-        home.sharedProfilePage(checked.value, {
-          notice: 'Saved. This is what a match sees once you both say yes.',
-        }),
-      );
+      return savedTo(reply, 'profile');
     });
 
     // ------------------------------------------------------------------
@@ -3599,25 +3615,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       await saveArrangement(s.accountId!, checked.value, 'counter');
-      return html(
-        reply,
-        home.arrangementPage(checked.value, {
-          notice: 'Saved. Every agent you have connected picks this up on its next check.',
-        }),
-      );
+      return savedTo(reply, 'arrangement');
     });
 
     counter.post('/arrangement/clear', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
       await saveArrangement(s.accountId!, {}, 'counter');
-      return html(
-        reply,
-        home.arrangementPage(
-          {},
-          { notice: 'Cleared. Your agents will ask you afresh how you want this to go.' },
-        ),
-      );
+      return savedTo(reply, 'arrangement-cleared');
     });
 
     // ------------------------------------------------------------------
@@ -3665,15 +3670,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       await setHearsVia(s.accountId!, want, 'counter');
-      return html(
-        reply,
-        home.settingsPage(
-          await settingsView(s.accountId!),
-          want === 'assistant'
-            ? 'Saved. Match and reply emails are off.'
-            : 'Saved. Matches and replies reach you by email.',
-        ),
-      );
+      return savedTo(reply, want === 'assistant' ? 'hears-assistant' : 'hears-email');
     });
 
     counter.post('/settings/timezone', async (req, reply) => {
@@ -3688,13 +3685,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       await setTimezone(s.accountId!, tz);
-      return html(
-        reply,
-        home.settingsPage(
-          await settingsView(s.accountId!),
-          `Saved. Your assistant says times in ${tz.replace(/_/g, ' ')}.`,
-        ),
-      );
+      return savedTo(reply, 'timezone');
     });
 
     counter.post('/settings/blind-mode', async (req, reply) => {
@@ -3702,13 +3693,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const on = String((req.body as any)?.blind_mode ?? '') === 'on';
       await ops.setBlindMode(s.accountId!, on);
-      return html(
-        reply,
-        home.settingsPage(
-          await settingsView(s.accountId!),
-          on ? 'Blind mode is on: emails become content-free pointers.' : 'Blind mode is off.',
-        ),
-      );
+      return savedTo(reply, on ? 'blind-on' : 'blind-off');
     });
 
     counter.post('/settings/frequency', async (req, reply) => {
@@ -3725,20 +3710,14 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         );
       }
       await ops.setEmailFrequency(s.accountId!, fm as any, fd as any, 'counter');
-      return html(
-        reply,
-        home.settingsPage(await settingsView(s.accountId!), 'Saved. Effective immediately.'),
-      );
+      return savedTo(reply, 'frequency');
     });
 
     counter.post('/settings/email-resume', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
       await ops.resumeNonTransactionalEmail(s.accountId!);
-      return html(
-        reply,
-        home.settingsPage(await settingsView(s.accountId!), 'Email is back on.'),
-      );
+      return savedTo(reply, 'email-resumed');
     });
 
     // ------------------------------------------------------------------

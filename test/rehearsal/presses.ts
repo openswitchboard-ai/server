@@ -87,7 +87,7 @@ export async function typeFigure(
   return { status: res.status, body: strip(await res.text()).slice(0, 300) };
 }
 
-/** Accept a figure that is on the table, on the human's own approval page. */
+/** Accept a figure that is on the table, on the human's own main page. */
 export async function acceptOffer(actor: TestActor, offerId: string): Promise<PressOutcome> {
   const res = await counterFetch(
     actor.jar,

@@ -43,7 +43,7 @@ export const LOCALITY_MAX = 60;
 
 /** The one sentence every blocked path says to the human. */
 export const SHARED_PROFILE_ACTION =
-  "Add the first name and area you'd share, on your approval page";
+  "Add the first name and area you'd share, on your main page";
 
 /**
  * The names step is the human's to press, every time (Lachlan, 2026-09-12).

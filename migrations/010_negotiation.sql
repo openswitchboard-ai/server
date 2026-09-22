@@ -8,7 +8,7 @@
 --                                 card that already exists)
 --     The agent may not propose an amount at all. respond(propose_offer) is
 --     refused with CONSENT_REQUIRED and the human's own approval link; the
---     human types the figure on their approval page and the switchboard sends
+--     human types the figure on their main page and the switchboard sends
 --     it as their side's offer through the ordinary offer machinery.
 --
 --   negotiation_mode = 'mandate' ("Auto-negotiate", opt-in, per card)

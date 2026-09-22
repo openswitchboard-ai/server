@@ -1155,7 +1155,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
   // in plaintext and is not echoed back; agents keep their own record of it.
   //
   // A SCREENING_REJECTED card carries WHY, in the same plain words the
-  // approval page shows, so the agent can tell its human without a second
+  // main page shows, so the agent can tell its human without a second
   // call. This is an own-card field ONLY: it is read here from the caller's
   // own rows, and no counterparty path ever reads cards.screening (the
   // disclosure payloads are schema-closed — see domain/matches.ts).

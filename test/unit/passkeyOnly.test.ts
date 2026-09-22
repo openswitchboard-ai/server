@@ -114,7 +114,7 @@ describe('the choice screen', () => {
 // Every surface that used to print a PIN box, in all three states.
 // ---------------------------------------------------------------------------
 const approval = (c: cpages.CeremonyView) =>
-  cpages.approvalPage({
+  cpages.mainPage({
     action: 'offer-accept',
     refId: 'ref-1',
     facts: [{ k: 'You are agreeing to', v: '620 AUD' }],
@@ -174,7 +174,7 @@ const killSwitch = (c: cpages.CeremonyView) =>
   });
 
 const SURFACES: [string, (c: cpages.CeremonyView) => string][] = [
-  ['the approval page', approval],
+  ['the main page', approval],
   ['the one-question page', oneQuestion],
   ['a settlement release', settlement],
   ['making an agent key', agentKeys],

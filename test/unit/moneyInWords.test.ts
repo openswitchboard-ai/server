@@ -359,7 +359,7 @@ describe('send_message with a figure in it', () => {
 // offer's own amount has been read against the human's own limits; a second
 // figure in the note beside it has been read by nothing and lands in front of
 // the other human word for word, which is the very leak the relay rule closes.
-// A note typed by the human on their own approval page is left alone: that
+// A note typed by the human on their own main page is left alone: that
 // page is their own words about their own money, and the rule here is about
 // what an agent may author.
 // ---------------------------------------------------------------------------

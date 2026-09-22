@@ -4,7 +4,7 @@
  *
  * The defect this suite exists to hold shut, from the 2026-09-09 rehearsal:
  * two humans got as far as a price and neither of them was told anything. The
- * buyer typed $415 on their approval page and the seller heard nothing. The
+ * buyer typed $415 on their main page and the seller heard nothing. The
  * seller accepted it and the buyer heard nothing. Both sides had an assistant
  * that only wakes when it is spoken to, which is the ordinary case and the one
  * the switchboard was quietest for.
