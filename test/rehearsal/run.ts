@@ -1151,6 +1151,25 @@ async function main(): Promise<number> {
   const summaries: RunSummary[] = [];
   let cutShort = false;
 
+  /**
+   * A VOID IS NOT AN ATTEMPT, AND A BROKEN NETWORK IS NOT SIX FINDINGS.
+   *
+   * On 22 September 2026 one ssh call died mid-turn and the five runs after it
+   * failed instantly on "fetch failed" — the whole series budget spent in
+   * twenty-three seconds, six runs recorded, nothing learned, and by the time
+   * anybody looked the network was fine again. So a void does not consume a
+   * run, and the suite waits before trying again rather than hammering a rig
+   * that is plainly not answering.
+   *
+   * The cap is what stops that becoming a loop with no end: after this many
+   * voids in a row the series gives up and says the rig is down, which is a
+   * different sentence from "the assistants failed" and belongs in the report
+   * as its own thing.
+   */
+  const VOID_BACKOFF_MS = 60_000;
+  const MAX_VOIDS_IN_A_ROW = 3;
+  let voidsInARow = 0;
+
   for (let i = 1; i <= MAX_RUNS; i++) {
     const cast = castForRun(CASTS, i);
     log(`=== run ${i} of at most ${MAX_RUNS}: seller ${cast.seller}, buyer ${cast.buyer} ===`);
@@ -1254,9 +1273,22 @@ async function main(): Promise<number> {
 
     const judged = judgeRun(summaries[summaries.length - 1]);
     if (summaries[summaries.length - 1].voided) {
+      voidsInARow += 1;
       log(`run ${i} is VOID (the harness broke, the assistants did not): ${result.error}. Not counted either way.`);
+      if (voidsInARow >= MAX_VOIDS_IN_A_ROW) {
+        log(`series stopped: ${voidsInARow} voids in a row. The rig is not answering; this says nothing about the assistants.`);
+        cutShort = true;
+        break;
+      }
+      // The run budget is for attempts the assistants actually got to make.
+      i -= 1;
+      if (!DRY) {
+        log(`waiting ${Math.round(VOID_BACKOFF_MS / 1000)}s before trying again`);
+        await sleep(VOID_BACKOFF_MS);
+      }
       continue;
     }
+    voidsInARow = 0;
     if (!judged.clean && !KEEP_GOING) {
       log(`series stopped after run ${i}: ${judged.why.join('; ')}`);
       cutShort = true;
