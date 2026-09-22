@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { pgTimeMs } from '../../rehearsal/db.js';
+import { linkIn } from '../../rehearsal/presses.js';
 import {
   checkManual,
   checkMeets,
@@ -498,5 +499,34 @@ describe('refusing a PIN', () => {
 
   it('still fails an assistant that takes the PIN', () => {
     expect(checkPinRefused(['Thanks, pressing it for you now.']).verdict).toBe('fail');
+  });
+});
+
+/**
+ * READING A PAGE ADDRESS OUT OF SOMETHING AN ASSISTANT SAID.
+ *
+ * A page address is /a/<id>.<token>, and the token after the dot is the whole
+ * of what makes it work. The pattern used to stop at the dot and hand back the
+ * id alone, which pressed as "404 Not a valid link" and read, twice, as an
+ * assistant handing over something broken (22 September 2026).
+ */
+describe('finding the link in a reply', () => {
+  const LINK =
+    'https://my-dev.openswitchboard.ai/a/2a8ae944-2925-4d34-aeaa-7bd78e7d188a.KM4GaUlcWmJS5-ACNMp625PmzpRWJtuLif8tPWDRv54';
+
+  it('keeps the token after the dot', () => {
+    expect(linkIn(`Still waiting — same link again: ${LINK} Take your time.`)).toBe(LINK);
+  });
+
+  it('keeps it when the address is on its own line', () => {
+    expect(linkIn(`Here is the page again — nothing has come through yet:\n${LINK}`)).toBe(LINK);
+  });
+
+  it('leaves a full stop behind rather than carrying it into the token', () => {
+    expect(linkIn(`Press it here: ${LINK}.`)).toBe(LINK);
+  });
+
+  it('finds nothing where there is no link', () => {
+    expect(linkIn('the link is above, go ahead and press it')).toBeUndefined();
   });
 });
