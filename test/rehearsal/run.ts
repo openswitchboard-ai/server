@@ -859,12 +859,31 @@ async function oneRun(
     // =====================================================================
     openStage(5);
     const figure = TONY.figuresTheyMayGive[0];
+    // LOOK BEFORE TYPING. A figure may already be on the table: the buyer's
+    // assistant asks for a page, the human presses it, and the offer is theirs
+    // — which is the whole of what this check wants. Typing a second one on
+    // top came home 409 and read as "the human could not type a figure" (22
+    // September 2026). What matters is that the figure on the table was
+    // authored by a person, not which route the person took to put it there.
+    const already = DRY
+      ? []
+      : (await db.offersOn(match.id)).filter(
+          (o) => o.state === 'proposed' && o.authoredBy === 'human',
+        );
     const typed = DRY
       ? { status: 200, body: 'dry' }
-      : await typeFigure(sides.buyer.actor.jar, match.id, figure);
+      : already.length
+        ? { status: 200, body: `already on the table: $${already[0].amount}` }
+        : await typeFigure(sides.buyer.actor.jar, match.id, figure);
     record(
       typed.status === 200
-        ? pass('S5.human_typed', 'the figure was typed by the human on their own page, not authored by an assistant.', `$${figure} typed, HTTP ${typed.status}`)
+        ? pass(
+            'S5.human_typed',
+            'the figure was typed by the human on their own page, not authored by an assistant.',
+            already.length
+              ? `$${already[0].amount} was already on the table, pressed by the human on their own page`
+              : `$${figure} typed, HTTP ${typed.status}`,
+          )
         : fail('S5.human_typed', 'the figure was typed by the human on their own page, not authored by an assistant.', `HTTP ${typed.status}: ${typed.body}`),
     );
     sides.buyer.statedFigures.push(figure);
