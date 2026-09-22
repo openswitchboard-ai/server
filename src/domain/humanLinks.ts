@@ -578,6 +578,34 @@ export interface PressAnswer {
 }
 
 /** The sentences, in the register every other answer is written in. */
+/**
+ * WHAT EACH PAGE ASKS, IN ONE CLAUSE, FOR THE TIMES THE AGENT IS NOT LOOKING
+ * AT THE SENTENCE THAT CARRIED IT.
+ *
+ * The `say` that comes back with a fresh link states what the page asks — "your
+ * first name and your suburb", in those words, because the other person needs
+ * to know whether this is ten minutes away or two hours. But an agent that
+ * fetches the link and waits in one breath often relays the WAIT's answer
+ * instead, and that answer used to say only "here is the page again". On 22
+ * September 2026 an assistant offered to "unlock names", never said the word
+ * suburb, and its human pressed a page it had described vaguer than the page
+ * describes itself.
+ *
+ * So the waiting note carries the question too. The words match the `say`
+ * sentences above deliberately: an agent should be able to relay either one
+ * and have said the same thing.
+ */
+const PAGE_ASKS: Record<string, string> = {
+  'stage3-disclosure': 'whether to share their first name and their suburb with the other side',
+  'offer-send': 'whether to send their figure to the other side',
+  'offer-accept': 'whether to take the figure that is on the table',
+  'conversation-photo': 'them to pick a photo from their own device and send it',
+  'conversation-renew': 'whether to keep the conversation going',
+  'negotiation-auto': 'whether to hand you the wheel on this one',
+  report: 'them to report this to the switchboard',
+  'shelf-pick': 'them to pick which shelf this belongs on',
+};
+
 export const PRESS_SENTENCES = {
   /**
    * THE PROMPTED WORDING, and the one the account-less callers get. The live
@@ -754,11 +782,14 @@ export async function waitForPress(
     }
     if (Date.now() + pollMs > deadline) {
       const link = linkFromRow(cfg, row);
+      const asks = PAGE_ASKS[row.action];
       return {
         pressed: false,
         link,
         what_to_do: PRESS_WHAT_TO_DO.waiting,
-        note: pressNote(`${PRESS_SENTENCES.waiting}\n${link}`),
+        note: pressNote(
+          `${asks ? `Here is the page again — it asks ${asks}, and nothing has come through yet.` : PRESS_SENTENCES.waiting}\n${link}`,
+        ),
       };
     }
     await sleep(pollMs);

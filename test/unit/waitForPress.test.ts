@@ -175,7 +175,14 @@ describe('holding the line', () => {
     // sentence while relaying the rest (22 September 2026), and a trim takes
     // the tail; a line of its own is what the manual asks for in front of a
     // human anyway.
-    expect(r.note.text).toBe(`${PRESS_SENTENCES.waiting}\n${r.link}`);
+    // AND IT SAYS WHAT THE PAGE ASKS. An agent that fetches a link and waits in
+    // one breath relays THIS answer rather than the `say` that came with the
+    // link, so this is often the only description of the page its human ever
+    // hears: it said "unlock names" and never the word suburb (22 September
+    // 2026). The address stays on its own line, because a trim takes the tail.
+    expect(r.note.text).toMatch(/^Here is the page again — it asks /);
+    expect(r.note.text).toContain('their first name and their suburb');
+    expect(r.note.text).toContain('nothing has come through yet');
     expect(r.note.text.split('\n').at(-1)).toBe(r.link);
     expect(r.note.text).toMatch(/here is the page again/i);
     // It puts the page in front of the human rather than reporting a state,
