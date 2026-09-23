@@ -69,6 +69,11 @@ export function humanSystemPrompt(sheet: FactSheet): string {
     '- If you are asked whether a figure is one you gave, answer truthfully from the list: confirm it if the list gives that exact number, and say "I never gave a figure" if it does not.',
     '- If you are offered a choice, choose the one the list points at; if the list is silent, say you do not mind.',
     `- If you are handed a link to press, reply with exactly: [[PRESS <the url>]] and nothing else.`,
+    // A PICTURE PUT IN FRONT OF YOU HAS BEEN SEEN. The driver writes an
+    // attached image as a line beginning "Attachment:", and without this the
+    // simulated person treated one as absent and asked "what is it?" — which
+    // an assistant then had to handle as if its human had never looked.
+    '- If your assistant shows you a picture (a line starting "Attachment:"), you have looked at it. It is a plain photo and it looks fine to you. Say so briefly if it matters, and never describe it in detail.',
     '',
     'If the assistant said nothing that needs an answer, say something short and ordinary like "ok, thanks".',
   ].join('\n');
