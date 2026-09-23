@@ -249,7 +249,24 @@ function readRuns(): Run[] {
 }
 
 function page(runs: Run[]): string {
-  const data = JSON.stringify(runs).replace(/</g, '\\u003c');
+  // NO BEARER TOKEN LEAVES IN A PUBLIC PAGE. A page address is /a/<id>.<token>
+  // and the token is the whole of what lets somebody press it. Every one in
+  // these transcripts is a dev link, single-use and fifteen minutes long, and
+  // long dead — but a page published for anybody to read is the wrong place
+  // to prove that, so the token is cut and the id kept (the id alone opens
+  // nothing, and it still lets a reader line a link up with its press).
+  // Signed storage URLs go the same way: their query string is a credential.
+  const redact = (v: unknown): unknown =>
+    typeof v === 'string'
+      ? v
+          .replace(/(\/a\/[0-9a-f-]{36})\.[A-Za-z0-9_-]{16,}/g, '$1.[token removed]')
+          .replace(/(https:\/\/[^\s"]*amazonaws\.com\/[^\s"?]*)\?[^\s"]*/g, '$1?[signature removed]')
+      : Array.isArray(v)
+        ? v.map(redact)
+        : v && typeof v === 'object'
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redact(x)]))
+          : v;
+  const data = JSON.stringify(redact(runs)).replace(/</g, '\\u003c');
   const first = runs[0]?.startedAt?.slice(0, 10) ?? '';
   const last = runs[runs.length - 1]?.startedAt?.slice(0, 10) ?? '';
   return `<title>Rehearsal Log</title>
