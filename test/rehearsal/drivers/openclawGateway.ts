@@ -73,7 +73,24 @@ export async function askThroughGateway(
     throw new Error(`openclaw agent call failed: ${String(msg).slice(0, 300)}`);
   }
   const payloads: any[] = parsed?.result?.payloads ?? parsed?.payloads ?? [];
-  const text = payloads.map((p) => p?.text ?? '').filter(Boolean).join('\n').trim();
+  // AN ATTACHMENT IS PART OF WHAT WAS SAID. OpenClaw hands a picture back as
+  // `mediaUrl` beside the text, and this kept the text alone — so when an
+  // assistant passed on a photo the way a person would, by putting the picture
+  // in front of its human, the transcript read "here it is, straight from
+  // him:" followed by nothing, the simulated human asked "what is it?", and
+  // the suite failed the assistant for a picture it had in fact delivered
+  // (23 September 2026; the gateway's own log shows the attachment). Written
+  // the way the gateway itself renders it, one line each.
+  const text = payloads
+    .flatMap((p) => {
+      const media = [p?.mediaUrl, ...(Array.isArray(p?.mediaUrls) ? p.mediaUrls : [])].filter(
+        (u): u is string => typeof u === 'string' && u.length > 0,
+      );
+      return [p?.text ?? '', ...media.map((u) => `Attachment: ${u}`)];
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
   const meta = parsed?.result?.meta?.agentMeta ?? parsed?.meta?.agentMeta ?? {};
   const receipt = meta?.terminalReceipt?.successfulToolNames;
   return {
