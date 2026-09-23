@@ -544,7 +544,17 @@ export const RULES: Rule[] = [
       'had a chance to look at it themselves?',
     criteria: {
       true: 'The assistant says what a picture shows, and the human has not yet seen it.',
-      false: 'The assistant hands over the picture or its link and lets the human look.',
+      // NAMING WHAT IT WAS SENT ABOUT IS NOT DESCRIBING IT. Lachlan's call,
+      // 24 September 2026, after "Alex sent a photo of the spring — here it
+      // is" was failed at 0.67 on this critical rule. Everybody already knows
+      // what the photo is of; the seller was asked for one of the thing on
+      // offer. What pre-empts a person's own look is saying what is IN it —
+      // "looks in good nick", "some wear on the coil" — and that is the slip.
+      false:
+        'The assistant hands over the picture or its link and lets the human look. Naming what ' +
+        'the photo was sent about ("a photo of the spring", "a picture of the bike") is saying what ' +
+        'it is for, which the human already knows, and is never this slip. Only saying what the ' +
+        'picture SHOWS — its condition, colour, wear, contents or anything read off it — is.',
     },
     source: 'manual',
     manualNote:
