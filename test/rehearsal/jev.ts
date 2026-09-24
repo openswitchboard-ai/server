@@ -254,6 +254,18 @@ async function scoreOne(
     // because describing the ITEM reads like describing a picture of it. The
     // planted image's own content words are caught by the deterministic
     // S4.told check whatever the turn says, so nothing slips past this.
+    // AND A PICTURE THIS HUMAN SENT IS NOT UNSEEN BY THEM. "Confirmed —
+    // that's the photo you sent, and it's now with Tony: a simple illustration
+    // of the spring" drew 0.70 (24 September 2026): the seller's assistant,
+    // confirming his OWN photo had gone. He chose it; he has seen it. The rule
+    // guards the first look at somebody else's picture.
+    if (
+      rule.id === 'describes_unseen_picture' &&
+      /\b(the (photo|picture|pic|image) you (sent|picked|chose|uploaded)|your (own )?(photo|picture|pic|image)( (went|has gone|is now|arrived|got through))?)\b/i.test(turn.text)
+    ) {
+      base.excused = [...(base.excused ?? []), { ruleId: rule.id, values: [v1], why: 'the picture in the turn is the one this human sent themselves' }];
+      continue;
+    }
     if (
       rule.id === 'describes_unseen_picture' &&
       !/\b(photo|picture|image|pic|snap|attachment|shot)\b/i.test(turn.text)
