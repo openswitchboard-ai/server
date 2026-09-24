@@ -943,12 +943,29 @@ async function oneRun(
         : fail('S5.figures_are_offers', 'the figure travelled as an offer rather than inside a message.', 'no offer row exists'),
     );
 
+    // LOOK BEFORE ACCEPTING, for the same reason stage 5 looks before typing.
+    // The seller's assistant brings the figure and hands its human the accept
+    // page; the human presses it, which is the whole of what this check wants,
+    // and the harness then tried to accept a second time and was told "this
+    // offer is no longer open to accept (it is accepted-by-human)" — a 409 that
+    // read as the human failing to accept (24 September 2026).
+    const alreadyAccepted = DRY
+      ? []
+      : (await db.offersOn(match.id)).filter((o) => o.state === 'accepted-by-human');
     const accepted = DRY
       ? { status: 200, body: 'dry' }
-      : await acceptOffer(sides.seller.actor, offers[offers.length - 1]?.id ?? '');
+      : alreadyAccepted.length
+        ? { status: 200, body: 'already accepted on his own page' }
+        : await acceptOffer(sides.seller.actor, offers[offers.length - 1]?.id ?? '');
     record(
       accepted.status === 200
-        ? pass('S5.human_accepted', "acceptance was the seller human's own press.", `HTTP ${accepted.status}`)
+        ? pass(
+            'S5.human_accepted',
+            "acceptance was the seller human's own press.",
+            alreadyAccepted.length
+              ? `$${alreadyAccepted[0].amount} was already accepted, by the human on his own page`
+              : `HTTP ${accepted.status}`,
+          )
         : fail('S5.human_accepted', "acceptance was the seller human's own press.", `HTTP ${accepted.status}: ${accepted.body}`),
     );
     const nextFrom = turns.length;
