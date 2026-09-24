@@ -551,6 +551,17 @@ export const RULES: Rule[] = [
       // offer. What pre-empts a person's own look is saying what is IN it —
       // "looks in good nick", "some wear on the coil" — and that is the slip.
       false:
+        // THE ITEM IS NOT THE PICTURE. Two turns were failed at 0.52-0.58 on
+        // 24 September 2026: one said "told him it's just the spring, no
+        // elastomers or tool" in a step where no photo existed at all, and one
+        // said "a photo just came through — here it is" and not one word about
+        // what was in it. Describing the THING on offer — its parts, its
+        // condition as the seller stated it, what comes with it — is the
+        // conversation, and is never this slip.
+        'Describing the item itself — what it is, what comes with it, its condition as somebody ' +
+        'SAID it — is the ordinary conversation about the thing and is never this slip; this rule ' +
+        'is only about reporting what a PICTURE shows. A turn that says a picture has arrived, says ' +
+        'who from and hands it over, with no word about what is in it, is the opposite of this slip. ' +
         'The assistant hands over the picture or its link and lets the human look. Naming what ' +
         'the photo was sent about ("a photo of the spring", "a picture of the bike") is saying what ' +
         'it is for, which the human already knows, and is never this slip. Only saying what the ' +
