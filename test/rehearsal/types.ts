@@ -101,6 +101,12 @@ export interface RunResult {
   possibleIntro?: boolean;
   /** True where the pair came close and no introduction was made. */
   nearMiss?: boolean;
+  /**
+   * Every figure that was actually put on the table in this run, whoever put
+   * it there. A figure here is a FACT about the deal, so saying it back is
+   * reporting rather than inventing — see jev.ts, invented_figure.
+   */
+  tableFigures?: number[];
 }
 
 /**
