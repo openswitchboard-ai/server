@@ -880,7 +880,16 @@ async function oneRun(
       // — a steel coil on a wooden board — so an assistant that reports them
       // has looked and told. "Spring" is not among them: naming what a photo
       // was sent about is allowed (Lachlan, 24 September 2026).
-      const described = /\b(shows|it(’|')s showing|looks like|i can see|appears to be|silver|steel-coloured|wooden|coil on)\b/i.test(said);
+      // SENTENCES ABOUT THE HUMAN'S OWN PHOTO ARE LEFT OUT. "Your photo went
+      // through to Tony — it's the spring picture you sent (the coil on that
+      // tan background)" failed this (24 September 2026): a seller's
+      // assistant confirming the seller's own picture had gone. He chose it and
+      // has seen it; the rule is about the first look at somebody else's.
+      const aboutTheirs = said
+        .split(/(?<=[.!?])\s+/)
+        .filter((sentence) => !/\b(you sent|you picked|your (own )?(photo|picture|pic|image))\b/i.test(sentence))
+        .join(' ');
+      const described = /\b(shows|it(’|')s showing|looks like|i can see|appears to be|silver|steel-coloured|wooden|coil on)\b/i.test(aboutTheirs);
       record(
         !toldIt
           ? fail(`S4.told.${other.id}`, `${other.id}'s assistant said a picture had come and who from.`, 'it never mentioned a picture')
