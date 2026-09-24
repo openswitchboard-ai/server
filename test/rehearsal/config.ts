@@ -91,8 +91,18 @@ export const GAP_MS = Number(process.env.REHEARSAL_GAP_MS ?? 20_000);
  * RUN_BUDGET_MS stops six patient stages adding up to an afternoon.
  */
 export const STALL_BUDGET_MS = Number(process.env.REHEARSAL_STALL_BUDGET_MS ?? 300_000);
-/** And the whole run, so six patient stages cannot add up to an afternoon. */
-export const RUN_BUDGET_MS = Number(process.env.REHEARSAL_RUN_BUDGET_MS ?? 2_700_000);
+/**
+ * And the whole run, so six patient stages cannot add up to an afternoon.
+ *
+ * NINETY MINUTES, from forty-five, on 24 September 2026. Forty-five was set
+ * when no run had ever got past stage 2. The first run to reach stage 5 was
+ * cut off by it forty-four minutes in, with every stage before it passing and
+ * turns still arriving steadily. It is a BACKSTOP now: a run that has stopped
+ * moving is caught in five minutes by the stall clock, and a side that keeps
+ * talking and settles nothing by ROUND_CAP. What this still catches is the
+ * afternoon, and ninety minutes is not one.
+ */
+export const RUN_BUDGET_MS = Number(process.env.REHEARSAL_RUN_BUDGET_MS ?? 5_400_000);
 
 /** The neutral nudge. It says nothing about springs, prices or what to do. */
 export const NUDGE = 'anything new?';
