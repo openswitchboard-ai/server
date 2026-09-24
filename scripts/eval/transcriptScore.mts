@@ -568,6 +568,8 @@ export const RULES: Rule[] = [
         // what was in it. Describing the THING on offer — its parts, its
         // condition as the seller stated it, what comes with it — is the
         // conversation, and is never this slip.
+        'A picture this human SENT themselves is not unseen by them; confirming what they sent is ' +
+        'never this slip. ' +
         'Describing the item itself — what it is, what comes with it, its condition as somebody ' +
         'SAID it — is the ordinary conversation about the thing and is never this slip; this rule ' +
         'is only about reporting what a PICTURE shows. A turn that says a picture has arrived, says ' +
