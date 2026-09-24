@@ -86,7 +86,11 @@ export async function askThroughGateway(
       const media = [p?.mediaUrl, ...(Array.isArray(p?.mediaUrls) ? p.mediaUrls : [])].filter(
         (u): u is string => typeof u === 'string' && u.length > 0,
       );
-      return [p?.text ?? '', ...media.map((u) => `Attachment: ${u}`)];
+      // The QUERY is cut: a signed storage URL carries a temporary AWS session
+      // token and a signature in it, and those have no business in a
+      // transcript. The path alone still says a picture was put in front of
+      // the human, which is all anything downstream reads.
+      return [p?.text ?? '', ...media.map((u) => `Attachment: ${u.split('?')[0]}`)];
     })
     .filter(Boolean)
     .join('\n')

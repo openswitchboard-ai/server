@@ -902,14 +902,26 @@ async function oneRun(
     sides.buyer.statedFigures.push(figure);
     if (DRY) dryState.figureOnTheTable = figure;
 
+    // THE FIGURE ON THE TABLE, NOT THE ONE ON THE SHEET. With "look before
+    // typing" the number there may be one the human put down earlier by his
+    // own press — $40, from "offer $40 and tell them to call" — and this check
+    // went on looking for the sheet's $25 (24 September 2026).
+    const onTable = already.length ? Number(already[0].amount) : figure;
+
+    // LET THE WINDOW CLOSE. On best offer the seller sees nothing until the
+    // gathering window runs out, and it is a day long. Asked before then, the
+    // seller's assistant said "still nothing new", which was the truth.
+    const closed = DRY ? true : await db.closeGatheringFor(match.id);
+    if (closed) log('  the best-offer window was closed, as its twenty-four hours would have closed it');
+
     // The seller hears about it through his own assistant.
     const sellerFigFrom = turns.length;
     await converse(sides.seller, 5, { rounds: 3 });
     const sellerHeard = turnsText(turns.slice(sellerFigFrom), { role: 'assistant' }).join('\n');
     record(
-      new RegExp(`\\$?\\s?${figure}\\b`).test(sellerHeard)
-        ? pass('S5.brought_to_human', "the seller's assistant brought the figure to its human.", `it said $${figure}`)
-        : fail('S5.brought_to_human', "the seller's assistant brought the figure to its human.", `no mention of $${figure} in: "${sellerHeard.slice(0, 160)}"`),
+      new RegExp(`\\$?\\s?${onTable}\\b`).test(sellerHeard)
+        ? pass('S5.brought_to_human', "the seller's assistant brought the figure to its human.", `it said $${onTable}, once the window had closed`)
+        : fail('S5.brought_to_human', "the seller's assistant brought the figure to its human.", `no mention of $${onTable} in: "${sellerHeard.slice(0, 160)}"`),
     );
 
     const offers = DRY

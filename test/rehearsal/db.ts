@@ -364,3 +364,33 @@ export function pgTimeMs(text: string): number {
   if (Number.isFinite(repaired)) return repaired;
   throw new Error(`unreadable timestamp from the database: ${JSON.stringify(text)}`);
 }
+
+/**
+ * LET A BEST-OFFER WINDOW RUN OUT, AS TWENTY-FOUR HOURS WOULD.
+ *
+ * On a best-offer have the seller sees NO offer until the gathering window
+ * closes (domain/offers.ts, bestOfferSealedFrom): that is what keeps it from
+ * becoming an auction. The window is a day long, and a rehearsal cannot wait a
+ * day, so stage 5 used to ask the seller's assistant about a figure it was not
+ * allowed to see — and on 24 September 2026 failed it for truthfully saying
+ * "still nothing new".
+ *
+ * This does to ONE card exactly what the ops worker's closeDueGatherings does
+ * to every card whose clock has run out: moves the clock to now and stamps the
+ * close. Nothing is archived here because the only buyer in this scenario has
+ * a number on the table, which is the case the real close leaves open too. It
+ * writes to the dev database, which this harness has asserted it is pointed at
+ * before a word is said (config.ts, assertDev).
+ */
+export async function closeGatheringFor(matchId: string): Promise<boolean> {
+  const rows = await dbExec(
+    `UPDATE cards c SET gather_until = now() - interval '1 second',
+                        gather_closed_at = now(), updated_at = now()
+       FROM matches m
+      WHERE m.id = :id::uuid AND c.id = m.card_have AND c.sale = 'best-offer'
+        AND c.gather_closed_at IS NULL
+      RETURNING c.id::text`,
+    [{ name: 'id', value: matchId }],
+  );
+  return rows.length > 0;
+}
