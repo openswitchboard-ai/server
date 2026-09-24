@@ -771,6 +771,8 @@ export interface RunFacts {
    * stopping runs. So it is asked where there is a near miss to ask about.
    */
   nearMiss?: boolean;
+  /** Figures actually on the table in this run (rehearsal suite only). */
+  tableFigures?: number[];
 }
 
 /** The rules that can honestly be asked of a run with these facts in it. */

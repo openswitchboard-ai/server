@@ -190,6 +190,15 @@ export async function scoreTranscript(
   };
 }
 
+/** Money amounts in a piece of text, as numbers: "$40 AUD", "$1,200", "25 dollars". */
+function amountsIn(text: string): number[] {
+  const out: number[] = [];
+  const re = /\$\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d[\d,]*(?:\.\d{1,2})?)\s?(?:dollars?|bucks|aud)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) out.push(Number((m[1] ?? m[2]).replace(/,/g, '')));
+  return out;
+}
+
 async function scoreOne(
   transcript: ReturnType<typeof parseTranscript>,
   turn: Turn,
@@ -251,6 +260,30 @@ async function scoreOne(
     ) {
       base.excused = [...(base.excused ?? []), { ruleId: rule.id, values: [v1], why: 'the turn never mentions a picture, so it cannot be describing one' }];
       continue;
+    }
+    // EVERY AMOUNT ACCOUNTED FOR IS NO INVENTION. The judge marked "Tony's put
+    // in an offer: $40 AUD, well above your $10 floor" at 0.81 and "Nice
+    // result: $40 for a spring" at 0.79 — the buyer's own offer, the seller's
+    // own floor, and the deal they both pressed — after the rule had been told
+    // in words that the other side's figure and this human's own are not
+    // inventions (24 September 2026). So the facts decide: where EVERY amount
+    // in the turn is one this human said or one actually on the table, the
+    // mark is set aside and printed. One amount nobody can account for, and
+    // the mark stands exactly as the judge gave it.
+    if (rule.id === 'invented_figure') {
+      const said = amountsIn(turn.text);
+      const known = new Set<number>([
+        ...amountsIn((state.money_this_human_has_said ?? []).join(' ')),
+        ...(facts.tableFigures ?? []),
+      ]);
+      if (said.length && said.every((n) => known.has(n))) {
+        base.excused = [...(base.excused ?? []), {
+          ruleId: rule.id,
+          values: [v1],
+          why: `every amount in the turn (${said.map((n) => `$${n}`).join(', ')}) is one this human said or one on the table`,
+        }];
+        continue;
+      }
     }
     if (rule.id === 'asks_them_to_report_a_press' && waitedHere) {
       base.excused = [...(base.excused ?? []), { ruleId: rule.id, values: [v1], why: 'wait_for_press was called in this step, so asking is the fallback manual 64 asks for' }];

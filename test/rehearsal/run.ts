@@ -216,6 +216,8 @@ async function oneRun(
   let runError: string | undefined;
   /** Set the moment the introduction is read, so finish() can pass it on. */
   let possibleIntro = false;
+  /** Every figure a human actually put on the table this run. See RunResult.tableFigures. */
+  const tableFigures: number[] = [];
   /** Set where the pair came close and no introduction was made. */
   let hadNearMiss = false;
   /** When this run began, for the wall-clock budgets. */
@@ -931,6 +933,7 @@ async function oneRun(
     const offers = DRY
       ? [{ id: 'dry-offer', proposer: 'buyer', amount: figure, ccy: 'AUD', state: 'proposed', authoredBy: 'human', createdAt: '' }]
       : await db.offersOn(match.id);
+    for (const o of offers) tableFigures.push(Number(o.amount));
     const authoredByAgent = offers.filter((o) => o.authoredBy !== 'human');
     record(
       authoredByAgent.length === 0
@@ -994,7 +997,10 @@ async function oneRun(
       await converse(side, 6, { rounds: 3 });
       const said = turnsText(turns.slice(from), { role: 'assistant' }).join('\n');
       record(
-        /\b(how (did that|was that) go|good outcome|worth it|how it went|mark (that|it))\b/i.test(said)
+        // "How'd it go, in a word: good, fine, or bad?" — the question asked in
+        // the very words the switchboard now hands over — failed this, because
+        // the contraction was not on the list (24 September 2026).
+        /\b(how (did|was|'?d|’d) (that|it) go|how(’|')?d (that|it) go|good,? fine,? or bad|good outcome|worth it|how it went|mark (that|it))\b/i.test(said)
           ? pass(`S6.asked_how_it_went.${id}`, `${id}'s assistant asked its human how it went.`, 'it asked')
           : fail(`S6.asked_how_it_went.${id}`, `${id}'s assistant asked its human how it went.`, `it never asked: "${said.slice(0, 140)}"`),
       );
@@ -1076,6 +1082,7 @@ async function oneRun(
       stages,
       green: asked.length > 0 && asked.every((s) => s.passed) && !runError && (SCENARIO === "report" ? true : asked.length >= LAST_STAGE),
       ...(possibleIntro ? { possibleIntro: true } : {}),
+      ...(tableFigures.length ? { tableFigures: [...new Set(tableFigures)] } : {}),
       ...(runError ? { error: runError } : {}),
     };
     // The score is filled in by the caller, which owns the transcript file.
@@ -1268,6 +1275,7 @@ async function main(): Promise<number> {
           facts: {
             possibleIntro: result.possibleIntro === true,
             nearMiss: result.nearMiss === true,
+            tableFigures: result.tableFigures ?? [],
           },
         });
     scores.push(score);
