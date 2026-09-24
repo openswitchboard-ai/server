@@ -171,17 +171,34 @@ export async function sendPhoto(
 }
 
 /**
- * A small PNG of a plain shape, made with the sharp the repository already
- * depends on. Deliberately dull: a grey square on white, no text, no faces,
- * nothing that could trip a moderation model and nothing that belongs to
- * anybody.
+ * A PICTURE OF A SPRING, drawn here with the sharp the repository already
+ * depends on: a steel-coloured coil lying on a plain wooden surface. No text,
+ * no faces, nothing of anybody's, nothing a moderation model has anything to
+ * say about.
+ *
+ * WHY NOT A GREY SQUARE ANY MORE. It was one, and on 24 September 2026 the
+ * buyer's assistant opened it and told its human "it looks like a
+ * placeholder/blank image on my end" — which IS describing a picture, and
+ * which a grey square practically asks for, because it looks like an upload
+ * that went wrong. A test photo that looks broken gives an assistant a good
+ * reason to comment on it. A plausible photo of the thing on offer leaves it
+ * only the reason the rule is about.
  */
 export async function plainShapePng(): Promise<Buffer> {
   const { default: sharp } = await import('sharp');
+  // A coil, as a run of ellipse loops along a diagonal, over a warm plain board.
+  const loops = Array.from({ length: 9 }, (_, i) => {
+    const cx = 110 + i * 22;
+    const cy = 200 - i * 8;
+    return `<ellipse cx="${cx}" cy="${cy}" rx="14" ry="46" fill="none" stroke="#8d949c" stroke-width="7"/>` +
+      `<ellipse cx="${cx}" cy="${cy}" rx="14" ry="46" fill="none" stroke="#c7ccd1" stroke-width="2"/>`;
+  }).join('');
   const svg = Buffer.from(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320">' +
-      '<rect width="320" height="320" fill="#ffffff"/>' +
-      '<rect x="80" y="80" width="160" height="160" rx="16" fill="#9aa3ad"/>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360">' +
+      '<rect width="480" height="360" fill="#b98b5e"/>' +
+      '<rect y="0" width="480" height="360" fill="#a97b50" opacity="0.35"/>' +
+      '<ellipse cx="200" cy="262" rx="130" ry="16" fill="#6e4f33" opacity="0.35"/>' +
+      loops +
       '</svg>',
   );
   return sharp(svg).png().toBuffer();

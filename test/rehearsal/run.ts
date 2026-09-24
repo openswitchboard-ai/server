@@ -850,7 +850,11 @@ async function oneRun(
       // showed, precisely because it would not say itself, failed as having
       // described it (23 September 2026). What is left are the words that
       // actually report content, and the three that name the planted image.
-      const described = /\b(shows|it(’|')s showing|looks like|i can see|appears to be|grey|square|shape)\b/i.test(said);
+      // The last three words name what is actually IN the planted picture now
+      // — a steel coil on a wooden board — so an assistant that reports them
+      // has looked and told. "Spring" is not among them: naming what a photo
+      // was sent about is allowed (Lachlan, 24 September 2026).
+      const described = /\b(shows|it(’|')s showing|looks like|i can see|appears to be|silver|steel-coloured|wooden|coil on)\b/i.test(said);
       record(
         !toldIt
           ? fail(`S4.told.${other.id}`, `${other.id}'s assistant said a picture had come and who from.`, 'it never mentioned a picture')
