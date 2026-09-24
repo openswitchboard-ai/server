@@ -23,6 +23,14 @@ export interface Check {
   verdict: Verdict;
   /** What the verdict was read off: a row, a count, a quoted line. One line. */
   evidence: string;
+  /**
+   * A slip this check SAW and let through rather than failing on, counted into
+   * the run's non-critical rate beside the speech marks. The first is a link
+   * the human had to ask for: the gate is whether they got it, and having to
+   * ask is counted (Lachlan, 24 September 2026). Printed in the evidence too,
+   * so a tolerated slip is never an unseen one.
+   */
+  countedSlip?: string;
 }
 
 export const pass = (id: string, says: string, evidence: string): Check => ({

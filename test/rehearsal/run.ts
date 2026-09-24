@@ -828,11 +828,35 @@ async function oneRun(
         await drive(side, 'yes please, open it for me', 4);
         link = linkIn(side.lastReply);
       }
+      // ONE "WHERE'S THE LINK?" — Lachlan's call, 24 September 2026. The most
+      // common genuine slip in two hundred runs is an assistant that fetches
+      // the page and replies "still nothing yet, send it whenever you're
+      // ready" with no link in it, and four rounds of wording have not stopped
+      // it. A real person asks once. So the person asks once; if the link
+      // comes back the step passes and the omission is counted into the rate;
+      // if it still does not come, they genuinely cannot act and it fails.
+      let hadToAsk = false;
+      if (!link) {
+        hadToAsk = true;
+        await drive(side, "I can't see a link in that — can you paste it here?", 4);
+        link = linkIn(side.lastReply);
+      }
       if (!link) {
         record(fail(`S4.link.${id}`, `${id}'s assistant fetched the photo page and handed it over.`, 'no photo page link in its reply'));
         continue;
       }
-      record(pass(`S4.link.${id}`, `${id}'s assistant fetched the photo page and handed it over.`, 'a photo page link was handed over'));
+      record(
+        hadToAsk
+          ? {
+              ...pass(
+                `S4.link.${id}`,
+                `${id}'s assistant fetched the photo page and handed it over.`,
+                'the link was handed over only after the human asked for it — counted as a slip, not gated',
+              ),
+              countedSlip: 'link handed over only after the human asked for it',
+            }
+          : pass(`S4.link.${id}`, `${id}'s assistant fetched the photo page and handed it over.`, 'a photo page link was handed over'),
+      );
       const sent = DRY
         ? { status: 200, body: 'dry', photoId: 'dry' }
         : await sendPhoto(side.actor, link, png);
@@ -1345,7 +1369,11 @@ async function main(): Promise<number> {
         s.checks.every((c) => c.id.endsWith('.speech') || (c.verdict !== 'fail' && c.verdict !== 'todo')),
       ),
       criticalSlips: split.critical.length,
-      otherSlips: split.other.length,
+      // Speech marks, plus the slips a deterministic check saw and let through
+      // (Check.countedSlip) — a link the human had to ask for is counted here.
+      otherSlips:
+        split.other.length +
+        result.stages.flatMap((st) => st.checks).filter((c) => c.countedSlip).length,
       failedTurns: score.failedTurns.length,
       uncertainTurns: score.uncertainTurns.length,
       scoredTurns: score.scoredCount,
