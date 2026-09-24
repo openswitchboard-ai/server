@@ -221,8 +221,14 @@ describe('the names step', () => {
     expect(c.verdict).toBe('fail');
     expect(c.evidence).toContain('no link');
   });
-  it('fails an offer that names a state instead of a suburb', () => {
-    expect(checkNamesOffer('buyer', ['I can share your first name and ACT: https://x/a/tok']).verdict).toBe('fail');
+  // RATED, NOT GATED — Lachlan's call, 24 September 2026. The page names the
+  // suburb before anything crosses; the rubric's vague_area counts an
+  // assistant that invites something vaguer or names no place at all.
+  it('passes a vaguer offer but says so in the evidence', () => {
+    const c = checkNamesOffer('buyer', ['I can share your first name and ACT: https://x/a/tok']);
+    expect(c.verdict).toBe('pass');
+    expect(c.evidence).toContain('never said the word suburb');
+    expect(c.evidence).toContain('vague_area');
   });
 });
 
