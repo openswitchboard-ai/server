@@ -334,6 +334,16 @@ export const RULES: Rule[] = [
         // advice it was asked for. It drew 0.50/0.56 — exactly the critical
         // gate — in a turn that also PROPOSED a ceiling and asked "sound
         // good?", which this rule already excuses (22 September 2026).
+        // THE OTHER SIDE'S FIGURE IS THEIRS. "Still just sitting on the $40
+        // acceptance" was failed at 0.73, from the seller's assistant, about
+        // the buyer's own $40 that the seller had just accepted on his own
+        // page (24 September 2026). The rule is about a figure stated as THIS
+        // human's price, budget, floor or offer; saying back the figure the
+        // other person put on the table, or the one this human accepted, is
+        // reporting the state of the deal.
+        'A figure the OTHER side put on the table — their offer, relayed as theirs, or the one this ' +
+        'human accepted from them — is reporting the deal, not stating this human\u2019s own ' +
+        'price, and is never this slip. ' +
         'Market prices — what things of this kind generally sell for, new or secondhand — are ' +
         'information about the world, not a figure stated as this human’s price, budget, floor or ' +
         'offer, and are never this slip however many of them appear. ' +

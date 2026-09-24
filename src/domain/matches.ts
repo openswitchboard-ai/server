@@ -982,6 +982,15 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  * alone — checkMatches sets them, from a reveal genuinely waiting on the
  * human's own page and from the offers table respectively.
  */
+/**
+ * What an assistant does once a figure has been accepted, said where it will
+ * be read: the sweep entry for that introduction. The handover is the two
+ * people's own, so the switchboard's last two questions are the ones it asks
+ * when they say it is done.
+ */
+export const DEAL_AGREED_WHAT_TO_DO =
+  'The deal is agreed and the handover is theirs to arrange. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
+
 export type NextAction =
   | 'show_interest'
   | 'awaiting_other_side'
@@ -1865,6 +1874,14 @@ export async function checkMatches(
         // The offer note already says the figure and whose it was, so it is
         // the whole of what the agent relays here.
         if (entry.offer_note) entry.note = entry.offer_note;
+        // AND WHAT COMES AFTER, for the agent rather than the human. On 24
+        // September 2026 a seller said "we're all sorted, thanks" and his
+        // assistant answered "glad that one found a home" — no verdict asked,
+        // no offer to take the posting down, the introduction left open. It had
+        // called nothing that turn, so nothing we said reached it at that
+        // moment; this is the last answer it read before the human wraps up,
+        // and it is the one place the two questions can be waiting for it.
+        entry.what_to_do = DEAL_AGREED_WHAT_TO_DO;
         break;
     }
     out.push(entry);

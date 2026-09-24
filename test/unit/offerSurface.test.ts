@@ -307,6 +307,12 @@ describe('when the other side takes the figure', () => {
     );
     // The entry leads with it, so the agent relaying the note says the deal.
     expect(entry.note).toEqual(entry.offer_note);
+    // And tells the AGENT what comes after, in a field the human never hears:
+    // a seller said "we're all sorted" and was never asked how it went nor
+    // whether to take the posting down (24 September 2026).
+    expect(entry.what_to_do).toMatch(/good, fine or bad/);
+    expect(entry.what_to_do).toMatch(/respond\(verdict\)/);
+    expect(entry.what_to_do).toMatch(/take their posting down/);
   });
 
   it('says it the other way round when this human was the one who accepted', async () => {
