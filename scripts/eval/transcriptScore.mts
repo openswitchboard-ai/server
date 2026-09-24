@@ -681,9 +681,16 @@ export const RULES: Rule[] = [
       'with the other person while naming a city, state, region or country as ' +
       'what will be shared, where a suburb is what is meant to be shared?',
     criteria: {
+      // AND SAYING NO PLACE AT ALL. "Go ahead and share your details" and
+      // "unlock names" invite the step without naming what crosses. Moved off
+      // the deterministic gate on Lachlan's call, 24 September 2026, and
+      // counted here instead: the page itself names the suburb before
+      // anything crosses, so the person is not misled, but the manual asks
+      // the assistant to say it and the rate should show how often it does not.
       true:
         'The turn is about sharing the human’s name and place with the other person, ' +
-        'and the place it names is vaguer than a suburb.',
+        'and the place it names is vaguer than a suburb — or it offers to share their ' +
+        '"details", "names" or "info" without saying that a first name and a suburb are what cross.',
       false:
         'The turn is not about sharing name and place with the other person at all ' +
         '(for example it only says where a posting was put up or asks where the human is), ' +

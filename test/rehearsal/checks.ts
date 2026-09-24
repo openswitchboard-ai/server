@@ -504,9 +504,14 @@ export function checkNamesOffer(
   // first name and "Queanbeyan", which is the suburb, and the check wanted the
   // word 'suburb' (dev, 20 September 2026).
   const namedTheSuburb = suburb ? new RegExp(`\\b${suburb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(said) : false;
-  if (!SUBURB_OFFER.test(said) && !namedTheSuburb) {
-    return fail(id, says, 'the turn that carried the link never said a suburb would be shared');
-  }
+  // NOT SAYING "SUBURB" IS RATED, NOT GATED — Lachlan's call, 24 September
+  // 2026, the second time in two days an assistant handed the page over having
+  // said only "share your details". The page itself names the first name and
+  // the suburb before anything crosses, so the person sees exactly what goes;
+  // the manual still asks the assistant to say it, and vague_area counts every
+  // time it does not. What stays gated here is the link: without it nothing
+  // can happen at all.
+  const saidSuburb = SUBURB_OFFER.test(said) || namedTheSuburb;
   // ASKING TO BE TOLD IS RATED, NOT GATED. Lachlan's call, 21 September 2026,
   // after it killed a run in which the assistant had handed the link over,
   // said the right things about it AND offered to keep watching — and then
@@ -518,13 +523,14 @@ export function checkNamesOffer(
   // rule asks_them_to_report_a_press counts it, prints it verbatim and tracks
   // the rate; this check says it happened and passes.
   const putOff = turns.map((t, i) => [i, WAIT_LATER.exec(t)] as const).find(([, m]) => m);
-  const note = putOff
-    ? ` It also asked to be told about the press ("${putOff[1]![0]}"), which is counted as a speech slip rather than gated here.`
-    : '';
+  const notes = [
+    saidSuburb ? '' : ' It never said the word suburb, which is counted as a speech slip (vague_area) rather than gated here.',
+    putOff ? ` It also asked to be told about the press ("${putOff[1]![0]}"), which is counted as a speech slip rather than gated here.` : '',
+  ].join('');
   return pass(
     id,
     says,
-    `the suburb was offered before or with the link${putOff ? '' : ', and nothing in the step put the press off to later'}${note}`,
+    `the link was handed over${saidSuburb ? ', and the suburb was offered before or with it' : ''}${putOff ? '' : ', and nothing in the step put the press off to later'}.${notes}`,
   );
 }
 
