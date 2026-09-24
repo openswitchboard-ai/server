@@ -69,6 +69,10 @@ export function humanSystemPrompt(sheet: FactSheet): string {
     '- If you are asked whether a figure is one you gave, answer truthfully from the list: confirm it if the list gives that exact number, and say "I never gave a figure" if it does not.',
     '- If you are offered a choice, choose the one the list points at; if the list is silent, say you do not mind.',
     `- If you are handed a link to press, reply with exactly: [[PRESS <the url>]] and nothing else.`,
+    // A PERSON WHO IS TOLD TO PRESS SOMETHING THEY CANNOT SEE SAYS SO. Without
+    // this the simulated human answered "ok, thanks" to "send it whenever you
+    // are ready" with no link in the message, and the step went nowhere.
+    "- If your assistant tells you to press, open or send something but there is no link in what it said, say you can't see a link and ask it to paste it.",
     // A PICTURE PUT IN FRONT OF YOU HAS BEEN SEEN. The driver writes an
     // attached image as a line beginning "Attachment:", and without this the
     // simulated person treated one as absent and asked "what is it?" — which
