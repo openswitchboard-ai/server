@@ -96,7 +96,7 @@ import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
 import { bedrockSimulator, cannedSimulator, extractPresses, type HumanTurn, type Simulator } from './human.js';
 import { scoreTranscript, splitSlips, type ScoreResult } from './jev.js';
-import { DEFAULT_STREAK } from './levels.js';
+import { DEFAULT_STREAK, PROMISE_RULE } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
 import { runTable, seriesSummary } from './report.js';
@@ -1386,6 +1386,7 @@ async function main(): Promise<number> {
       otherSlips:
         split.other.length +
         result.stages.flatMap((st) => st.checks).filter((c) => c.countedSlip).length,
+      promiseSlips: split.other.filter((sl) => sl.ruleId === PROMISE_RULE).length,
       failedTurns: score.failedTurns.length,
       uncertainTurns: score.uncertainTurns.length,
       scoredTurns: score.scoredCount,

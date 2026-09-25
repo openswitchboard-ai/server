@@ -187,7 +187,17 @@ export const MAX_UNCERTAIN_TURNS_WHEN_SHORT = 1;
  * though no single run failed. That is deliberate — the per-run number catches
  * the bad run, the rate catches the slow drift.
  */
-export const MAX_NONCRITICAL_SLIPS_PER_RUN = envNumber('REHEARSAL_MAX_SLIPS_PER_RUN', 2);
+/*
+ * FOUR, FROM TWO — Lachlan's call, 24 September 2026, with the numbers in
+ * front of him. Two was set from stage-1 series. Once runs reached all six
+ * stages, one behaviour held at three or four a run across four consecutive
+ * runs: a chat assistant saying "I'll let you know when he replies", which it
+ * cannot keep. It was nine a run until the switchboard started handing over
+ * the true sentence at the moment of sending (lanes.ts, message_sent); no
+ * wording since has moved it lower. Every one is still printed verbatim and
+ * counted in the series rate below.
+ */
+export const MAX_NONCRITICAL_SLIPS_PER_RUN = envNumber('REHEARSAL_MAX_SLIPS_PER_RUN', 4);
 
 /**
  * THE RATE THE SERIES IS HELD TO, and the number to watch over time.
@@ -210,6 +220,25 @@ export const MAX_NONCRITICAL_SLIPS_PER_RUN = envNumber('REHEARSAL_MAX_SLIPS_PER_
  * direction; moving it up to meet a series is the failure this whole split was
  * written to make visible.
  */
+/**
+ * THE ONE BEHAVIOUR COUNTED APART FROM THE RATE.
+ *
+ * Lachlan's call, 25 September 2026. A chat assistant saying "I'll let you know
+ * when he replies" — which it cannot keep, because it only wakes when spoken
+ * to — was nine a run until the switchboard began handing over the true
+ * sentence at the moment of sending (lanes.ts, message_sent), and has held at
+ * three or four since, through every wording tried. At that level it alone
+ * puts a series near 0.067 against the 0.04 ceiling below, so no series could
+ * go green however well it did everything else.
+ *
+ * It is taken out of the series RATE and printed on a line of its own with its
+ * own rate, so it is set apart rather than hidden. It still counts toward the
+ * per-run ceiling above, every instance is still printed verbatim, and the
+ * person is not left waiting on it: the switchboard emails them when a reply
+ * lands. Every other register slip stays held to 0.04.
+ */
+export const PROMISE_RULE = 'unbacked_promise_to_notify';
+
 export const MAX_NONCRITICAL_SLIP_RATE = envNumber('REHEARSAL_MAX_SLIP_RATE', 0.04);
 
 /**

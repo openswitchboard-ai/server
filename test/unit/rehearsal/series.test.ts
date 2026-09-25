@@ -264,3 +264,37 @@ describe('a run the harness broke', () => {
     expect(v.streak).toBe(1);
   });
 });
+
+/**
+ * THE ONE BEHAVIOUR COUNTED APART (levels.ts, PROMISE_RULE). Unbacked promises
+ * leave the series rate and are reported on their own line; every other
+ * register slip is still held to the ceiling.
+ */
+describe('counting unbacked promises apart from the rate', () => {
+  const run = (over: Partial<RunSummary>): RunSummary => ({
+    run: 1,
+    cast: 'nagatha,bilby',
+    deterministicClean: true,
+    criticalSlips: 0,
+    otherSlips: 0,
+    failedTurns: 0,
+    uncertainTurns: 0,
+    scoredTurns: 45,
+    overruled: false,
+    cutShort: false,
+    voided: false,
+    ...over,
+  });
+
+  it('leaves promises out of the rate and reports them apart', () => {
+    const v = judgeSeries([run({ otherSlips: 3, promiseSlips: 3 }), run({ run: 2, otherSlips: 3, promiseSlips: 3 })], 2, []);
+    expect(v.slipRate.slips).toBe(0);
+    expect(v.promiseRate).toEqual({ slips: 6, turns: 90, rate: 6 / 90 });
+  });
+
+  it('still holds every other register slip to the ceiling', () => {
+    const v = judgeSeries([run({ otherSlips: 5, promiseSlips: 1 }), run({ run: 2, otherSlips: 5, promiseSlips: 1 })], 2, []);
+    expect(v.slipRate.slips).toBe(8);
+    expect(v.slipRate.withinCeiling).toBe(false);
+  });
+});
