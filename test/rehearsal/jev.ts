@@ -190,12 +190,47 @@ export async function scoreTranscript(
   };
 }
 
-/** Money amounts in a piece of text, as numbers: "$40 AUD", "$1,200", "25 dollars". */
+/**
+ * Money amounts in a piece of text, as numbers: "$40 AUD", "$1,200", "25
+ * dollars" — and in WORDS, "twenty-five dollars", "forty bucks", "a hundred and
+ * fifty dollars". The wrap-up of the first run to pass every check in all six
+ * stages said "Twenty-five dollars for a bit of pedal hardware" about the $25
+ * both people had pressed, was marked an invented figure at 0.79, and was not
+ * set aside, because this read digits only (25 September 2026).
+ */
+const UNITS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19,
+};
+const TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+function wordsToNumber(words: string): number | undefined {
+  let total = 0;
+  let current = 0;
+  let seen = false;
+  for (const w of words.toLowerCase().split(/[\s-]+/).filter(Boolean)) {
+    if (w === 'and') continue;
+    if (w in UNITS) { current += UNITS[w]; seen = true; }
+    else if (w in TENS) { current += TENS[w]; seen = true; }
+    else if (w === 'hundred') { current = (current || 1) * 100; seen = true; }
+    else if (w === 'thousand') { total += (current || 1) * 1000; current = 0; seen = true; }
+    else return undefined;
+  }
+  return seen ? total + current : undefined;
+}
 function amountsIn(text: string): number[] {
   const out: number[] = [];
-  const re = /\$\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d[\d,]*(?:\.\d{1,2})?)\s?(?:dollars?|bucks|aud)\b/gi;
+  const digits = /\$\s?(\d[\d,]*(?:\.\d{1,2})?)|\b(\d[\d,]*(?:\.\d{1,2})?)\s?(?:dollars?|bucks|aud)\b/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) out.push(Number((m[1] ?? m[2]).replace(/,/g, '')));
+  while ((m = digits.exec(text))) out.push(Number((m[1] ?? m[2]).replace(/,/g, '')));
+  const numberWord = '(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and)';
+  const spelled = new RegExp(`\\b((?:${numberWord}[\\s-]+)*${numberWord})\\s+(?:dollars?|bucks)\\b`, 'gi');
+  while ((m = spelled.exec(text))) {
+    const n = wordsToNumber(m[1]);
+    if (n !== undefined && n > 0) out.push(n);
+  }
   return out;
 }
 
