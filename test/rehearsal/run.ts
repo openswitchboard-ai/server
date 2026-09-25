@@ -222,6 +222,20 @@ async function oneRun(
   let hadNearMiss = false;
   /** When this run began, for the wall-clock budgets. */
   const runStartedMs = Date.now();
+  /**
+   * THE SAME START ON A CLOCK THAT STOPS WHEN THE MACHINE SLEEPS.
+   *
+   * On macOS process.hrtime is mach_absolute_time, which does not advance
+   * while the machine is asleep; Date.now() does. On 25 September 2026 the
+   * laptop running the suite closed its lid on battery fourteen minutes into
+   * stage 2, slept for three hours, and woke to a run clock reading far past
+   * ninety minutes — which the suite then recorded as the assistants taking too
+   * long. The gap between the two clocks is the time spent asleep, and a run
+   * that slept through its budget is the rig stopping, not a finding.
+   */
+  const runStartedHr = process.hrtime.bigint();
+  const asleepMs = (): number =>
+    Math.max(0, Date.now() - runStartedMs - Number((process.hrtime.bigint() - runStartedHr) / 1_000_000n));
   /** When the stage now open began. Reset by openStage. */
   let stageStartedMs = Date.now();
   /**
@@ -449,7 +463,17 @@ async function oneRun(
       lastTurnMs = Date.now();
       for (let i = 0; i < rounds; i++) {
         const late = outOfTime();
-        if (late) throw new FailFast(`took too long — ${late}`);
+        if (late) {
+          // A sleep of more than a minute means the clocks cannot be trusted,
+          // and the run is VOID rather than failed: a plain Error, not FailFast.
+          const slept = asleepMs();
+          if (slept > 60_000) {
+            throw new Error(
+              `the machine running the suite was asleep for ${Math.round(slept / 60_000)} minute(s) mid-run, so its clocks say nothing about the assistants`,
+            );
+          }
+          throw new FailFast(`took too long — ${late}`);
+        }
         const said = await drive(side, next, stage);
         if (opts.done && (await opts.done())) return;
         // An assistant that answers with nothing has nothing for the human to
