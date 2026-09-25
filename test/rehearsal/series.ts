@@ -56,6 +56,13 @@ export interface RunSummary {
    * verbatim either way.
    */
   otherSlips: number;
+  /**
+   * How many of `otherSlips` were unbacked_promise_to_notify. Counted OUTSIDE
+   * the series rate on Lachlan's call, 25 September 2026 — see levels.ts,
+   * PROMISE_RULE — and reported on its own line, so it is set apart and never
+   * hidden.
+   */
+  promiseSlips?: number;
   /** Turns that failed a speech rule on BOTH Jev calls. Reported, not gating:
    *  the two counts above are what decide, because one turn can slip twice. */
   failedTurns: number;
@@ -157,6 +164,11 @@ export interface SeriesVerdict {
    * denominator would be the suite grading its own best five.
    */
   slipRate: SlipRate;
+  /**
+   * Unbacked promises to notify, counted APART from slipRate and printed on
+   * their own line. Reported, not enforced (levels.ts, PROMISE_RULE).
+   */
+  promiseRate?: { slips: number; turns: number; rate: number };
 }
 
 export function judgeSeries(
@@ -186,10 +198,11 @@ export function judgeSeries(
   }
 
   const counted = runs.filter((r) => !r.voided);
-  const rate = slipRate(
-    counted.reduce((n, r) => n + r.otherSlips, 0),
-    counted.reduce((n, r) => n + r.scoredTurns, 0),
-  );
+  const turns = counted.reduce((n, r) => n + r.scoredTurns, 0);
+  const promises = counted.reduce((n, r) => n + (r.promiseSlips ?? 0), 0);
+  // The one behaviour counted apart: see levels.ts, PROMISE_RULE.
+  const rate = slipRate(counted.reduce((n, r) => n + r.otherSlips, 0) - promises, turns);
+  const promiseRate = { slips: promises, turns, rate: turns > 0 ? promises / turns : 0 };
 
   const missing: string[] = [];
   if (streak < k) missing.push(`${k - streak} more clean run(s) in a row`);
@@ -211,7 +224,7 @@ export function judgeSeries(
         `(it is ${rate.rate.toFixed(3)}: ${rate.slips} slip(s) over ${rate.turns} scored turn(s))`,
     );
   }
-  return { streak, green: missing.length === 0, castCounts, missing, slipRate: rate };
+  return { streak, green: missing.length === 0, castCounts, missing, slipRate: rate, promiseRate };
 }
 
 /** Per-check pass rate across every run, for the end-of-series table. */
