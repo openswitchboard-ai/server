@@ -2,7 +2,7 @@
  * The matching engine (0.F). Consumes 'card-published' messages, retrieves
  * candidates by pgvector cosine similarity over opposite-type cards — the
  * nearest on compatible shelves, and the nearest anywhere on the board, and on
- * the social shelves other wants as well (domain/swaps.ts) —
+ * the social and services shelves other wants as well (domain/swaps.ts) —
  * applies the hard rules (matchRules.ts documents the full rule set and
  * weights), puts each pair in a tier (matchTiers.ts), and creates sure and
  * possible introductions and near-misses.
@@ -28,13 +28,14 @@ import {
 } from './matchRules.js';
 import { resequenceCard } from './sequencer.js';
 import {
-  SWAP_TOP_LEVEL,
+  OFFERED_KEYS,
   isSwapPair,
-  languageComplement,
-  onLanguageExchange,
+  statesAnOffer,
   swapCategory,
+  swapComplement,
   swapKind,
   swapPairOrder,
+  swapTopLevel,
   swapsOnShelf,
 } from './swaps.js';
 import { categoryDenied, categoryGate } from '../denylist.js';
@@ -243,25 +244,42 @@ function candidateWhere(
     type: string;
     category: string;
     geo: GeoBucket;
+    /** Read only to decide whether a services want states an offer. */
+    kind?: string | null;
+    attributes?: Record<string, unknown> | null;
   },
   opts: { shelf?: boolean } = {},
 ): { sql: string; params: any[] } {
   const onShelf = opts.shelf !== false;
   const opposite = source.type === 'WANT' ? 'HAVE' : 'WANT';
-  // SWAPS (domain/swaps.ts, 26 September 2026). A want on a social shelf also
-  // takes other wants on social shelves as candidates: two people who are both
-  // looking for a tennis partner, or each after the other's language, are each
-  // other's other half. Only wants, only social, and only on social: a have is
-  // untouched, and a want on goods or services still sees haves alone. Every
-  // other clause below applies to a swap candidate exactly as to any other.
-  // The top level is a constant of ours, never anything a caller sent, so it
-  // is written into the SQL rather than bound.
-  const swaps = source.type === 'WANT' && swapsOnShelf(source.category);
-  const typeClause = swaps
+  // SWAPS (domain/swaps.ts, 26 September 2026). A want on a social or a
+  // services shelf also takes other wants on its own top level as candidates:
+  // two people who are both looking for a tennis partner, or each after what
+  // the other offers, are each other's other half. Only wants, and only on
+  // those two top levels: a have is untouched, and a want on goods still sees
+  // haves alone. Every other clause below applies to a swap candidate exactly
+  // as to any other. The top level is one of our constants (swapTopLevel
+  // returns the constant, never the caller's string), so it is written into
+  // the SQL rather than bound.
+  //
+  // ON SERVICES, SOMEBODY HAS TO OFFER SOMETHING (swaps.ts, the complement
+  // rule). Where the source itself states no offer, the only want worth
+  // retrieving is one whose attributes carry an offer key; without this, every
+  // other person after a plumber would take a candidate slot from a plumber
+  // who is offering. The key list is ours too. An offer stated only in a
+  // candidate's own words, with no key, is missed here: the manual asks for it
+  // in `offers`, and the complement rule would have let it through.
+  const swapTop = source.type === 'WANT' && swapsOnShelf(source.category) ? swapTopLevel(source.category) : undefined;
+  const offerFilter =
+    swapTop === 'services' && !statesAnOffer({ kind: source.kind, attributes: source.attributes })
+      ? `
+                AND c.attributes ?| ARRAY[${OFFERED_KEYS.map((k) => `'${k}'`).join(',')}]::text[]`
+      : '';
+  const typeClause = swapTop
     ? `(c.type = $1::text
             OR (c.type = 'WANT'
-                AND (c.category = '${SWAP_TOP_LEVEL}'
-                     OR left(c.category, ${SWAP_TOP_LEVEL.length + 1}) = '${SWAP_TOP_LEVEL}.')))`
+                AND (c.category = '${swapTop}'
+                     OR left(c.category, ${swapTop.length + 1}) = '${swapTop}.')${offerFilter}))`
     : `c.type = $1::text`;
   const lat = typeof source.geo.lat === 'number' ? source.geo.lat : null;
   const lon = typeof source.geo.lon === 'number' ? source.geo.lon : null;
@@ -641,19 +659,26 @@ export async function runMatchingForCard(
     // Cheap hard rules first; price bands are only decrypted for survivors.
     if (!urgencyRouted(source, cand) || !urgencyRouted(cand, source)) continue;
 
-    // A SWAP: two wants on the social shelves (domain/swaps.ts). The pair is
-    // written in one canonical order whichever of the two is being processed,
-    // so the second posting's run lands on the first one's row and the unique
-    // key keeps it to one introduction. On a swap "want" and "have" below are
-    // only the two slots of the row; both postings are wants.
+    // A SWAP: two wants on the same top level, social or services
+    // (domain/swaps.ts). The pair is written in one canonical order whichever
+    // of the two is being processed, so the second posting's run lands on the
+    // first one's row and the unique key keeps it to one introduction. On a
+    // swap "want" and "have" below are only the two slots of the row; both
+    // postings are wants.
     const swap = isSwapPair(source, cand);
-    // THE COMPLEMENT RULE, on a language exchange only: two people after the
-    // same language who both bring the same other one are not a swap, and the
-    // postings say so. Where they do not say, the pair goes on to be judged
-    // like any other. Not a near miss either — it is not something close to
-    // the thing, it is the wrong way round.
-    if (swap && onLanguageExchange(source.category, cand.category)) {
-      const verdict = languageComplement(source, cand);
+    // Two postings of the same type that are not a swap by shape (a lost pet
+    // and a tennis partner, both wants on social) are nothing to each other.
+    if (!swap && cand.type === source.type) continue;
+    // THE COMPLEMENT RULE, one rule for every swap: what each says it offers
+    // has to be in what the other wants, wherever both halves are said; and on
+    // services somebody has to offer something. Where they do not say, the
+    // pair goes on to be judged like any other. Not a near miss either — it is
+    // not something close to the thing, it is the wrong way round.
+    if (swap) {
+      const verdict = swapComplement(
+        { category: source.category, kind: (source as any).kind, attributes: source.attributes },
+        { category: cand.category, kind: (cand as any).kind, attributes: cand.attributes },
+      );
       if (!verdict.ok) {
         log('matcher: swap is not a complement', { card_id: cardId, candidate_id: cand.id });
         continue;

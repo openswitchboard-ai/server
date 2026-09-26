@@ -6,10 +6,13 @@
  * Spanish — and the matcher never looked at the pair, because it only ever
  * retrieved the opposite type. This suite pins the whole of the change
  * (src/domain/swaps.ts):
- *   - retrieval: a want on social takes wants on social as candidates; a want
- *     on goods or services, and any have, is exactly as before;
+ *   - retrieval: a want on social takes wants on social as candidates, and a
+ *     want on services takes wants on services (only ones that offer
+ *     something, where it offers nothing itself); a want on goods, and any
+ *     have, is exactly as before;
  *   - one row per pair, in one canonical order, whichever side ran first;
- *   - the complement rule on a language exchange, and where it stops;
+ *   - the complement rule, one general rule for every swap (the same day it
+ *     replaced the language-only one), and where it stops;
  *   - no band is opened for a swap, and no figure or payment can be put on one;
  *   - every sentence either side reads says they are both looking.
  */
@@ -25,12 +28,14 @@ import * as db from '../../src/db.js';
 import * as crypto from '../../src/crypto.js';
 import {
   isSwapPair,
-  languageComplement,
-  languageSidesOf,
-  onLanguageExchange,
+  statesAnOffer,
   swapCategory,
+  swapComplement,
   swapKind,
   swapPairOrder,
+  swapSidesOf,
+  swapTopLevel,
+  swapWords,
   swapsOnShelf,
 } from '../../src/domain/swaps.js';
 import {
@@ -39,8 +44,10 @@ import {
   searchQueryShape,
 } from '../../src/domain/matcher.js';
 import {
+  LOST_PET_NO_FIGURE_SENTENCE,
   SWAP_NO_FIGURE_SENTENCE,
   assertNotSwap,
+  noMoneySentence,
   buildSignal,
   checkMatches,
   readerSide,
@@ -67,21 +74,30 @@ const BEN = 'bbbbbbbb-3333-4333-8333-bbbbbbbbbbbb';
 
 // ---------------------------------------------------------------------------
 describe('which pairs are swaps', () => {
-  it('is two wants, both on social', () => {
+  it('is two wants on the same top level, social or services', () => {
     expect(swapsOnShelf('social')).toBe(true);
     expect(swapsOnShelf('social.activity-partner.tennis')).toBe(true);
+    expect(swapsOnShelf('services.lessons.guitar')).toBe(true);
+    expect(swapsOnShelf('services')).toBe(true);
     expect(swapsOnShelf('socialite.x')).toBe(false);
+    expect(swapsOnShelf('servicesx.y')).toBe(false);
     expect(swapsOnShelf('goods.bicycle.mountain')).toBe(false);
-    expect(swapsOnShelf('services.tutoring.languages')).toBe(false);
+    // Lost and found pets: two owners are not each other's answer.
+    expect(swapsOnShelf('social.community.lost-pet')).toBe(false);
+    expect(swapTopLevel('services.repairs.bike')).toBe('services');
+    expect(swapTopLevel('goods.bicycle')).toBeUndefined();
     const w = (category: string) => ({ type: 'WANT', category });
     const h = (category: string) => ({ type: 'HAVE', category });
     expect(isSwapPair(w('social.language-exchange.tandem'), w('social.language-exchange'))).toBe(true);
+    expect(isSwapPair(w('services.lessons.guitar'), w('services.repairs.bike'))).toBe(true);
     // Have with have stays off, on social too.
     expect(isSwapPair(h('social.hobby-group.book-club'), h('social.hobby-group.book-club'))).toBe(false);
     // A want and a have is an ordinary pair.
     expect(isSwapPair(w('social.activity-partner.tennis'), h('social.activity-partner.tennis'))).toBe(false);
-    // Both must be on social: a social want never swaps with a goods want.
+    // Same top level: a social want never swaps with a goods or a services want.
     expect(isSwapPair(w('social.activity-partner.tennis'), w('goods.sport.tennis'))).toBe(false);
+    expect(isSwapPair(w('social.activity-partner.tennis'), w('services.lessons.tennis'))).toBe(false);
+    expect(isSwapPair(w('social.community.lost-pet'), w('social.community.lost-pet'))).toBe(false);
   });
 
   it('orders a pair the same way whichever side is processed', () => {
@@ -132,12 +148,32 @@ describe('retrieval', () => {
     }
   });
 
-  it('a want on goods or services, and any have, is opposite types only', () => {
+  it('a want on services takes other services wants, and only ones that offer, where it offers nothing', () => {
+    const bare = candidateQueryShape(src('WANT', 'services.trades-help.plumbing'));
+    expect(bare.where).toContain(SWAP_CLAUSE);
+    expect(bare.where).toContain("c.category = 'services'");
+    expect(bare.where).toContain("left(c.category, 9) = 'services.'");
+    expect(bare.where).toContain("c.attributes ?| ARRAY['offers'");
+    expect(bare.where).not.toContain("'social.'");
+    // A source that offers something needs no filter on the other side.
+    const offering = candidateQueryShape({
+      ...src('WANT', 'services.lessons.guitar'),
+      attributes: { offers: 'help with a bike' },
+    } as any);
+    expect(offering.where).toContain(SWAP_CLAUSE);
+    expect(offering.where).not.toContain('?|');
+    // Social never filters on an offer.
+    expect(candidateQueryShape(src('WANT', 'social.activity-partner.tennis')).where).not.toContain('?|');
+  });
+
+  it('a want on goods, a want on lost and found pets, and any have, is opposite types only', () => {
     for (const q of [
       candidateQueryShape(src('WANT', 'goods.bicycle.mountain')),
-      searchQueryShape(src('WANT', 'services.tutoring.languages')),
+      searchQueryShape(src('WANT', 'goods.bicycle.mountain')),
+      candidateQueryShape(src('WANT', 'social.community.lost-pet')),
       candidateQueryShape(src('HAVE', 'social.language-exchange.tandem')),
       searchQueryShape(src('HAVE', 'social.activity-partner.tennis')),
+      candidateQueryShape(src('HAVE', 'services.lessons.guitar')),
     ]) {
       expect(q.where).not.toContain(SWAP_CLAUSE);
       expect(q.where.trimStart().startsWith('c.type = $1::text')).toBe(true);
@@ -147,83 +183,106 @@ describe('retrieval', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('the complement rule on a language exchange', () => {
-  it('reads what each posting is after and what it brings, from kind and attributes', () => {
-    expect(languageSidesOf({ kind: 'Spanish conversation partner' })).toEqual({ after: ['spanish'] });
-    expect(languageSidesOf({ kind: 'English practice partner, I speak Spanish' })).toEqual({
-      after: ['english'],
-      brings: ['spanish'],
+describe('the complement rule, one rule for every swap', () => {
+  it('normalises words for case, punctuation and a plural, and drops the empty ones', () => {
+    expect(swapWords('Guitar LESSONS, for beginners!')).toEqual(['guitar', 'beginner']);
+    expect(swapWords('Bike repairs')).toEqual(['bike', 'repair']);
+    expect(swapWords('a partner to practise with')).toEqual([]);
+  });
+
+  it('reads what a posting offers from the offer keys and first-person words, and what it wants from the rest', () => {
+    expect(
+      swapSidesOf({
+        category: 'social.language-exchange.tandem',
+        kind: 'Spanish conversation partner',
+        attributes: { language: 'Spanish', offers: 'English' },
+      }),
+    ).toEqual({ offers: ['english'], wants: ['spanish', 'language', 'tandem'] });
+    expect(swapSidesOf({ kind: 'English practice partner, I speak Spanish' })).toEqual({
+      offers: ['spanish'],
+      wants: ['english'],
     });
-    expect(languageSidesOf({ kind: 'I’m a native Spanish speaker wanting English practice' })).toEqual({
-      after: ['english'],
-      brings: ['spanish'],
-    });
-    expect(languageSidesOf({ kind: 'x', attributes: { language: 'Spanish', speaks: 'English' } })).toEqual({
-      after: ['spanish'],
-      brings: ['english'],
-    });
-    expect(languageSidesOf({ attributes: { language: 'Italian', proficiency: 'native' } })).toEqual({
-      brings: ['italian'],
+    expect(swapSidesOf({ kind: 'I’m a native Spanish speaker wanting English practice' })).toEqual({
+      offers: ['spanish'],
+      wants: ['english'],
     });
     expect(
-      languageSidesOf({ attributes: { language: 'Italian', offers: 'native Italian', wants: 'English' } }),
-    ).toEqual({ after: ['english'], brings: ['italian'] });
-    // A language the list does not know is read from an attribute as itself.
-    expect(languageSidesOf({ attributes: { learning: 'Kaurna', speaks: 'English' } })).toEqual({
-      after: ['kaurna'],
-      brings: ['english'],
+      swapSidesOf({ category: 'services.repairs.bike', kind: 'bike service', attributes: { in_exchange: 'Guitar lessons' } }),
+    ).toEqual({ offers: ['guitar'], wants: ['bike', 'service', 'repair'] });
+    // Any key on the offered list, and any word: nothing here is a language list.
+    expect(swapSidesOf({ attributes: { learning: 'Kaurna', speaks: 'English' } })).toEqual({
+      offers: ['english'],
+      wants: ['kaurna'],
     });
+    // Silence about an offer is silence.
+    expect(swapSidesOf({ kind: 'tennis partner' }).offers).toBeUndefined();
+    expect(statesAnOffer({ kind: 'tennis partner' })).toBe(false);
+    expect(statesAnOffer({ kind: 'plumber, I can teach guitar' })).toBe(true);
+    expect(statesAnOffer({ attributes: { offers: 'a lift to the station' } })).toBe(true);
   });
 
-  it('never reads a third person as what the poster brings', () => {
-    expect(languageSidesOf({ kind: 'looking for a native Spanish speaker' })).toEqual({ after: ['spanish'] });
-    expect(languageSidesOf({ kind: 'partner who speaks Spanish' })).toEqual({ after: ['spanish'] });
+  it('never reads a third person as what the poster offers', () => {
+    expect(swapSidesOf({ kind: 'looking for a native Spanish speaker' }).offers).toBeUndefined();
+    expect(swapSidesOf({ kind: 'partner who speaks Spanish' }).offers).toBeUndefined();
   });
 
-  it('leaves a kind that names two languages and marks neither undetermined', () => {
-    expect(languageSidesOf({ kind: 'Spanish/English exchange' })).toEqual({});
-  });
-
-  it('refuses two identical "after Spanish, speak English" postings', () => {
-    const same = { kind: 'Spanish conversation partner, I speak English' };
-    expect(languageComplement(same, same)).toEqual({ ok: false, determined: true });
-    const attrs = { kind: 'Spanish partner', attributes: { language: 'Spanish', speaks: 'English' } };
-    expect(languageComplement(attrs, attrs).ok).toBe(false);
+  it('refuses two identical "after Spanish, offer English" postings', () => {
+    const same = { category: 'social.language-exchange.tandem', kind: 'Spanish partner', attributes: { language: 'Spanish', offers: 'English' } };
+    expect(swapComplement(same, same)).toEqual({ ok: false, determined: true });
+    const inWords = { kind: 'Spanish conversation partner, I speak English' };
+    expect(swapComplement(inWords, inWords).ok).toBe(false);
   });
 
   it('accepts the pair from 25 September, where each has the other half', () => {
-    const a = { kind: 'Spanish conversation partner', attributes: { language: 'Spanish' } };
-    const b = { kind: 'English practice partner, I speak Spanish' };
-    expect(languageComplement(a, b)).toEqual({ ok: true, determined: true });
-    expect(languageComplement(b, a)).toEqual({ ok: true, determined: true });
-    const full = { kind: 'Spanish partner, I speak English' };
-    expect(languageComplement(full, b)).toEqual({ ok: true, determined: true });
+    const a = { category: 'social.language-exchange.tandem', kind: 'Spanish conversation partner', attributes: { language: 'Spanish', offers: 'English' } };
+    const b = { category: 'social.language-exchange.tandem', kind: 'English practice partner', attributes: { language: 'English', speaks: 'Spanish' } };
+    expect(swapComplement(a, b)).toEqual({ ok: true, determined: true });
+    expect(swapComplement(b, a)).toEqual({ ok: true, determined: true });
+    // One side silent on its offer: only the stated half is checked.
+    expect(swapComplement(a, { kind: 'English practice partner' })).toEqual({ ok: true, determined: true });
+  });
+
+  it('pairs a services swap where each offers what the other is after, whatever the thing', () => {
+    const guitarist = {
+      category: 'services.repairs.bike',
+      kind: 'bike repair',
+      attributes: { offers: 'guitar lessons' },
+    };
+    const mechanic = {
+      category: 'services.lessons.guitar',
+      kind: 'guitar lessons',
+      attributes: { offers: 'bike repairs' },
+    };
+    expect(swapComplement(guitarist, mechanic)).toEqual({ ok: true, determined: true });
+    // A stated offer the other side is not after blocks.
+    const baker = { category: 'services.lessons.guitar', kind: 'guitar lessons', attributes: { offers: 'dog walking' } };
+    expect(swapComplement(guitarist, baker).ok).toBe(false);
+  });
+
+  it('never pairs two services wants where neither offers anything', () => {
+    const a = { category: 'services.trades-help.plumbing', kind: 'plumber for a leaking tap' };
+    const b = { category: 'services.trades-help.plumbing', kind: 'plumber, blocked drain' };
+    expect(swapComplement(a, b)).toEqual({ ok: false, determined: false });
+    // One offer is enough to ask the question.
+    expect(swapComplement({ ...a, attributes: { offers: 'plumbing' } }, b)).toEqual({ ok: true, determined: true });
+  });
+
+  it('never blocks on silence on social', () => {
+    // Two tennis partners, and two learners who say nothing of what they
+    // offer, may still meet: the embedding and the tiers decide.
+    const t = { category: 'social.activity-partner.tennis', kind: 'tennis partner' };
+    expect(swapComplement(t, t)).toEqual({ ok: true, determined: false });
+    expect(swapComplement({ kind: 'Spanish conversation partner' }, { kind: 'Spanish practice' })).toEqual({
+      ok: true,
+      determined: false,
+    });
   });
 
   it('refuses where one half is known to be missing', () => {
-    // B brings French; A is after Spanish.
+    // B offers French; A is after Spanish.
     const a = { kind: 'Spanish conversation partner' };
     const b = { kind: 'English practice, I speak French' };
-    expect(languageComplement(a, b).ok).toBe(false);
-  });
-
-  it('never blocks on silence', () => {
-    // Two learners of the same language who say nothing of what they speak
-    // may still meet: the embedding and the tiers decide.
-    expect(languageComplement({ kind: 'Spanish conversation partner' }, { kind: 'Spanish practice' })).toEqual({
-      ok: true,
-      determined: false,
-    });
-    expect(languageComplement({ kind: 'language exchange' }, { attributes: {} })).toEqual({
-      ok: true,
-      determined: false,
-    });
-  });
-
-  it('runs only on a language exchange shelf', () => {
-    expect(onLanguageExchange('social.language-exchange.tandem', 'social.conversation.video-call')).toBe(true);
-    expect(onLanguageExchange('social.language-exchange', 'social.language-exchange')).toBe(true);
-    expect(onLanguageExchange('social.activity-partner.tennis', 'social.activity-partner.tennis')).toBe(false);
+    expect(swapComplement(a, b).ok).toBe(false);
   });
 });
 
@@ -362,6 +421,76 @@ describe('the engine introduces two wants on social, once', () => {
     expect(log).toHaveBeenCalledWith('matcher: swap is not a complement', expect.anything());
   });
 
+  it('never introduces two services wants that offer nothing, and never a want to a want of another shape', async () => {
+    const plumber = {
+      category: 'services.trades-help.plumbing',
+      kind: 'plumber',
+      attributes: { day_part: 'weekend' },
+    };
+    board.source = posting({ id: LOW, ...plumber });
+    board.gated = [posting({ id: HIGH, account_id: BEN, ...plumber, similarity: 0.99 })];
+    let out = (await runMatchingForCard(cfg, LOW, log))!;
+    expect(out.matchesCreated).toHaveLength(0);
+    expect(board.inserted).toHaveLength(0);
+    expect(board.nearMisses).toHaveLength(0);
+
+    // A lost pet is a want on social, and a tennis partner is too: not a swap
+    // by shape, and never an ordinary want-and-have pair either.
+    log.mockReset();
+    board.source = posting({ id: LOW });
+    board.gated = [
+      posting({ id: HIGH, account_id: BEN, category: 'social.community.lost-pet', kind: 'lost kelpie', similarity: 0.97 }),
+    ];
+    out = (await runMatchingForCard(cfg, LOW, log))!;
+    expect(out.matchesCreated).toHaveLength(0);
+    expect(board.inserted).toHaveLength(0);
+  });
+
+  it('introduces a services swap where each offers what the other is after', async () => {
+    board.source = posting({
+      id: LOW,
+      category: 'services.lessons.guitar',
+      kind: 'guitar lessons',
+      attributes: { offers: 'bike repairs', format: 'in-person' },
+    });
+    board.gated = [
+      posting({
+        id: HIGH,
+        account_id: BEN,
+        category: 'services.lessons.guitar',
+        kind: 'guitar lessons',
+        attributes: { offers: 'dog walking', format: 'in-person' },
+        similarity: 0.99,
+      }),
+    ];
+    // Each wants guitar lessons; one offers bike repairs, which the other is
+    // not after. A stated mismatch blocks.
+    await runMatchingForCard(cfg, LOW, log);
+    expect(board.inserted).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith('matcher: swap is not a complement', expect.anything());
+
+    log.mockReset();
+    board.source = posting({
+      id: LOW,
+      category: 'services.repairs.bike',
+      kind: 'bike repair',
+      attributes: { offers: 'guitar lessons', format: 'in-person' },
+    });
+    board.gated = [
+      posting({
+        id: HIGH,
+        account_id: BEN,
+        category: 'services.lessons.guitar',
+        kind: 'guitar lessons',
+        attributes: { offers: 'bike repairs', format: 'in-person' },
+        similarity: 0.95,
+      }),
+    ];
+    await runMatchingForCard(cfg, LOW, log);
+    expect(log).not.toHaveBeenCalledWith('matcher: swap is not a complement', expect.anything());
+    for (const row of board.inserted) expect(row[10]).toBe(true);
+  });
+
   it('lets the complementary pair through the rule', async () => {
     board.source = posting({
       id: LOW,
@@ -483,6 +612,30 @@ describe('downstream: both people are looking, and there is no figure', () => {
       proposeSettlement(cfg, ANA, { match_id: MATCH, amount: 20, ccy: 'AUD' }),
     ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: SWAP_NO_FIGURE_SENTENCE } });
     expect(lintHumanCopy(SWAP_NO_FIGURE_SENTENCE)).toEqual([]);
+  });
+
+  it('refuses a figure, a figure page and a payment on lost and found pets, in words', async () => {
+    const pets = swapMatch({ swap: false, category: 'social.community.lost-pet', kind: 'lost kelpie' });
+    expect(() => assertNotSwap(pets)).toThrow(OsbError);
+    expect(noMoneySentence(pets)).toBe(LOST_PET_NO_FIGURE_SENTENCE);
+    expect(noMoneySentence(swapMatch({ swap: false }))).toBeUndefined();
+    usePool(pets);
+    await expect(
+      proposeOffer(cfg, ANA, {
+        match_id: MATCH,
+        amount: 50,
+        ccy: 'AUD',
+        expiry: new Date(Date.now() + 86_400_000).toISOString(),
+      }),
+    ).rejects.toMatchObject({ payload: { code: 'NOT_UNLOCKED_YET', human_action: LOST_PET_NO_FIGURE_SENTENCE } });
+    await expect(sendNumberLink(cfg, BEN, MATCH, { amount: 50, ccy: 'AUD' })).rejects.toMatchObject({
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: LOST_PET_NO_FIGURE_SENTENCE },
+    });
+    usePool({ ...pets, stage: 3 });
+    await expect(
+      proposeSettlement(cfg, ANA, { match_id: MATCH, amount: 50, ccy: 'AUD' }),
+    ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: LOST_PET_NO_FIGURE_SENTENCE } });
+    expect(lintHumanCopy(LOST_PET_NO_FIGURE_SENTENCE)).toEqual([]);
   });
 
   it('the summons names the reader’s own thing and says the other is looking too', () => {

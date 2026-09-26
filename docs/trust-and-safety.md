@@ -56,7 +56,7 @@ person that the switchboard has not looked at and cannot account for.*
 
 | Check | What it catches | How | Runs on |
 |---|---|---|---|
-| Prohibited, by meaning | Weapons, drugs, prescription meds, live animals, wildlife, sexual services, anything illegal, regardless of category name | Model classifier against the deny list's reason codes; the path glob stays as the cheap first pass | Postings, amendments |
+| Prohibited, by meaning | Weapons, drugs, prescription meds, live animals (lost and found pets going home excepted, on their own shelf and with no money), wildlife, sexual services, anything illegal, regardless of category name | Model classifier against the deny list's reason codes; the path glob stays as the cheap first pass | Postings, amendments |
 | PII | Names, emails, phones, street addresses, handles, coordinates | Existing model screen | Postings, messages |
 | Money figures | Digits, symbols, spelled amounts, price phrasing | Existing `moneyInWords` | Messages |
 | Injection | Text aimed at an AI reader | Existing model screen | Postings, messages |

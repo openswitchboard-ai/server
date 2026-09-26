@@ -20,7 +20,7 @@
  *    plural used as a possessive ("your kids clothing"), or the raw "&" the
  *    heading it came from still has.
  *
- * The frames are rendered for all 462 leaves rather than a handful, because a
+ * The frames are rendered for all 469 leaves rather than a handful, because a
  * phrase that reads well after "your" can still read wrong after "keen on".
  */
 import { describe, expect, it } from 'vitest';
@@ -126,7 +126,9 @@ function framesFor(path: string): { frame: string; text: string }[] {
 
 describe('every open leaf has words a person would say', () => {
   it('ships a phrase on every open leaf and on no branch above one', () => {
-    expect(LEAVES.length).toBe(463); // + goods.electronics.console.sim-racing (schema, 2026-09-20)
+    // 463 + goods.food's five shop-bought leaves + social.community.lost-pet
+    // (schema, 26 September 2026).
+    expect(LEAVES.length).toBe(469); // + goods.electronics.console.sim-racing (schema, 2026-09-20)
     const missing = LEAVES.filter((p) => !taxonomy.nodes[p].phrase);
     expect(missing, `these leaves have no phrase: ${missing.join(', ')}`).toEqual([]);
     const branchesWithPhrases = PATHS.filter((p) => hasChildren(p) && taxonomy.nodes[p].phrase);

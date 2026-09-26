@@ -53,6 +53,7 @@
  * the key moved every time an assistant did as it was told. This file decides
  * what a posting is short of and says it in plain words; it remembers nothing.
  */
+import { onLostPetShelf } from './shelfRules.js';
 
 /**
  * The facts that say WHICH ONE it is. Ordered by how often a posting has one,
@@ -317,6 +318,26 @@ export function detailShortfall(card: {
     return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_HUMAN_ACTION };
   }
 
+  // A LOST OR FOUND PET is described by what it looks like and where it went
+  // missing or turned up (26 September 2026). The social questions below ask
+  // whether a thing is in person or online and how often it would suit, which
+  // is nonsense asked of a lost kelpie; a stranger recognises a pet by its
+  // look and its whereabouts. Same bar as the rest of social: its own words and
+  // one fact, under any key but the money.
+  if (onLostPetShelf(String(card.category ?? ''))) {
+    const facts = contextFacts(card.attributes);
+    if (kind && facts.length >= 1) return undefined;
+    const questions: string[] = [];
+    if (!kind) questions.push('What kind of pet is it, in a few plain words?');
+    if (facts.length === 0) {
+      questions.push(
+        'What does the pet look like: its colour, its size, and any collar, tag or markings?',
+      );
+      questions.push(offering ? 'Where and when was it found?' : 'Where and when was it lost?');
+    }
+    return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_LOST_PET_HUMAN_ACTION };
+  }
+
   if (top === 'services' || top === 'social') {
     const context = contextFacts(card.attributes);
     if (kind && context.length >= 1) return undefined;
@@ -389,6 +410,16 @@ export const DETAIL_AND_RADIUS_HUMAN_ACTION =
  */
 export const DETAIL_CONTEXT_HUMAN_ACTION =
   'Ask your human these, then post again with the answers in `attributes`: format, frequency, day_part, language, level. In person or online, and how often, is what counts. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
+
+/**
+ * THE SAME LINE FOR A LOST OR FOUND PET (26 September 2026). Its keys are the
+ * poster's to choose, and any of them counts (contextFacts reads every key but
+ * the money), so the line names the facts rather than a fixed vocabulary, and
+ * says outright that no price or reward goes on it: the door refuses both
+ * (domain/shelfRules.ts).
+ */
+export const DETAIL_LOST_PET_HUMAN_ACTION =
+  'Ask your human these, then post again with the answers in `attributes`: species, colour, markings, where and when. No price or reward goes on it. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
 
 /**
  * And the one line for an assistant that DID reach for the escape hatch and

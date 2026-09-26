@@ -3,15 +3,20 @@
  *   AWS_PROFILE=openswitchboard RUN_INTEGRATION=1 npx vitest run test/integration/swaps.test.ts
  *
  * WRITTEN 26 September 2026 AND NOT YET RUN: it needs the swap change and
- * migration 053 deployed to dev first. The unit suite (test/unit/swaps.test.ts)
+ * migration 053 deployed to dev first. Rewritten the same day for the general
+ * complement rule (domain/swaps.ts): the offer now goes in `offers`, as the
+ * manual (v70) asks, and swaps reach the services shelves too. The unit suite (test/unit/swaps.test.ts)
  * pins the rules; this evidences them through the real product path (OAuth +
  * MCP publish + screening + embedding + matcher worker):
  *   - the pair from the first production test — one person after Spanish who
  *     speaks English, one after English who speaks Spanish, both wants — is
  *     introduced, ONCE, as a swap, in canonical order;
  *   - both people read it as somebody looking too, with no figure possible;
- *   - two identical "after Spanish, speak English" wants are not introduced;
- *   - two wants on goods are never introduced to each other.
+ *   - two identical "after Spanish, offer English" wants are not introduced;
+ *   - two wants on goods are never introduced to each other;
+ *   - on services, two wants that each offer what the other is after (guitar
+ *     lessons for piano lessons) are introduced as a swap, and two people who
+ *     both want a house cleaned and offer nothing are never introduced.
  *
  * Every posting gets a RUN-UNIQUE opaque bucket and radius reach, so leftovers
  * in the shared dev DB cannot pollute the assertions.
@@ -36,6 +41,8 @@ const runTag = randomBytes(3).toString('hex');
 const LANG_B = `sw_${runTag}`;
 const SAME_B = `ss_${runTag}`;
 const GOODS_B = `sg_${runTag}`;
+const SERV_B = `sv_${runTag}`;
+const NONE_B = `sn_${runTag}`;
 
 const want = (category: string, bucket: string, kind: string, attributes: Record<string, unknown>) => ({
   schema_version: SCHEMA_VERSION,
@@ -66,12 +73,16 @@ async function rowsBetween(a: string, b: string): Promise<any[]> {
   );
 }
 
-let ana: TestActor; // after Spanish, speaks English
-let beto: TestActor; // after English, speaks Spanish
-let cleo: TestActor; // after Spanish, speaks English (same as ana)
-let dora: TestActor; // after Spanish, speaks English (same as cleo)
+let ana: TestActor; // after Spanish, offers English
+let beto: TestActor; // after English, offers Spanish
+let cleo: TestActor; // after Spanish, offers English (same as ana)
+let dora: TestActor; // after Spanish, offers English (same as cleo)
 let eli: TestActor; // goods want
 let fay: TestActor; // goods want
+let gus: TestActor; // services: after guitar lessons, offers piano lessons
+let hana: TestActor; // services: after piano lessons, offers guitar lessons
+let ivo: TestActor; // services: after house cleaning, offers nothing
+let jo: TestActor; // services: after house cleaning, offers nothing
 
 let anaWant = '';
 let betoWant = '';
@@ -79,32 +90,49 @@ let cleoWant = '';
 let doraWant = '';
 let eliWant = '';
 let fayWant = '';
+let gusWant = '';
+let hanaWant = '';
+let ivoWant = '';
+let joWant = '';
 
-d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
+d('swaps: two wants on social or services meet, once', { timeout: 300_000 }, () => {
   beforeAll(async () => {
     const mk = (n: string) => bootstrapActor(n, 'Fixtureville');
-    [ana, beto, cleo, dora, eli, fay] = await Promise.all([
+    [ana, beto, cleo, dora, eli, fay, gus, hana, ivo, jo] = await Promise.all([
       mk('Ana'), mk('Beto'), mk('Cleo'), mk('Dora'), mk('Eli'), mk('Fay'),
+      mk('Gus'), mk('Hana'), mk('Ivo'), mk('Jo'),
     ]);
     const tandem = 'social.language-exchange.tandem';
-    [anaWant, betoWant, cleoWant, doraWant, eliWant, fayWant] = await Promise.all([
-      publish(ana, want(tandem, LANG_B, 'Spanish conversation partner, I speak English', {
-        language: 'Spanish', speaks: 'English', format: 'online',
+    [anaWant, betoWant, cleoWant, doraWant, eliWant, fayWant, gusWant, hanaWant, ivoWant, joWant] = await Promise.all([
+      publish(ana, want(tandem, LANG_B, 'Spanish conversation partner', {
+        language: 'Spanish', offers: 'English', format: 'online',
       })),
-      publish(beto, want(tandem, LANG_B, 'English practice partner, I speak Spanish', {
-        language: 'English', speaks: 'Spanish', format: 'online',
+      publish(beto, want(tandem, LANG_B, 'English practice partner', {
+        language: 'English', offers: 'Spanish', format: 'online',
       })),
-      publish(cleo, want(tandem, SAME_B, 'Spanish conversation partner, I speak English', {
-        language: 'Spanish', speaks: 'English', format: 'online',
+      publish(cleo, want(tandem, SAME_B, 'Spanish conversation partner', {
+        language: 'Spanish', offers: 'English', format: 'online',
       })),
-      publish(dora, want(tandem, SAME_B, 'Spanish conversation partner, I speak English', {
-        language: 'Spanish', speaks: 'English', format: 'online',
+      publish(dora, want(tandem, SAME_B, 'Spanish conversation partner', {
+        language: 'Spanish', offers: 'English', format: 'online',
       })),
       publish(eli, want('goods.bicycle.mountain', GOODS_B, 'mountain bike', {
         brand: 'trek', model: 'marlin 7', condition: 'good',
       })),
       publish(fay, want('goods.bicycle.mountain', GOODS_B, 'mountain bike', {
         brand: 'trek', model: 'marlin 7', condition: 'good',
+      })),
+      publish(gus, want('services.lessons.guitar', SERV_B, 'guitar lessons', {
+        offers: 'piano lessons', format: 'in-person',
+      })),
+      publish(hana, want('services.lessons.piano', SERV_B, 'piano lessons', {
+        offers: 'guitar lessons', format: 'in-person',
+      })),
+      publish(ivo, want('services.home.cleaning', NONE_B, 'house cleaning', {
+        frequency: 'fortnightly', format: 'in-person',
+      })),
+      publish(jo, want('services.home.cleaning', NONE_B, 'house cleaning', {
+        frequency: 'fortnightly', format: 'in-person',
       })),
     ]);
     await Promise.all(
@@ -116,6 +144,10 @@ d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
           [dora, doraWant],
           [eli, eliWant],
           [fay, fayWant],
+          [gus, gusWant],
+          [hana, hanaWant],
+          [ivo, ivoWant],
+          [jo, joWant],
         ] as const
       ).map(([actor, id]) => waitForCardStates(actor.accessToken, [id], ['PUBLISHED'])),
     );
@@ -160,7 +192,7 @@ d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
     }
   });
 
-  it('does not introduce two identical "after Spanish, speak English" wants', async () => {
+  it('does not introduce two identical "after Spanish, offer English" wants', async () => {
     await new Promise((r) => setTimeout(r, 10_000));
     expect(await rowsBetween(cleoWant, doraWant)).toHaveLength(0);
   });
@@ -168,5 +200,24 @@ d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
   it('never introduces two wants on goods to each other', async () => {
     await new Promise((r) => setTimeout(r, 5_000));
     expect(await rowsBetween(eliWant, fayWant)).toHaveLength(0);
+  });
+
+  it('introduces a services swap where each offers what the other is after', async () => {
+    const rows = await poll(
+      async () => {
+        const r = await rowsBetween(gusWant, hanaWant);
+        return r.length ? r : undefined;
+      },
+      'the services swap introduction',
+    );
+    expect(rows).toHaveLength(1);
+    const [, cardWant, cardHave, swap] = rows[0];
+    expect(swap).toBe(true);
+    expect([cardWant, cardHave]).toEqual([gusWant, hanaWant].sort());
+  });
+
+  it('never introduces two services wants that offer nothing', async () => {
+    await new Promise((r) => setTimeout(r, 5_000));
+    expect(await rowsBetween(ivoWant, joWant)).toHaveLength(0);
   });
 });
