@@ -46,6 +46,14 @@ export interface ModelFlags {
  * sexual services, anything plainly illegal, and people — a person offered or
  * sought as the thing itself, which is the one the network must never carry
  * under any wording at all.
+ *
+ * LOST AND FOUND PETS (26 September 2026). live-animals is about an animal
+ * changing hands, and a found dog going back to its owner is not that. The
+ * prompt says so in as many words, because the shelf it is posted on
+ * (social.community.lost-pet, domain/shelfRules.ts) is the one place a live
+ * animal may now appear, and a screen that refused every found kelpie would
+ * close it again. The door has already refused a price, a reward or a sale
+ * there; what the model still catches is the sale written in other words.
  */
 export const PROHIBITED_REASONS = [
   'weapons',
@@ -69,7 +77,7 @@ Flag, strictly:
 - prohibited: the thing being offered or sought is one this network does not carry, WHATEVER it was filed under. Judge the thing itself, not the category path. When true, set prohibited_reason to exactly one of:
   - weapons: firearms, ammunition, knives kept as weapons, and their parts.
   - prescription-medication: medicines that need a prescription, and veterinary equivalents.
-  - live-animals: a living animal changing hands.
+  - live-animals: a living animal changing hands: sold, bought, given away, rehomed, adopted or bred. A lost pet being looked for, or a found pet waiting for its owner to claim it, is NOT this: that is an owner getting their own animal back, and it is allowed.
   - wildlife-products: ivory, shells, skins, taxidermy, protected species in any form.
   - drugs: illegal drugs, their precursors and the equipment made for taking them.
   - sexual-services: sex sold or sought, escorting, and anything of that kind however it is worded.

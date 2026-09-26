@@ -252,6 +252,9 @@ describe('screening reasons in plain words', () => {
       'sexual-services',
       'illegal-activity',
       'people',
+      // The two shelf rules of 26 September 2026 (domain/shelfRules.ts).
+      'home-made-food',
+      'no-money-on-lost-pets',
       // And the verdict with no code this network recognises behind it.
       'prohibited',
     ];

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { noMoneyOnShelf } from './shelfRules.js';
 import {
   arrangementOrNothing,
   cadenceInPlainWords,
@@ -71,8 +72,8 @@ export interface MatchRow {
    *  on every answer that names it. */
   certainty?: 'sure' | 'possible';
   /**
-   * A SWAP (migration 053, domain/swaps.ts): both postings are wants on the
-   * social shelves. card_want and card_have are then only two slots in a fixed
+   * A SWAP (migration 053, domain/swaps.ts): both postings are wants on the same
+   * top level, social or services. card_want and card_have are then only two slots in a fixed
    * order, both people are looking, and no figure or payment applies. Absent
    * reads as false, which every row made before it is.
    */
@@ -130,10 +131,31 @@ export function readerSide(
 export const SWAP_NO_FIGURE_SENTENCE =
   'This one is a swap between two people who are both looking, so no money changes hands on it and there is no figure to send. The two of them just need to talk.';
 
-export function assertNotSwap(m: { swap?: boolean | null }): void {
-  if (m.swap) {
-    throw new OsbError('NOT_UNLOCKED_YET', { human_action: SWAP_NO_FIGURE_SENTENCE });
-  }
+/**
+ * AND NO FIGURE ON A LOST OR FOUND PET (26 September 2026). The one shelf a
+ * live animal may appear on is the one where nothing is sold: the posting door
+ * already refuses a price, an asking price and a reward there
+ * (domain/shelfRules.ts), and every door on the introduction refuses a figure
+ * with this sentence, exactly as a swap does.
+ */
+export const LOST_PET_NO_FIGURE_SENTENCE =
+  'Lost and found pets carry no money on the switchboard, so there is no figure to send on this one. The two of them just need to talk and get the pet home.';
+
+/** The sentence a figure door refuses this introduction with, or undefined
+ *  where money may change hands on it. */
+export function noMoneySentence(m: {
+  swap?: boolean | null;
+  category?: string | null;
+}): string | undefined {
+  if (m.swap) return SWAP_NO_FIGURE_SENTENCE;
+  if (noMoneyOnShelf(m.category)) return LOST_PET_NO_FIGURE_SENTENCE;
+  return undefined;
+}
+
+/** Refuse a figure on a swap or on lost and found pets, in words. */
+export function assertNotSwap(m: { swap?: boolean | null; category?: string | null }): void {
+  const sentence = noMoneySentence(m);
+  if (sentence) throw new OsbError('NOT_UNLOCKED_YET', { human_action: sentence });
 }
 
 /**
@@ -160,7 +182,7 @@ export function assertNotSwap(m: { swap?: boolean | null }): void {
  * kept its details shut. Expiry, withdrawal and the summons email cover that,
  * and the trade was accepted.
  *
- * A want and a have, and only that: a SWAP (two wants on the social shelves,
+ * A want and a have, and only that: a SWAP (two wants on the social or services shelves,
  * domain/swaps.ts) is made by the matcher alone, which is where its canonical
  * order and its complement rule live. This ops path refuses one as before.
  */

@@ -20,6 +20,11 @@ import { getPool } from '../db.js';
 import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
+import {
+  HOME_MADE_FOOD_SENTENCE,
+  LOST_PET_NO_MONEY_SENTENCE,
+  shelfRuleRefusal,
+} from './shelfRules.js';
 import type { Config } from '../config.js';
 
 export { screenTextWithBedrock } from '../intake/checks/modelScreen.js';
@@ -56,8 +61,15 @@ const REASON_SENTENCES: Record<string, string> = {
     'Weapons stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
   'prescription-medication':
     'Prescription medication stays off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
+  // One shelf is the exception since 26 September 2026: lost and found pets,
+  // where nothing is sold (domain/shelfRules.ts). The sentence says so, so a
+  // person whose found dog was refused elsewhere hears where it can go.
   'live-animals':
-    'Live animals stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
+    'Live animals stay off the switchboard everywhere it runs, apart from lost and found pets going home. This one cannot go back on the board as it stands.',
+  // The two shelf rules of 26 September 2026 (domain/shelfRules.ts), in the
+  // same words the door refuses them in.
+  'home-made-food': HOME_MADE_FOOD_SENTENCE,
+  'no-money-on-lost-pets': LOST_PET_NO_MONEY_SENTENCE,
   'wildlife-products':
     'Wildlife products stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
   alcohol:
@@ -168,6 +180,20 @@ export function collectFreeText(
  * on a screen that never happened.
  */
 export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningVerdict> {
+  // THE SHELF RULES ONCE MORE, on the row as it stands (domain/shelfRules.ts).
+  // The door already asked them at publish and amend; this is the backstop
+  // for anything that reached the queue another way, and it costs no model
+  // call. A band on the row is never decrypted here: that it exists is enough.
+  const shelf = shelfRuleRefusal({
+    category: card.category,
+    kind: card.kind,
+    also_called: card.also_called,
+    attributes: card.attributes,
+    ask: card.ask,
+    sale: card.sale,
+    price: card.price_enc ? true : undefined,
+  });
+  if (shelf) return { pass: false, reason_code: shelf.reason_code, detail: 'shelf rule' };
   const verdict = await runIntake(cfg, {
     door: 'posting',
     sender_account: card.account_id,

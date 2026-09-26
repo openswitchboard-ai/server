@@ -143,7 +143,7 @@ interface LineRow {
 /**
  * Every open introduction on one want or have, with what the ranking needs.
  *
- * A SWAP (two wants on the social shelves, domain/swaps.ts) sits in BOTH
+ * A SWAP (two wants on the social or services shelves, domain/swaps.ts) sits in BOTH
  * postings' lines, exactly as a want-and-have pair does: each of the two
  * people is looking, each has their own slots, and the introduction goes live
  * only when both have one free. Nothing here reads which column a posting is

@@ -60,6 +60,7 @@ import { nearMissesForCards } from './nearMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
 import { ownCountryHint } from './profile.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
+import { shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
 import type { Config } from '../config.js';
 
@@ -519,6 +520,23 @@ function figureWillAsk(attempt: Attempt, figures: PostingFigure[]): boolean {
 export const FIGURE_RADIUS_TAIL =
   ' Ask the last question too, and send `reach` back as "country" or the same radius.';
 
+/**
+ * THE SHELF RULES AT THE DOOR (domain/shelfRules.ts). A home-made food posting
+ * or an animal for sale is refused as the thing it is, in the category's word;
+ * money on a lost or found pet is refused as a field to take off, the way a
+ * figure in the words is refused everywhere else.
+ */
+function assertShelfRules(card: ShelfRuleCard): void {
+  const refusal = shelfRuleRefusal(card);
+  if (!refusal) return;
+  if (refusal.reason_code === 'no-money-on-lost-pets') {
+    throw Object.assign(new Error(refusal.human_action), {
+      validation: [refusal.field ?? 'price'],
+    });
+  }
+  throw new OsbError('CATEGORY_PROHIBITED', { human_action: refusal.human_action });
+}
+
 /** `kind` as it is stored: trimmed, or null where the posting gave none. */
 const kindOf = (card: any): string | null => {
   const k = typeof card?.kind === 'string' ? card.kind.trim() : '';
@@ -700,6 +718,12 @@ async function runPublish(
     }
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
+  // TWO SHELVES WITH A RULE OF THEIR OWN (26 September 2026): home-made food
+  // on the food shelf, and a sale or any money on lost and found pets. Asked
+  // here on the path as sent, so a home-baked cake is not first asked how many
+  // there are, and again below on the shelf the door files it under. The whole
+  // of the reasoning is in domain/shelfRules.ts.
+  assertShelfRules(card);
 
   // THE CHEAP REFUSALS, IN A FIXED ORDER, ONE AT A TIME.
   //
@@ -960,6 +984,11 @@ async function runPublish(
       runners_up: filed.runners_up,
     });
   }
+
+  // The shelf rules again, on the shelf this is actually going on: a posting
+  // sent under a path the catalogue does not know may have been filed onto the
+  // food shelf or the lost and found pets shelf just now.
+  if (filed.category !== card.category) assertShelfRules({ ...card, category: filed.category });
 
   // One agreed spelling before the row is written, so two people who meant
   // the same thing embed the same text (domain/attributeCanon.ts). This runs
@@ -1474,6 +1503,12 @@ export async function amendIntent(
   // while an asking price sits on the row is the same disclosure as posting
   // the two together, and so is adding an ask to a best offer.
   assertFloorStaysPrivate(next);
+  // AND THE SHELF RULES, on the posting as it will stand: an amend is the one
+  // call that can add a price, a reward or new words to a lost or found pet
+  // already up, or the word "home-made" to a food posting (domain/shelfRules.ts).
+  // The band on the row is encrypted and never read here; one sent in the
+  // patch is the only price an amend can add.
+  assertShelfRules({ ...next, price: 'price' in (patch ?? {}) ? patch.price : undefined });
   // A FIGURE AN AMEND ADDS OR CHANGES IS READ BACK ONCE, exactly as one on a
   // publish is. Only the figures this patch is putting there are read back: an
   // amend that leaves the money alone is nothing to ask about, and the band
