@@ -21,7 +21,7 @@
  * the card is refused exactly the same way. NO-FALLBACKS applies to screening
  * and consent decisions; this is neither.
  */
-import { openCategories, reservedFamily, taxonomyNode } from '../denylist.js';
+import { closedAs, openCategories, relatedOpenOf, reservedFamily, relatedOpenTable, taxonomyNode } from '../denylist.js';
 import { categoryLabelPath } from './matchRules.js';
 import { embedText } from './embeddings.js';
 import { shelfInWords } from './shelfPick.js';
@@ -458,7 +458,7 @@ export async function suggestCategories(
 // the wrong tool for a closed family, and a wrong suggestion is worse than
 // none: offering "small fixes around the house" to someone after a licensed
 // plumber routes them round the very reason the door is closed. So a reserved
-// family only ever suggests from RELATED_OPEN below, written by hand, where the
+// family only ever suggests from its own `related_open` list in the taxonomy, where the
 // open shelf is genuinely the same errand done the neighbourly way (moving
 // help beside commercial removals). Most families have nothing there, and
 // they say nothing. The embedding search still runs for a top level nobody
@@ -468,46 +468,19 @@ export async function suggestCategories(
 // sentence names shelves in words and never says a path.
 // ---------------------------------------------------------------------------
 
-/** A closed family, as a person would name it after "isn't open to". */
-const RESERVED_WORDS: Record<string, string> = {
-  property: 'rooms, rentals and other property',
-  work: 'jobs and paid work',
-  'services.trades': 'licensed trades like plumbing and electrical work',
-  'services.health': 'health care',
-  'services.legal': 'legal services',
-  'services.financial': 'financial services like advice, tax and accounting',
-  'services.childcare': 'childcare',
-  'services.driving': 'paid driving, like lessons, passenger rides and removals',
-  'services.security': 'security work like guarding, alarms and locksmithing',
-  'services.food': 'cooking and catering to order',
-  'goods.vehicles': 'vehicles and trailers',
-  'social.dating': 'dating',
-  'social.support': 'support groups',
-};
+// The plain name of each closed family and its curated open neighbours are
+// DATA, written on the taxonomy node (`closed_as`, `related_open`; schema SPEC
+// §2), never here: no code in this file names a kind of thing.
 
 /**
- * The only suggestions a closed family ever makes: open shelves that are the
- * same errand done between neighbours, and nothing that works round the reason
- * the family is closed. Keyed on the closed path itself or on the family, the
- * more specific first. An absent key means no suggestion, on purpose.
+ * Every curated suggestion the catalogue holds, keyed on the closed path. Read
+ * from the data; exported so the suite can check each one is open.
  */
-export const RELATED_OPEN: Record<string, string[]> = {
-  // Commercial removals need a licence; a hand with the lifting does not.
-  'services.driving.removals': ['services.moving'],
-  // Freelance and gig work between neighbours is what everyday help is for.
-  'work.freelance': ['services.creative', 'services.tech', 'services.admin'],
-  'work.gig': ['services.errands', 'services.moving', 'services.garden'],
-  'work.casual': ['services.errands', 'services.moving', 'services.garden'],
-};
+export const RELATED_OPEN: Record<string, string[]> = relatedOpenTable();
 
 /** A closed path's curated open neighbours, most specific key first. */
 export function relatedOpenShelves(category: string): string[] {
-  const parts = String(category ?? '').split('.');
-  for (let i = parts.length; i >= 1; i--) {
-    const hit = RELATED_OPEN[parts.slice(0, i).join('.')];
-    if (hit) return hit.filter((c) => suggestableCategories().includes(c));
-  }
-  return [];
+  return relatedOpenOf(category).filter((c) => suggestableCategories().includes(c));
 }
 
 /** The reason clause, where the taxonomy gives a real one. */
@@ -544,7 +517,7 @@ export function suggestionSentence(
   if (status === 'reserved') {
     const family = category ? reservedFamily(category) : undefined;
     const words =
-      (family && RESERVED_WORDS[family.path]) ||
+      (family && closedAs(family.path)) ||
       (family ? shelfInWords(family.path) : '') ||
       'that kind of thing';
     const why = family ? reservedWhy(family.reason) : '';

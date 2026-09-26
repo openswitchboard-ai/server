@@ -59,7 +59,7 @@ import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
 import { DEFAULT_RADIUS_KM, NormalisedGeo, geoOf, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
-import { shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
+import { NO_MONEY_REASON, shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
 import type { Config } from '../config.js';
 
@@ -530,15 +530,15 @@ export const FIGURE_RADIUS_TAIL =
   ' Ask the last question too, and send `reach` back as "country" or the same radius.';
 
 /**
- * THE SHELF RULES AT THE DOOR (domain/shelfRules.ts). A home-made food posting
- * or an animal for sale is refused as the thing it is, in the category's word;
- * money on a lost or found pet is refused as a field to take off, the way a
- * figure in the words is refused everywhere else.
+ * THE SHELF RULES AT THE DOOR (domain/shelfRules.ts), read from the taxonomy.
+ * A thing a shelf does not take is refused as the thing it is, in the
+ * category's word; money on a shelf that carries none is refused as a field to
+ * take off, the way a figure in the words is refused everywhere else.
  */
 function assertShelfRules(card: ShelfRuleCard): void {
   const refusal = shelfRuleRefusal(card);
   if (!refusal) return;
-  if (refusal.reason_code === 'no-money-on-lost-pets') {
+  if (refusal.reason_code === NO_MONEY_REASON) {
     throw Object.assign(new Error(refusal.human_action), {
       validation: [refusal.field ?? 'price'],
     });
@@ -727,11 +727,11 @@ async function runPublish(
     }
     throw new OsbError('CATEGORY_PROHIBITED', { human_action: intake.plain_words });
   }
-  // TWO SHELVES WITH A RULE OF THEIR OWN (26 September 2026): home-made food
-  // on the food shelf, and a sale or any money on lost and found pets. Asked
-  // here on the path as sent, so a home-baked cake is not first asked how many
-  // there are, and again below on the shelf the door files it under. The whole
-  // of the reasoning is in domain/shelfRules.ts.
+  // SHELVES WITH A RULE OF THEIR OWN, written on the taxonomy node: a thing
+  // the shelf does not take, and money where none changes hands. Asked here on
+  // the path as sent, so a thing the shelf does not take is not first asked
+  // how many there are, and again below on the shelf the door files it under.
+  // The whole of the reasoning is in domain/shelfRules.ts.
   assertShelfRules(card);
 
   // THE CHEAP REFUSALS, IN A FIXED ORDER, ONE AT A TIME.
@@ -995,8 +995,8 @@ async function runPublish(
   }
 
   // The shelf rules again, on the shelf this is actually going on: a posting
-  // sent under a path the catalogue does not know may have been filed onto the
-  // food shelf or the lost and found pets shelf just now.
+  // sent under a path the catalogue does not know may have been filed onto a
+  // shelf with a rule of its own just now.
   if (filed.category !== card.category) assertShelfRules({ ...card, category: filed.category });
 
   // One agreed spelling before the row is written, so two people who meant
@@ -1513,8 +1513,8 @@ export async function amendIntent(
   // the two together, and so is adding an ask to a best offer.
   assertFloorStaysPrivate(next);
   // AND THE SHELF RULES, on the posting as it will stand: an amend is the one
-  // call that can add a price, a reward or new words to a lost or found pet
-  // already up, or the word "home-made" to a food posting (domain/shelfRules.ts).
+  // call that can add a price, a reward or new words to a posting already up
+  // on a shelf with a rule of its own (domain/shelfRules.ts).
   // The band on the row is encrypted and never read here; one sent in the
   // patch is the only price an amend can add.
   assertShelfRules({ ...next, price: 'price' in (patch ?? {}) ? patch.price : undefined });

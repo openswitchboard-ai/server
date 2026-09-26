@@ -358,6 +358,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       "Languages. Write a posting in English whatever your human speaks: kind and attributes go up in English, so it can meet people who say it in other languages. Once it is up, put their own words for it in also_called with refine_intent, so nothing they said is lost. Say the switchboard's sentences to your human in their own language, with the meaning unchanged. Where your human and the other person speak different languages, translate what arrives for your human and say that you translated it. Send your human's words as they said them, and translate them only when they ask you to. The older notes here have also been reworded to state each rule on its own; no rule changed.",
   },
+  {
+    version: 73,
+    note:
+      'Shelf rules are now stated one way for every shelf. A few shelves carry a rule of their own: some carry no money at all, and some do not take a particular kind of thing that would otherwise file there. A posting that breaks one comes back with the sentence to say to your human, and on a shelf with no money no figure is sent once two people meet, the same as on a swap. Where a posting is one particular thing to be recognised rather than something done together, the one question asked is what someone would recognise it by.',
+  },
 ];
 
 /**
@@ -451,7 +456,7 @@ WRITE THE POSTING IN ENGLISH, whatever your human speaks: \`kind\` and \`attribu
     about: 'Where a posting is filed, and the shelves you may be asked to choose between.',
     text: `1a. Categories come from a shared taxonomy of dotted paths: goods.* for things, services.* for everyday help (tutoring, repairs, gardening, moving help, tech help, pet care), social.* for people to do things with (conversation, language exchange, activity partners, community and volunteering). Pick the nearest node it has and put the specifics in attributes — a MacBook Air is goods.electronics.laptop with a brand and model. Where it has no leaf for the thing, post under the nearest node above it, at least the top level, and say what the thing is yourself in kind, a few plain words: "vintage synth repair", "bouldering partner". The catalogue helps things meet; it never stops one going up. The only things that do not go up are the reserved families — jobs, property, licensed trades, dating — and anything prohibited, and each comes back as an ordinary answer with the sentence to say, and a shelf in suggestions only where one is genuinely the same errand; where there is none, there is nothing else to offer them. Send a path the catalogue has never heard of and the switchboard files the posting under the nearest node it does know, and that node is what it works from afterwards. It says where in filed_under, with a sentence beside it. Your own path is kept on the posting for the record, and your own words in kind stay exactly as you wrote them. Tell your human which shelf it went on, and if that is the wrong one, take it down and put it up somewhere better. Where the shelves nearest your path disagree among themselves, nothing is filed at all: the answer hands you a few of them in plain words, so ask your human which is closest and post again with that one. If they recognise none of them, post it again with the category none_of_these. The answer to that, under the plain word shelf_pick, is a link to a page on your human's own approval site where they search every shelf the catalogue has and tap the one that fits, or put it under things in general, or leave it unposted. Hand the link over, say what the page lets them do, and wait on its press_id with wait_for_press. The answer carries the shelf they chose in picked: post it again with that category, then tell them in plain words where it went. The page shows nothing about the thing and choosing a shelf takes no PIN, because a shelf shares nothing and spends nothing.
 
-Two shelves have a rule of their own. Food is shop-bought only: fresh produce, sealed pantry food, coffee and tea, a share of a bulk order and a shop's or café's leftovers can go up, and food made, cooked or baked at home cannot yet. Lost and found pets is the one place a live animal can appear: a lost pet goes up as a want and a found one as a have, with no price, reward or offer on it at all.
+A few shelves carry a rule of their own. Some carry no money at all, so a posting there goes up with no price, reward or offer, and no figure is sent once two people meet. Some do not take a particular kind of thing that would otherwise file there. A posting that breaks either comes back with the sentence to say to your human.
 
 Two people who are both looking can meet as a swap, on the social and the everyday-help shelves. Post a want in your human's own words and put what they offer in return in \`offers\`. On everyday help a want only meets another want where one of them offers something, and nothing is paid on a swap.
 
@@ -716,7 +721,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 72,
+  version: 73,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

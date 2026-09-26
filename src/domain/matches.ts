@@ -123,23 +123,15 @@ export function readerSide(
 }
 
 /**
- * NO FIGURE ON A SWAP. Two people who are both looking are giving each other
- * the same kind of thing, so nobody is buying and nobody is selling, and every
- * door that would put a number on the table or open a payment refuses a swap
- * with this sentence rather than asking anybody for a figure.
+ * NO FIGURE WHERE NO MONEY CHANGES HANDS. Two cases, one sentence: a swap,
+ * where two people who are both looking give each other the same kind of
+ * thing and nobody is buying or selling (domain/swaps.ts), and a shelf whose
+ * taxonomy node says `no_money` (domain/shelfRules.ts). Every door that would
+ * put a number on the table or open a payment refuses with this sentence
+ * rather than asking anybody for a figure.
  */
-export const SWAP_NO_FIGURE_SENTENCE =
-  'This one is a swap between two people who are both looking, so no money changes hands on it and there is no figure to send. The two of them just need to talk.';
-
-/**
- * AND NO FIGURE ON A LOST OR FOUND PET (26 September 2026). The one shelf a
- * live animal may appear on is the one where nothing is sold: the posting door
- * already refuses a price, an asking price and a reward there
- * (domain/shelfRules.ts), and every door on the introduction refuses a figure
- * with this sentence, exactly as a swap does.
- */
-export const LOST_PET_NO_FIGURE_SENTENCE =
-  'Lost and found pets carry no money on the switchboard, so there is no figure to send on this one. The two of them just need to talk and get the pet home.';
+export const NO_FIGURE_SENTENCE =
+  'No money changes hands on this one, so there is no figure to send. The two of them just need to talk.';
 
 /** The sentence a figure door refuses this introduction with, or undefined
  *  where money may change hands on it. */
@@ -147,12 +139,10 @@ export function noMoneySentence(m: {
   swap?: boolean | null;
   category?: string | null;
 }): string | undefined {
-  if (m.swap) return SWAP_NO_FIGURE_SENTENCE;
-  if (noMoneyOnShelf(m.category)) return LOST_PET_NO_FIGURE_SENTENCE;
-  return undefined;
+  return m.swap || noMoneyOnShelf(m.category) ? NO_FIGURE_SENTENCE : undefined;
 }
 
-/** Refuse a figure on a swap or on lost and found pets, in words. */
+/** Refuse a figure where no money changes hands, in words. */
 export function assertNotSwap(m: { swap?: boolean | null; category?: string | null }): void {
   const sentence = noMoneySentence(m);
   if (sentence) throw new OsbError('NOT_UNLOCKED_YET', { human_action: sentence });

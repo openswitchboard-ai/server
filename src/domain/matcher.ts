@@ -666,8 +666,8 @@ export async function runMatchingForCard(
     // swap "want" and "have" below are only the two slots of the row; both
     // postings are wants.
     const swap = isSwapPair(source, cand);
-    // Two postings of the same type that are not a swap by shape (a lost pet
-    // and a tennis partner, both wants on social) are nothing to each other.
+    // Two postings of the same type that are not a swap by shape (two wants on a
+    // shelf where a want is one particular thing to be found) are nothing to each other.
     if (!swap && cand.type === source.type) continue;
     // THE COMPLEMENT RULE, one rule for every swap: what each says it offers
     // has to be in what the other wants, wherever both halves are said; and on

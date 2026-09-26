@@ -1,4 +1,4 @@
-import { onLostPetShelf } from './shelfRules.js';
+import { shelfPolicy } from './shelfRules.js';
 
 /**
  * SWAPS: TWO PEOPLE WHO ARE BOTH LOOKING (Lachlan, 26 September 2026).
@@ -47,7 +47,7 @@ import { onLostPetShelf } from './shelfRules.js';
  * Nobody is buying and nobody is selling, so no band is decrypted for it, no
  * figure can be put on the table, and no protected payment can be opened on
  * it. Each of those doors refuses a swap in words rather than asking for a
- * number (matches.ts, SWAP_NO_FIGURE_SENTENCE).
+ * number (matches.ts, NO_FIGURE_SENTENCE).
  */
 
 /**
@@ -72,12 +72,13 @@ export function swapTopLevel(category: string | null | undefined): SwapTopLevel 
 
 /**
  * Is this a shelf on which two wants may be introduced to each other? Every
- * shelf on social and services but one: lost and found pets
- * (domain/shelfRules.ts), where two people who have each lost a dog are two
- * owners, and the only pair worth making is an owner and a finder.
+ * shelf on social and services except one whose taxonomy node says `thing`
+ * (domain/shelfRules.ts): there a want is one particular thing to be found,
+ * two people each looking for their own are not giving each other anything,
+ * and the only pair worth making is a want and a have.
  */
 export function swapsOnShelf(category: string | null | undefined): boolean {
-  return !!swapTopLevel(category) && !onLostPetShelf(category);
+  return !!swapTopLevel(category) && !shelfPolicy(category).thing;
 }
 
 /**

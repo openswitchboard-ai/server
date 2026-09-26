@@ -53,7 +53,7 @@
  * the key moved every time an assistant did as it was told. This file decides
  * what a posting is short of and says it in plain words; it remembers nothing.
  */
-import { onLostPetShelf } from './shelfRules.js';
+import { consumableWords, shelfPolicy } from './shelfRules.js';
 
 /**
  * The facts that say WHICH ONE it is. Ordered by how often a posting has one,
@@ -218,20 +218,21 @@ function contextFacts(attributes: unknown): string[] {
 // the thing, which the count above already reads.
 // ---------------------------------------------------------------------------
 
-/** Words for something eaten, used up, or split between people. */
-const CONSUMABLE_WORDS =
-  /\b(share|shares|leftovers?|surplus|bulk|food|groceries|produce|pastr(y|ies)|bread|cakes?|biscuits|fruit|veg|vegetables|eggs|honey|jam|preserves)\b/i;
+/**
+ * Words for something split between people or left over, whatever it is. The
+ * words for a KIND of thing that is eaten or used up are data, on the taxonomy
+ * node that says `consumable` (`consumable_words`, domain/shelfRules.ts).
+ */
+const SHARED_WORDS = /\b(share|shares|leftovers?|surplus|bulk)\b/i;
 
 /** Words for a thing lent or hired rather than handed over for good. */
 const LENDING_WORDS = /\b(hire|hiring|borrow|borrowing|lend|lending|loan|rent|rental|renting)\b/i;
 
-/** The shelf of things that are eaten. */
-const FOOD_SHELF = /^goods\.food(\.|$)/;
-
-/** Something eaten or split between people: no make, no model, no condition. */
+/** Something eaten, used up or split between people: no make, no model, no condition. */
 function isConsumable(card: { category?: unknown; kind?: unknown }): boolean {
-  if (FOOD_SHELF.test(String(card.category ?? ''))) return true;
-  return typeof card.kind === 'string' && CONSUMABLE_WORDS.test(card.kind);
+  if (shelfPolicy(String(card.category ?? '')).consumable) return true;
+  if (typeof card.kind !== 'string') return false;
+  return SHARED_WORDS.test(card.kind) || consumableWords().test(card.kind);
 }
 
 /** Lent or hired: the maker is beside the point, the condition still matters. */
@@ -318,24 +319,20 @@ export function detailShortfall(card: {
     return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_HUMAN_ACTION };
   }
 
-  // A LOST OR FOUND PET is described by what it looks like and where it went
-  // missing or turned up (26 September 2026). The social questions below ask
-  // whether a thing is in person or online and how often it would suit, which
-  // is nonsense asked of a lost kelpie; a stranger recognises a pet by its
-  // look and its whereabouts. Same bar as the rest of social: its own words and
-  // one fact, under any key but the money.
-  if (onLostPetShelf(String(card.category ?? ''))) {
+  // ONE PARTICULAR THING, NOT AN ACTIVITY. A shelf whose taxonomy node says
+  // `thing` sits under social or services, but what is posted there is one
+  // particular thing a stranger has to recognise, not something done together.
+  // Asking whether it is in person or online, or how often it would suit, is
+  // nonsense there; the one question is what someone would recognise it by.
+  // Same bar as the rest of social: its own words and one fact, under any key
+  // but the money.
+  if (shelfPolicy(String(card.category ?? '')).thing) {
     const facts = contextFacts(card.attributes);
     if (kind && facts.length >= 1) return undefined;
     const questions: string[] = [];
-    if (!kind) questions.push('What kind of pet is it, in a few plain words?');
-    if (facts.length === 0) {
-      questions.push(
-        'What does the pet look like: its colour, its size, and any collar, tag or markings?',
-      );
-      questions.push(offering ? 'Where and when was it found?' : 'Where and when was it lost?');
-    }
-    return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_LOST_PET_HUMAN_ACTION };
+    if (!kind) questions.push('What is it, in a few plain words?');
+    if (facts.length === 0) questions.push(`What would someone need to know to recognise ${thing}?`);
+    return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_RECOGNISE_HUMAN_ACTION };
   }
 
   if (top === 'services' || top === 'social') {
@@ -412,14 +409,12 @@ export const DETAIL_CONTEXT_HUMAN_ACTION =
   'Ask your human these, then post again with the answers in `attributes`: format, frequency, day_part, language, level. In person or online, and how often, is what counts. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
 
 /**
- * THE SAME LINE FOR A LOST OR FOUND PET (26 September 2026). Its keys are the
+ * THE SAME LINE FOR ONE PARTICULAR THING ON A `thing` SHELF. Its keys are the
  * poster's to choose, and any of them counts (contextFacts reads every key but
- * the money), so the line names the facts rather than a fixed vocabulary, and
- * says outright that no price or reward goes on it: the door refuses both
- * (domain/shelfRules.ts).
+ * the money), so the line names no fixed vocabulary at all.
  */
-export const DETAIL_LOST_PET_HUMAN_ACTION =
-  'Ask your human these, then post again with the answers in `attributes`: species, colour, markings, where and when. No price or reward goes on it. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
+export const DETAIL_RECOGNISE_HUMAN_ACTION =
+  'Ask your human this, then post again with the answers in `attributes`, under whatever keys fit: what someone would recognise it by. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
 
 /**
  * And the one line for an assistant that DID reach for the escape hatch and
