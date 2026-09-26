@@ -291,10 +291,14 @@ function agentFacingListing(): any {
     for (const k of path) node = node.properties[k];
     node.description = text;
   };
-  say(
-    ['schema_version'],
-    'Semver of the schema package this was written against.',
-  );
+  // THE VALUE, NOT A DESCRIPTION OF ONE. This said only "Semver of the schema
+  // package this was written against", and a local model (Qwen 3.6 in LM
+  // Studio, the first non-Anthropic assistant on prod, 26 September 2026)
+  // guessed "1.0.0" — which the switchboard refuses, because it checks the
+  // major version, with an answer telling the assistant to upgrade a package
+  // it has never heard of. Claude-family clients evidently found the value
+  // elsewhere; nothing should depend on that.
+  say(['schema_version'], `Always "${SCHEMA_VERSION}", exactly as written here.`);
   say(
     ['category'],
     "Dotted taxonomy path, e.g. 'goods.bicycle.mountain', 'services.repairs.bicycle' or 'social.language-exchange'. The catalogue is a deny list: a leaf it has never heard of still goes up, so file it where it belongs and say what the thing is in `kind`.",
