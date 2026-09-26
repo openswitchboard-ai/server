@@ -401,8 +401,11 @@ export function countryNamed(input: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 /** How far ahead of every rival a candidate has to be to answer for the name
- *  on its own. Paris is eighty times the size of its nearest namesake. */
-const DOMINANCE = 10;
+ *  on its own. Paris is eighty times the size of its nearest namesake.
+ *  Eight since 26 September 2026: Hobart, Tasmania is nine times Hobart,
+ *  Indiana, and at ten a person in Hobart was asked which one they meant. The
+ *  resolved place is always written out in full for them to correct. */
+const DOMINANCE = 8;
 /** A namesake this size is a town in its own right, and somewhere a person
  *  could well have meant, however big the leader is. Perth in Scotland has
  *  47,000 people and is a real answer to "Perth"; Paris in Texas has 25,000

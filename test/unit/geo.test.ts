@@ -311,10 +311,13 @@ describe('gazetteer', () => {
     }
     // 26 September 2026: an Australian account whose own area is Hobart was
     // offered Hobart, Indiana. One Hobart in Australia, so that is the answer.
-    expect(ambiguousPlaces('Hobart')!.length).toBeGreaterThanOrEqual(2);
-    expect(ambiguousPlaces('Hobart', { country: 'AU' })).toBeUndefined();
-    expect(settledInCountry('Hobart', { country: 'AU' })!.admin1).toBeTruthy();
-    expect(describePlace(resolvePlaceFor('Hobart', { country: 'AU' })!)).toContain('Tasmania');
+    // (Hobart itself now settles on size alone, so Newcastle stands in: one in
+    // Australia, and real ones in England and South Africa.)
+    expect(ambiguousPlaces('Hobart')).toBeUndefined();
+    expect(ambiguousPlaces('Newcastle')!.length).toBeGreaterThanOrEqual(2);
+    expect(ambiguousPlaces('Newcastle', { country: 'AU' })).toBeUndefined();
+    expect(settledInCountry('Newcastle', { country: 'AU' })!.admin1).toBeTruthy();
+    expect(describePlace(resolvePlaceFor('Newcastle', { country: 'AU' })!)).toContain('New South Wales');
     // The same for any country holding exactly one of a shared name.
     const za = settledInCountry('Franklin', { country: 'ZA' })!;
     expect(qualifyPlace(za).display).toBe('Franklin, KwaZulu-Natal, ZA');
@@ -897,21 +900,23 @@ describe('which country a human is probably in', () => {
   it('places a shared name in the human\'s own country where it holds only one', () => {
     // The probe: "Hobart" from an Australian account came back asking which,
     // with four American Hobarts on the list.
-    const hobart = normaliseGeo({ place: 'Hobart', radius_km: 25 }, { country: 'AU' });
-    expect(hobart.country).toBe('AU');
-    expect(hobart.resolved!.display).toContain('Tasmania');
-    // And it lands where "Hobart, Tasmania" always has.
-    expect(hobart.geo.bucket).toBe(normaliseGeo({ place: 'Hobart, Tasmania', radius_km: 25 }).geo.bucket);
+    // Hobart now settles on size alone; Newcastle carries the same test.
+    expect(normaliseGeo({ place: 'Hobart', radius_km: 25 }).resolved!.display).toContain('Tasmania');
+    const nc = normaliseGeo({ place: 'Newcastle', radius_km: 25 }, { country: 'AU' });
+    expect(nc.country).toBe('AU');
+    expect(nc.resolved!.display).toContain('New South Wales');
+    // And it lands where "Newcastle, New South Wales" always has.
+    expect(nc.geo.bucket).toBe(normaliseGeo({ place: 'Newcastle, New South Wales', radius_km: 25 }).geo.bucket);
     // With no hint it is still asked.
-    expect(err(() => normaliseGeo({ place: 'Hobart', radius_km: 25 })).payload.code).toBe(
+    expect(err(() => normaliseGeo({ place: 'Newcastle', radius_km: 25 })).payload.code).toBe(
       'LOCATION_AMBIGUOUS',
     );
   });
 
   it('reads a shared area name on the clock\'s country', () => {
-    expect(homeCountry({ area: 'Hobart', timezone: 'Australia/Hobart' })).toBe('AU');
-    expect(countryOfArea('Hobart', 'AU')).toBe('AU');
-    expect(countryOfArea('Hobart')).toBeUndefined();
+    expect(homeCountry({ area: 'Newcastle', timezone: 'Australia/Sydney' })).toBe('AU');
+    expect(countryOfArea('Newcastle', 'AU')).toBe('AU');
+    expect(countryOfArea('Newcastle')).toBeUndefined();
   });
 });
 
