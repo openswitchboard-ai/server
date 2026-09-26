@@ -690,6 +690,13 @@ describe('what the switchboard calls things, in front of a model', () => {
  * gone out. Put it back exactly as it was and say the new thing in a NEW entry
  * at a new version. The only legitimate edit here is appending the hash of a
  * version that did not exist before.
+ *
+ * THE ONE EXCEPTION, 27 September 2026. A production assistant relayed one of
+ * our rehearsal anecdotes to its human as if it were real history, so the
+ * founder decided every served note is restated as its rule alone, without
+ * the story. Versions 36, 39, 41 and 43 were re-hashed for that rewording (the
+ * rule in each is unchanged), and version 72 says so to connected sessions.
+ * test/unit/noTestStories.test.ts keeps the stories out from here on.
  */
 const SHIPPED_NOTE_SHA256: Record<number, string> = {
   1: '1ced45c2ad7e8df82a4466e87f6b1ad58d43a7c8386608f3cbd914d90b6445b7',
@@ -727,14 +734,14 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   33: 'e92fb3baeaf523e89ab07e94bd4db456225e8e13e2ee15a99b36ace9a4780e9e',
   34: '4fcb4c62fcaff8bfbc9ee724dd1b5f702f6d544e63fe44cb92387bfd30774594',
   35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
-  36: '94fb0693a3f64858a44c93880afea6553b86c6777071b2a7374df9e022062678',
+  36: '93b62dadbd0e2bee6dae47ef13a6d1d2fcf684c9c7c10a5d94e27d998f86f980',
   37: '7ea548cfe98c458d9f2ca98b58f9a6ebd532dd5bc8e1ed2cc45cd7a92c7ec80c',
   38: 'e30726148ece9cc697ba539646d670815aefefc436b6d6ef75f6355041e02068',
-  39: '525d610e711324e03c33f7064b60d889dd823166fe5e9ab21cdb0002140e39bf',
+  39: 'dff4ef7ad6c1e1b73dc23621ade0fcbbb57d2be4d12ce77e9ce9af675cf76f2e',
   40: '1850fe97d047c43b48ef55abb034d67fb7ac71672f7acaf6b4f620b9b6eee2c9',
-  41: '90334c69390a256145abd9ef55678aca5562a2b47786f994840dca569a104021',
+  41: '7181b1458919d0b58c9fde2d5bdc30eef95bb397393363579486c12fccfafe64',
   42: '018e63c59ca4d7d8370fc4dbebb53ab6d84b40c732326e4949e3f2de8270403b',
-  43: '1bfa7c69974b24e1639c564a3fadef3d5eb6f679a4cd63d177b1163e447bab1f',
+  43: 'bda637c7dd282e67260ce13a4e276dec1d749dd83f709ecc6c1bba4ba1c389fc',
   44: '8371c2ea9332fecca15d40e7a32f2cdf499961b43703b39e09e44e6a301dbdfb',
   45: '74be1235f6b188480e38e3f45a70593a76a8e67ccb127f1492fedadff3c672fd',
   46: 'PENDING',
@@ -1540,12 +1547,10 @@ describe('version 43: reach follows the thing', () => {
     expect(entry().note.length).toBeGreaterThan(400);
   });
 
-  it('names the failure that caused it', () => {
+  it('says why the old default went, as a rule rather than a story', () => {
     const note = entry().note;
-    expect(note).toMatch(/trek mountain bike/i);
-    expect(note).toContain('$450');
-    expect(note).toMatch(/canberra reaching the whole of australia/i);
-    expect(note).toMatch(/postage would be exorbitant/i);
+    expect(note).toMatch(/old default of posting wide/i);
+    expect(note).toMatch(/posting a bicycle across a country costs more than the bicycle/i);
   });
 
   it('carries all four cases, and the question for an unclear one', () => {
@@ -1615,9 +1620,9 @@ describe('and the body teaches the new rule where a fresh session reads it', () 
     expect(b).toMatch(/ask your human one plain question rather than guessing/i);
   });
 
-  it('names the bike in the body too, so the reason travels with the rule', () => {
-    expect(board()).toMatch(/\$450 Trek mountain bike/);
-    expect(board()).toMatch(/postage would be exorbitant/i);
+  it('gives the reason in the body as a rule, with no story attached', () => {
+    expect(board()).toMatch(/because the postage would cost more than the thing/i);
+    expect(board()).not.toMatch(/trek|exorbitant|rehearsal/i);
   });
 
   it('keeps the system words out of the new body copy', () => {
@@ -1652,8 +1657,7 @@ describe('publish_intent carries the rule where the posting is made', () => {
   it('tells the agent to say which reach it chose and why', async () => {
     const d = await desc();
     expect(d).toMatch(/say out loud which reach you chose so they can correct you/i);
-    // The bike that taught it keeps its place in the manual.
-    expect(sectionText('posting_reach')).toMatch(/\$450 Trek mountain bike/i);
+    expect(sectionText('posting_reach')).toMatch(/say which reach you chose and why/i);
   });
 
   it('stays consistent with the reach enum the schema package ships', async () => {
