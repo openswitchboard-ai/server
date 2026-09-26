@@ -43,6 +43,8 @@ import { amendIntent, publishIntent } from '../../src/domain/cards.js';
 import {
   CONDITION_KEY,
   DETAIL_HUMAN_ACTION,
+  DETAIL_CONTEXT_HUMAN_ACTION,
+  CONTEXT_KEYS,
   DETAIL_UNKNOWN_UNMATCHED,
   IDENTIFYING_KEYS,
   MAX_QUESTIONS,
@@ -269,6 +271,24 @@ describe('what counts as enough to describe the thing to a stranger', () => {
     // assistant reading it can satisfy the gate without guessing.
     expect(listed).toContain('brand');
     expect(listed).toContain(CONDITION_KEY);
+  });
+
+  // 25 September 2026, the first production run: a Spanish conversation
+  // partner was told to ask for a brand, a model and a condition.
+  it('asks a service or social posting for what counts there, not goods keys', () => {
+    const s = detailShortfall({ category: 'social.language_exchange', type: 'looking_for', kind: 'Spanish conversation partner', attributes: {} })!;
+    expect(s.human_action).toBe(DETAIL_CONTEXT_HUMAN_ACTION);
+    expect(DETAIL_CONTEXT_HUMAN_ACTION.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(DETAIL_CONTEXT_HUMAN_ACTION)).toEqual([]);
+    expect(DETAIL_CONTEXT_HUMAN_ACTION).toContain('detail_unknown');
+    expect(DETAIL_CONTEXT_HUMAN_ACTION).not.toMatch(/brand|model|condition/);
+    const listed = DETAIL_CONTEXT_HUMAN_ACTION.split('`attributes`:')[1]
+      .split('.')[0]
+      .split(',')
+      .map((w) => w.trim());
+    for (const key of listed) expect(CONTEXT_KEYS.includes(key), key).toBe(true);
+    const goods = detailShortfall({ category: 'goods.x', type: 'offering', attributes: {} })!;
+    expect(goods.human_action).toBe(DETAIL_HUMAN_ACTION);
   });
 
 });
