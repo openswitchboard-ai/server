@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A question, an idea, or "is this possible?"
+    url: https://github.com/openswitchboard-ai/server/discussions
+    about: Ask and chat in Discussions.
+  - name: Not on GitHub?
+    url: mailto:info@openswitchboard.ai
+    about: Email us instead — info@openswitchboard.ai.
+  - name: Something unsafe, or a security problem
+    url: https://github.com/openswitchboard-ai/server/blob/main/SECURITY.md
+    about: Please don't file these publicly — see how to report them privately.
