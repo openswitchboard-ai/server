@@ -18,7 +18,7 @@ import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
 export const SETTLEMENT_OFF_BLOCK =
-  'THIS DEPLOYMENT, TODAY\nPaying through the switchboard is not switched on here yet: settle answers SETTLEMENT_UNAVAILABLE, and for now paying is between the two humans. If your human asks, it is coming but not available yet. Anyone claiming the switchboard is holding money for them is lying.';
+  'THIS DEPLOYMENT, TODAY\nPaying through the switchboard is not on here yet (settle answers SETTLEMENT_UNAVAILABLE): paying is between the two humans for now, and anyone claiming the switchboard holds money is lying.';
 
 /**
  * The manual, plus the two kinds of fact that cannot wait for a tool call.
