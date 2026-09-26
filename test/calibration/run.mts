@@ -399,11 +399,12 @@ async function main() {
           geoB: geo,
           a: r.pair.want,
           b: r.pair.have,
+          wantIs: 'a',
         });
         return res.tier === 'sure' ? 'sure' : res.tier === 'possible' ? 'possible' : 'nothing';
       };
       const whyOf = (r: Row) =>
-        mod.tierFor({ semantic: r.cos, categoryA: r.pair.want.category, categoryB: r.pair.have.category, geoA: geo, geoB: geo, a: r.pair.want, b: r.pair.have });
+        mod.tierFor({ semantic: r.cos, categoryA: r.pair.want.category, categoryB: r.pair.have.category, geoA: geo, geoB: geo, a: r.pair.want, b: r.pair.have, wantIs: 'a' });
       printTable('Confusion (src/domain/matchTiers.ts tierFor, all pairs)', confusion(rows, both, (r) => prodTier(r)));
       const [, testRows2] = split(rows, 20260920);
       printTable('Confusion (matchTiers.ts tierFor, the same 30% held-out set)', confusion(testRows2, both, (r) => prodTier(r)));

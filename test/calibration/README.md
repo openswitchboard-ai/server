@@ -17,8 +17,13 @@ touches a database or anything deployed.
 
 ## Files
 
-- `pairs.json`: 144 labelled pairs (34 sure, 40 possible, 70 nothing; 82 marked
-  `obscure`). Each has a want and a have `{category, kind, attributes}` written
+- `pairs.json`: 158 labelled pairs (40 sure, 41 possible, 77 nothing; 82 marked
+  `obscure`). The fourteen `g` pairs were added on 27 September 2026 for THE
+  WANT IS COVERED (matchTiers.ts): a generic want against a specific have of
+  exactly that thing (sure), the other direction (possible), and the tempting
+  negatives beside them (a bike rack, a mountain bike, a helmet, a wheelset,
+  a 54cm frame for a 56cm want, a 16 inch kids bike for a 20 inch one, a
+  guitar case). The tier lines themselves were fitted on the first 144. Each has a want and a have `{category, kind, attributes}` written
   the way a careful assistant would post them. Categories are real
   `taxonomy.v2.json` nodes. A few are invented leaves an assistant might make
   up (`goods.hobby.model-rocketry`, `goods.motoring.parts.tractor`,
@@ -30,7 +35,9 @@ touches a database or anything deployed.
 - `run.mts`: embeds with `embeddings.embedText` over `matchRules.projectionText`
   (the production call and projection), then computes the signals, searches
   the rules and prints the report. If `src/domain/matchTiers.ts` exists, it
-  also runs that module's `tierFor` and `wordAgreement` over the same pairs.
+  also runs that module's `tierFor` and `wordAgreement` over the same pairs,
+  telling it the want is the `a` side (`wantIs`), which the covered rule
+  needs.
 
 ## What the numbers mean
 

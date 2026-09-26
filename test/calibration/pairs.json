@@ -3258,5 +3258,344 @@
     "quantity": "30 pots"
    }
   }
+ },
+ {
+  "id": "g01",
+  "label": "sure",
+  "obscure": false,
+  "why": "Production 27 Sep 2026: generic road bike wanted, a specific 56cm road bike offered; the have is exactly what was asked for",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant Contend 2 road bike",
+   "attributes": {
+    "brand": "Giant",
+    "model": "Contend 2",
+    "year": "2019",
+    "frame_size": "56cm",
+    "material": "aluminium",
+    "condition": "good, a few scuffs"
+   }
+  }
+ },
+ {
+  "id": "g02",
+  "label": "sure",
+  "obscure": false,
+  "why": "Generic acoustic guitar wanted, a specific Yamaha offered",
+  "want": {
+   "category": "goods.music.guitar",
+   "kind": "acoustic guitar",
+   "attributes": {
+    "strings": "steel"
+   }
+  },
+  "have": {
+   "category": "goods.music.guitar",
+   "kind": "Yamaha FG800 acoustic guitar",
+   "attributes": {
+    "brand": "Yamaha",
+    "model": "FG800",
+    "strings": "steel",
+    "body": "dreadnought",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g03",
+  "label": "sure",
+  "obscure": false,
+  "why": "Generic kids bike with a wheel size, a specific kids bike of that size",
+  "want": {
+   "category": "goods.bicycle.kids",
+   "kind": "kids bike",
+   "attributes": {
+    "wheel_size": "20 inch"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.kids",
+   "kind": "Specialized Hotrock 20 kids bike",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Hotrock 20",
+    "wheel_size": "20\"",
+    "gears": "7 speed",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "g04",
+  "label": "sure",
+  "obscure": false,
+  "why": "Generic pram wanted, a specific Bugaboo pram offered",
+  "want": {
+   "category": "goods.baby.stroller",
+   "kind": "pram",
+   "attributes": {
+    "folding": "yes"
+   }
+  },
+  "have": {
+   "category": "goods.baby.stroller",
+   "kind": "Bugaboo Fox 3 pram",
+   "attributes": {
+    "brand": "Bugaboo",
+    "model": "Fox 3",
+    "folding": "yes",
+    "colour": "black",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g05",
+  "label": "sure",
+  "obscure": false,
+  "why": "Brand-level road bike wanted, a specific model of that brand offered",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant road bike",
+   "attributes": {
+    "brand": "Giant",
+    "frame_size": "56cm"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant Contend 2 road bike",
+   "attributes": {
+    "brand": "Giant",
+    "model": "Contend 2",
+    "year": "2019",
+    "frame_size": "56cm",
+    "material": "aluminium",
+    "condition": "good, a few scuffs"
+   }
+  }
+ },
+ {
+  "id": "g06",
+  "label": "sure",
+  "obscure": false,
+  "why": "Road bike wanted from the bicycle parent shelf, a specific road bike on the road shelf",
+  "want": {
+   "category": "goods.bicycle",
+   "kind": "road bike",
+   "attributes": {
+    "frame_size": "56cm"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant Contend 2 road bike",
+   "attributes": {
+    "brand": "Giant",
+    "model": "Contend 2",
+    "year": "2019",
+    "frame_size": "56cm",
+    "material": "aluminium",
+    "condition": "good, a few scuffs"
+   }
+  }
+ },
+ {
+  "id": "g07",
+  "label": "possible",
+  "obscure": false,
+  "why": "The other direction: a specific model wanted, a vague road bike offered; it may or may not be a Contend",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant Contend 2 road bike",
+   "attributes": {
+    "brand": "Giant",
+    "model": "Contend 2",
+    "frame_size": "56cm"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "g08",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Road bike wanted, a bike rack offered",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.accessories",
+   "kind": "road bike roof rack",
+   "attributes": {
+    "brand": "Thule",
+    "model": "ProRide 598",
+    "fits": "road bike up to 20kg",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g09",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Road bike wanted, a mountain bike offered",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.mountain",
+   "kind": "Trek Marlin 5 mountain bike",
+   "attributes": {
+    "brand": "Trek",
+    "model": "Marlin 5",
+    "frame_size": "56cm",
+    "pedals": "flat",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g10",
+  "label": "nothing",
+  "obscure": false,
+  "why": "56cm road bike wanted, the same model offered in a 54cm frame",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.road",
+   "kind": "Giant Contend 2 road bike",
+   "attributes": {
+    "brand": "Giant",
+    "model": "Contend 2",
+    "year": "2019",
+    "frame_size": "54cm",
+    "material": "aluminium",
+    "condition": "good, a few scuffs"
+   }
+  }
+ },
+ {
+  "id": "g11",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Road bike wanted, a road bike helmet offered",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.accessories",
+   "kind": "Giro road bike helmet",
+   "attributes": {
+    "brand": "Giro",
+    "size": "56cm head",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g12",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Road bike wanted, a road wheelset offered",
+  "want": {
+   "category": "goods.bicycle.road",
+   "kind": "used road bike",
+   "attributes": {
+    "frame_size": "56cm",
+    "pedals": "flat"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.parts",
+   "kind": "Shimano RS100 road bike wheelset",
+   "attributes": {
+    "brand": "Shimano",
+    "model": "RS100",
+    "fits": "700c road bike",
+    "condition": "good"
+   }
+  }
+ },
+ {
+  "id": "g13",
+  "label": "nothing",
+  "obscure": false,
+  "why": "20 inch kids bike wanted, a 16 inch kids bike offered",
+  "want": {
+   "category": "goods.bicycle.kids",
+   "kind": "kids bike",
+   "attributes": {
+    "wheel_size": "20 inch"
+   }
+  },
+  "have": {
+   "category": "goods.bicycle.kids",
+   "kind": "Specialized Hotrock 16 kids bike",
+   "attributes": {
+    "brand": "Specialized",
+    "model": "Hotrock 16",
+    "wheel_size": "16 inch",
+    "condition": "used"
+   }
+  }
+ },
+ {
+  "id": "g14",
+  "label": "nothing",
+  "obscure": false,
+  "why": "Acoustic guitar wanted, a case for one offered",
+  "want": {
+   "category": "goods.music.guitar",
+   "kind": "acoustic guitar",
+   "attributes": {
+    "strings": "steel"
+   }
+  },
+  "have": {
+   "category": "goods.music.accessories",
+   "kind": "Yamaha acoustic guitar case",
+   "attributes": {
+    "brand": "Yamaha",
+    "fits": "dreadnought acoustic guitar",
+    "condition": "good"
+   }
+  }
  }
 ]

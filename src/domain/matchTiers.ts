@@ -370,6 +370,95 @@ export interface WordAgreement {
    * pair its word agreement and it bars a sure one; it never bars the pair.
    */
   negated: boolean;
+  /**
+   * The details both postings stated under the SAME attribute key: 'conflict'
+   * where any one of them differs (a 56cm frame against a 54cm one), 'agree'
+   * where at least one is shared and none differs, 'unknown' where the two
+   * never state the same detail. See attributeAgreement. A conflict bars a
+   * sure one and nothing else.
+   */
+  attributes: Agreement;
+}
+
+/**
+ * THE DETAILS BOTH SIDES STATED, COMPARED (27 September 2026).
+ *
+ * Until today an attribute VALUE was only ever a bag of words: "56cm" on one
+ * side and "54cm" on the other were two distinctive words that failed to
+ * overlap, which lowered the score a little and nothing more. Two postings
+ * that both state a frame size, and state different ones, are not the same
+ * thing, and the covered rule below (THE WANT IS COVERED) would otherwise
+ * call them sure on everything else they share.
+ *
+ * DELIBERATELY NARROW, because calling a conflict that is not one costs a
+ * real pair its sure. A conflict is called only where both sides use the SAME
+ * key (compared case-folded, and never a brand, model or skipped key: brands
+ * and models have their own checks, and condition, colour, year and the rest
+ * describe the copy, not the thing), and then only:
+ *
+ *   - NUMBERS: both values are a plain number with at most a unit ("56cm",
+ *     "56 cm", "56"), the units are the same or one side gave none, and the
+ *     numbers differ. "56cm" against "22 inch" is a different unit and is
+ *     never called; "54-56cm" or "56cm or larger" is not a plain number and
+ *     is never called.
+ *   - WORDS: neither value holds a digit, both say something meaningful, and
+ *     they share no word, no stem and no five-letter start ("aluminium" and
+ *     "aluminum" agree). "flat" against "clipless" is a conflict.
+ *
+ * A value that says the human does not mind ("any", "either", "not fussy")
+ * is never compared at all.
+ */
+const NO_PREFERENCE = new Set(
+  'any either whatever unsure unknown flexible open fussy na n/a none nope anything'.split(' '),
+);
+const UNIT_OF: Record<string, string> = {
+  cm: 'cm', mm: 'mm', m: 'm', in: 'inch', inch: 'inch', inches: 'inch', '"': 'inch',
+  gb: 'gb', tb: 'tb', kg: 'kg', g: 'g', l: 'l', ml: 'ml', v: 'v', w: 'w', ah: 'ah', lb: 'lb', lbs: 'lb',
+};
+const PLAIN_NUMBER = /^(\d+(?:\.\d+)?)\s*(cm|mm|m|inches|inch|in|"|gb|tb|kg|g|ml|l|v|w|ah|lbs|lb)?$/;
+
+function valueAgreement(x: unknown, y: unknown): Agreement {
+  if (!['string', 'number'].includes(typeof x) || !['string', 'number'].includes(typeof y)) return 'unknown';
+  const [sx, sy] = [String(x).trim().toLowerCase(), String(y).trim().toLowerCase()];
+  const [tx, ty] = [tokensOf(sx, { joins: false }), tokensOf(sy, { joins: false })];
+  if (tx.some((t) => NO_PREFERENCE.has(t)) || ty.some((t) => NO_PREFERENCE.has(t))) return 'unknown';
+  const [nx, ny] = [PLAIN_NUMBER.exec(sx), PLAIN_NUMBER.exec(sy)];
+  if (nx && ny) {
+    const [ux, uy] = [nx[2] ? UNIT_OF[nx[2]] : undefined, ny[2] ? UNIT_OF[ny[2]] : undefined];
+    if (ux && uy && ux !== uy) return 'unknown';
+    return Number(nx[1]) === Number(ny[1]) ? 'agree' : 'conflict';
+  }
+  if (/\d/.test(sx) || /\d/.test(sy)) return 'unknown';
+  const [wx, wy] = [tx.filter(meaningful), ty.filter(meaningful)];
+  if (!wx.length || !wy.length) return 'unknown';
+  const close = (a: string, b: string) =>
+    a === b || headStem(a) === headStem(b) || (a.length >= 5 && b.length >= 5 && a.slice(0, 5) === b.slice(0, 5));
+  return wx.some((a) => wy.some((b) => close(a, b))) ? 'agree' : 'conflict';
+}
+
+/** Attributes as a plain object keyed case-folded, or empty. */
+function attrsOf(p: PostingWords): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (p.attributes && typeof p.attributes === 'object') {
+    for (const [k, v] of Object.entries(p.attributes as Record<string, unknown>)) out.set(k.toLowerCase(), v);
+  }
+  return out;
+}
+
+/** The comparable keys: never a brand, a model or a skipped key. */
+const comparableKey = (k: string) => !SKIP_KEYS.has(k) && !BRAND_KEYS.has(k) && !MODEL_KEYS.has(k);
+
+/** The details both postings stated under the same key: see the block above. */
+export function attributeAgreement(a: PostingWords, b: PostingWords): Agreement {
+  const [A, B] = [attrsOf(a), attrsOf(b)];
+  let out: Agreement = 'unknown';
+  for (const [k, v] of A) {
+    if (!comparableKey(k) || !B.has(k)) continue;
+    const said = valueAgreement(v, B.get(k));
+    if (said === 'conflict') return 'conflict';
+    if (said === 'agree') out = 'agree';
+  }
+  return out;
 }
 
 /**
@@ -493,7 +582,131 @@ export function wordAgreement(a: PostingWords, b: PostingWords): WordAgreement {
     sharedBeyondHead,
     sharedDistinctive,
     negated,
+    attributes: attributeAgreement(a, b),
   };
+}
+
+/**
+ * THE WANT IS COVERED (27 September 2026).
+ *
+ * Found on production: a want for "a used road bike", 56cm frame, flat pedals,
+ * up to $400, did not meet a Giant Contend 2 road bike, 56cm, $300, on the
+ * same shelf. The two projection embeddings sat at a cosine of about 0.45,
+ * because a posting that says a great deal and a posting that says very
+ * little embed far apart even when one is exactly the other, and the Dice
+ * score (0.48) is pulled down the same way: every word the richer side adds
+ * counts against it. So the most common case on a marketplace — someone
+ * wants "a road bike", someone has a particular one — came back a near miss.
+ *
+ * The principle: a want is a description, and a have that fits every word of
+ * that description is the thing wanted, however much more it says about
+ * itself. The extra words are answers to questions the want never asked. So
+ * this reads the pair in ONE DIRECTION, want into have, and it is sure when:
+ *
+ *   - the two shelves are the same, or one sits directly above the other
+ *     (categoryCloseness >= COVERED_MIN_CLOSENESS; siblings are not enough,
+ *     which is what keeps a road bike want off a mountain bike);
+ *   - every word the want uses for the thing itself — its kind, its other
+ *     words, its brand and its model — appears in the have's words;
+ *   - no attribute the two both state disagrees (attributeAgreement);
+ *   - a detail the want states under a key the have never uses ("pedals:
+ *     flat" against a have that says nothing about pedals) is unknown, not a
+ *     contradiction: it is a question for the conversation, and it neither
+ *     counts for the pair nor against it. But only COVERED_MAX_UNSTATED such
+ *     details: a want with two or more the have never answers describes
+ *     something the have has not shown it is, and that is a maybe;
+ *   - of everything else the want says, the have holds at least
+ *     COVERED_MIN_SHARE of the distinctive weight (a detail under a key both
+ *     use, stated partly differently, counts against it here);
+ *   - the heads agree, and where the want says anything beyond its head the
+ *     two share a word beyond it; a want that is ONLY its head ("ukulele")
+ *     is covered only on the very same shelf;
+ *   - A PART IS COVERED ONLY WHERE THE WANT SAYS WHAT IT FITS. Where either
+ *     side is a part (a part, part number or fits key, or "for"/"fits" in its
+ *     own words), the want must itself say which model or what it fits, and
+ *     then those words must be in the have like every other. "Gaggia steam
+ *     wand" against a steam wand for the Classic Pro is the question "does it
+ *     fit mine?" not yet asked, and the labelled set calls it a maybe
+ *     (p01, p02, p29 — found by the first calibration run of this rule);
+ *   - and the cosine is not below COVERED_MIN_COSINE, a floor that says only
+ *     that the two are not unrelated.
+ *
+ * The OTHER direction is not covered, and must not be: a have for "Vandoren
+ * clarinet reeds" against a want for V12s may or may not be V12s, and the
+ * labelled set calls that a maybe. That is why tierFor has to be told which
+ * side is the want (PairFacts.wantIs); where it is not told — a swap, where
+ * both sides want — this rule does not run.
+ *
+ * Everything that bars a sure anywhere still bars it here: a hard rule, a
+ * head or brand conflict, a model the have does not share, a `not_these`,
+ * a conflicting stated detail.
+ */
+export const COVERED_MIN_CLOSENESS = 0.85;
+export const COVERED_MIN_SHARE = 0.75;
+export const COVERED_MAX_UNSTATED = 1;
+export const COVERED_MIN_COSINE = 0.35;
+
+/** Keys that say a posting is a part of something else. */
+const PART_KEYS = new Set(['part', 'part_number', 'part_no', 'fits', 'compatible_with', 'suits', 'for']);
+/** Keys that say which model, or what a part fits. */
+const FIT_KEYS = new Set(['fits', 'compatible_with', 'suits', 'for', 'model', 'model_number', 'series', 'variant', 'version']);
+const FIT_WORDS = new Set(['for', 'fits', 'fit', 'suits', 'suit']);
+const kindSaysFor = (p: PostingWords) => tokensOf(p.kind ?? '', { joins: false }).some((t) => FIT_WORDS.has(t));
+const isAPart = (p: PostingWords) => [...attrsOf(p).keys()].some((k) => PART_KEYS.has(k)) || kindSaysFor(p);
+const saysWhatItFits = (p: PostingWords) =>
+  [...attrsOf(p).entries()].some(([k, v]) => FIT_KEYS.has(k) && tokensOf(v).some(meaningful)) || kindSaysFor(p);
+
+export interface Covered {
+  covered: boolean;
+  /** The first reason it is not, for a log line or a calibration table. */
+  why: string;
+}
+
+export function wantCoveredBy(want: PostingWords, have: PostingWords, closeness: number): Covered {
+  const W = bagOf(want);
+  const H = bagOf(have);
+  const no = (why: string): Covered => ({ covered: false, why });
+  if (closeness < COVERED_MIN_CLOSENESS) return no('shelves not close enough');
+  if (!W.head || !H.head) return no('no head noun');
+  if ((isAPart(want) || isAPart(have)) && !saysWhatItFits(want)) return no('a part, and the want never says what it fits');
+  const haveStems = new Set([...H.all].map(headStem));
+  const inHave = (t: string) => H.all.has(t) || haveStems.has(headStem(t));
+  // The want's own words for the thing: kind, other words, brand and model.
+  const own = [
+    ...tokensOf(want.kind ?? ''),
+    ...otherWordsOf(want.also_called).flatMap((p) => tokensOf(p)),
+    ...W.brand,
+    ...W.model,
+  ].filter((t) => meaningful(t) && !GENERIC.has(t));
+  const missing = [...new Set(own)].filter((t) => !inHave(t));
+  if (missing.length) return no(`the have never says: ${missing.join(', ')}`);
+  // The details the want states under a key the have never uses: unknown,
+  // so their words are set aside, and there may be only a few of them.
+  const haveAttrs = attrsOf(have);
+  const unstated = [...attrsOf(want).entries()].filter(
+    ([k, v]) => comparableKey(k) && !haveAttrs.has(k) && tokensOf(v).some((t) => meaningful(t) && !GENERIC.has(t)),
+  );
+  if (unstated.length > COVERED_MAX_UNSTATED) return no('too many details the have never answers');
+  const ownSet = new Set(own);
+  const setAside = new Set(
+    unstated.flatMap(([, v]) => tokensOf(v)).filter((t) => !ownSet.has(t) && !inHave(t)),
+  );
+  // How much of the rest of the want's distinctive weight the have holds.
+  let total = 0;
+  let held = 0;
+  for (const [t, w] of W.weights) {
+    if (setAside.has(t)) continue;
+    total += w;
+    if (inHave(t)) held += w;
+  }
+  if (!total || held / total < COVERED_MIN_SHARE) return no('too little of the want is answered');
+  const beyondHead = [...W.weights.keys()].filter((t) => headStem(t) !== headStem(W.head!));
+  if (beyondHead.length) {
+    if (!beyondHead.some(inHave)) return no('nothing shared beyond the head');
+  } else if (closeness < 1) {
+    return no('a want that is only its head, on another shelf');
+  }
+  return { covered: true, why: 'covered' };
 }
 
 const round = (n: number) => Math.round(n * 10000) / 10000;
@@ -518,6 +731,12 @@ export interface PairFacts {
   /** Each owner's reputation bump (matchRules.ts, PERSONAL THRESHOLD NUDGE). */
   bumpWant?: number;
   bumpHave?: number;
+  /**
+   * Which of a and b is the WANT, for the one rule that reads a pair in one
+   * direction (THE WANT IS COVERED). Left out — a swap, where both sides
+   * want — that rule does not run and every other rule is unchanged.
+   */
+  wantIs?: 'a' | 'b';
   /**
    * THE HOOK FOR A PAIR JUDGE, NOT CALLED YET. Part against whole (a chainsaw
    * chain against the chainsaw, a bezel insert against the watch) defeats both
@@ -558,8 +777,13 @@ export interface TierResult {
  * In order, with the lines fitted on test/calibration:
  *   - a hard rule failed (geo, price): nothing.
  *   - SURE: cosine >= SURE_MIN_COSINE, word agreement >= SURE_MIN_WORDS, and
- *     neither a head-noun conflict nor a brand conflict. Never on the blend
- *     alone, and whatever the shelves.
+ *     neither a head-noun conflict nor a brand conflict nor a stated detail
+ *     that differs. Never on the blend alone, and whatever the shelves.
+ *   - SURE, too, where the want is covered by the have (THE WANT IS COVERED,
+ *     27 September 2026): same or parent shelf, every word the want uses for
+ *     the thing in the have, heads agree, nothing contradicts. On any cosine
+ *     over COVERED_MIN_COSINE, because a thin want and a rich have embed far
+ *     apart even when the have is exactly what was asked for.
  *   - POSSIBLE: cosine >= POSSIBLE_MIN_COSINE, or any distinctive word in
  *     common with cosine >= POSSIBLE_WORDS_MIN_COSINE.
  *   - near miss: a compatible shelf and the old floor on the blend.
@@ -596,6 +820,10 @@ export function agreementSentence(w: WordAgreement): string {
     if (w[key] === 'agree') agree.push(label);
     else if (w[key] === 'conflict') differ.push(label);
   }
+  // A stated detail that differs (attributeAgreement) is named where it
+  // differs and nowhere else: agreeing details are what the other two already
+  // say, and naming them would change every sentence written before it.
+  if (w.attributes === 'conflict') differ.push('a detail you both gave');
   const list = (xs: string[]) =>
     xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs[0];
   let sentence: string;
@@ -652,9 +880,25 @@ export function tierFor(f: PairFacts): TierResult {
   if (!ev.hardRulesPass) return out('nothing', `hard rule: ${ev.failed}`);
 
   const bump = Math.max(Number(f.bumpWant ?? 0), Number(f.bumpHave ?? 0));
-  const conflict = words.head === 'conflict' || words.brand === 'conflict' || words.negated;
+  const conflict =
+    words.head === 'conflict' || words.brand === 'conflict' || words.negated || words.attributes === 'conflict';
   if (!conflict && semantic >= SURE_MIN_COSINE + bump && words.score >= SURE_MIN_WORDS) {
     return out('sure', 'close in meaning, the words agree, nothing contradicts');
+  }
+  // THE WANT IS COVERED: see the block over wantCoveredBy. One direction only,
+  // and only where the caller said which side is the want.
+  if (
+    f.wantIs &&
+    !conflict &&
+    words.head === 'agree' &&
+    words.model !== 'conflict' &&
+    semantic >= COVERED_MIN_COSINE + bump &&
+    (f.wantIs === 'a'
+      ? wantCoveredBy(f.a, f.b, parts.categoryCloseness)
+      : wantCoveredBy(f.b, f.a, parts.categoryCloseness)
+    ).covered
+  ) {
+    return out('sure', 'everything the want asks for, the have says, and nothing contradicts');
   }
   if (semantic >= POSSIBLE_MIN_COSINE + bump) {
     return out('possible', conflict ? 'very close in meaning, the words disagree' : 'very close in meaning');
