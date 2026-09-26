@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../src/aws.js', () => ({ bedrock: { send: vi.fn() }, sqs: { send: vi.fn() } }));
 
 import {
+  RELATED_OPEN,
   askText,
   cosine,
   lexicalScore,
   lexicalSuggestions,
   nodeText,
+  relatedOpenShelves,
   SUGGEST_CACHE_MAX,
   resetCategoryCorpus,
   resetSuggestCache,
@@ -17,6 +19,9 @@ import {
   warmCategoryCorpus,
 } from '../../src/domain/categorySuggest.js';
 import * as embeddings from '../../src/domain/embeddings.js';
+import { assertCategoryOpen } from '../../src/domain/cards.js';
+import { categoryGate } from '../../src/denylist.js';
+import { lintHumanCopy } from '../../src/email/lint.js';
 
 const cfg = { bedrockEmbedModelId: 'test-embed' } as any;
 
@@ -71,17 +76,68 @@ describe('lexical closeness', () => {
 });
 
 describe('the sentence a human reads', () => {
-  it('names the closest open categories, plainly', () => {
-    expect(suggestionSentence('unknown', ['goods.electronics.laptop', 'goods.electronics.tablet'])).toBe(
-      "That category isn't in the taxonomy. Closest open ones: goods.electronics.laptop, goods.electronics.tablet.",
+  // 26 September 2026: the probe on dev heard "Closest open ones:
+  // services.garden, services.repairs.computer, goods.home.decor." for a
+  // dentist. Paths are for the machine field; the sentence names shelves.
+  it('names the nearest open shelves in words, never as paths', () => {
+    const s = suggestionSentence('unknown', ['goods.electronics.laptop', 'goods.electronics.tablet']);
+    expect(s).toBe(
+      "That heading isn't one the switchboard uses. The nearest open shelves are laptops and tablets.",
     );
-    expect(suggestionSentence('reserved', ['social.activity-partner.walking'])).toContain(
-      'Closest open ones: social.activity-partner.walking.',
+    expect(s).not.toMatch(/\b[a-z-]+\.[a-z-]+/);
+    expect(suggestionSentence('reserved', ['services.moving'], 'services.driving.removals')).toBe(
+      "The switchboard isn't open to paid driving, like lessons, passenger rides and removals yet, because that work needs licence checks it doesn't do. The nearest open shelf is moving and lifting.",
     );
   });
 
   it('still says something useful with nothing to suggest', () => {
-    expect(suggestionSentence('unknown', [])).toBe("That category isn't in the taxonomy.");
+    expect(suggestionSentence('unknown', [])).toBe("That heading isn't one the switchboard uses.");
+  });
+
+  it('names a closed family in plain words, with the real reason where there is one', () => {
+    const cases: [string, RegExp][] = [
+      ['property.share.room', /^The switchboard isn't open to rooms, rentals and other property yet\.$/],
+      ['services.trades.plumbing', /licensed trades like plumbing and electrical work yet, because that work needs licence checks/],
+      ['services.health.dental', /isn't open to health care yet, because that work needs licence checks/],
+      ['goods.vehicles.trailer', /isn't open to vehicles and trailers yet, while the right rules for that are worked out\.$/],
+      ['social.dating.casual', /isn't open to dating yet, while the right rules/],
+    ];
+    for (const [path, reads] of cases) {
+      const s = suggestionSentence('reserved', relatedOpenShelves(path), path);
+      expect(s, path).toMatch(reads);
+      expect(s, path).not.toContain(path);
+      expect(s, path).not.toMatch(/\b(goods|services|social|property|work)\.[a-z]/);
+      expect(lintHumanCopy(s), path).toEqual([]);
+      expect(s.length, path).toBeLessThanOrEqual(300);
+    }
+  });
+
+  it('offers nothing for a closed family unless something is genuinely related', () => {
+    // The three the probe heard nonsense for now hear nothing at all.
+    expect(relatedOpenShelves('services.health.dental')).toEqual([]);
+    expect(relatedOpenShelves('services.trades.plumbing')).toEqual([]);
+    expect(relatedOpenShelves('property.share.room')).toEqual([]);
+    expect(relatedOpenShelves('goods.vehicles.trailer')).toEqual([]);
+    // Where the same errand is done between neighbours, that shelf is offered.
+    expect(relatedOpenShelves('services.driving.removals')).toEqual(['services.moving']);
+    // Every curated suggestion is itself open.
+    for (const list of Object.values(RELATED_OPEN)) {
+      for (const c of list) expect(categoryGate(c).ok, c).toBe(true);
+    }
+  });
+
+  it('refuses a closed family at the door without asking the embedder', async () => {
+    const spy = vi.spyOn(embeddings, 'embedText');
+    const payload = await assertCategoryOpen(cfg, 'services.health.dental', 'acct').then(
+      () => {
+        throw new Error('the gate did not refuse');
+      },
+      (e: any) => e.payload,
+    );
+    expect(payload.code).toBe('CATEGORY_PROHIBITED');
+    expect(payload.suggestions).toBeUndefined();
+    expect(payload.human_action).toContain('health care');
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

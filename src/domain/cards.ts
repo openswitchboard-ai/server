@@ -18,7 +18,7 @@ import { categoryDenied, categoryGate } from '../denylist.js';
 import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { attributeFields } from '../intake/checks/moneyFigure.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
-import { suggestCategories, suggestionSentence } from './categorySuggest.js';
+import { relatedOpenShelves, suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { SHELF_NONE_OPTION, snapCategory } from './categoryBackfill.js';
 import {
   closeShelfAttempt,
@@ -32,8 +32,10 @@ import {
 } from './shelfGaps.js';
 import { SHELF_PICK_ACTION, generalShelf, shelfInWords, shelfPickLink } from './shelfPick.js';
 import {
+  DETAIL_AND_RADIUS_HUMAN_ACTION,
   DETAIL_HUMAN_ACTION,
   DETAIL_UNKNOWN_UNMATCHED,
+  MAX_QUESTIONS,
   detailShortfall,
 } from './postingDetail.js';
 import {
@@ -50,9 +52,9 @@ import {
   type PostingGate,
 } from './postingRef.js';
 import { type Arrangement } from './arrangement.js';
-import { readLaneFacts, sayFor } from './lanes.js';
+import { laneFor, readLaneFacts, sayFor, sayNote, type Lane } from './lanes.js';
 import type { HearsVia } from './accounts.js';
-import { categoryLabelPath } from './matchRules.js';
+import { categoryLabelPath, theirOwnThing } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
 import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
@@ -269,8 +271,8 @@ export interface CardRow {
  * validation refusal rather than CATEGORY_PROHIBITED, because the category was
  * fine and the posting was short of a field.
  *
- * When it does refuse, the switchboard adds up to three of the closest open
- * categories so the agent can correct itself on the next call. Working those
+ * When it does refuse, the switchboard adds up to three open categories (see
+ * below for which) so the agent can correct itself on the next call. Working those
  * out is a courtesy — it never changes the decision, and a refusal stands
  * whether or not the suggestions arrive.
  *
@@ -285,9 +287,18 @@ export async function assertCategoryOpen(
 ): Promise<{ known: boolean }> {
   const gate = categoryGate(category);
   if (!gate.ok) {
-    const { categories } = await suggestCategories(cfg, category, 3);
+    // A CLOSED FAMILY SUGGESTS ONLY WHAT IS GENUINELY RELATED (26 September
+    // 2026): the nearest vectors to dental care were garden help and home
+    // decor, because the whole family is closed and what is left over is
+    // unrelated by construction. So a reserved path reads the curated list and
+    // never the embedder; a top level nobody has heard of is a spelling
+    // problem, and the search still runs for that. See categorySuggest.ts.
+    const categories =
+      gate.refusal === 'reserved'
+        ? relatedOpenShelves(category)
+        : (await suggestCategories(cfg, category, 3)).categories;
     throw new OsbError('CATEGORY_PROHIBITED', {
-      human_action: suggestionSentence(gate.refusal ?? 'unknown', categories),
+      human_action: suggestionSentence(gate.refusal ?? 'unknown', categories, category),
       ...(categories.length ? { suggestions: categories } : {}),
     });
   }
@@ -475,18 +486,38 @@ async function confirmFigures(
   accountId: string,
   attempt: Attempt,
   figures: PostingFigure[],
+  /** The radius question, where it rides along on this read-back. */
+  radiusQuestion?: string,
 ): Promise<void> {
-  if (!figures.length) return;
+  if (!figureWillAsk(attempt, figures)) return;
   const amounts = figureAmountsKey(figures);
-  if (attempt.asked.has('figure') && attempt.amounts === amounts) return;
   const reference = await askOnce(accountId, attempt, 'figure', amounts);
+  const questions = figureQuestions(figures);
   throw new OsbError('CONFIRM_FIGURE', {
-    human_action: FIGURE_HUMAN_ACTION,
-    questions: figureQuestions(figures),
+    human_action: radiusQuestion
+      ? `${FIGURE_HUMAN_ACTION}${FIGURE_RADIUS_TAIL}`
+      : FIGURE_HUMAN_ACTION,
+    questions: radiusQuestion
+      ? [...questions.slice(0, MAX_QUESTIONS - 1), radiusQuestion]
+      : questions,
     figures,
     reference,
   });
 }
+
+/** Whether the figure gate is about to read something back on this attempt. */
+function figureWillAsk(attempt: Attempt, figures: PostingFigure[]): boolean {
+  if (!figures.length) return false;
+  return !(attempt.asked.has('figure') && attempt.amounts === figureAmountsKey(figures));
+}
+
+/**
+ * What the figure read-back adds when the radius question rides on it: which
+ * field the last answer goes in. Kept short, because the protocol caps the
+ * whole line at 300 characters.
+ */
+export const FIGURE_RADIUS_TAIL =
+  ' Ask the last question too, and send `reach` back as "country" or the same radius.';
 
 /** `kind` as it is stored: trimmed, or null where the posting gave none. */
 const kindOf = (card: any): string | null => {
@@ -694,19 +725,52 @@ async function runPublish(
   //
   // DOES IT SAY ENOUGH TO DESCRIBE THE THING TO A STRANGER? The whole of the
   // reasoning, and the rule itself, is in domain/postingDetail.ts.
+  //
+  // NOTHING IS ASKED TWICE (26 September 2026). This used to excuse a second
+  // attempt only when it also carried detail_unknown, so an attempt that came
+  // back with the answers — written in Spanish, under keys the count had never
+  // heard of — was handed the identical questions a second time, and its
+  // assistant had done nothing wrong. Once the questions have been put on this
+  // reference, what comes back under it is the human's answer, and it goes on
+  // as it stands. detail_unknown still reads the same way; it is simply no
+  // longer the only way past a question already asked. An attempt with no
+  // reference is a first attempt and is asked, exactly as before.
+  //
+  // A RADIUS CHOSEN FOR A THING IS CONFIRMED ONCE (the full story is at the
+  // radius gate below), and since 26 September 2026 that question rides on
+  // whichever refusal this attempt gets first. It is worked out here, before
+  // the detail gate, so that gate can carry it.
+  const isGoods = String(card.category ?? '').split('.')[0] === 'goods';
+  const offering = card.type === 'offering';
+  const radiusToConfirm =
+    isGoods && card.geo?.reach === 'radius' && !attempt.asked.has('reach');
+  const radiusQuestion = offering
+    ? 'Would you post it to someone further away, or is it pick-up only?'
+    : 'Would you be happy to have it posted to you from further away, or will you only collect it?';
   const shortfall = detailShortfall(card);
   if (shortfall) {
-    const excused = opts.detailUnknown && attempt.asked.has('detail');
+    const excused = attempt.asked.has('detail');
     if (!excused) {
       // Minted or written down first, so the next attempt has something to
       // recognise — and something no rewording of the posting can move.
       const reference = await askOnce(accountId, attempt, 'detail');
+      // The radius question comes along in the same breath, where there is a
+      // goods posting with a chosen radius and no detail_unknown in play (that
+      // answer has its own sentence, and nothing else belongs beside it).
+      const fold = radiusToConfirm && !opts.detailUnknown && isGoods;
+      if (fold) await askOnce(accountId, attempt, 'reach');
       throw new OsbError('NEEDS_DETAIL', {
         // The escape hatch was reached for and did not match: say so, rather
         // than handing back the same questions as though it had never been
         // sent. See DETAIL_UNKNOWN_UNMATCHED in domain/postingDetail.ts.
-        human_action: opts.detailUnknown ? DETAIL_UNKNOWN_UNMATCHED : shortfall.human_action,
-        questions: shortfall.questions,
+        human_action: opts.detailUnknown
+          ? DETAIL_UNKNOWN_UNMATCHED
+          : fold
+            ? DETAIL_AND_RADIUS_HUMAN_ACTION
+            : shortfall.human_action,
+        questions: fold
+          ? [...shortfall.questions.slice(0, MAX_QUESTIONS - 1), radiusQuestion]
+          : shortfall.questions,
         reference,
       });
     }
@@ -724,8 +788,6 @@ async function runPublish(
   // postings read 0.86 alike, and the buyer's own radius kept them apart. So
   // it is asked of every goods posting, in the words that fit its side. A
   // service and a social posting keep the old default, which suits them.
-  const isGoods = String(card.category ?? '').split('.')[0] === 'goods';
-  const offering = card.type === 'offering';
   if (isGoods && !card.geo?.reach) {
     throw new OsbError('NEEDS_DETAIL', {
       reference: await askOnce(accountId, attempt, 'reach'),
@@ -751,24 +813,40 @@ async function runPublish(
   // IT USED TO BE KEYED ON `${kind}#reach`, which is the poster's own words for
   // the thing with a word stuck on the end — the same defect as the other two,
   // never hit only because the detail gate in front of it usually asked first.
+  //
+  // IT NO LONGER COSTS A ROUND TRIP OF ITS OWN WHERE ANOTHER QUESTION IS BEING
+  // ASKED ANYWAY (26 September 2026). An edge-case probe on dev posted twenty-odd
+  // goods postings, every one of them with a radius and a distance, and every
+  // one came back once for this question alone, in between the detail question
+  // and the figure read-back: three trips to the human where two would do. The
+  // protection is the asking, and a question asked alongside another is still
+  // asked. So it rides on the detail refusal above when that one fires, on the
+  // figure read-back below when that one fires, and comes back on its own only
+  // where nothing else is being asked — which is the one case where it is the
+  // only thing standing between an assistant's guess and a posting.
+  //
+  // Accepting a radius outright when it arrives with a distance was considered
+  // and rejected: the Queanbeyan spring arrived with exactly that, "radius" and
+  // 8 km, and the human would have posted it anywhere.
+  const figures = figuresOnPosting(card);
   if (isGoods && card.geo?.reach === 'radius' && !attempt.asked.has('reach')) {
-    throw new OsbError('NEEDS_DETAIL', {
-      reference: await askOnce(accountId, attempt, 'reach'),
-      human_action: offering
-        ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
-        : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
-      questions: [
-        offering
-          ? 'Would you post it to someone further away, or is it pick-up only?'
-          : 'Would you be happy to have it posted to you from further away, or will you only collect it?',
-      ],
-    });
+    if (!figureWillAsk(attempt, figures)) {
+      throw new OsbError('NEEDS_DETAIL', {
+        reference: await askOnce(accountId, attempt, 'reach'),
+        human_action: offering
+          ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
+          : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
+        questions: [radiusQuestion],
+      });
+    }
+    await askOnce(accountId, attempt, 'reach');
+    await confirmFigures(accountId, attempt, figures, radiusQuestion);
   }
 
   // AND A FIGURE IS READ BACK ONCE, before it can decide anything. See
   // domain/postingFigure.ts for the rehearsal that bought this and for the
   // manual rule it enforces.
-  await confirmFigures(accountId, attempt, figuresOnPosting(card));
+  await confirmFigures(accountId, attempt, figures);
 
   // SNAP AT THE DOOR. The gate above decided whether this may go up at all,
   // on the path the assistant wrote; this decides where it goes. A path the
@@ -1104,16 +1182,32 @@ const peopleWord = (n: number, singular: string, plural: string): string =>
  * name it — "your mountain bike" for the person offering it, "the mountain
  * bike you are after" for the person looking, which is the same split every
  * notice uses (email/templates.ts).
+ *
+ * NAMED FROM THE POSTER'S OWN WORDS (26 September 2026). This used to name the
+ * shelf, so a Saturday hiking group was "your hiking", a café's leftover
+ * pastries filed on the nearest shelf were "your repair cafe", and cheap
+ * pastries were "the crockery you are after". `kind` is theirs, and it comes
+ * first now (theirOwnThing).
+ *
+ * AND "NOTHING YET" PROMISES ONLY WHERE A PROMISE CAN BE KEPT. It said "I'll
+ * say the moment somebody comes forward" to every agent, which is the promise
+ * the manual forbids unless the agent runs on its own with a rhythm saved. The
+ * wording is the lane table's now (domain/lanes.ts, NOTES.nothing_yet).
  */
 function peopleSentence(
   category: string,
+  kind: string | null,
   type: 'WANT' | 'HAVE',
   here: number,
   waiting: number,
+  lane: { lane: Lane; arrangement: Arrangement; hearsVia?: HearsVia },
 ): string {
-  const thing = theirThing(categoryPhrase(category) || 'this', type === 'HAVE' ? 'have' : 'want');
+  const thing = theirOwnThing(category, kind, type === 'HAVE' ? 'have' : 'want');
   if (here === 0 && waiting === 0) {
-    return `Nothing yet on ${thing}. I'll say the moment somebody comes forward.`;
+    return sayNote('nothing_yet', lane.lane, lane.arrangement, {
+      thing,
+      ...(lane.hearsVia ? { hearsVia: lane.hearsVia } : {}),
+    });
   }
   if (here === 0) {
     return `${peopleWord(waiting, 'is', 'are')} waiting their turn on ${thing}. Check in for what to do next.`;
@@ -1143,6 +1237,17 @@ export async function listIntents(accountId: string): Promise<any[]> {
   // screening-rejected one is left alone rather than told "nothing yet".
   const stillUp = r.rows.filter((row) => row.lifecycle_state === 'PUBLISHED');
   const people = await peopleOnCards(stillUp.map((row) => row.id));
+  // Which lane this agent is in and whether the switchboard writes to this
+  // human, read once for the whole list (domain/lanes.ts). Only read where
+  // something is up, because only a posting that is up is told "nothing yet".
+  const laneFacts = stillUp.length
+    ? await readLaneFacts(accountId)
+    : { arrangement: {} as Arrangement, hearsVia: undefined };
+  const lane = {
+    lane: laneFor(laneFacts.arrangement),
+    arrangement: laneFacts.arrangement,
+    hearsVia: laneFacts.hearsVia,
+  };
   // What came close and did not make it, for each posting still up
   // (domain/nearMisses.ts). Its own list, never folded in among the people who
   // have actually come forward: a near miss is information and nobody has been
@@ -1176,7 +1281,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
             people_here: who.here,
             in_line: who.waiting,
             note: {
-              text: peopleSentence(row.category, row.type, who.here, who.waiting),
+              text: peopleSentence(row.category, row.kind ?? null, row.type, who.here, who.waiting, lane),
               provenance: 'switchboard-system' as const,
             },
           }
@@ -1185,8 +1290,15 @@ export async function listIntents(accountId: string): Promise<any[]> {
       ...(row.lifecycle_state === 'SCREENING_REJECTED'
         ? (() => {
             const rej = rejectionInPlainWords(row.screening);
+            // THE READY SENTENCE TOO (26 September 2026). A rejected posting
+            // came back with the reason in a field and no `note`, so the one
+            // entry an agent most needed words for was the one without any.
+            // The reason IS the sentence, in the same plain words the main
+            // page shows, so it rides as the note on the same terms as every
+            // other entry's.
             return rej
               ? {
+                  note: { text: rej.plain, provenance: 'switchboard-system' as const },
                   screening: {
                     ...(rej.reasonCode ? { reason_code: rej.reasonCode } : {}),
                     reason: rej.plain,

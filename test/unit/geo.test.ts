@@ -17,6 +17,8 @@ import {
   qualifyPlace,
   regionNamed,
   resolvePlace,
+  resolvePlaceFor,
+  settledInCountry,
 } from '../../src/geo/gazetteer.js';
 import { countryOfArea, countryOfTimeZone, homeCountry } from '../../src/geo/homeCountry.js';
 import {
@@ -301,18 +303,28 @@ describe('gazetteer', () => {
     expect(ambiguousPlaces('Franklin', {})!.map((p) => qualifyPlace(p).display)).toEqual(plain);
   });
 
-  it('a hint reorders the question and never answers it', () => {
+  it('a hint answers only where the human\'s own country holds one place of that name', () => {
     // A name one city plainly owns is still not put to anyone, hint or no
     // hint: an Australian typing "Sydney" is asked no more than anyone else.
     for (const name of ['Paris', 'Canberra', 'Adelaide', 'Tokyo']) {
       expect(ambiguousPlaces(name, { country: 'AU' }), name).toBeUndefined();
     }
-    // And a name in question stays in question, even where exactly one place
-    // in the hinted country carries it — the switchboard asks rather than
-    // picking quietly on a clock setting.
-    const one = ambiguousPlaces('Franklin', { country: 'ZA' })!;
-    expect(qualifyPlace(one[0]).display).toBe('Franklin, KwaZulu-Natal, ZA');
-    expect(one.length).toBeGreaterThanOrEqual(2);
+    // 26 September 2026: an Australian account whose own area is Hobart was
+    // offered Hobart, Indiana. One Hobart in Australia, so that is the answer.
+    expect(ambiguousPlaces('Hobart')!.length).toBeGreaterThanOrEqual(2);
+    expect(ambiguousPlaces('Hobart', { country: 'AU' })).toBeUndefined();
+    expect(settledInCountry('Hobart', { country: 'AU' })!.admin1).toBeTruthy();
+    expect(describePlace(resolvePlaceFor('Hobart', { country: 'AU' })!)).toContain('Tasmania');
+    // The same for any country holding exactly one of a shared name.
+    const za = settledInCountry('Franklin', { country: 'ZA' })!;
+    expect(qualifyPlace(za).display).toBe('Franklin, KwaZulu-Natal, ZA');
+    expect(ambiguousPlaces('Franklin', { country: 'ZA' })).toBeUndefined();
+    // Where the country holds two, the name stays in question, theirs first.
+    expect(settledInCountry('Franklin', { country: 'AU' })).toBeUndefined();
+    expect(ambiguousPlaces('Franklin', { country: 'AU' })!.length).toBe(5);
+    // And with no hint, nothing is settled.
+    expect(settledInCountry('Hobart')).toBeUndefined();
+    expect(resolvePlaceFor('Paris', { country: 'AU' })!.country).toBe('FR');
   });
 
   it('writes a place out in full', () => {
@@ -880,6 +892,26 @@ describe('which country a human is probably in', () => {
     expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
     expect(e.payload.candidates[0].place).toBe('Franklin, Australian Capital Territory');
     expect(e.payload.human_action).toContain('Franklin, Australian Capital Territory, AU');
+  });
+
+  it('places a shared name in the human\'s own country where it holds only one', () => {
+    // The probe: "Hobart" from an Australian account came back asking which,
+    // with four American Hobarts on the list.
+    const hobart = normaliseGeo({ place: 'Hobart', radius_km: 25 }, { country: 'AU' });
+    expect(hobart.country).toBe('AU');
+    expect(hobart.resolved!.display).toContain('Tasmania');
+    // And it lands where "Hobart, Tasmania" always has.
+    expect(hobart.geo.bucket).toBe(normaliseGeo({ place: 'Hobart, Tasmania', radius_km: 25 }).geo.bucket);
+    // With no hint it is still asked.
+    expect(err(() => normaliseGeo({ place: 'Hobart', radius_km: 25 })).payload.code).toBe(
+      'LOCATION_AMBIGUOUS',
+    );
+  });
+
+  it('reads a shared area name on the clock\'s country', () => {
+    expect(homeCountry({ area: 'Hobart', timezone: 'Australia/Hobart' })).toBe('AU');
+    expect(countryOfArea('Hobart', 'AU')).toBe('AU');
+    expect(countryOfArea('Hobart')).toBeUndefined();
   });
 });
 

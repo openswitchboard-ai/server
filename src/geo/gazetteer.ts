@@ -479,11 +479,6 @@ export interface PlaceHint {
 /**
  * The candidates ordered for the human who asked: their own country first,
  * largest first inside each group.
- *
- * A hint only ever reorders. Whether a name is in question at all is settled
- * before this runs, on population alone, so a person in Australia typing
- * "Sydney" is no more asked than anyone else — and when the answer is a list,
- * the Franklin down the road is at the top of it rather than off the end.
  */
 function preferCountry(cities: number[], hint?: string): number[] {
   if (!hint) return cities;
@@ -495,21 +490,16 @@ function preferCountry(cities: number[], hint?: string): number[] {
 }
 
 /**
- * The places a bare name could have meant, when no single one owns it.
+ * Every distinct place a bare name could have meant, largest first, or
+ * undefined when the name is not in question at all — one city answers to it,
+ * a comma or a code already settles it, or one candidate is both ten times the
+ * size of every rival and leaves no rival that is a town in its own right.
  *
- * Returns undefined when the name is not in question — one city answers to
- * it, or a comma or a code already settles it, or one candidate is both ten
- * times the size of every rival and leaves no rival that is a town in its own
- * right. Otherwise: the candidates, one per qualified name, at most five, for
- * the caller to put to a human.
- *
- * Largest first, except that a `hint` naming the human's own country lifts the
- * places in it to the front. The question asked is unchanged — a name several
- * real towns answer to is never picked silently, not even when exactly one of
- * them is in the human's country — but the first thing they are offered is now
- * the one they most likely meant.
+ * Distinct by qualified name: two towns in one division would offer the same
+ * qualified form, and the smaller of them could never be picked by it, so the
+ * larger stands for both.
  */
-export function ambiguousPlaces(input: string, hint: PlaceHint = {}): Place[] | undefined {
+function sharedNameCandidates(input: string, hint?: string): Place[] | undefined {
   const raw = (input ?? '').trim();
   if (!raw || raw.includes(',')) return undefined;
   if (CODE_FORM.test(raw)) return undefined;
@@ -523,22 +513,71 @@ export function ambiguousPlaces(input: string, hint: PlaceHint = {}): Place[] | 
     rows[top][5] > 0 &&
     rest.every((i) => rows[i][5] < RIVAL_MATTERS_ABOVE && rows[top][5] >= rows[i][5] * DOMINANCE);
   if (owns) return undefined;
-  // Two towns in one division would offer the same qualified form, and the
-  // smaller of them could never be picked by it. Keep the larger.
   const seen = new Set<string>();
   const out: Place[] = [];
-  for (const i of preferCountry(cities, hint.country)) {
+  for (const i of preferCountry(cities, hint)) {
     const p = toPlace(i);
     const { display } = qualifyPlace(p);
     if (seen.has(display)) continue;
     seen.add(display);
     out.push(p);
-    if (out.length === 5) break;
   }
   // Two towns of one name in one division leave nothing to choose between:
   // no qualified form tells them apart, so asking would get nowhere. The
   // larger one answers, the way it did before.
   return out.length < 2 ? undefined : out;
+}
+
+/**
+ * THE ONE PLACE OF THAT NAME IN THE HUMAN'S OWN COUNTRY, where there is exactly
+ * one (26 September 2026).
+ *
+ * The rule used to be that a hint only ever reordered: a name several real
+ * towns answer to was put to the human even when exactly one of them was in
+ * their country. An edge-case probe on dev then asked an Australian account
+ * whose own area is Hobart which Hobart it meant, and offered Hobart, Indiana.
+ * Nobody in Tasmania means Indiana by "Hobart", and asking them is the
+ * switchboard pretending not to know what it knows. So where the human's own
+ * country holds exactly one place of that name, that place is the answer. It
+ * is not silent: the posting's answer writes the place out in full
+ * (location_resolved), which the agent reads back and the human can correct.
+ *
+ * Where their country holds two or more (Franklin, ACT and Franklin, Tasmania),
+ * the name is still in question and still asked, with their own first. Where
+ * it holds none, the hint says nothing and the question is the one it always
+ * was.
+ */
+export function settledInCountry(input: string, hint: PlaceHint = {}): Place | undefined {
+  const cc = hint.country?.toUpperCase();
+  if (!cc) return undefined;
+  const all = sharedNameCandidates(input);
+  if (!all) return undefined;
+  const mine = all.filter((p) => p.country === cc);
+  return mine.length === 1 ? mine[0] : undefined;
+}
+
+/**
+ * The places a bare name could have meant, when no single one owns it — and,
+ * since 26 September 2026, when the human's own country does not settle it
+ * either (settledInCountry above).
+ *
+ * Returns undefined when the name is not in question. Otherwise: the
+ * candidates, one per qualified name, at most five, for the caller to put to
+ * a human — their own country's first, largest first inside each group.
+ */
+export function ambiguousPlaces(input: string, hint: PlaceHint = {}): Place[] | undefined {
+  if (settledInCountry(input, hint)) return undefined;
+  return sharedNameCandidates(input, hint.country)?.slice(0, 5);
+}
+
+/**
+ * Resolve free text for a human whose country is known: the one place of that
+ * name in their country where there is exactly one, and resolvePlace's answer
+ * otherwise. Every caller that asked ambiguousPlaces with a hint resolves with
+ * this, so the question and the answer agree about what was settled.
+ */
+export function resolvePlaceFor(input: string, hint: PlaceHint = {}): Place | undefined {
+  return settledInCountry(input, hint) ?? resolvePlace(input);
 }
 
 /**

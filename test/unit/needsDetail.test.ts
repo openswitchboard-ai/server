@@ -42,6 +42,7 @@ import * as db from '../../src/db.js';
 import { amendIntent, publishIntent } from '../../src/domain/cards.js';
 import {
   CONDITION_KEY,
+  DETAIL_AND_RADIUS_HUMAN_ACTION,
   DETAIL_HUMAN_ACTION,
   DETAIL_CONTEXT_HUMAN_ACTION,
   CONTEXT_KEYS,
@@ -294,6 +295,150 @@ describe('what counts as enough to describe the thing to a stranger', () => {
 });
 
 // ---------------------------------------------------------------------------
+// What the edge-case probe on dev posted (26 September 2026), read by the rule.
+// ---------------------------------------------------------------------------
+describe('the things people actually post', () => {
+  it('lets rich attributes through under whatever keys the assistant chose', () => {
+    const passes: Parameters<typeof detailShortfall>[0][] = [
+      // A black adjustable office chair in good condition.
+      {
+        category: 'goods.furniture.office-chair',
+        type: 'offering',
+        kind: 'office chair',
+        attributes: { condition: 'good', colour: 'black', adjustable: true },
+      },
+      // A Spanish want: every key in Spanish, and it says plainly what it is.
+      {
+        category: 'goods.bicycle',
+        type: 'looking_for',
+        kind: 'bicicleta usada',
+        attributes: { tipo: 'bicicleta de paseo o híbrida', talla_cuadro: 'mediana' },
+      },
+      // Leftover pastries from a café: no condition asked of food.
+      {
+        category: 'goods.food.surplus',
+        type: 'offering',
+        kind: 'leftover pastries',
+        attributes: { quantity: 10, types: 'croissants and danishes', pickup: 'at close' },
+      },
+      // A share of a bulk coffee order, filed somewhere else entirely.
+      {
+        category: 'goods.food.coffee-beans',
+        type: 'offering',
+        kind: 'share of bulk coffee order',
+        attributes: { share_size: '1kg', roast: 'medium', order_closes: 'Friday' },
+      },
+      // A ladder to borrow for a day.
+      {
+        category: 'goods.tools.ladder',
+        type: 'looking_for',
+        kind: 'extension ladder to borrow',
+        attributes: { arrangement: 'borrow', when: 'Saturday', min_height_m: 4 },
+      },
+    ];
+    for (const card of passes) expect(detailShortfall(card), String(card.kind)).toBeUndefined();
+  });
+
+  it('still turns back a posting made only of the arrangement', () => {
+    // When, how it changes hands and what it costs say nothing a stranger
+    // could recognise the thing by.
+    const short = detailShortfall({
+      category: 'goods.tools.ladder',
+      type: 'looking_for',
+      kind: 'ladder',
+      attributes: { when: 'Saturday', pickup: 'yes', free: true, budget_note: 'cheap' },
+    });
+    expect(short).toBeDefined();
+  });
+
+  it('never asks the make and model of food, a share, or something lent', () => {
+    for (const card of [
+      { category: 'goods.food.surplus', type: 'offering', kind: 'leftover pastries', attributes: {} },
+      { category: 'goods.food.coffee-beans', type: 'looking_for', kind: 'share of bulk coffee order', attributes: {} },
+      { category: 'goods.sports.water.surf', type: 'looking_for', kind: 'surfboard hire', attributes: {} },
+      { category: 'goods.tools.ladder', type: 'looking_for', kind: 'extension ladder to borrow', attributes: {} },
+      { category: 'goods.tools.ladder', type: 'offering', kind: 'extension ladder', attributes: { arrangement: 'lend' } },
+    ]) {
+      const short = detailShortfall(card)!;
+      expect(short, card.kind).toBeDefined();
+      const all = short.questions.join(' ');
+      expect(all, card.kind).not.toContain('make and model');
+      expect(all, card.kind).not.toContain('What comes with it');
+      for (const q of short.questions) expect(lintHumanCopy(q), q).toEqual([]);
+    }
+    // Food and shares carry no condition either; something lent still does.
+    const pastries = detailShortfall({
+      category: 'goods.food.surplus',
+      type: 'offering',
+      kind: 'leftover pastries',
+      attributes: {},
+    })!;
+    expect(pastries.questions.join(' ')).not.toContain('condition');
+    const ladder = detailShortfall({
+      category: 'goods.tools.ladder',
+      type: 'offering',
+      kind: 'extension ladder to lend',
+      attributes: { height_m: 6, type: 'aluminium extension' },
+    })!;
+    expect(ladder.questions).toEqual(['What condition is the extension ladder to lend in?']);
+  });
+
+  it('asks only for the condition where the facts are already there', () => {
+    // A pine bookshelf with five shelves was asked its make and model and
+    // which one it was, when the only thing it had not said was its condition.
+    const short = detailShortfall({
+      category: 'goods.furniture.bookcase',
+      type: 'offering',
+      kind: 'bookshelf',
+      attributes: { material: 'pine', shelves: 5 },
+    })!;
+    expect(short.questions).toEqual(['What condition is the bookshelf in?']);
+  });
+
+  it('asks an errand or something social nothing where it has said what it is', () => {
+    // A dated hike and a lost dog were asked whether they were in person or
+    // online, and how often.
+    for (const card of [
+      {
+        category: 'social.activity-partner.hiking',
+        type: 'offering',
+        kind: 'Saturday hiking group',
+        attributes: { date: '2026-10-04', start_time: '08:00', difficulty: 'moderate' },
+      },
+      {
+        category: 'social.community.lost-and-found',
+        type: 'looking_for',
+        kind: 'lost dog',
+        attributes: { breed: 'kelpie', colour: 'brown', collar: 'red' },
+      },
+    ]) {
+      expect(detailShortfall(card), card.kind).toBeUndefined();
+    }
+    // A figure alone is still not a fact about what it is.
+    expect(
+      detailShortfall({
+        category: 'services.tutoring.maths',
+        type: 'looking_for',
+        kind: 'maths tutoring',
+        attributes: { budget: 'modest' },
+      }),
+    ).toBeDefined();
+  });
+
+  it('names, in the line with the radius on it, only keys the rule counts', () => {
+    const listed = DETAIL_AND_RADIUS_HUMAN_ACTION.split('`attributes`:')[1]
+      .split('.')[0]
+      .split(',')
+      .map((w) => w.trim());
+    const counted = new Set<string>([...IDENTIFYING_KEYS, CONDITION_KEY]);
+    for (const key of listed) expect(counted.has(key), key).toBe(true);
+    expect(DETAIL_AND_RADIUS_HUMAN_ACTION.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(DETAIL_AND_RADIUS_HUMAN_ACTION)).toEqual([]);
+    expect(DETAIL_AND_RADIUS_HUMAN_ACTION).toContain('`reach`');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The door, and what the assistant is handed
 // ---------------------------------------------------------------------------
 interface World {
@@ -432,6 +577,21 @@ describe('the refusal an assistant is handed', () => {
       reference: asked.reference,
     });
     // And it goes up under the number it was asked about, never a second one.
+    expect(r.intent_id).toBe(asked.reference);
+  });
+
+  // 26 September 2026: a Spanish want answered the questions under Spanish
+  // keys, sent the reference back, and was handed the identical questions a
+  // second time. Nothing is asked twice on one reference.
+  it('never asks the same questions twice on one reference', async () => {
+    const asked = (await refusal(listing({ attributes: {} })))!;
+    expect(asked.code).toBe('NEEDS_DETAIL');
+    const r: any = await publishIntent(
+      cfg,
+      ACCOUNT,
+      listing({ attributes: { descripcion: 'bicicleta de montaña', estado: 'buen estado' } }),
+      { reference: asked.reference },
+    );
     expect(r.intent_id).toBe(asked.reference);
   });
 

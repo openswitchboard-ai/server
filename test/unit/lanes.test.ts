@@ -26,11 +26,14 @@ import * as db from '../../src/db.js';
 import { arrangementOrNothing, type Arrangement } from '../../src/domain/arrangement.js';
 import type { HearsVia } from '../../src/domain/accounts.js';
 import {
+  NOTES,
+  NOTE_IDS,
   SENTENCES,
   SENTENCE_IDS,
   laneFor,
   say,
   sayFor,
+  sayNote,
   type Lane,
   type SentenceId,
 } from '../../src/domain/lanes.js';
@@ -74,6 +77,18 @@ const everyWording = (
 /** Every wording the table can produce, across both axes. */
 const everyWordingAnyhow = (id: SentenceId): { name: string; text: string }[] =>
   HEARS.flatMap((h) => everyWording(id, h));
+
+/** Every wording of one of the human's ready sentences, across both axes. */
+const everyNoteAnyhow = (id: (typeof NOTE_IDS)[number]): { name: string; text: string }[] =>
+  HEARS.flatMap((hearsVia) => {
+    const ctx = { thing: 'your mountain bike', ...(hearsVia ? { hearsVia } : {}) };
+    const by = hearsVia ?? 'nothing read';
+    return [
+      { name: `autonomous, rhythm agreed (${by})`, text: sayNote(id, 'autonomous', AGREED, ctx) },
+      { name: `autonomous, nothing agreed (${by})`, text: sayNote(id, 'autonomous', NOT_YET, ctx) },
+      { name: `prompted (${by})`, text: sayNote(id, 'prompted', NOTHING, ctx) },
+    ];
+  });
 
 /**
  * The claim itself, in both spellings the table uses. It matches the CLAIM
@@ -370,6 +385,11 @@ describe('nothing outside the table promises to come back', () => {
     // Deliberately not `bring it back`: "I can bring it back whenever you ask"
     // is the opposite of a promise — it is bounded by the human speaking.
     /\bbring (you|them) (the moment|when|as soon as)/i,
+    // "Nothing yet on your bookcase. I'll say the moment somebody comes
+    // forward." sat in cards.ts, said to every agent in every lane, and passed
+    // every pattern above (edge-case probe on dev, 26 September 2026).
+    /I'?ll say (the moment|when|as soon as)|I will say (the moment|when|as soon as)/i,
+    /\bthe moment (somebody|someone|anyone|anybody) comes forward/i,
   ];
 
   /**
@@ -397,6 +417,9 @@ describe('nothing outside the table promises to come back', () => {
   it('and every promise phrase in lanes.ts sits in a wording the table produced', () => {
     const everything = new Set<string>();
     for (const id of SENTENCE_IDS) for (const w of everyWordingAnyhow(id)) everything.add(w.text);
+    // And the human's ready sentences, which live in the same file for the
+    // same reason (NOTES).
+    for (const id of NOTE_IDS) for (const w of everyNoteAnyhow(id)) everything.add(w.text);
     const said = [...everything].join('\n');
     const lines = prose(readFileSync('src/domain/lanes.ts', 'utf8')).split('\n');
     const loose: string[] = [];
@@ -648,6 +671,52 @@ describe('what a caller passes', () => {
           ? say('in_line', 'autonomous', AGREED)
           : say('in_line', 'prompted', NOTHING),
       );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * THE HUMAN'S READY SENTENCES, BY LANE (26 September 2026).
+ *
+ * The first of them is list_intents' "nothing yet", which promised to speak up
+ * to every agent in every lane. The rule is the table's own, from the other
+ * side: these are said to the human as they stand, so only the agreed wording
+ * may promise, and only 'email' may say the switchboard writes.
+ */
+describe('the ready sentences said to the human', () => {
+  const PROMISE = /I'?ll tell you|I will tell you|I'?ll say the moment|let you know/i;
+
+  it('promises only where the agent runs on its own with a rhythm saved', () => {
+    for (const id of NOTE_IDS) {
+      for (const { name, text } of everyNoteAnyhow(id)) {
+        if (name.startsWith('autonomous, rhythm agreed')) {
+          expect(text, `${id} — ${name}`).toMatch(PROMISE);
+          expect(text, `${id} — ${name}`).toContain('every hour');
+        } else {
+          expect(text, `${id} — ${name}`).not.toMatch(PROMISE);
+        }
+      }
+    }
+  });
+
+  it('says the switchboard writes only to a human it really writes to', () => {
+    for (const id of NOTE_IDS) {
+      for (const { name, text } of everyNoteAnyhow(id)) {
+        if (name.startsWith('autonomous, rhythm agreed')) continue;
+        expect(CLAIMS_POST.test(text), `${id} — ${name}`).toBe(name.includes('(email)'));
+      }
+      expect(Boolean(NOTES[id].claimsEmail), id).toBe(true);
+    }
+  });
+
+  it('is in the house register, inside its budget, and names no machinery', () => {
+    for (const id of NOTE_IDS) {
+      for (const { name, text } of everyNoteAnyhow(id)) {
+        expect(lintHumanCopy(text), `${id} — ${name}`).toEqual([]);
+        expect(text.length, `${id} — ${name}`).toBeLessThanOrEqual(NOTES[id].budget);
+        expect(text, `${id} — ${name}`).not.toMatch(/standing_arrangement|\bmatch(es)?\b|\bcard\b/i);
+      }
     }
   });
 });

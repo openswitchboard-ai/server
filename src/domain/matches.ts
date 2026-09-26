@@ -19,6 +19,8 @@ import {
   categoryPhrase,
   categoryPhraseWithArticle,
   otherWordsOf,
+  ownThingPhrase,
+  theirOwnThing,
   KIND_MAX_CHARS,
 } from './matchRules.js';
 import { agreementSentence, wordAgreement } from './matchTiers.js';
@@ -1481,9 +1483,23 @@ export function signalNote(
 // nothing here costs a read the reply was not making anyway.
 // ---------------------------------------------------------------------------
 
-/** The thing, as the person on this side of it would name it. */
+/**
+ * The words the reader themselves wrote for the thing, where the row holds
+ * them. A matches row carries the WANT's `kind` and nothing of the have's, so
+ * only the person in the want column has their own words on it; the other
+ * side is named from the shelf rather than from somebody else's words.
+ */
+const readersOwnKind = (m: MatchRow, accountId: string): string | null =>
+  m.account_want === accountId ? (m.kind ?? null) : null;
+
+/**
+ * The thing, as the person on this side of it would name it: their own words
+ * where the row holds them, the shelf's phrase otherwise, and a grammatical
+ * fallback for a pastime or for nothing at all (templates.ts theirOwnThing,
+ * 26 September 2026).
+ */
 const ownThing = (m: MatchRow, accountId: string): string =>
-  theirThing(categoryPhrase(m.category, m.kind) || 'this', readerSide(m, accountId));
+  theirOwnThing(m.category, readersOwnKind(m, accountId), readerSide(m, accountId));
 
 /**
  * What express_interest says now that it does nothing. The rule the wording
@@ -1850,7 +1866,11 @@ export async function checkMatches(
       // The offer sentence names the thing the way a person would say it in
       // one — "for your mountain bike" — where the signal sentence wants the
       // article in front of it as well.
-      const noteText = offerTableNote(table, categoryPhrase(m.category, m.kind), readerSide(m, accountId));
+      const noteText = offerTableNote(
+        table,
+        ownThingPhrase(m.category, readersOwnKind(m, accountId)).words,
+        readerSide(m, accountId),
+      );
       if (noteText) entry.offer_note = sbNote(noteText);
       // The words that came with their figure, beside the sentence rather than
       // inside it, wearing their own label. The sentence above says a note was

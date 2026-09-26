@@ -12,9 +12,10 @@
  * Nothing about that ranking is wrong in general. What was missing is the one
  * thing the switchboard already knew about the person asking: roughly where in
  * the world they are. A hint from here reorders the candidates so their own
- * country comes first. It NEVER picks for them — a name several real towns
- * answer to is still put to the human — and it never changes what a name
- * resolves to. It is an ordering, not an answer.
+ * country comes first. Since 26 September 2026 it also settles a shared name
+ * where their country holds exactly one place of it (gazetteer.ts
+ * settledInCountry); where their country holds several, the name is still put
+ * to the human, their own first.
  *
  * Two sources, in this order:
  *   1. the area already on their own page, when it settles to one place;
@@ -24,9 +25,11 @@
  * switchboard they live in Canberra has said something about where they are,
  * while a zone is a clock setting and travels with a laptop. Neither is
  * treated as fact, because neither has to be — the worst a wrong hint can do
- * is put the likely answer second.
+ * is put the likely answer second, or settle a shared name on the wrong
+ * country's one place of it, which the posting's answer writes out in full
+ * for the human to correct.
  */
-import { ambiguousPlaces, resolvePlace } from './gazetteer.js';
+import { ambiguousPlaces, resolvePlaceFor } from './gazetteer.js';
 
 /**
  * IANA zone -> ISO 3166-1 alpha-2, for the zones the switchboard's people
@@ -132,11 +135,16 @@ export function countryOfTimeZone(tz: string | null | undefined): string | undef
  * the person is in — it is the very question a hint is meant to help with —
  * so an ambiguous area yields no hint rather than the biggest namesake's flag.
  */
-export function countryOfArea(area: string | null | undefined): string | undefined {
+export function countryOfArea(
+  area: string | null | undefined,
+  /** The clock's country, where there is one: it can settle a shared name. */
+  clockCountry?: string,
+): string | undefined {
   const raw = (area ?? '').trim();
   if (!raw) return undefined;
-  if (ambiguousPlaces(raw)) return undefined;
-  return resolvePlace(raw)?.country;
+  const hint = clockCountry ? { country: clockCountry } : {};
+  if (ambiguousPlaces(raw, hint)) return undefined;
+  return resolvePlaceFor(raw, hint)?.country;
 }
 
 /** What is known about where this human is, as the two facts on the account. */
@@ -152,5 +160,9 @@ export interface HomeFacts {
  * neither says anything.
  */
 export function homeCountry(facts: HomeFacts): string | undefined {
-  return countryOfArea(facts.area) ?? countryOfTimeZone(facts.timezone);
+  // The clock is read first only so that it can settle a shared area name:
+  // "Hobart" on a Tasmanian clock is Hobart, Tasmania (26 September 2026). The
+  // area still wins wherever it says something of its own.
+  const clock = countryOfTimeZone(facts.timezone);
+  return countryOfArea(facts.area, clock) ?? clock;
 }

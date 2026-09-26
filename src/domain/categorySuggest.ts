@@ -21,9 +21,10 @@
  * the card is refused exactly the same way. NO-FALLBACKS applies to screening
  * and consent decisions; this is neither.
  */
-import { openCategories, taxonomyNode } from '../denylist.js';
+import { openCategories, reservedFamily, taxonomyNode } from '../denylist.js';
 import { categoryLabelPath } from './matchRules.js';
 import { embedText } from './embeddings.js';
+import { shelfInWords } from './shelfPick.js';
 import type { Config } from '../config.js';
 
 /** How the switchboard arrived at a set of suggestions. */
@@ -429,17 +430,125 @@ export async function suggestCategories(
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE REFUSAL, SAID TO A PERSON (26 September 2026).
+//
+// An edge-case probe on dev read back what this used to say. A want for a good
+// dentist came back "That category is reserved and can't be posted yet.
+// Closest open ones: services.garden, services.repairs.computer,
+// goods.home.decor." A plumber came back with trading cards and aquariums, and
+// a room in a share house with skill sharing. Three faults in one sentence:
+//
+//  - it read dotted paths aloud, which the manual forbids an assistant to do
+//    and which the switchboard was doing on its behalf;
+//  - the "closest" shelves were the nearest vectors to a closed family, and
+//    the nearest open thing to dental care is not a thing at all — the whole
+//    family is closed, so whatever is left over is unrelated by construction;
+//  - it never said why, so the human heard a refusal with no reason in it.
+//
+// So a reserved family is now named in plain words, with the one real reason
+// where the taxonomy gives one. The reasons are the schema's own (SPEC §2,
+// "Reserved nodes"): a licensed trade "needs a licence in most places the
+// switchboard runs", and a regulated vertical is "held back deliberately at
+// launch, pending a policy that does it justice". Nothing past that is
+// claimed: no law is cited, and a reserved top level, which the taxonomy says
+// only "not yet open" about, is given no reason at all.
+//
+// AND THE SUGGESTIONS ARE CURATED, OR THERE ARE NONE. A nearest-vector list is
+// the wrong tool for a closed family, and a wrong suggestion is worse than
+// none: offering "small fixes around the house" to someone after a licensed
+// plumber routes them round the very reason the door is closed. So a reserved
+// family only ever suggests from RELATED_OPEN below, written by hand, where the
+// open shelf is genuinely the same errand done the neighbourly way (moving
+// help beside commercial removals). Most families have nothing there, and
+// they say nothing. The embedding search still runs for a top level nobody
+// has heard of, because that is a spelling problem rather than a closed door.
+//
+// Paths stay in `suggestions`, the machine field an assistant files with. The
+// sentence names shelves in words and never says a path.
+// ---------------------------------------------------------------------------
+
+/** A closed family, as a person would name it after "isn't open to". */
+const RESERVED_WORDS: Record<string, string> = {
+  property: 'rooms, rentals and other property',
+  work: 'jobs and paid work',
+  'services.trades': 'licensed trades like plumbing and electrical work',
+  'services.health': 'health care',
+  'services.legal': 'legal services',
+  'services.financial': 'financial services like advice, tax and accounting',
+  'services.childcare': 'childcare',
+  'services.driving': 'paid driving, like lessons, passenger rides and removals',
+  'services.security': 'security work like guarding, alarms and locksmithing',
+  'services.food': 'cooking and catering to order',
+  'goods.vehicles': 'vehicles and trailers',
+  'social.dating': 'dating',
+  'social.support': 'support groups',
+};
+
 /**
- * The sentence an agent's human reads. Plain, and it names what to do next.
+ * The only suggestions a closed family ever makes: open shelves that are the
+ * same errand done between neighbours, and nothing that works round the reason
+ * the family is closed. Keyed on the closed path itself or on the family, the
+ * more specific first. An absent key means no suggestion, on purpose.
+ */
+export const RELATED_OPEN: Record<string, string[]> = {
+  // Commercial removals need a licence; a hand with the lifting does not.
+  'services.driving.removals': ['services.moving'],
+  // Freelance and gig work between neighbours is what everyday help is for.
+  'work.freelance': ['services.creative', 'services.tech', 'services.admin'],
+  'work.gig': ['services.errands', 'services.moving', 'services.garden'],
+  'work.casual': ['services.errands', 'services.moving', 'services.garden'],
+};
+
+/** A closed path's curated open neighbours, most specific key first. */
+export function relatedOpenShelves(category: string): string[] {
+  const parts = String(category ?? '').split('.');
+  for (let i = parts.length; i >= 1; i--) {
+    const hit = RELATED_OPEN[parts.slice(0, i).join('.')];
+    if (hit) return hit.filter((c) => suggestableCategories().includes(c));
+  }
+  return [];
+}
+
+/** The reason clause, where the taxonomy gives a real one. */
+function reservedWhy(reason: string): string {
+  if (reason === 'licensed-trade') return ", because that work needs licence checks it doesn't do";
+  if (reason === 'regulated-vertical') return ', while the right rules for that are worked out';
+  return '';
+}
+
+/** "a", "a and b", "a, b and c". */
+function listInWords(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** The suggestions as a sentence of shelf names, or nothing. */
+function nearestInWords(suggestions: string[]): string {
+  const words = suggestions.map(shelfInWords).filter(Boolean);
+  if (!words.length) return '';
+  return words.length === 1
+    ? ` The nearest open shelf is ${words[0]}.`
+    : ` The nearest open shelves are ${listInWords(words)}.`;
+}
+
+/**
+ * The sentence an agent's human hears when a category is refused. Plain,
+ * never a path, and a reason only where there is a real one.
  */
 export function suggestionSentence(
   status: 'reserved' | 'unknown',
   suggestions: string[],
+  category?: string,
 ): string {
-  const head =
-    status === 'reserved'
-      ? "That category is reserved and can't be posted yet."
-      : "That category isn't in the taxonomy.";
-  if (!suggestions.length) return head;
-  return `${head} Closest open ones: ${suggestions.join(', ')}.`;
+  if (status === 'reserved') {
+    const family = category ? reservedFamily(category) : undefined;
+    const words =
+      (family && RESERVED_WORDS[family.path]) ||
+      (family ? shelfInWords(family.path) : '') ||
+      'that kind of thing';
+    const why = family ? reservedWhy(family.reason) : '';
+    return `The switchboard isn't open to ${words} yet${why}.${nearestInWords(suggestions)}`;
+  }
+  return `That heading isn't one the switchboard uses.${nearestInWords(suggestions)}`;
 }

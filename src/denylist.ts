@@ -186,6 +186,46 @@ export function categoryGate(category: string): CategoryGate {
   return { ok: true, known };
 }
 
+/**
+ * THE CLOSED FAMILY A PATH SITS IN, for the sentence that says so.
+ *
+ * categoryGate answers yes or no; this answers "which door, and why was it
+ * closed", which is what the refusal has to say to a person (26 September
+ * 2026: the old sentence read the dotted path aloud and never said why). The
+ * outermost closed node wins, because that is the family a person would name:
+ * `services.trades.plumbing` is closed as a licensed trade, and a reserved top
+ * level such as `property` closes everything under it for its own reason.
+ *
+ * The reason is the taxonomy's own word and nothing more: 'licensed-trade' or
+ * 'regulated-vertical' where a node says which, 'not-yet-open' for a reserved
+ * top level, which carries no reason beyond that.
+ */
+export interface ReservedFamily {
+  /** The closed node itself: 'property', 'services.trades', 'goods.vehicles'. */
+  path: string;
+  reason: 'licensed-trade' | 'regulated-vertical' | 'not-yet-open';
+}
+
+export function reservedFamily(category: string): ReservedFamily | undefined {
+  const parts = String(category ?? '').split('.');
+  const top = parts[0];
+  const topLevel = taxonomy.top_levels?.[top];
+  if (!topLevel) return undefined;
+  if (topLevel.status !== 'open') return { path: top, reason: 'not-yet-open' };
+  for (let i = 1; i <= parts.length; i++) {
+    const path = parts.slice(0, i).join('.');
+    const node = taxonomy.nodes?.[path];
+    if (node?.status === 'reserved') {
+      const r = node.reserved_reason;
+      return {
+        path,
+        reason: r === 'licensed-trade' || r === 'regulated-vertical' ? r : 'not-yet-open',
+      };
+    }
+  }
+  return undefined;
+}
+
 /** Every category a card may be posted under, in taxonomy order. */
 export function openCategories(): string[] {
   return Object.keys(taxonomy.nodes ?? {}).filter((c) => categoryStatus(c).status === 'open');
