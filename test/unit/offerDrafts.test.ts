@@ -499,6 +499,7 @@ describe('the pages that show a carried figure', () => {
     expect(html).not.toContain(cpages.DRAFT_LINE);
     expect(html).toContain('>Accept<');
     expect(html).toContain('>Not now<');
-    expect(html).toContain('goes through your assistant');
+    // Not now is a plain way back to the main page (27 September 2026).
+    expect(html).toContain('href="/">Not now<');
   });
 });
