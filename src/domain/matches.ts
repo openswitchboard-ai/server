@@ -1004,7 +1004,7 @@ export const DEAL_AGREED_WHAT_TO_DO =
  * here, where it will be read.
  */
 export const DEAL_AGREED_PAYMENT_OFF =
-  'This switchboard does not hold money: paying is between the two of them, however they both prefer. Never offer to hold the money or suggest the switchboard can.';
+  'Paying through the switchboard is not switched on here yet, so for now paying is between the two of them, however they both prefer. Do not offer to hold the money or suggest the switchboard can; if they ask, say it is coming but not available yet.';
 export const DEAL_AGREED_PAYMENT_ON =
   'If a protected payment would help, you may offer it once, as described in read_manual; otherwise paying is between the two of them.';
 
