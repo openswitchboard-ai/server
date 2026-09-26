@@ -41,6 +41,10 @@ export interface Case {
 }
 
 const AUD = 'AUD';
+// Every place is written in full, town, state and country: since 26 September
+// 2026 that is the only form a posting's place is taken in, and it is the form
+// an assistant is handed for its human's own area. The accounts' own areas are
+// written the same way, so what the sweep hands back is what gets posted.
 const radius = (place: string, km = 25) => ({ place, reach: 'radius', radius_km: km });
 
 export const CASES = (sv: string): Case[] => {
@@ -57,7 +61,7 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'store',
           firstName: 'Dana',
-          locality: 'Geelong',
+          locality: 'Geelong, Victoria, Australia',
           postings: [
             ['office chair', 'goods.furniture.office-chair', 40, { condition: 'good', colour: 'black', adjustable: true }],
             ['desk lamp', 'goods.home.lighting', 15, { condition: 'like new', type: 'LED desk lamp' }],
@@ -72,7 +76,7 @@ export const CASES = (sv: string): Case[] => {
             listing: have({
               category,
               kind,
-              geo: radius('Geelong', 20),
+              geo: radius('Geelong, Victoria, Australia', 20),
               ask: { amount, ccy: AUD },
               sale: 'straight',
               attributes,
@@ -93,14 +97,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'seller',
           firstName: 'Priya',
-          locality: 'Ballarat',
+          locality: 'Ballarat, Victoria, Australia',
           postings: [
             {
               label: 'have: 12 camping chairs, $15 each, slots 10',
               listing: have({
                 category: 'goods.furniture.chair',
                 kind: 'folding camping chair',
-                geo: radius('Ballarat', 25),
+                geo: radius('Ballarat, Victoria, Australia', 25),
                 ask: { amount: 15, ccy: AUD },
                 sale: 'straight',
                 slots: 10,
@@ -112,14 +116,14 @@ export const CASES = (sv: string): Case[] => {
         ...['buyer1', 'buyer2'].map((key, i) => ({
           key,
           firstName: i ? 'Sam' : 'Lee',
-          locality: 'Ballarat',
+          locality: 'Ballarat, Victoria, Australia',
           postings: [
             {
               label: 'want: one folding camping chair, up to $20',
               listing: want({
                 category: 'goods.furniture.chair',
                 kind: 'folding camping chair',
-                geo: radius('Ballarat', 25),
+                geo: radius('Ballarat, Victoria, Australia', 25),
                 price: { band: { max: 20 }, ccy: AUD },
                 attributes: { quantity: 1, folding: true, condition: 'any' },
               }),
@@ -137,14 +141,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'landlord',
           firstName: 'Mia',
-          locality: 'Newcastle',
+          locality: 'Newcastle, New South Wales, Australia',
           postings: [
             {
               label: 'have: room in a 3-bedroom share house, $220/week',
               listing: have({
                 category: 'property.share.room',
                 kind: 'room in a share house',
-                geo: radius('Newcastle', 10),
+                geo: radius('Newcastle, New South Wales, Australia', 10),
                 ask: { amount: 220, ccy: AUD },
                 sale: 'straight',
                 attributes: { rent_period: 'week', bedrooms_in_house: 3, furnished: false, bills_included: true, available_from: '2026-10-10' },
@@ -155,14 +159,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'tenant',
           firstName: 'Tom',
-          locality: 'Newcastle',
+          locality: 'Newcastle, New South Wales, Australia',
           postings: [
             {
               label: 'want: room in a share house, up to $250/week',
               listing: want({
                 category: 'property.share.room',
                 kind: 'room in a share house',
-                geo: radius('Newcastle', 10),
+                geo: radius('Newcastle, New South Wales, Australia', 10),
                 price: { band: { max: 250 }, ccy: AUD },
                 attributes: { rent_period: 'week', move_in: 'mid October', furnished: 'either' },
               }),
@@ -180,14 +184,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'homeowner',
           firstName: 'Jo',
-          locality: 'Wollongong',
+          locality: 'Wollongong, New South Wales, Australia',
           postings: [
             {
               label: 'want: licensed plumber for a leaking hot water system',
               listing: want({
                 category: 'services.trades.plumbing',
                 kind: 'licensed plumber',
-                geo: radius('Wollongong', 20),
+                geo: radius('Wollongong, New South Wales, Australia', 20),
                 urgency: 'days',
                 attributes: { job: 'leaking hot water system', licensed_required: true },
               }),
@@ -197,14 +201,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'sparky',
           firstName: 'Ray',
-          locality: 'Wollongong',
+          locality: 'Wollongong, New South Wales, Australia',
           postings: [
             {
               label: 'have: licensed electrician taking small jobs',
               listing: have({
                 category: 'services.trades.electrical',
                 kind: 'licensed electrician',
-                geo: radius('Wollongong', 30),
+                geo: radius('Wollongong, New South Wales, Australia', 30),
                 attributes: { licensed: true, jobs: 'small domestic jobs, power points, lights' },
               }),
             },
@@ -222,14 +226,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'guitarLearner',
           firstName: 'Ana',
-          locality: 'Hobart',
+          locality: 'Hobart, Tasmania, Australia',
           postings: [
             {
               label: 'want: guitar lessons, can teach Spanish in exchange',
               listing: want({
                 category: 'services.lessons.guitar',
                 kind: 'beginner guitar lessons',
-                geo: radius('Hobart', 15),
+                geo: radius('Hobart, Tasmania, Australia', 15),
                 attributes: { level: 'beginner', in_exchange: 'Spanish lessons (native speaker)', payment: 'swap, no money' },
               }),
             },
@@ -238,14 +242,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'spanishLearner',
           firstName: 'Ben',
-          locality: 'Hobart',
+          locality: 'Hobart, Tasmania, Australia',
           postings: [
             {
               label: 'want: Spanish lessons, can teach guitar in exchange',
               listing: want({
                 category: 'services.tutoring.languages',
                 kind: 'Spanish lessons',
-                geo: radius('Hobart', 15),
+                geo: radius('Hobart, Tasmania, Australia', 15),
                 attributes: { language: 'Spanish', level: 'beginner', in_exchange: 'guitar lessons (ten years playing)', payment: 'swap, no money' },
               }),
             },
@@ -262,14 +266,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'ps5Owner',
           firstName: 'Kai',
-          locality: 'Townsville',
+          locality: 'Townsville, Queensland, Australia',
           postings: [
             {
               label: 'have: PS5, to trade for a bike',
               listing: have({
                 category: 'goods.electronics.console.playstation',
                 kind: 'PlayStation 5',
-                geo: radius('Townsville', 25),
+                geo: radius('Townsville, Queensland, Australia', 25),
                 attributes: { model: 'PS5 disc edition', condition: 'good', controllers: 1, trade_for: 'bike (mountain or hybrid)' },
               }),
             },
@@ -278,7 +282,7 @@ export const CASES = (sv: string): Case[] => {
               listing: want({
                 category: 'goods.bicycle',
                 kind: 'bike',
-                geo: radius('Townsville', 25),
+                geo: radius('Townsville, Queensland, Australia', 25),
                 attributes: { type: 'mountain or hybrid', frame_size: 'medium', trade_offered: 'PS5' },
               }),
             },
@@ -287,14 +291,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'bikeOwner',
           firstName: 'Zoe',
-          locality: 'Townsville',
+          locality: 'Townsville, Queensland, Australia',
           postings: [
             {
               label: 'have: mountain bike, to trade for a PS5',
               listing: have({
                 category: 'goods.bicycle.mountain',
                 kind: 'mountain bike',
-                geo: radius('Townsville', 25),
+                geo: radius('Townsville, Queensland, Australia', 25),
                 attributes: { frame_size: 'medium', wheel_size_in: 29, condition: 'good', trade_for: 'PS5' },
               }),
             },
@@ -303,7 +307,7 @@ export const CASES = (sv: string): Case[] => {
               listing: want({
                 category: 'goods.electronics.console.playstation',
                 kind: 'PlayStation 5',
-                geo: radius('Townsville', 25),
+                geo: radius('Townsville, Queensland, Australia', 25),
                 attributes: { condition: 'working', trade_offered: 'mountain bike' },
               }),
             },
@@ -324,14 +328,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'organiser',
           firstName: 'Nat',
-          locality: 'Cairns',
+          locality: 'Cairns, Queensland, Australia',
           postings: [
             {
               label: 'have: 3 shares of a 5kg bulk coffee bean order, $45 a share, slots 3',
               listing: have({
                 category: 'goods.food.coffee-beans',
                 kind: 'share of bulk coffee order',
-                geo: radius('Cairns', 20),
+                geo: radius('Cairns, Queensland, Australia', 20),
                 ask: { amount: 45, ccy: AUD },
                 sale: 'straight',
                 slots: 3,
@@ -343,14 +347,14 @@ export const CASES = (sv: string): Case[] => {
         ...['share1', 'share2', 'share3'].map((key, i) => ({
           key,
           firstName: ['Ivy', 'Oli', 'Raj'][i],
-          locality: 'Cairns',
+          locality: 'Cairns, Queensland, Australia',
           postings: [
             {
               label: 'want: a 1kg share of a bulk coffee order, up to $50',
               listing: want({
                 category: 'goods.food.coffee-beans',
                 kind: 'share of bulk coffee order',
-                geo: radius('Cairns', 20),
+                geo: radius('Cairns, Queensland, Australia', 20),
                 price: { band: { max: 50 }, ccy: AUD },
                 attributes: { share_size: '1kg', beans: 'whole' },
               }),
@@ -368,14 +372,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'asker',
           firstName: 'Ella',
-          locality: 'Canberra',
+          locality: 'Canberra, Australian Capital Territory, Australia',
           postings: [
             {
               label: 'want: a good dentist recommendation in Canberra',
               listing: want({
                 category: 'services.health.dental',
                 kind: 'dentist recommendation',
-                geo: radius('Canberra', 20),
+                geo: radius('Canberra, Australian Capital Territory, Australia', 20),
                 attributes: { what: 'a recommendation for a good, gentle dentist', for: 'adult check-up and clean' },
               }),
             },
@@ -392,14 +396,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'giver',
           firstName: 'Gus',
-          locality: 'Toowoomba',
+          locality: 'Toowoomba, Queensland, Australia',
           postings: [
             {
               label: 'have: free 3-seater couch, pick up only (price band 0-0)',
               listing: have({
                 category: 'goods.furniture.sofa',
                 kind: 'three seater couch',
-                geo: radius('Toowoomba', 15),
+                geo: radius('Toowoomba, Queensland, Australia', 15),
                 price: { band: { min: 0, max: 0 }, ccy: AUD },
                 attributes: { seats: 3, free: true, pickup_only: true, condition: 'worn but clean', colour: 'grey' },
               }),
@@ -409,14 +413,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'taker',
           firstName: 'Liv',
-          locality: 'Toowoomba',
+          locality: 'Toowoomba, Queensland, Australia',
           postings: [
             {
               label: 'want: free couch (budget 0), can pick up',
               listing: want({
                 category: 'goods.furniture.sofa',
                 kind: 'couch',
-                geo: radius('Toowoomba', 15),
+                geo: radius('Toowoomba, Queensland, Australia', 15),
                 price: { band: { max: 0 }, ccy: AUD },
                 attributes: { free_only: true, can_pick_up: true, seats: 3 },
               }),
@@ -437,14 +441,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'borrower',
           firstName: 'Max',
-          locality: 'Bendigo',
+          locality: 'Bendigo, Victoria, Australia',
           postings: [
             {
               label: 'want: borrow an extension ladder for a day',
               listing: want({
                 category: 'goods.tools.ladder',
                 kind: 'extension ladder to borrow',
-                geo: radius('Bendigo', 10),
+                geo: radius('Bendigo, Victoria, Australia', 10),
                 attributes: { arrangement: 'borrow', duration: 'one day', when: 'this Saturday', min_height_m: 4 },
               }),
             },
@@ -453,14 +457,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'lender',
           firstName: 'Ruth',
-          locality: 'Bendigo',
+          locality: 'Bendigo, Victoria, Australia',
           postings: [
             {
               label: 'have: extension ladder to lend',
               listing: have({
                 category: 'goods.tools.ladder',
                 kind: 'extension ladder to lend',
-                geo: radius('Bendigo', 10),
+                geo: radius('Bendigo, Victoria, Australia', 10),
                 attributes: { arrangement: 'lend', height_m: 6, type: 'aluminium extension', return_within: 'a day or two' },
               }),
             },
@@ -469,14 +473,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'trailerOwner',
           firstName: 'Hal',
-          locality: 'Bendigo',
+          locality: 'Bendigo, Victoria, Australia',
           postings: [
             {
               label: 'have: box trailer for hire, $40/day',
               listing: have({
                 category: 'goods.vehicles.trailer',
                 kind: 'box trailer for hire',
-                geo: radius('Bendigo', 20),
+                geo: radius('Bendigo, Victoria, Australia', 20),
                 ask: { amount: 40, ccy: AUD },
                 sale: 'straight',
                 attributes: { arrangement: 'hire', rate_period: 'day', size: '7x4', caged: false },
@@ -487,14 +491,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'trailerHirer',
           firstName: 'Pip',
-          locality: 'Bendigo',
+          locality: 'Bendigo, Victoria, Australia',
           postings: [
             {
               label: 'want: hire a box trailer for a day, up to $50',
               listing: want({
                 category: 'goods.vehicles.trailer',
                 kind: 'box trailer hire',
-                geo: radius('Bendigo', 20),
+                geo: radius('Bendigo, Victoria, Australia', 20),
                 price: { band: { max: 50 }, ccy: AUD },
                 attributes: { arrangement: 'hire', duration: 'one day', when: 'next weekend' },
               }),
@@ -512,14 +516,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'owner',
           firstName: 'Beth',
-          locality: 'Braddon',
+          locality: 'Braddon, Australian Capital Territory, Australia',
           postings: [
             {
               label: 'want: lost my dog, brown kelpie, Braddon',
               listing: want({
                 category: 'social.community.lost-and-found',
                 kind: 'lost dog',
-                geo: radius('Braddon', 10),
+                geo: radius('Braddon, Australian Capital Territory, Australia', 10),
                 urgency: 'today',
                 attributes: { animal: 'dog', breed: 'kelpie', colour: 'brown', last_seen: 'Braddon, yesterday evening', collar: 'red' },
               }),
@@ -529,14 +533,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'finder',
           firstName: 'Carl',
-          locality: 'Braddon',
+          locality: 'Braddon, Australian Capital Territory, Australia',
           postings: [
             {
               label: 'have: found a brown kelpie in Braddon',
               listing: have({
                 category: 'social.community.lost-and-found',
                 kind: 'found dog',
-                geo: radius('Braddon', 10),
+                geo: radius('Braddon, Australian Capital Territory, Australia', 10),
                 urgency: 'today',
                 attributes: { animal: 'dog', breed: 'kelpie', colour: 'brown', found_where: 'Braddon', collar: 'red' },
               }),
@@ -557,14 +561,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'host',
           firstName: 'Fay',
-          locality: 'Launceston',
+          locality: 'Launceston, Tasmania, Australia',
           postings: [
             {
               label: 'have: hiking group Sat 4 Oct 2026, room for 6 (slots 6, ttl 8 days)',
               listing: have({
                 category: 'social.activity-partner.hiking',
                 kind: 'Saturday hiking group',
-                geo: radius('Launceston', 30),
+                geo: radius('Launceston, Tasmania, Australia', 30),
                 slots: 6,
                 ttl_days: 8,
                 attributes: { date: '2026-10-04', day: 'Saturday', start_time: '08:00', difficulty: 'moderate', distance_km: 12, spots: 6 },
@@ -575,14 +579,14 @@ export const CASES = (sv: string): Case[] => {
         ...['hiker1', 'hiker2'].map((key, i) => ({
           key,
           firstName: i ? 'Ned' : 'Una',
-          locality: 'Launceston',
+          locality: 'Launceston, Tasmania, Australia',
           postings: [
             {
               label: 'want: join a hiking group this weekend',
               listing: want({
                 category: 'social.activity-partner.hiking',
                 kind: 'hiking group to join',
-                geo: radius('Launceston', 30),
+                geo: radius('Launceston, Tasmania, Australia', 30),
                 ttl_days: 8,
                 attributes: { when: 'weekend of 4 October 2026', difficulty: 'moderate' },
               }),
@@ -600,14 +604,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'hispano',
           firstName: 'Luis',
-          locality: 'Darwin',
+          locality: 'Darwin, Northern Territory, Australia',
           postings: [
             {
               label: 'want (Spanish): bicicleta usada, hasta $200',
               listing: want({
                 category: 'goods.bicycle',
                 kind: 'bicicleta usada',
-                geo: radius('Darwin', 20),
+                geo: radius('Darwin, Northern Territory, Australia', 20),
                 price: { band: { max: 200 }, ccy: AUD },
                 attributes: { tipo: 'bicicleta de paseo o híbrida', talla_cuadro: 'mediana', estado: 'usada, en buen estado', uso: 'ir al trabajo' },
               }),
@@ -618,14 +622,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'seller',
           firstName: 'Amy',
-          locality: 'Darwin',
+          locality: 'Darwin, Northern Territory, Australia',
           postings: [
             {
               label: 'have: used hybrid bike, $150',
               listing: have({
                 category: 'goods.bicycle.hybrid',
                 kind: 'used hybrid bike',
-                geo: radius('Darwin', 20),
+                geo: radius('Darwin, Northern Territory, Australia', 20),
                 ask: { amount: 150, ccy: AUD },
                 sale: 'straight',
                 attributes: { frame_size: 'medium', condition: 'good', gears: 21 },
@@ -645,14 +649,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'traveller',
           firstName: 'Ivan',
-          locality: 'Canberra',
+          locality: 'Canberra, Australian Capital Territory, Australia',
           postings: [
             {
               label: 'want: surfboard hire in Byron Bay next week (home area Canberra)',
               listing: want({
                 category: 'goods.sports.water.surf',
                 kind: 'surfboard hire',
-                geo: radius('Byron Bay', 10),
+                geo: radius('Byron Bay, New South Wales, Australia', 10),
                 ttl_days: 10,
                 attributes: { arrangement: 'hire', board: 'longboard or mal', skill: 'intermediate', dates: 'next week, about 3 days' },
               }),
@@ -662,14 +666,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'byronLocal',
           firstName: 'Rhys',
-          locality: 'Byron Bay',
+          locality: 'Byron Bay, New South Wales, Australia',
           postings: [
             {
               label: 'have: longboard for hire in Byron Bay, $30/day',
               listing: have({
                 category: 'goods.sports.water.surf',
                 kind: 'surfboard hire',
-                geo: radius('Byron Bay', 10),
+                geo: radius('Byron Bay, New South Wales, Australia', 10),
                 ask: { amount: 30, ccy: AUD },
                 sale: 'straight',
                 attributes: { arrangement: 'hire', board: 'longboard', length_ft: 9, rate_period: 'day' },
@@ -688,14 +692,14 @@ export const CASES = (sv: string): Case[] => {
       actors: ['player1', 'player2'].map((key, i) => ({
         key,
         firstName: i ? 'Wes' : 'Ada',
-        locality: 'Mackay',
+        locality: 'Mackay, Queensland, Australia',
         postings: [
           {
             label: 'want: tennis partner for weekend social hits',
             listing: want({
               category: 'social.activity-partner.tennis',
               kind: 'tennis partner',
-              geo: radius('Mackay', 15),
+              geo: radius('Mackay, Queensland, Australia', 15),
               attributes: { level: 'intermediate', when: 'weekend mornings', format: 'social hit, singles' },
             }),
           },
@@ -712,14 +716,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'cafe',
           firstName: 'Bea',
-          locality: 'Albury',
+          locality: 'Albury, New South Wales, Australia',
           postings: [
             {
               label: 'have: 10 leftover pastries at close today, free or $2 each (urgency today)',
               listing: have({
                 category: 'goods.food.pastries',
                 kind: 'leftover pastries',
-                geo: radius('Albury', 5),
+                geo: radius('Albury, New South Wales, Australia', 5),
                 urgency: 'today',
                 ttl_days: 1,
                 price: { band: { min: 0, max: 2 }, ccy: AUD },
@@ -732,14 +736,14 @@ export const CASES = (sv: string): Case[] => {
         {
           key: 'local',
           firstName: 'Tess',
-          locality: 'Albury',
+          locality: 'Albury, New South Wales, Australia',
           postings: [
             {
               label: 'want: cheap pastries today',
               listing: want({
                 category: 'goods.food.pastries',
                 kind: 'cheap pastries',
-                geo: radius('Albury', 5),
+                geo: radius('Albury, New South Wales, Australia', 5),
                 urgency: 'today',
                 price: { band: { max: 5 }, ccy: AUD },
                 attributes: { quantity: 'a few', pickup: 'today' },

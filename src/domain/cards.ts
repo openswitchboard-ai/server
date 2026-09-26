@@ -57,8 +57,7 @@ import type { HearsVia } from './accounts.js';
 import { categoryLabelPath, theirOwnThing } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
-import { NormalisedGeo, normaliseGeo } from '../geo/normalise.js';
-import { ownCountryHint } from './profile.js';
+import { DEFAULT_RADIUS_KM, NormalisedGeo, geoOf, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
@@ -192,30 +191,40 @@ function filedUnderNote(decision: { changed: boolean; category: string }): strin
 }
 
 /**
- * A posting's location, resolved — and, when the name turns out to be one
- * several real towns answer to, asked again with the human's own country in
- * front of the list.
+ * A posting's location, resolved.
  *
- * The rehearsal (19 September 2026): a person living in Franklin, ACT was
- * offered five Franklins, all of them in the United States, because the
- * candidates are ranked on population and five American towns outrank both
- * Australian ones. The hint fixes the order; it never picks, so the human is
- * asked exactly as before.
- *
- * Reading the hint costs an identity decrypt, so it is read only on the
- * refusal that needs it. Nothing about a posting whose place resolves cleanly
- * — which is nearly all of them — touches the account at all.
+ * Until 26 September 2026 a refusal for a shared name was asked again with the
+ * human's own country read off their account, first to put their own towns at
+ * the top of the list and later to settle the name outright where their
+ * country held one of it. The founder's decision ended that: a posting's place
+ * is written in full, town, state and country, and the switchboard never
+ * guesses which town was meant, so nothing about the account is read here. The
+ * area on their own page reaches their assistant already written in full
+ * (area_resolved on the sweep), which is the form to copy.
  */
-async function placeCard(geo: any, accountId: string, purpose: string): Promise<NormalisedGeo> {
-  try {
-    return normaliseGeo(geo);
-  } catch (e) {
-    if (!(e instanceof OsbError) || e.payload.code !== 'LOCATION_AMBIGUOUS') throw e;
-    // The same refusal again, with the candidates in the order this human
-    // should hear them. It raises LOCATION_AMBIGUOUS once more; it returns
-    // only if a hint somehow settled the name, which is fine either way.
-    return normaliseGeo(geo, await ownCountryHint(accountId, purpose));
-  }
+function placeCard(geo: any): NormalisedGeo {
+  return normaliseGeo(geo);
+}
+
+/**
+ * An amend that leaves the place alone keeps the placement the posting has.
+ *
+ * An amend used to re-resolve the stored place every time. With places now
+ * taken only in full (26 September 2026), that would refuse a change of
+ * urgency on a posting that went up as "Canberra" the day before, for a place
+ * nobody asked to change. So the stored centre, radius and country stand, and
+ * only a patch that sends a new geo is resolved, under today's rules.
+ */
+function keptPlacement(card: CardRow): NormalisedGeo {
+  const g = geoOf(card);
+  return {
+    geo: card.geo,
+    lat: g.lat,
+    lon: g.lon,
+    radius_km: g.radius_km ?? DEFAULT_RADIUS_KM,
+    reach: g.reach,
+    country: g.country,
+  };
 }
 
 function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
@@ -999,7 +1008,7 @@ async function runPublish(
 
   // Location resolution: a named place becomes a centre point and a
   // canonical cell before the card is stored (LOCATION_UNRESOLVED otherwise).
-  const geo = await placeCard(card.geo, accountId, 'own-country-for-publish');
+  const geo = placeCard(card.geo);
 
   const account = await getAccount(accountId);
   if (!account) throw new Error('account not found');
@@ -1576,9 +1585,9 @@ export async function amendIntent(
   // Canonicalisation is idempotent, so rebuilding `current` from attributes
   // that already went through it changes nothing.
   const attributes = canonicaliseAttributes(filed.category, next.attributes ?? {});
-  // An amend re-resolves the place, so it asks the same question as publish
-  // and must offer the same answers in the same order.
-  const geo = await placeCard(next.geo, accountId, 'own-country-for-amend');
+  // A new place is resolved under the same rule as publish: written in full or
+  // refused. An amend that sends no geo keeps the placement already stored.
+  const geo = 'geo' in (patch ?? {}) ? placeCard(next.geo) : keptPlacement(card);
 
   await checkPublishQuota(accountId, cfg.quotas);
 

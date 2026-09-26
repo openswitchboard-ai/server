@@ -328,6 +328,11 @@ export type ErrorCode =
   | 'SETTLEMENT_UNAVAILABLE'
   | 'LOCATION_UNRESOLVED'
   | 'LOCATION_AMBIGUOUS'
+  // A posting's place was not written in full: town, state and country
+  // (26 September 2026, geo/normalise.ts). One fixed sentence, no candidates,
+  // because the switchboard no longer guesses which town was meant. Ahead of
+  // the pinned error document.
+  | 'LOCATION_NOT_FULL'
   // Nothing in, nothing out: this account has been stopped by the operator
   // (docs/trust-and-safety.md). Ahead of the pinned error document — see
   // AHEAD_OF_SCHEMA below.
@@ -381,6 +386,7 @@ const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
   'SHELF_UNCLEAR',
   'SHELF_PICK',
   'FLOOR_IS_PRIVATE',
+  'LOCATION_NOT_FULL',
 ];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */

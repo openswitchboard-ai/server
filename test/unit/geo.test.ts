@@ -8,21 +8,23 @@ import {
   isGeohash,
 } from '../../src/geo/geohash.js';
 import {
-  ambiguousPlaces,
+  allRows,
+  countryNameOf,
   countryNamed,
   describePlace,
   gazetteerSource,
   looksLikeStreetAddress,
   normaliseKey,
-  qualifyPlace,
+  placeAt,
   regionNamed,
+  resolveFullPlace,
+  resolveOwnArea,
   resolvePlace,
-  resolvePlaceFor,
-  settledInCountry,
 } from '../../src/geo/gazetteer.js';
-import { countryOfArea, countryOfTimeZone, homeCountry } from '../../src/geo/homeCountry.js';
+import { countryOfTimeZone } from '../../src/geo/homeCountry.js';
 import {
   MAX_RADIUS_KM,
+  PLACE_NOT_FULL,
   describeReach,
   describeStoredGeo,
   describeStoredReach,
@@ -30,7 +32,14 @@ import {
   normaliseGeo,
 } from '../../src/geo/normalise.js';
 import { REACH_GEO_CLOSENESS, evaluateGeo, evaluatePair } from '../../src/domain/matchRules.js';
+import { lintHumanCopy } from '../../src/email/lint.js';
 import { OsbError } from '../../src/protocol.js';
+
+/** The full forms the tests post with: town, state and country. */
+const CANBERRA = 'Canberra, ACT, Australia';
+const PERTH_WA = 'Perth, Western Australia, Australia';
+const AUCKLAND = 'Auckland, New Zealand';
+const GLASGOW = 'Glasgow, Scotland, United Kingdom';
 
 describe('geohash cells', () => {
   it('round-trips a point through a geohash4 cell', () => {
@@ -145,16 +154,12 @@ describe('gazetteer', () => {
   it('a name a bigger place merely answers to goes to the places that own it', () => {
     // The defect (Lachlan, 13 September 2026): bare "Franklin" resolved to
     // Columbus, Ohio — an alternate spelling the dump hangs off a city of
-    // 900,000, which beat every real Franklin on population. A person typing
-    // the name of their suburb and landing on a city on another continent is
-    // worse than landing nowhere.
+    // 900,000, which beat every real Franklin on population. The lenient
+    // reader still holds to that; a posting never reaches it, because a bare
+    // name is not a full place (26 September 2026).
     const franklin = resolvePlace('Franklin')!;
     expect(normaliseKey(franklin.name)).toBe('franklin');
-    // And the name is in question anyway, so the posting path asks rather
-    // than picks: the refuse-with-candidates path was always right here.
-    const candidates = ambiguousPlaces('Franklin')!;
-    expect(candidates.length).toBeGreaterThanOrEqual(2);
-    for (const p of candidates) expect(normaliseKey(p.name)).toBe('franklin');
+    expect(resolveFullPlace('Franklin').kind).toBe('not_full');
 
     // The same rule, the other way: nothing is called "Cracow", so the
     // alternate spelling still answers, and "New York" is still carried by
@@ -231,103 +236,126 @@ describe('gazetteer', () => {
     }
   });
 
-  it('lists the candidates when several cities answer to one bare name', () => {
-    const perth = ambiguousPlaces('Perth')!;
-    expect(perth.length).toBeGreaterThanOrEqual(2);
-    expect(perth.length).toBeLessThanOrEqual(5);
-    const displays = perth.map((p) => qualifyPlace(p).display);
-    expect(displays).toContain('Perth, Western Australia, AU');
-    expect(displays).toContain('Perth, Scotland, GB');
-    // Largest first, so a human reads the likely one at the top.
-    expect(perth[0].country).toBe('AU');
-    for (const name of ['Richmond', 'Springfield', 'London', 'Victoria']) {
-      expect(ambiguousPlaces(name)!.length, name).toBeGreaterThanOrEqual(2);
+  // -------------------------------------------------------------------------
+  // THE FULL PLACE (26 September 2026). The founder's decision: a posting's
+  // place is town, state and country, and the switchboard never guesses. Size,
+  // the human's own country and every "largest wins" are gone from placing.
+  // -------------------------------------------------------------------------
+  it('takes a place written in full, by name or by code', () => {
+    const full = (s: string) => {
+      const a = resolveFullPlace(s);
+      expect(a.kind, s).toBe('place');
+      return a.kind === 'place' ? describePlace(a.place) : '';
+    };
+    expect(full('Hobart, Tasmania, Australia')).toBe('Hobart, Tasmania, Australia');
+    // Abbreviations inside the full form resolve where they are unambiguous.
+    expect(full('Hobart, TAS, AU')).toBe('Hobart, Tasmania, Australia');
+    expect(full('Hobart, Tas, Australia')).toBe('Hobart, Tasmania, Australia');
+    expect(full(CANBERRA)).toBe('Canberra, Australian Capital Territory, Australia');
+    expect(full('Canberra, ACT, AUS')).toBe('Canberra, Australian Capital Territory, Australia');
+    expect(full('Franklin, Tasmania, Australia')).toBe('Franklin, Tasmania, Australia');
+    expect(full('Franklin, ACT, AU')).toBe('Franklin, Australian Capital Territory, Australia');
+    expect(full('Perth, WA, AU')).toBe(PERTH_WA);
+    expect(full('Perth, Scotland, GB')).toBe('Perth, Scotland, United Kingdom');
+    expect(full('Springfield, IL, US')).toBe('Springfield, Illinois, United States');
+    expect(full('Newcastle, NSW, AU')).toBe('Newcastle, New South Wales, Australia');
+    // "UK" is what people write; ISO reserves it for the country coded GB.
+    expect(full('Glasgow, Scotland, UK')).toBe(GLASGOW);
+    // A town sharing its region's name needs no region; a city-state needs its
+    // country written after it all the same.
+    expect(full('Mexico City, Mexico')).toBe('Mexico City, Mexico');
+    expect(full(AUCKLAND)).toBe('Auckland, New Zealand');
+    expect(full('Singapore, Singapore')).toBe('Singapore, Singapore');
+  });
+
+  it('never guesses: anything short of the full place is not full', () => {
+    for (const s of [
+      // Bare names, big and small, shared and not.
+      'Hobart',
+      'Perth',
+      'Paris',
+      'Canberra',
+      'Franklin',
+      'Newcastle',
+      'Nowhereville',
+      // A town without its state, or without its country.
+      'Hobart, Tasmania',
+      'Hobart, Australia',
+      'Perth, Scotland',
+      'Franklin, ACT',
+      // Regions and countries, however they are written.
+      'ACT',
+      'NSW',
+      'AU-ACT',
+      'US-CA',
+      'New South Wales, Australia',
+      'Australia',
+      'AU',
+      // Spaced hints are not taken apart: commas say where the parts are.
+      'Franklin ACT Australia',
+      '',
+    ]) {
+      expect(resolveFullPlace(s).kind, s).toBe('not_full');
     }
   });
 
-  it('every candidate carries the exact string that selects it', () => {
-    for (const name of ['Perth', 'Richmond', 'Springfield', 'London']) {
-      for (const p of ambiguousPlaces(name)!) {
-        const choice = qualifyPlace(p);
-        const back = resolvePlace(choice.place);
-        expect(back, `${name}: ${choice.place}`).toBeDefined();
-        expect(haversineKm(back!, p), choice.display).toBeLessThan(5);
-      }
+  it('says it does not know a full place written wrongly, rather than moving it', () => {
+    // Hobart is in Tasmania. Written as Victoria, it is not quietly put back.
+    for (const s of ['Hobart, Victoria, Australia', 'Nowhereville, NSW, Australia', 'Hobart, Tasmania, Canada']) {
+      expect(resolveFullPlace(s).kind, s).toBe('unknown');
     }
   });
 
-  it('a name one city plainly owns still resolves without asking', () => {
-    // Paris is eighty times its nearest namesake, and no rival is a town in
-    // its own right. Perth in Scotland is.
-    for (const name of ['Paris', 'Canberra', 'Fremantle', 'Waco', 'Yass', 'Tokyo', 'Adelaide']) {
-      expect(ambiguousPlaces(name), name).toBeUndefined();
-    }
-    expect(resolvePlace('Paris')!.country).toBe('FR');
-    // A comma or a code already settles the question.
-    for (const s of ['Perth, Scotland', 'Perth, WA', 'AU-ACT', 'AU']) {
-      expect(ambiguousPlaces(s), s).toBeUndefined();
-    }
+  it('prefers the town the name belongs to over one that merely contains it', () => {
+    // Gobernador Galvez is bigger than Galvez; "Galvez" is still Galvez.
+    const a = resolveFullPlace('Galvez, Santa Fe, Argentina');
+    expect(a.kind).toBe('place');
+    expect(a.kind === 'place' && a.place.name).toBe('Galvez');
   });
 
-  it("offers the human's own country first when a name is shared", () => {
-    // The rehearsal (19 September 2026): a person living in Franklin, ACT was
-    // offered five Franklins, every one of them in the United States, and
-    // their assistant told them truthfully that the name only resolved to US
-    // cities. Both Australian Franklins were in the asset the whole time,
-    // ranked off the end of the list by population.
-    const plain = ambiguousPlaces('Franklin')!.map((p) => qualifyPlace(p).display);
-    expect(plain.every((d) => d.endsWith(', US'))).toBe(true);
-
-    const mine = ambiguousPlaces('Franklin', { country: 'AU' })!.map(
-      (p) => qualifyPlace(p).display,
+  it("reads the human's own area without size, and with their clock's country", () => {
+    // The area box is a person typing their own suburb. It settles where one
+    // town answers, or one of the towns that do is in their own country.
+    const own = (s: string, country?: string) => {
+      const p = resolveOwnArea(s, country ? { country } : {});
+      return p ? describePlace(p) : undefined;
+    };
+    expect(own('Hobart', 'AU')).toBe('Hobart, Tasmania, Australia');
+    expect(own('Newcastle', 'AU')).toBe('Newcastle, New South Wales, Australia');
+    expect(own('Franklin, Tasmania')).toBe('Franklin, Tasmania, Australia');
+    expect(own('Franklin, ACT')).toBe('Franklin, Australian Capital Territory, Australia');
+    expect(own('Braddon, Australian Capital Territory')).toBe(
+      'Braddon, Australian Capital Territory, Australia',
     );
-    expect(mine[0]).toBe('Franklin, Australian Capital Territory, AU');
-    expect(mine[1]).toBe('Franklin, Tasmania, AU');
-    // Still five, and the American ones still in population order behind.
-    expect(mine.length).toBe(5);
-    expect(mine.slice(2)).toEqual(plain.slice(0, 3));
-    // And every one of them still selects the place it names.
-    for (const p of ambiguousPlaces('Franklin', { country: 'AU' })!) {
-      expect(resolvePlace(qualifyPlace(p).place)!.country).toBe(p.country);
-    }
+    expect(own('Newtown NSW')).toBe('Newtown, New South Wales, Australia');
+    expect(own('Canberra')).toBe('Canberra, Australian Capital Territory, Australia');
+    expect(own(CANBERRA)).toBe('Canberra, Australian Capital Territory, Australia');
+    // Nothing is settled by size: Hobart is nine times Hobart, Indiana, and
+    // with no clock to say which country, the name is still two places.
+    expect(own('Hobart')).toBeUndefined();
+    expect(own('Paris')).toBeUndefined();
+    // Two of the name in their own country leaves it unsettled.
+    expect(own('Franklin', 'AU')).toBeUndefined();
+    // A state or a country is not a town.
+    expect(own('ACT', 'AU')).toBeUndefined();
+    expect(own('Australia', 'AU')).toBeUndefined();
   });
 
-  it('leaves the order alone when the hint names a country without the name', () => {
-    const plain = ambiguousPlaces('Franklin')!.map((p) => qualifyPlace(p).display);
-    for (const cc of ['JP', 'FR', 'XX']) {
-      expect(
-        ambiguousPlaces('Franklin', { country: cc })!.map((p) => qualifyPlace(p).display),
-        cc,
-      ).toEqual(plain);
+  it('whatever the own area settles to is a place a posting takes as written', () => {
+    for (const [s, country] of [
+      ['Hobart', 'AU'],
+      ['Newcastle', 'AU'],
+      ['Franklin, Tasmania', undefined],
+      ['Braddon, Australian Capital Territory', undefined],
+      ['Newtown NSW', undefined],
+      ['Fremantle', undefined],
+    ] as [string, string | undefined][]) {
+      const p = resolveOwnArea(s, country ? { country } : {})!;
+      expect(p, s).toBeDefined();
+      const back = resolveFullPlace(describePlace(p));
+      expect(back.kind, s).toBe('place');
+      expect(back.kind === 'place' && haversineKm(back.place, p), s).toBeLessThan(1);
     }
-    expect(ambiguousPlaces('Franklin', {})!.map((p) => qualifyPlace(p).display)).toEqual(plain);
-  });
-
-  it('a hint answers only where the human\'s own country holds one place of that name', () => {
-    // A name one city plainly owns is still not put to anyone, hint or no
-    // hint: an Australian typing "Sydney" is asked no more than anyone else.
-    for (const name of ['Paris', 'Canberra', 'Adelaide', 'Tokyo']) {
-      expect(ambiguousPlaces(name, { country: 'AU' }), name).toBeUndefined();
-    }
-    // 26 September 2026: an Australian account whose own area is Hobart was
-    // offered Hobart, Indiana. One Hobart in Australia, so that is the answer.
-    // (Hobart itself now settles on size alone, so Newcastle stands in: one in
-    // Australia, and real ones in England and South Africa.)
-    expect(ambiguousPlaces('Hobart')).toBeUndefined();
-    expect(ambiguousPlaces('Newcastle')!.length).toBeGreaterThanOrEqual(2);
-    expect(ambiguousPlaces('Newcastle', { country: 'AU' })).toBeUndefined();
-    expect(settledInCountry('Newcastle', { country: 'AU' })!.admin1).toBeTruthy();
-    expect(describePlace(resolvePlaceFor('Newcastle', { country: 'AU' })!)).toContain('New South Wales');
-    // The same for any country holding exactly one of a shared name.
-    const za = settledInCountry('Franklin', { country: 'ZA' })!;
-    expect(qualifyPlace(za).display).toBe('Franklin, KwaZulu-Natal, ZA');
-    expect(ambiguousPlaces('Franklin', { country: 'ZA' })).toBeUndefined();
-    // Where the country holds two, the name stays in question, theirs first.
-    expect(settledInCountry('Franklin', { country: 'AU' })).toBeUndefined();
-    expect(ambiguousPlaces('Franklin', { country: 'AU' })!.length).toBe(5);
-    // And with no hint, nothing is settled.
-    expect(settledInCountry('Hobart')).toBeUndefined();
-    expect(resolvePlaceFor('Paris', { country: 'AU' })!.country).toBe('FR');
   });
 
   it('writes a place out in full', () => {
@@ -339,6 +367,9 @@ describe('gazetteer', () => {
     );
     expect(describePlace(resolvePlace('Perth, Scotland')!)).toBe('Perth, Scotland, United Kingdom');
     expect(describePlace(resolvePlace('Australia')!)).toBe('Australia');
+    // A town always carries its country, even one that shares the name, so
+    // the written-out form is always one a posting takes.
+    expect(describePlace(resolvePlace('Singapore')!)).toBe('Singapore, Singapore');
   });
 
   it('recognises a street address', () => {
@@ -368,25 +399,24 @@ const err = (fn: () => unknown): OsbError => {
   throw new Error('expected a refusal');
 };
 
+
 describe('card location normalisation', () => {
   it('a named place becomes a centre point, a canonical cell and a reach', () => {
-    const n = normaliseGeo({ place: 'Canberra', radius_km: 25 });
-    expect(n.geo).toEqual({ place: 'Canberra', bucket: 'r3dp', radius_km: 25 });
+    const n = normaliseGeo({ place: CANBERRA, radius_km: 25 });
+    expect(n.geo).toEqual({ place: CANBERRA, bucket: 'r3dp', radius_km: 25 });
     expect(n.lat).toBeCloseTo(-35.28, 1);
     expect(n.lon).toBeCloseTo(149.13, 1);
     expect(n.resolved?.name).toBe('Canberra');
   });
 
-  it('an unstated radius takes the width of the named area', () => {
-    expect(normaliseGeo({ place: 'Canberra' }).radius_km).toBeGreaterThan(0);
-    // A whole state is wider than the town in it.
-    expect(normaliseGeo({ place: 'AU-WA' }).radius_km).toBeGreaterThan(
-      normaliseGeo({ place: 'Fremantle' }).radius_km,
-    );
+  it('an unstated radius takes the width of the named town', () => {
+    expect(normaliseGeo({ place: CANBERRA }).radius_km).toBeGreaterThan(0);
+    // A whole state is no longer somewhere a posting can be: wide is a reach.
+    expect(err(() => normaliseGeo({ place: 'AU-WA' })).payload.code).toBe('LOCATION_NOT_FULL');
   });
 
   it('a radius above the protocol ceiling is clamped', () => {
-    expect(normaliseGeo({ place: 'Canberra', radius_km: 5000 }).radius_km).toBe(MAX_RADIUS_KM);
+    expect(normaliseGeo({ place: CANBERRA, radius_km: 5000 }).radius_km).toBe(MAX_RADIUS_KM);
   });
 
   it('a geohash bucket decodes to the centre of its cell', () => {
@@ -398,14 +428,16 @@ describe('card location normalisation', () => {
     expect(n.lon).toBe(c.lon);
   });
 
-  it('an invented bucket the gazetteer knows becomes a place and a canonical cell', () => {
-    const canberra = normaliseGeo({ bucket: 'canberra', radius_km: 25 });
-    expect(canberra.geo).toEqual({ place: 'canberra', bucket: 'r3dp', radius_km: 25 });
-    const act = normaliseGeo({ bucket: 'AU-ACT', radius_km: 25 });
-    expect(act.lat).not.toBeNull();
-    // The whole point: these two used to be unequal strings.
-    expect(haversineKm({ lat: canberra.lat!, lon: canberra.lon! }, { lat: act.lat!, lon: act.lon! }))
-      .toBeLessThan(25);
+  it('an invented bucket is placed only when it is written in full', () => {
+    const full = normaliseGeo({ bucket: CANBERRA, radius_km: 25 });
+    expect(full.geo).toEqual({ place: CANBERRA, bucket: 'r3dp', radius_km: 25 });
+    // A bare name or a division code on the map is refused the way a place
+    // is (26 September 2026): the biggest answer is no longer taken for it.
+    for (const bucket of ['canberra', 'AU-ACT', 'ACT', 'AU']) {
+      expect(err(() => normaliseGeo({ bucket, radius_km: 25 })).payload.code, bucket).toBe(
+        'LOCATION_NOT_FULL',
+      );
+    }
   });
 
   it('a bucket nothing answers to keeps its string and stays unplaced', () => {
@@ -419,108 +451,76 @@ describe('card location normalisation', () => {
     const e = err(() => normaliseGeo({ place: '12 Smith St' }));
     expect(e.payload.code).toBe('LOCATION_UNRESOLVED');
     expect(e.payload.human_action).toMatch(/street address/i);
+    const inFull = err(() => normaliseGeo({ place: '12 Smith St, Hobart, Tasmania, Australia' }));
+    expect(inFull.payload.code).toBe('LOCATION_UNRESOLVED');
+    expect(inFull.payload.human_action).toMatch(/street address/i);
   });
 
-  it('refuses a place it cannot find, and says what to send instead', () => {
-    const e = err(() => normaliseGeo({ place: 'Nowhereville' }));
+  it('refuses a full place it cannot find, and says what to check', () => {
+    const e = err(() => normaliseGeo({ place: 'Nowhereville, NSW, Australia' }));
     expect(e.payload.code).toBe('LOCATION_UNRESOLVED');
-    expect(e.payload.human_action).toMatch(/nearest city|region/i);
+    expect(e.payload.human_action).toMatch(/does not know/i);
+    expect(e.payload.human_action).toMatch(/town, state and country/i);
   });
 
-  it('refuses a state or territory, and says to name a town inside it', () => {
-    for (const [place, region] of [
-      ['ACT', 'Australian Capital Territory'],
-      ['NSW', 'New South Wales'],
-      ['WA', 'Western Australia'],
-      ['Texas', 'Texas'],
-      ['New South Wales', 'New South Wales'],
-    ] as [string, string][]) {
+  it('refuses anything not written in full with one fixed sentence and no list', () => {
+    // A bare name however big, a shared name however lopsided, a town missing
+    // its state or country, a state, a country, a division code: one code,
+    // one sentence, no candidates, no foreign towns offered.
+    for (const place of [
+      'Hobart',
+      'Perth',
+      'Paris',
+      'Franklin',
+      'Newcastle',
+      'Canberra',
+      'Nowhereville',
+      'Hobart, Tasmania',
+      'Hobart, Australia',
+      'Perth, Scotland',
+      'Franklin ACT',
+      'Newtown NSW',
+      'ACT',
+      'NSW',
+      'WA',
+      'Texas',
+      'New South Wales',
+      'New South Wales, Australia',
+      'AU',
+      'AUS',
+      'Australia',
+      'US',
+      'AU-ACT',
+      'Q'.repeat(80),
+    ]) {
       const e = err(() => normaliseGeo({ place, radius_km: 25 }));
-      expect(e.payload.code, place).toBe('LOCATION_UNRESOLVED');
-      expect(e.payload.human_action, place).toMatch(/state or territory/i);
-      expect(e.payload.human_action, place).toContain(region);
-      expect(e.payload.human_action!.length, place).toBeLessThanOrEqual(300);
+      expect(e.payload.code, place).toBe('LOCATION_NOT_FULL');
+      expect(e.payload.human_action, place).toBe(PLACE_NOT_FULL);
+      expect(e.payload.candidates, place).toBeUndefined();
     }
-    // A bucket carrying the same shorthand is refused the same way.
-    expect(err(() => normaliseGeo({ bucket: 'ACT' })).payload.human_action).toMatch(
-      /state or territory/i,
-    );
+    expect(PLACE_NOT_FULL).toMatch(/town, state and country/);
+    expect(PLACE_NOT_FULL).toContain('Hobart, Tasmania, Australia');
+    expect(PLACE_NOT_FULL.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(PLACE_NOT_FULL)).toEqual([]);
   });
 
-  it('refuses a bare country, and says to name a town inside it', () => {
-    // The second incident: a card posted as "AU" sat on the centroid of the
-    // continent, 476 km from the city it belonged to.
-    for (const [place, country] of [
-      ['AU', 'Australia'],
-      ['AUS', 'Australia'],
-      ['Australia', 'Australia'],
-      ['US', 'United States'],
-    ] as [string, string][]) {
-      const e = err(() => normaliseGeo({ place, radius_km: 25 }));
-      expect(e.payload.code, place).toBe('LOCATION_UNRESOLVED');
-      expect(e.payload.human_action, place).toMatch(/whole country/i);
-      expect(e.payload.human_action, place).toContain(country);
-      expect(e.payload.human_action!.length, place).toBeLessThanOrEqual(300);
-    }
-    // A bucket carrying the same shorthand is refused the same way.
-    expect(err(() => normaliseGeo({ bucket: 'AU' })).payload.human_action).toMatch(
-      /whole country/i,
-    );
-    // The deliberate forms are untouched.
-    expect(normaliseGeo({ place: 'AU-ACT', radius_km: 25 }).lat).not.toBeNull();
-  });
-
-  it('refuses a name several cities answer to, and hands back the candidates', () => {
-    const e = err(() => normaliseGeo({ place: 'Perth', radius_km: 25 }));
-    expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
-    expect(e.payload.human_action).toMatch(/names more than one place/i);
-    expect(e.payload.human_action!.length).toBeLessThanOrEqual(300);
-    const displays = e.payload.candidates!.map((c) => c.display);
-    expect(displays).toContain('Perth, Western Australia, AU');
-    expect(displays).toContain('Perth, Scotland, GB');
-    expect(e.payload.candidates!.length).toBeLessThanOrEqual(5);
-    // The candidate's own string is what an agent reposts with, and it works.
-    for (const c of e.payload.candidates!) {
-      expect(normaliseGeo({ place: c.place, radius_km: 25 }).lat, c.place).not.toBeNull();
-    }
-    const scotland = normaliseGeo({ place: 'Perth, Scotland', radius_km: 25 });
+  it('one town written two full ways lands in one cell', () => {
+    const a = normaliseGeo({ place: 'Franklin, ACT, Australia', radius_km: 25 });
+    const b = normaliseGeo({ place: 'Franklin, Australian Capital Territory, AU', radius_km: 25 });
+    expect(a.geo.bucket).toBe(b.geo.bucket);
+    expect(a.resolved!.display).toContain('Australian Capital Territory');
+    const scotland = normaliseGeo({ place: 'Perth, Scotland, GB', radius_km: 25 });
     expect(scotland.resolved!.country).toBe('GB');
     expect(
       haversineKm({ lat: scotland.lat!, lon: scotland.lon! }, { lat: 56.3959, lon: -3.4308 }),
     ).toBeLessThan(10);
-    // A name with one clear owner still goes through silently.
-    expect(normaliseGeo({ place: 'Paris', radius_km: 25 }).resolved!.country).toBe('FR');
-  });
-
-  it('the two gazetteer defects, from the posting side', () => {
-    // "Franklin" is asked about rather than answered, and every candidate
-    // offered is a place actually called Franklin.
-    const e = err(() => normaliseGeo({ place: 'Franklin', radius_km: 25 }));
-    expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
-    for (const c of e.payload.candidates!) {
-      expect(c.place.split(',')[0]).toBe('Franklin');
-      expect(normaliseGeo({ place: c.place, radius_km: 25 }).lat, c.place).not.toBeNull();
-    }
-    // A posting written the way people speak lands where it should, and in
-    // the same cell as the comma'd form matching has always used.
-    const spaced = normaliseGeo({ place: 'Franklin ACT', radius_km: 25 });
-    const commad = normaliseGeo({ place: 'Franklin, ACT', radius_km: 25 });
-    expect(spaced.geo.bucket).toBe(commad.geo.bucket);
-    expect(spaced.resolved!.display).toContain('Australian Capital Territory');
-    const newtown = normaliseGeo({ place: 'Newtown NSW', radius_km: 25 });
-    expect(newtown.geo.bucket).toBe(normaliseGeo({ place: 'Newtown, NSW', radius_km: 25 }).geo.bucket);
-    expect(newtown.resolved!.display).toContain('New South Wales');
-    // Two people describing one suburb two ways still meet.
-    expect(
-      haversineKm({ lat: spaced.lat!, lon: spaced.lon! }, { lat: commad.lat!, lon: commad.lon! }),
-    ).toBeLessThan(1);
   });
 
   it('says out loud where it put the card, and how far it reaches', () => {
-    expect(normaliseGeo({ place: 'Canberra', radius_km: 150 }).resolved!.display).toBe(
+    expect(normaliseGeo({ place: CANBERRA, radius_km: 150 }).resolved!.display).toBe(
       'Canberra, Australian Capital Territory, Australia — matching within 150 km',
     );
-    expect(normaliseGeo({ bucket: 'canberra' }).resolved!.display).toContain(
+    expect(normaliseGeo({ bucket: CANBERRA }).resolved!.display).toContain(
       'Australian Capital Territory',
     );
     // A bare cell was never a named place, so there is nothing to read back.
@@ -528,7 +528,11 @@ describe('card location normalisation', () => {
   });
 
   it('reads a stored card location back for the main page', () => {
+    // Postings already up keep reading back, however their place was written.
     expect(describeStoredGeo({ place: 'Canberra', bucket: 'r3dp', radius_km: 25 })).toBe(
+      'Canberra, Australian Capital Territory, Australia',
+    );
+    expect(describeStoredGeo({ place: CANBERRA, bucket: 'r3dp', radius_km: 25 })).toBe(
       'Canberra, Australian Capital Territory, Australia',
     );
     // A place the gazetteer no longer answers to keeps its own string.
@@ -538,16 +542,16 @@ describe('card location normalisation', () => {
 
   it('the towns inside those regions still place exactly where they are', () => {
     for (const [place, lat, lon] of [
-      ['Canberra', -35.2835, 149.1281],
-      ['Fremantle', -32.0563, 115.7456],
-      ['Waco', 31.5493, -97.1467],
-      ['Yass', -34.8404, 148.9099],
+      [CANBERRA, -35.2835, 149.1281],
+      ['Fremantle, WA, Australia', -32.0563, 115.7456],
+      ['Waco, Texas, United States', 31.5493, -97.1467],
+      ['Yass, NSW, Australia', -34.8404, 148.9099],
     ] as [string, number, number][]) {
       const n = normaliseGeo({ place, radius_km: 25 });
       expect(haversineKm({ lat: n.lat!, lon: n.lon! }, { lat, lon }), place).toBeLessThan(5);
     }
     // The incident, in one line: "ACT" must never land in the Waco cell.
-    expect(normaliseGeo({ place: 'Waco' }).geo.bucket).toBe('9vdg');
+    expect(normaliseGeo({ place: 'Waco, TX, US' }).geo.bucket).toBe('9vdg');
     expect(() => normaliseGeo({ place: 'ACT' })).toThrow();
   });
 
@@ -559,8 +563,12 @@ describe('card location normalisation', () => {
     const long = 'Q'.repeat(80);
     expect(err(() => normaliseGeo({ place: long })).payload.human_action!.length)
       .toBeLessThanOrEqual(300);
+    expect(err(() => normaliseGeo({ place: `${long}, ${long}, ${long}` })).payload.human_action!.length)
+      .toBeLessThanOrEqual(300);
   });
 });
+
+
 
 describe('distance matching', () => {
   const at = (lat: number, lon: number, radius_km: number, bucket = 'r3dp') => ({
@@ -571,8 +579,8 @@ describe('distance matching', () => {
   });
 
   it('two cards in one city overlap however their agents spelled it', () => {
-    const a = normaliseGeo({ place: 'Canberra', radius_km: 25 });
-    const b = normaliseGeo({ place: 'AU-ACT', radius_km: 25 });
+    const a = normaliseGeo({ place: CANBERRA, radius_km: 25 });
+    const b = normaliseGeo({ place: 'Canberra, Australian Capital Territory, AU', radius_km: 25 });
     const r = evaluateGeo(
       { bucket: a.geo.bucket, lat: a.lat, lon: a.lon, radius_km: a.radius_km },
       { bucket: b.geo.bucket, lat: b.lat, lon: b.lon, radius_km: b.radius_km },
@@ -684,12 +692,12 @@ describe('reach', () => {
   };
 
   it('resolves a place and keeps the country it landed in', () => {
-    const n = normaliseGeo({ place: 'Canberra', reach: 'country', radius_km: 25 });
+    const n = normaliseGeo({ place: CANBERRA, reach: 'country', radius_km: 25 });
     expect(n.country).toBe('AU');
     expect(n.reach).toBe('country');
     // The reach is stored on the card; the place is still a real town.
     expect(n.geo).toEqual({
-      place: 'Canberra',
+      place: CANBERRA,
       bucket: 'r3dp',
       radius_km: 25,
       reach: 'country',
@@ -699,54 +707,54 @@ describe('reach', () => {
   it('leaves the stored geo alone when the reach is the default', () => {
     // Every card written before reach existed meant this, so it has to look
     // exactly like one.
-    expect(normaliseGeo({ place: 'Canberra', reach: 'radius', radius_km: 25 }).geo).toEqual({
-      place: 'Canberra',
+    expect(normaliseGeo({ place: CANBERRA, reach: 'radius', radius_km: 25 }).geo).toEqual({
+      place: CANBERRA,
       bucket: 'r3dp',
       radius_km: 25,
     });
-    expect(normaliseGeo({ place: 'Canberra', radius_km: 25 }).reach).toBe('radius');
+    expect(normaliseGeo({ place: CANBERRA, radius_km: 25 }).reach).toBe('radius');
   });
 
   it('a nationwide pair meets across a country, and stops at its border', () => {
     // Canberra to Perth is about 3,100 km: no radius reaches it.
-    const canberra = card('Canberra', 'country');
-    const perth = card('Perth, Western Australia', 'country');
-    const auckland = card('Auckland', 'country');
+    const canberra = card(CANBERRA, 'country');
+    const perth = card(PERTH_WA, 'country');
+    const auckland = card(AUCKLAND, 'country');
     expect(evaluateGeo(canberra, perth).compatible).toBe(true);
     expect(evaluateGeo(canberra, auckland).compatible).toBe(false);
     // And the radius pair those same two places make is still refused.
-    expect(evaluateGeo(card('Canberra'), card('Perth, Western Australia')).compatible).toBe(false);
+    expect(evaluateGeo(card(CANBERRA), card(PERTH_WA)).compatible).toBe(false);
   });
 
   it('both sides have to reach: nationwide alone is not enough', () => {
     // The person collecting has to be as willing to cross the distance as
     // the person sending, or nobody is going anywhere.
-    const nationwide = card('Canberra', 'country');
-    const local = card('Perth, Western Australia');
+    const nationwide = card(CANBERRA, 'country');
+    const local = card(PERTH_WA);
     expect(evaluateGeo(nationwide, local).compatible).toBe(false);
     expect(evaluateGeo(local, nationwide).compatible).toBe(false);
   });
 
   it('anywhere meets anywhere, across countries', () => {
-    const canberra = card('Canberra', 'anywhere');
-    const auckland = card('Auckland', 'anywhere');
-    const glasgow = card('Glasgow', 'anywhere');
+    const canberra = card(CANBERRA, 'anywhere');
+    const auckland = card(AUCKLAND, 'anywhere');
+    const glasgow = card(GLASGOW, 'anywhere');
     expect(evaluateGeo(canberra, auckland).compatible).toBe(true);
     expect(evaluateGeo(canberra, glasgow).compatible).toBe(true);
     // Anywhere covers a nationwide card only when it is in that country too.
-    expect(evaluateGeo(canberra, card('Perth, Western Australia', 'country')).compatible).toBe(true);
-    expect(evaluateGeo(canberra, card('Auckland', 'country')).compatible).toBe(false);
+    expect(evaluateGeo(canberra, card(PERTH_WA, 'country')).compatible).toBe(true);
+    expect(evaluateGeo(canberra, card(AUCKLAND, 'country')).compatible).toBe(false);
   });
 
   it('scores a reach match flat and moderate, not as though it were adjacent', () => {
-    const far = evaluateGeo(card('Canberra', 'country'), card('Perth, Western Australia', 'country'));
+    const far = evaluateGeo(card(CANBERRA, 'country'), card(PERTH_WA, 'country'));
     expect(far.closeness).toBe(REACH_GEO_CLOSENESS);
     expect(far.closeness).toBeLessThan(
-      evaluateGeo(card('Canberra'), card('Canberra')).closeness,
+      evaluateGeo(card(CANBERRA), card(CANBERRA)).closeness,
     );
     // A pair that is ALSO close keeps its distance score: saying you would
     // post it should never cost you the neighbour who would walk over.
-    const near = evaluateGeo(card('Canberra', 'country'), card('Canberra', 'country'));
+    const near = evaluateGeo(card(CANBERRA, 'country'), card(CANBERRA, 'country'));
     expect(near.closeness).toBe(1);
   });
 
@@ -759,17 +767,17 @@ describe('reach', () => {
         .compatible,
     ).toBe(false);
     // Against a placed card it is still the string comparison that decides.
-    expect(evaluateGeo(unplaced, card('Canberra', 'country')).compatible).toBe(false);
+    expect(evaluateGeo(unplaced, card(CANBERRA, 'country')).compatible).toBe(false);
   });
 
   it('reads the reach back in plain words, all three ways', () => {
-    expect(normaliseGeo({ place: 'Canberra', reach: 'country' }).resolved!.display).toBe(
+    expect(normaliseGeo({ place: CANBERRA, reach: 'country' }).resolved!.display).toBe(
       'Canberra, Australian Capital Territory, Australia — reaching all of Australia',
     );
-    expect(normaliseGeo({ place: 'Canberra', reach: 'anywhere' }).resolved!.display).toBe(
+    expect(normaliseGeo({ place: CANBERRA, reach: 'anywhere' }).resolved!.display).toBe(
       'Canberra, Australian Capital Territory, Australia — reaching anywhere',
     );
-    expect(normaliseGeo({ place: 'Canberra', radius_km: 25 }).resolved!.display).toBe(
+    expect(normaliseGeo({ place: CANBERRA, radius_km: 25 }).resolved!.display).toBe(
       'Canberra, Australian Capital Territory, Australia — matching within 25 km',
     );
   });
@@ -786,13 +794,13 @@ describe('reach', () => {
     expect(describeReach('country', 25, null)).toBe('reaching its whole country');
   });
 
-  it('tells an agent that names a country where reach lives', () => {
+  it('refuses a country as a place, with the one sentence', () => {
+    // Until 26 September 2026 a country earned its own sentence pointing at
+    // reach. Every place that is not written in full now earns the same one;
+    // what reach means is on publish_intent, where the argument is filled in.
     const e = err(() => normaliseGeo({ place: 'Australia' }));
-    expect(e.payload.code).toBe('LOCATION_UNRESOLVED');
-    expect(e.payload.human_action).toMatch(/whole country/);
-    expect(e.payload.human_action).toMatch(/reach to "country"/);
-    // The refusal itself stands: a country is still not a place to put a card.
-    expect(e.payload.human_action).toMatch(/name the town or city/);
+    expect(e.payload.code).toBe('LOCATION_NOT_FULL');
+    expect(e.payload.human_action).toBe(PLACE_NOT_FULL);
   });
 
   it('keeps that refusal inside the protocol ceiling for every country', () => {
@@ -804,7 +812,6 @@ describe('reach', () => {
     }
   });
 });
-
 describe('every name the asset carries', () => {
   /** Every lookup key in the bundled asset — the whole corpus of names an
    *  agent could plausibly send. */
@@ -813,31 +820,58 @@ describe('every name the asset carries', () => {
     return Object.keys(JSON.parse(gunzipSync(readFileSync(path)).toString('utf8')).index);
   };
 
-  it('either places a name or refuses it with something an agent can act on', () => {
-    // The whole corpus through the publish path's location gate. Two things
-    // have to hold for every one of a quarter of a million names: nothing
-    // escapes as a bare error (which would be a 500 on a card someone tried
-    // to post), and an ambiguity refusal never offers one candidate, which
-    // would be a choice with nothing to choose.
+  it('refuses every bare name with something an agent can act on', () => {
+    // The whole corpus through the publish path's location gate. Nothing may
+    // escape as a bare error (which would be a 500 on a card someone tried to
+    // post), and since 26 September 2026 nothing bare is placed at all: a
+    // lookup key is one name, and a posting's place is town, state and
+    // country.
     const keys = everyKey();
     expect(keys.length).toBeGreaterThan(100_000);
     const broke: string[] = [];
     let placed = 0;
-    let refused = 0;
     for (const key of keys) {
-      const candidates = ambiguousPlaces(key);
-      if (candidates && candidates.length < 2) broke.push(`one candidate: ${key}`);
       try {
         normaliseGeo({ place: key, radius_km: 25 });
         placed++;
       } catch (e: any) {
-        if (e?.payload?.code) refused++;
-        else broke.push(`${key}: ${e?.message}`);
+        if (!e?.payload?.code) broke.push(`${key}: ${e?.message}`);
       }
     }
     expect(broke.slice(0, 10)).toEqual([]);
-    expect(placed).toBeGreaterThan(0);
-    expect(refused).toBeGreaterThan(0);
+    expect(placed).toBe(0);
+  });
+
+  it('places every town written out in full, where it is', () => {
+    // The other half of the rule: every town in the asset, written the way the
+    // switchboard writes it back (describePlace, which is also what an
+    // assistant is handed as its human's area), is taken as it stands and
+    // lands on a town written exactly that way. The handful that cannot are towns whose own name,
+    // or whose country's name, carries a comma of its own ("Bonaire, Saint
+    // Eustatius and Saba"), which a comma-separated place cannot say.
+    const rows = allRows();
+    const missed: string[] = [];
+    let towns = 0;
+    let unsayable = 0;
+    rows.forEach((r, i) => {
+      if (r[6] !== 0) return;
+      towns++;
+      const p = placeAt(i);
+      if (p.name.includes(',') || (countryNameOf(p.country) ?? '').includes(',')) {
+        unsayable++;
+        return;
+      }
+      const written = describePlace(p);
+      const a = resolveFullPlace(written);
+      // Two towns of one name in one state are one written form, and the
+      // larger stands for both; so the check is that the answer writes out
+      // the same, not that it is the same row.
+      const same = a.kind === 'place' && normaliseKey(describePlace(a.place)) === normaliseKey(written);
+      if (!same) missed.push(`${written}: ${a.kind}`);
+    });
+    expect(towns).toBeGreaterThan(100_000);
+    expect(unsayable).toBeLessThan(60);
+    expect(missed.slice(0, 10)).toEqual([]);
   });
 });
 
@@ -862,61 +896,21 @@ describe('which country a human is probably in', () => {
   });
 
   it('says nothing rather than guessing, for a zone it has no table for', () => {
-    // A hint is worth having only where it is right. An unknown zone costs
-    // the ordering that was there before it, which is what everyone had.
     for (const tz of ['Europe/Paris', 'Asia/Tokyo', 'UTC', '', '   ', 'nonsense', null, undefined]) {
       expect(countryOfTimeZone(tz), String(tz)).toBeUndefined();
     }
   });
 
-  it('prefers the area on file over the clock, and drops an area in question', () => {
-    // A zone travels with a laptop; an area is something the person said.
-    expect(homeCountry({ area: 'Canberra', timezone: 'America/New_York' })).toBe('AU');
-    expect(homeCountry({ timezone: 'Australia/Sydney' })).toBe('AU');
-    // "Franklin" is the very question a hint is meant to help with, so it is
-    // no answer to it: the clock behind it is used instead.
-    expect(homeCountry({ area: 'Franklin', timezone: 'Australia/Sydney' })).toBe('AU');
-    expect(homeCountry({ area: 'Franklin' })).toBeUndefined();
-    expect(homeCountry({})).toBeUndefined();
-    expect(countryOfArea('Franklin, ACT')).toBe('AU');
-  });
-
-  it('carries the hint through the publish path without changing what places', () => {
-    const hint = { country: 'AU' };
-    // What resolves, resolves the same way with a hint as without one.
-    for (const place of ['Canberra', 'Franklin, ACT', 'Perth, Scotland', 'AU-ACT']) {
-      expect(normaliseGeo({ place, radius_km: 25 }, hint).geo.bucket, place).toBe(
-        normaliseGeo({ place, radius_km: 25 }).geo.bucket,
+  it('has no say in where a posting goes', () => {
+    // 26 September 2026: the publish path took a hint and settled "Hobart" for
+    // an Australian account. It takes one argument now, and a bare name is
+    // refused for everyone alike.
+    expect(normaliseGeo.length).toBe(1);
+    for (const place of ['Hobart', 'Newcastle', 'Franklin']) {
+      expect(err(() => normaliseGeo({ place, radius_km: 25 })).payload.code, place).toBe(
+        'LOCATION_NOT_FULL',
       );
     }
-    // What is refused is still refused — and now the first place the agent
-    // reads out to its human is the one down the road.
-    const e = err(() => normaliseGeo({ place: 'Franklin', radius_km: 25 }, hint));
-    expect(e.payload.code).toBe('LOCATION_AMBIGUOUS');
-    expect(e.payload.candidates[0].place).toBe('Franklin, Australian Capital Territory');
-    expect(e.payload.human_action).toContain('Franklin, Australian Capital Territory, AU');
-  });
-
-  it('places a shared name in the human\'s own country where it holds only one', () => {
-    // The probe: "Hobart" from an Australian account came back asking which,
-    // with four American Hobarts on the list.
-    // Hobart now settles on size alone; Newcastle carries the same test.
-    expect(normaliseGeo({ place: 'Hobart', radius_km: 25 }).resolved!.display).toContain('Tasmania');
-    const nc = normaliseGeo({ place: 'Newcastle', radius_km: 25 }, { country: 'AU' });
-    expect(nc.country).toBe('AU');
-    expect(nc.resolved!.display).toContain('New South Wales');
-    // And it lands where "Newcastle, New South Wales" always has.
-    expect(nc.geo.bucket).toBe(normaliseGeo({ place: 'Newcastle, New South Wales', radius_km: 25 }).geo.bucket);
-    // With no hint it is still asked.
-    expect(err(() => normaliseGeo({ place: 'Newcastle', radius_km: 25 })).payload.code).toBe(
-      'LOCATION_AMBIGUOUS',
-    );
-  });
-
-  it('reads a shared area name on the clock\'s country', () => {
-    expect(homeCountry({ area: 'Newcastle', timezone: 'Australia/Sydney' })).toBe('AU');
-    expect(countryOfArea('Newcastle', 'AU')).toBe('AU');
-    expect(countryOfArea('Newcastle')).toBeUndefined();
   });
 });
 
@@ -937,7 +931,11 @@ describe('what the manual tells an agent about places', () => {
     // holds every refusal that is the switchboard working, these two included.
     expect(MANUAL_BODY).toContain('LOCATION_AMBIGUOUS');
     expect(MANUAL_BODY).toContain('LOCATION_UNRESOLVED');
+    expect(MANUAL_BODY).toContain('LOCATION_NOT_FULL');
     expect(MANUAL_BODY).toMatch(/post again with the fuller form it gives you/i);
+    // 26 September 2026: always the full place, town, state and country.
+    expect(MANUAL_BODY).toMatch(/always write the place in full, town, state and country/i);
+    expect(publish).toMatch(/`place` IS WRITTEN IN FULL, town, state and country/);
     // The register: the place goes into what the agent says, in its own voice.
     expect(MANUAL_BODY).toMatch(/say if that's wrong/i);
     expect(MANUAL_BODY).toMatch(/amend it there and then/i);
@@ -973,11 +971,10 @@ describe('the geo tool schema agents actually see', () => {
     const publish = TOOLS.find((t) => t.name === 'publish_intent')!;
     const geo = publish.inputSchema.properties.listing.properties.geo;
     expect(Object.keys(geo.properties).sort()).toEqual(['bucket', 'place', 'radius_km', 'reach']);
-    expect(geo.description).toMatch(/suburb, city or region/);
+    expect(geo.description).toMatch(/the town written in full, with its state and country/);
     expect(geo.properties.reach.enum).toEqual(['radius', 'country', 'anywhere']);
-    expect(publish.description).toMatch(/nearest suburb, city or region/);
-    // The distinction the field exists for, at the point the model acts on it.
-    expect(publish.description).toMatch(/`place` is the nearest suburb, city or region/);
+    // The rule the field exists for, at the point the model acts on it.
+    expect(publish.description).toMatch(/`place` IS WRITTEN IN FULL, town, state and country, as `area_resolved` is/);
     // anyOf cannot be expressed by constrained-decoding grammar compilers; the
     // server validates every listing against the full schema regardless.
     const blob = JSON.stringify(publish.inputSchema);

@@ -67,6 +67,9 @@ describe('the refusals that are the switchboard working', () => {
         'CONVERSATION_PAUSED',
         'INTENT_EXPIRED',
         'LOCATION_AMBIGUOUS',
+        // A place not written in full, town, state and country (26 September
+        // 2026). One sentence says to write it out; nothing has gone wrong.
+        'LOCATION_NOT_FULL',
         'LOCATION_UNRESOLVED',
         // The posting does not yet say enough to describe the thing to a
         // stranger. The questions to ask are on the answer, so this is the

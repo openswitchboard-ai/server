@@ -1,36 +1,26 @@
 /**
- * Which country a human is probably in, for the one job of breaking a tie
- * between places that share a name.
+ * Which country a human's clock says they are in.
  *
- * The defect (rehearsal, 19 September 2026): a human in Franklin, ACT typed
- * "Franklin" and the switchboard offered five Franklins, every one of them in
- * the United States. The gazetteer holds their Franklin — it is the largest of
- * the two Australian ones — but the candidate list is ranked on population
- * alone, and five American towns are bigger than both. The assistant told its
- * human, truthfully, that the name only resolved to US cities.
+ * The defect that started this (rehearsal, 19 September 2026): a human in
+ * Franklin, ACT typed "Franklin" and the switchboard offered five Franklins,
+ * every one of them in the United States. For a week the country read here
+ * reordered that list, then settled a shared name outright where the human's
+ * country held exactly one place of it.
  *
- * Nothing about that ranking is wrong in general. What was missing is the one
- * thing the switchboard already knew about the person asking: roughly where in
- * the world they are. A hint from here reorders the candidates so their own
- * country comes first. Since 26 September 2026 it also settles a shared name
- * where their country holds exactly one place of it (gazetteer.ts
- * settledInCountry); where their country holds several, the name is still put
- * to the human, their own first.
+ * SINCE 26 SEPTEMBER 2026 IT PLACES NO POSTING. A posting's place is written in
+ * full, town, state and country, and the switchboard never guesses which town
+ * was meant (geo/normalise.ts), so what country a human is probably in has no
+ * say in where anything they post goes. It is kept for two courtesies on the
+ * human's own side, where the person who typed a name is the person who hears
+ * it back:
+ *   - ordering the area box's suggestions, their own country first
+ *     (geo/suggest.ts);
+ *   - writing their own area out in full where their country holds exactly
+ *     one town of the name they typed (gazetteer.ts resolveOwnArea).
  *
- * Two sources, in this order:
- *   1. the area already on their own page, when it settles to one place;
- *   2. the IANA zone their browser reported at onboarding.
- *
- * The area is the better evidence of the two: a person who has told the
- * switchboard they live in Canberra has said something about where they are,
- * while a zone is a clock setting and travels with a laptop. Neither is
- * treated as fact, because neither has to be — the worst a wrong hint can do
- * is put the likely answer second, or settle a shared name on the wrong
- * country's one place of it, which the posting's answer writes out in full
- * for the human to correct.
+ * The area-first reading this file used to offer, and the account read that
+ * went with it, had only the posting path to serve and went with it.
  */
-import { ambiguousPlaces, resolvePlaceFor } from './gazetteer.js';
-
 /**
  * IANA zone -> ISO 3166-1 alpha-2, for the zones the switchboard's people
  * actually carry. `Intl` knows a great deal about zones and nothing at all
@@ -127,42 +117,4 @@ export function countryOfTimeZone(tz: string | null | undefined): string | undef
     if (name.startsWith(prefix)) return cc;
   }
   return undefined;
-}
-
-/**
- * The country an area on file sits in, when the area settles to one place on
- * its own. A name several cities answer to says nothing about which country
- * the person is in — it is the very question a hint is meant to help with —
- * so an ambiguous area yields no hint rather than the biggest namesake's flag.
- */
-export function countryOfArea(
-  area: string | null | undefined,
-  /** The clock's country, where there is one: it can settle a shared name. */
-  clockCountry?: string,
-): string | undefined {
-  const raw = (area ?? '').trim();
-  if (!raw) return undefined;
-  const hint = clockCountry ? { country: clockCountry } : {};
-  if (ambiguousPlaces(raw, hint)) return undefined;
-  return resolvePlaceFor(raw, hint)?.country;
-}
-
-/** What is known about where this human is, as the two facts on the account. */
-export interface HomeFacts {
-  /** Exactly what they typed as their area, if anything. */
-  area?: string | null;
-  /** Their IANA zone, if it was ever captured. */
-  timezone?: string | null;
-}
-
-/**
- * The country hint for a human, area first and zone second, or undefined when
- * neither says anything.
- */
-export function homeCountry(facts: HomeFacts): string | undefined {
-  // The clock is read first only so that it can settle a shared area name:
-  // "Hobart" on a Tasmanian clock is Hobart, Tasmania (26 September 2026). The
-  // area still wins wherever it says something of its own.
-  const clock = countryOfTimeZone(facts.timezone);
-  return countryOfArea(facts.area, clock) ?? clock;
 }

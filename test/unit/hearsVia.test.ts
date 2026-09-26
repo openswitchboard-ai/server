@@ -662,7 +662,7 @@ describe('what an agent is told right after posting', () => {
         // for on anything offered (domain/postingDetail.ts).
         kind: 'mountain bike',
         attributes: { brand: 'trek', frame_size: 'medium', condition: 'good' },
-        geo: { place: 'Canberra', reach: 'country' },
+        geo: { place: 'Canberra, ACT, Australia', reach: 'country' },
         urgency: 'days',
         visibility: 'anonymous-until-introduced',
         status: 'active',

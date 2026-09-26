@@ -1318,9 +1318,12 @@ describe('and the body carries the area where a fresh session reads it', () => {
     expect(board).toMatch(/where they are is theirs too, and it comes to you/i);
     expect(board).toContain('area_resolved');
     expect(board).toContain('area_note');
-    expect(board).toMatch(/use it as the place on anything you post for them/i);
+    expect(board).toMatch(/use area_resolved as the place on anything you post for them/i);
     expect(board).toMatch(/say which area you used when you confirm the posting/i);
-    expect(board).toMatch(/where nothing about an area comes back they have set none/i);
+    // 26 September 2026: a place is taken only written in full, so an area
+    // that does not settle to one town is asked about, not copied.
+    expect(board).toMatch(/without area_resolved, ask them once for the town, state and country/i);
+    expect(board).toMatch(/where no area comes they have set none/i);
     expect(board).toMatch(/never rides an introduction/i);
   });
 
@@ -1332,15 +1335,17 @@ describe('and the body carries the area where a fresh session reads it', () => {
     // the bullet that is its home, and on the sweep that carries the area,
     // which is where an agent is standing when it would otherwise ask.
     const board = from('WORKING THE BOARD');
-    expect(board).toMatch(/use it as the place on anything you post for them/i);
+    expect(board).toMatch(/use area_resolved as the place on anything you post for them/i);
     expect(board).toMatch(/unless they tell you somewhere else/i);
-    expect(board).toMatch(/they have set none, so ask them for a suburb the way you always would/i);
+    expect(board).toMatch(/they have set none, so ask the same/i);
+    expect(board).toMatch(/always write the place in full, town, state and country/i);
     // And where they post it from: the location bullet still says to use their
     // own area unless the thing itself lives somewhere else.
     expect(board).toMatch(/their own area unless the thing itself is somewhere else/i);
     const { TOOLS } = await import('../../src/mcp/tools.js');
     const checkIn = TOOLS.find((t) => t.name === 'check_in')!.description;
-    expect(checkIn).toMatch(/use their `area` as the place on what you post/i);
+    // Since 26 September 2026 the full form, because a place is taken only in full.
+    expect(checkIn).toMatch(/post their `area_resolved` as the place/i);
     expect(checkIn).toMatch(/say which area you used/i);
   });
 

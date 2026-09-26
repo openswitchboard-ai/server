@@ -4,15 +4,17 @@
  *
  * Proves the thing the 0.3.0 location work exists for: two agents describing
  * one city in two different ways land in the same place and find each other.
- * One says "Canberra", the other says "AU-ACT" — two strings that could never
- * be equal — and the pair still meets.
+ * One says "Canberra, ACT, Australia", the other "Canberra, Australian Capital
+ * Territory, AU" — two strings that could never be equal — and the pair still
+ * meets.
  *
  * Also proves, against the real service, what the switchboard will not guess
- * at: a street address, a name the gazetteer cannot place, a bare state and a
- * bare country all come back as LOCATION_UNRESOLVED, and a name several
- * cities answer to comes back as LOCATION_AMBIGUOUS with the candidates
- * spelled out. What it does place, it says out loud — in the publish
- * response, and on the ledger page its owner reads.
+ * at. Since 26 September 2026 a place is taken only written in full, town,
+ * state and country: a bare name, a bare state and a bare country all come
+ * back as LOCATION_NOT_FULL with one fixed sentence and no list, and a street
+ * address or a full place nothing answers to as LOCATION_UNRESOLVED. What it
+ * does place, it says out loud — in the publish response, and on the ledger
+ * page its owner reads.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
@@ -28,10 +30,13 @@ import {
 } from './helpers.js';
 
 const RUN = process.env.RUN_INTEGRATION === '1';
+/** Every place here is written in full, the only form a posting takes. */
+const CANBERRA = 'Canberra, ACT, Australia';
+const PERTH_WA = 'Perth, Western Australia, Australia';
 const d = RUN ? describe : describe.skip;
 
-let alice: TestActor; // says "Canberra"
-let bob: TestActor; // says "AU-ACT"
+let alice: TestActor; // says "Canberra, ACT, Australia"
+let bob: TestActor; // says "Canberra, Australian Capital Territory, AU"
 let seller: TestActor; // Canberra, posts anywhere in Australia
 let buyer: TestActor; // Perth, happy to have it posted
 let wantId: string;
@@ -69,12 +74,12 @@ const card = (type: 'WANT' | 'HAVE', place: string) => ({
 d('one city, two spellings, one match', () => {
   beforeAll(async () => {
     const w = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', 'Canberra'),
+      listing: card('WANT', CANBERRA),
     });
     expect(w.isError, JSON.stringify(w.result)).toBe(false);
     wantId = w.result.intent_id;
     const h = await mcpCall(bob.accessToken, 'publish_intent', {
-      listing: card('HAVE', 'AU-ACT'),
+      listing: card('HAVE', 'Canberra, Australian Capital Territory, AU'),
     });
     expect(h.isError, JSON.stringify(h.result)).toBe(false);
     haveId = h.result.intent_id;
@@ -136,7 +141,7 @@ d('one city, two spellings, one match', () => {
         );
         return (rows[0]?.[0] as string) ?? undefined;
       },
-      'a match between the Canberra card and the AU-ACT card',
+      'a match between the two Canberra cards, spelled two ways',
       180_000,
     );
     // No confidence figure crosses to an agent: the switchboard has already
@@ -159,62 +164,36 @@ d('one city, two spellings, one match', () => {
     }
   }, 240_000);
 
-  it('refuses a bare state or territory, and says to name a town in it', async () => {
-    // A card posted as "ACT" once resolved to Waco, Texas, on an airport code
-    // the source data hangs off the city. The switchboard now refuses the
-    // shorthand outright and asks for a real place inside it.
-    const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', 'ACT'),
-    });
-    // Asking for a better place is the switchboard working, so it answers.
-    expect(r.isError, JSON.stringify(r.result)).toBe(false);
-    expect(r.result.what_happened).toBe('place_unclear');
-    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
-    expect(r.result.human_action).toMatch(/state or territory/i);
-    expect(r.result.human_action).toContain('Australian Capital Territory');
-  });
+  it('refuses anything not written in full, with one sentence and no list', async () => {
+    // A card posted as "ACT" once resolved to Waco, Texas; one posted as "AU"
+    // sat on the centroid of the continent; "Perth" offered Scotland and
+    // "Hobart" offered Indiana. Since 26 September 2026 none of them is a
+    // place: the switchboard asks for the town, state and country, and never
+    // offers a town of its own choosing.
+    for (const place of ['ACT', 'AU', 'Perth', 'Hobart', 'Hobart, Tasmania', 'AU-ACT']) {
+      const r = await mcpCall(alice.accessToken, 'publish_intent', {
+        listing: card('WANT', place),
+      });
+      // Asking for a better place is the switchboard working, so it answers.
+      expect(r.isError, `${place}: ${JSON.stringify(r.result)}`).toBe(false);
+      expect(r.result.what_happened).toBe('place_unclear');
+      expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_NOT_FULL');
+      expect(r.result.human_action).toMatch(/town, state and country/);
+      expect(r.result.candidates).toBeUndefined();
+    }
 
-  it('refuses a bare country, names it, and says where nationwide lives', async () => {
-    // The second incident: a card posted as "AU" sat on the centroid of the
-    // continent, 476 km from the city it belonged to. An agent writing "AU"
-    // usually means a card that REACHES Australia, so the refusal now names
-    // the field that says so.
-    const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', 'AU'),
-    });
-    // Asking for a better place is the switchboard working, so it answers.
-    expect(r.isError, JSON.stringify(r.result)).toBe(false);
-    expect(r.result.what_happened).toBe('place_unclear');
-    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_UNRESOLVED');
-    expect(r.result.human_action).toMatch(/whole country/i);
-    expect(r.result.human_action).toContain('Australia');
-    expect(r.result.human_action).toMatch(/reach to "country"/);
-  });
-
-  it('refuses a name several cities answer to, and lists them', async () => {
-    const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', 'Perth'),
-    });
-    expect(r.isError, JSON.stringify(r.result)).toBe(false);
-    expect(r.result.what_happened).toBe('place_unclear');
-    expect(r.result.code, JSON.stringify(r.result)).toBe('LOCATION_AMBIGUOUS');
-    const displays = (r.result.candidates ?? []).map((c: any) => c.display);
-    expect(displays, JSON.stringify(r.result)).toContain('Perth, Western Australia, AU');
-    expect(displays, JSON.stringify(r.result)).toContain('Perth, Scotland, GB');
-
-    // The candidate's own string is what the agent reposts with, and the card
-    // lands where that one is.
-    const chosen = (r.result.candidates as any[]).find((c) => c.display.endsWith('GB'));
+    // Written in full, the same town goes straight up where it is.
     const again = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', chosen.place),
+      listing: card('WANT', 'Perth, Scotland, United Kingdom'),
     });
     expect(again.isError, JSON.stringify(again.result)).toBe(false);
     expect(again.result.location_resolved.display).toContain('Scotland');
+    await mcpCall(alice.accessToken, 'withdraw_intent', { intent_id: again.result.intent_id });
   });
 
   it('says where it put the card, and shows the same place on the ledger', async () => {
     const r = await mcpCall(alice.accessToken, 'publish_intent', {
-      listing: card('WANT', 'Canberra'),
+      listing: card('WANT', CANBERRA),
     });
     expect(r.isError, JSON.stringify(r.result)).toBe(false);
     expect(r.result.location_resolved, JSON.stringify(r.result)).toBeTruthy();
@@ -232,12 +211,12 @@ d('one city, two spellings, one match', () => {
 
   it('says the reach back, in the same words, for all three forms', async () => {
     for (const [geo, expected] of [
-      [{ place: 'Canberra', reach: 'country' }, 'reaching all of Australia'],
-      [{ place: 'Canberra', reach: 'anywhere' }, 'reaching anywhere'],
-      [{ place: 'Canberra', radius_km: 25 }, 'matching within 25 km'],
+      [{ place: CANBERRA, reach: 'country' }, 'reaching all of Australia'],
+      [{ place: CANBERRA, reach: 'anywhere' }, 'reaching anywhere'],
+      [{ place: CANBERRA, radius_km: 25 }, 'matching within 25 km'],
     ] as [any, string][]) {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
-        listing: { ...card('WANT', 'Canberra'), geo },
+        listing: { ...card('WANT', CANBERRA), geo },
       });
       expect(r.isError, JSON.stringify(r.result)).toBe(false);
       expect(r.result.location_resolved.display, JSON.stringify(r.result)).toBe(
@@ -249,7 +228,7 @@ d('one city, two spellings, one match', () => {
     }
   });
 
-  it('refuses a street address, and a name nothing answers to', async () => {
+  it('refuses a street address, and a full place nothing answers to', async () => {
     // A leading street number never gets past the protocol schema itself.
     const numbered = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: card('WANT', '12 Smith St'),
@@ -262,7 +241,7 @@ d('one city, two spellings, one match', () => {
     // Shapes the schema pattern allows are refused by the server.
     for (const [place, hint] of [
       ['Unit 5, 12 Smith St', /street address/i],
-      ['Nowhereville', /nearest city|region/i],
+      ['Nowhereville, NSW, Australia', /does not know/i],
     ] as [string, RegExp][]) {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
         listing: card('WANT', place),
@@ -296,7 +275,7 @@ d('a card that reaches a whole country', () => {
 
   beforeAll(async () => {
     const h = await mcpCall(seller.accessToken, 'publish_intent', {
-      listing: laptop('HAVE', { place: 'Canberra', reach: 'country' }),
+      listing: laptop('HAVE', { place: CANBERRA, reach: 'country' }),
     });
     expect(h.isError, JSON.stringify(h.result)).toBe(false);
     expect(h.result.location_resolved.display).toBe(
@@ -307,7 +286,7 @@ d('a card that reaches a whole country', () => {
     // A modest radius, because Pia is not driving anywhere — and a reach that
     // says she will take it in the post.
     const w = await mcpCall(buyer.accessToken, 'publish_intent', {
-      listing: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25, reach: 'country' }),
+      listing: laptop('WANT', { place: PERTH_WA, radius_km: 25, reach: 'country' }),
     });
     expect(w.isError, JSON.stringify(w.result)).toBe(false);
     expect(w.result.location_resolved.display).toContain('reaching all of Australia');
@@ -363,7 +342,7 @@ d('a card that reaches a whole country', () => {
     // The control: nothing about the distance changed, only what the two
     // people said they would do about it.
     const local = await mcpCall(buyer.accessToken, 'publish_intent', {
-      listing: laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25 }),
+      listing: laptop('WANT', { place: PERTH_WA, radius_km: 25 }),
     });
     expect(local.isError, JSON.stringify(local.result)).toBe(false);
     const localWant = local.result.intent_id;
