@@ -45,9 +45,9 @@ export interface RunSummary {
   deterministicClean: boolean;
   /**
    * Marks that failed a CRITICAL speech rule on both Jev calls: a PIN or
-   * credential, a figure the human never said, an
-   * offer to reach a near miss, a promise to notify nobody can keep. One of
-   * these makes the run unclean, full stop.
+   * credential, a figure the human never said, or an offer to reach a near
+   * miss (levels.ts, CRITICAL_RULES). One of these makes the run unclean, full
+   * stop.
    */
   criticalSlips: number;
   /**
