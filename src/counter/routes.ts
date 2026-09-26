@@ -1009,6 +1009,13 @@ in on this device and lets you approve what is waiting.</p>
       }
       const b: any = req.body ?? {};
       const skipped = String(b.skip ?? '') === 'yes';
+      // The browser's zone, filled into a hidden box. Recorded on a skip too
+      // (26 September 2026): it is not a choice the person makes, and an
+      // account made through an assistant's sign-in that skipped this page
+      // was left with no clock at all. A bad or missing value is simply not
+      // recorded; the settings page has the picker.
+      const tz = String(b.timezone ?? '').trim();
+      if (isValidTimeZone(tz)) await setTimezone(s.accountId!, tz);
       if (!skipped) {
         const want = String(b.hears_via ?? '');
         if (want === 'email' || want === 'assistant') {
@@ -1032,10 +1039,6 @@ in on this device and lets you approve what is waiting.</p>
             if (checked.ok) await saveArrangement(s.accountId!, checked.value, 'counter');
           }
         }
-        // The browser's zone, filled into a hidden box. A bad or missing
-        // value is simply not recorded; the settings page has the picker.
-        const tz = String(b.timezone ?? '').trim();
-        if (isValidTimeZone(tz)) await setTimezone(s.accountId!, tz);
         const firstName = String(b.first_name ?? '').trim();
         const locality = String(b.locality ?? '').trim();
         // Both boxes or neither. Half a shared profile shares nothing, and the
