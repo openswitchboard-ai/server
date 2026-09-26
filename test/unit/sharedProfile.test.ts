@@ -615,8 +615,10 @@ describe('the pages that collect it', () => {
     expect(approvalWithCollection).toContain('maxlength="60"');
   });
 
-  it('lets a decline through without filling anything in', () => {
-    expect(approvalWithCollection).toMatch(/value="decline"[^>]*formnovalidate|formnovalidate[^>]*value="decline"/);
+  // Not now is a plain link back to the main page (27 September 2026), so it
+  // never has to get past the boxes at all.
+  it('lets Not now through without filling anything in', () => {
+    expect(approvalWithCollection).toContain('<a class="btn secondary" href="/">Not now</a>');
   });
 
   it('asks for nothing extra once the profile is on file', () => {

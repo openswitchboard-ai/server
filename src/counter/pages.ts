@@ -1008,11 +1008,11 @@ ${detail}
   ${v.needsPin ? ceremonyField(c, 'q') : ''}
   <div class="actions">
   ${ceremonySubmit(c, { formId: 'oneQuestion', label: v.yesLabel, className: 'approve', name: 'decision', value: 'yes' })}
-  <button type="submit" name="decision" value="no" class="secondary" formnovalidate>${esc(v.noLabel)}</button>
+  <a class="btn secondary" href="/">${esc(v.noLabel)}</a>
   </div>
 </form>
 ${ceremonyAlt(c, 'oneQuestion')}
-<p class="small muted">This link works once. ${esc(v.noLabel)} changes nothing and sends no reason.</p>
+<p class="small muted">This link works once.</p>
 ${v.needsPin ? ceremonyNote(c) : ''}
 ${ceremonyScript(c)}`);
 }
@@ -1190,10 +1190,10 @@ on your device, and with scripts off it cannot happen, so nothing can be sent fr
   checked before any number leaves.</p>
   <div class="actions">
   <button type="submit" name="decision" value="yes" class="approve" id="sendBtn"${v.photoId ? '' : ' disabled'}>Send the photo</button>
-  <button type="submit" name="decision" value="no" class="secondary" formnovalidate>Not now</button>
+  <a class="btn secondary" href="/">Not now</a>
   </div>
 </form>
-<p class="small muted">This link works once. Not now changes nothing.</p>
+<p class="small muted">This link works once.</p>
 <script>
 ${PHOTO_SCRUB_JS}
 const pf = document.getElementById('photo');
@@ -1401,6 +1401,13 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
   <p class="field-help">${AREA_HELP}</p>${AREA_SUGGEST_SCRIPT}`;
 }
 
+/*
+ * NOT NOW IS A WAY BACK, NOTHING MORE (Lachlan, 27 September 2026). On every
+ * page that asks one thing, "Not now" is a plain link to the main page: it
+ * spends no link, records no decision and tells nobody anything, and the same
+ * question is still waiting there. Saying no is for the person to tell their
+ * assistant.
+ */
 export function mainPage(v: ApprovalView, error?: string): string {
   const title = {
     'offer-accept': 'Accept this number?',
@@ -1447,11 +1454,10 @@ ${headlineHtml}
   ${ceremonyField(v, 'approve')}
   <div class="actions">
   ${ceremonySubmit(v, { formId: 'approveForm', label: yesLabel, className: 'approve', name: 'decision', value: 'approve' })}
-  <button type="submit" name="decision" value="decline" class="secondary" formnovalidate>Not now</button>
+  <a class="btn secondary" href="/">Not now</a>
   </div>
 </form>
 ${ceremonyAlt(v, 'approveForm')}
-<p class="small muted">Not now changes nothing and sends no reason. A number of your own goes through your assistant.</p>
 ${ceremonyNote(v)}
 ${restHtml}
 ${ceremonyScript(v)}`);
