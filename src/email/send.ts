@@ -35,7 +35,7 @@ import { getPool } from '../db.js';
 import { emailHash, getHearsVia } from '../domain/accounts.js';
 import { assertEmailCopyClean, assertNoticeClean } from './lint.js';
 import { signEmailToken } from './tokens.js';
-import { EXEMPT_TEMPLATES, type EmailContent, type FooterLinks } from './templates.js';
+import { EXEMPT_TEMPLATES, newsNotice, type EmailContent, type FooterLinks } from './templates.js';
 import type { Config } from '../config.js';
 
 export type EmailKind = 'transactional' | 'bulk';
@@ -255,6 +255,20 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
       const won = await recordSend(input, 'suppressed', 'their assistant brings them the news');
       return { status: won ? 'suppressed' : 'duplicate' };
     }
+  }
+
+  // THE ONE NOTICE (26 September 2026): whatever the renderer wrote, a notice
+  // goes out as the same fixed email (templates.ts, newsNotice). The detail is
+  // the assistant's to tell.
+  if (isNotice) {
+    const links = baseFooterLinks(cfg);
+    const account = input.accountId;
+    if (account) {
+      links.unsubUrl = `${cfg.counterOrigin}/email/unsub?t=${encodeURIComponent(
+        signEmailToken(account, 'unsubscribe'),
+      )}`;
+    }
+    input = { ...input, content: newsNotice(links) };
   }
 
   // THE SUPPRESSION LIST IS ABOUT THE ADDRESS, NOT THE ACCOUNT (2026-09-17

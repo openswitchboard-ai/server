@@ -253,14 +253,13 @@ describe('the names notice, untouched', () => {
     const bodyText = () =>
       (sesSend.mock.calls.at(-1)![0] as any).input.Content.Simple.Body.Text.Data as string;
     await notifyYourMove(cfg, MATCH, ANA, 'names');
-    expect(bodyText()).toContain(
-      'They have said yes to swapping first names about the mountain bike you are after.',
-    );
+    // Since 26 September 2026 every notice is the one fixed email: the side
+    // and the thing are the assistant's to say.
+    expect(bodyText()).toContain('Your assistant has news.');
+    expect(bodyText()).not.toContain('mountain bike');
     expect(bodyText()).not.toContain('your mountain bike');
     await notifyYourMove(cfg, MATCH, BEPPE, 'names');
-    expect(bodyText()).toContain(
-      'They have said yes to swapping first names about your mountain bike.',
-    );
+    expect(bodyText()).toContain('Your assistant has news.');
   });
 });
 
