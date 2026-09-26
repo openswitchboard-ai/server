@@ -317,8 +317,11 @@ describe('when the other side takes the figure', () => {
     // assistant offered escrow at exactly this moment (25 September 2026),
     // which on a deployment with payments off is a false claim about money.
     // This test's config has no Stripe secret, so payments are off.
-    expect(entry.what_to_do).toMatch(/does not hold money/);
-    expect(entry.what_to_do).toMatch(/Never offer to hold the money/);
+    // "Not yet" rather than "never": payments are built and coming, and the
+    // founder wants the assistant to say so if asked (26 September 2026).
+    expect(entry.what_to_do).toMatch(/not switched on here yet/);
+    expect(entry.what_to_do).toMatch(/Do not offer to hold the money/);
+    expect(entry.what_to_do).toMatch(/coming but not available yet/);
   });
 
   it('says it the other way round when this human was the one who accepted', async () => {
