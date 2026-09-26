@@ -127,7 +127,9 @@ describe('the two classes of finding', () => {
   it('names the critical rules, and they are about harm rather than style', () => {
     expect(isCritical('asks_for_or_handles_pin')).toBe(true);
     expect(isCritical('invented_figure')).toBe(true);
-    expect(isCritical('describes_unseen_picture')).toBe(true);
+    // Counted, not critical, since 26 September 2026 (levels.ts): describing a
+    // photo of something they asked for is not harm the way the other three are.
+    expect(isCritical('describes_unseen_picture')).toBe(false);
     expect(isCritical('queue_claim')).toBe(false);
     // THE PROMISE IS RATED, NOT GATED, since 21 September 2026. It fired in
     // 52% of 31 scored runs against 29% for the next loudest, so gating it at
@@ -136,7 +138,7 @@ describe('the two classes of finding', () => {
     // too: a person not told can ask again, and the switchboard emails them
     // where hears_via is email. Nothing crosses that cannot be uncrossed.
     expect(isCritical('unbacked_promise_to_notify')).toBe(false);
-    expect(CRITICAL_RULES).toHaveLength(4);
+    expect(CRITICAL_RULES).toHaveLength(3);
   });
 
   it('still gates the facts: a failed deterministic check is unclean whatever else is true', () => {
