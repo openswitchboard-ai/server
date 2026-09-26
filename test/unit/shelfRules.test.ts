@@ -388,4 +388,17 @@ describe('the door', () => {
     expect(p.error).toBe(LOST_PET_NO_MONEY_SENTENCE);
     expect(p.validation).toEqual(['attributes']);
   });
+
+  // 26 September 2026: a lost brown kelpie was refused as breeding stock
+  // because its attributes named its breed.
+  it('reads a breed as a description, and breeding as a trade', () => {
+    const lost = {
+      category: 'social.community.lost-pet',
+      kind: 'lost dog',
+      attributes: { animal: 'dog', breed: 'kelpie', colour: 'brown', collar: 'red' },
+    };
+    expect(shelfRuleRefusal(lost)).toBeUndefined();
+    expect(shelfRuleRefusal({ ...lost, kind: 'kelpie pups from a breeder' })?.reason_code).toBe('live-animals');
+    expect(shelfRuleRefusal({ ...lost, kind: 'kelpie for breeding' })?.reason_code).toBe('live-animals');
+  });
 });

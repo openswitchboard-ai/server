@@ -114,9 +114,14 @@ export function saysHomeMade(card: ShelfRuleCard): boolean {
   return HOME_MADE.test(postersWords(card));
 }
 
-/** A lost or found pet being sold, rehomed, adopted or bred. */
+/**
+ * A lost or found pet being sold, rehomed, adopted or bred. NOT a bare
+ * "breed": that is what a kelpie IS, and a probe on 26 September 2026 had a
+ * lost brown kelpie refused as breeding stock because its attributes said
+ * `breed: kelpie`. Breeding is "breeder", "breeding", "to breed", "for breeding".
+ */
 const ANIMAL_TRADE =
-  /\b(?:for\s+sale|sell(?:ing)?|sold|buy(?:ing)?|re-?hom(?:e|es|ed|ing)|adopt(?:ion|ing|ed)?|breed(?:er|ers|ing)?|stud|litter|free\s+to\s+(?:a\s+)?good\s+home)\b/;
+  /\b(?:for\s+sale|sell(?:ing)?|sold|buy(?:ing)?|re-?hom(?:e|es|ed|ing)|adopt(?:ion|ing|ed)?|breed(?:er|ers|ing)|(?:to|for)\s+breed|stud|litter|free\s+to\s+(?:a\s+)?good\s+home)\b/;
 
 /** Money words on a lost or found pet, figure or none. */
 const MONEY_WORDS = /\b(?:reward|price|paid|payment|fee|cost|cash)\b/;
