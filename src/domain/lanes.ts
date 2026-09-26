@@ -419,6 +419,66 @@ export function sayFor(id: SentenceId, a: Arrangement, ctx: Ctx = {}): string {
   return say(id, laneFor(a), a, ctx);
 }
 
+// ---------------------------------------------------------------------------
+// THE READY SENTENCES FOR THE HUMAN, BY LANE (26 September 2026).
+//
+// Everything in SENTENCES above is addressed to the AGENT: it says what the
+// agent may promise and how. Some of what the switchboard hands over is the
+// other kind — a ready sentence written for the human, which the agent says
+// as it stands. Those can promise too, and one did: list_intents said "Nothing
+// yet on your bookcase. I'll say the moment somebody comes forward." to every
+// agent on every account, which is the unbacked promise the manual forbids
+// unless the agent runs on its own with a saved arrangement. An edge-case probe
+// on dev heard it five times in one listing. It slipped past the guard sweep
+// because "I'll say the moment" was not one of the phrasings it knew.
+//
+// So the human's sentences that turn on the lane live here too, in their own
+// table, served through `sayNote`. They are written in the first person,
+// because the agent says them. Only the agreed wording promises anything, and
+// it names the rhythm it is keeping; the rest say who does write (where the
+// switchboard really does) and that asking is always open.
+// ---------------------------------------------------------------------------
+
+export const NOTES = {
+  /** A posting that is up, with nobody on it yet. */
+  nothing_yet: {
+    about: 'A want or a have that is up, with nobody come forward on it yet.',
+    budget: 200,
+    claimsEmail: true,
+    prompted: (c: Ctx) =>
+      `Nothing yet on ${c.thing}. ${
+        c.hearsVia === 'email'
+          ? 'The switchboard emails you when somebody comes forward, and you can ask me whenever you like.'
+          : 'Ask me whenever you like and I will look.'
+      }`,
+    autonomous: {
+      agreed: (c: Ctx) =>
+        `Nothing yet on ${c.thing}. I look ${c.cadence}, and I'll tell you when somebody comes forward.`,
+      not_yet: (c: Ctx) =>
+        `Nothing yet on ${c.thing}. ${
+          c.hearsVia === 'email'
+            ? 'The switchboard emails you when somebody comes forward, and you can ask me whenever you like.'
+            : 'Ask me whenever you like and I will look.'
+        }`,
+    },
+  } as Sentence,
+} satisfies Record<string, Sentence>;
+
+export type NoteId = keyof typeof NOTES;
+
+export const NOTE_IDS = Object.keys(NOTES) as NoteId[];
+
+/** The human's ready sentence for this id, in this lane, on this arrangement. */
+export function sayNote(id: NoteId, lane: Lane, a: Arrangement, ctx: Ctx = {}): string {
+  const s = NOTES[id];
+  if (lane === 'prompted') return render(s.prompted, ctx);
+  if (a.check_every_minutes === undefined) return render(s.autonomous.not_yet, ctx);
+  return render(s.autonomous.agreed, {
+    ...ctx,
+    cadence: cadenceInPlainWords(a.check_every_minutes),
+  });
+}
+
 /**
  * THE TWO FACTS A WAITING SENTENCE NEEDS, read once for the whole answer.
  *

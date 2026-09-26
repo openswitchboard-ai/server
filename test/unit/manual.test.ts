@@ -991,7 +991,9 @@ describe('the body no longer tells an agent to expect a failure', () => {
       MANUAL_BODY.indexOf('2. Price bands are private'),
     );
     expect(oneA).toMatch(/comes back as an ordinary answer with the sentence to say/i);
-    expect(oneA).toMatch(/closest open ones in suggestions/i);
+    // 26 September 2026: a closed family suggests a shelf only where one is
+    // genuinely the same errand (domain/categorySuggest.ts RELATED_OPEN).
+    expect(oneA).toMatch(/a shelf in suggestions only where one is genuinely the same errand/i);
     expect(oneA).not.toContain('CATEGORY_PROHIBITED');
     expect(oneA).not.toMatch(/the error names/i);
   });

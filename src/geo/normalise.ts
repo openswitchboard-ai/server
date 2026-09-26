@@ -45,6 +45,7 @@ import {
   qualifyPlace,
   regionNamed,
   resolvePlace,
+  resolvePlaceFor,
   type Place,
   type PlaceHint,
 } from './gazetteer.js';
@@ -221,9 +222,9 @@ function refuseCountry(text: string): void {
 
 /** Refuse a name several cities answer to, and say which they are.
  *
- *  The hint does not change what is refused, only the order the candidates are
- *  read out in: the human's own country first, so the first name their agent
- *  says back to them is the likely one. */
+ *  The hint settles the name where the human's own country holds exactly one
+ *  place of it, and otherwise orders the candidates: their own country first,
+ *  so the first name their agent says back to them is the likely one. */
 function refuseAmbiguous(text: string, hint: PlaceHint): void {
   const places = ambiguousPlaces(text, hint);
   if (!places) return;
@@ -259,9 +260,12 @@ function refuseUnplaceable(text: string, hint: PlaceHint): void {
  * existed and a card that means the same thing look the same in the database.
  *
  * `hint` says which country the human is probably in (src/geo/homeCountry.ts).
- * It changes nothing about what resolves or what is refused — only the order
- * the ambiguous candidates come back in, so a person in Franklin, ACT hears
- * about their own Franklin first rather than five American ones.
+ * Where their country holds exactly one place of a shared name, that place is
+ * the answer (26 September 2026: an Australian account whose own area is
+ * Hobart was offered Hobart, Indiana). Where it holds several, they are asked
+ * with their own first, so a person in Franklin, ACT hears about their own
+ * Franklin first rather than five American ones. A name nobody shares, and a
+ * name written out in full, resolve exactly as they did without a hint.
  */
 export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
   const place: string | undefined =
@@ -310,7 +314,10 @@ export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
       });
     }
     refuseUnplaceable(place, hint);
-    const hit = resolvePlace(place);
+    // The human's own country settles a shared name where it holds exactly one
+    // place of it (gazetteer.ts settledInCountry): Hobart, for someone in
+    // Australia, is Hobart, Tasmania.
+    const hit = resolvePlaceFor(place, hint);
     if (!hit) {
       throw new OsbError('LOCATION_UNRESOLVED', {
         human_action: `The switchboard does not know '${place}'. Try the nearest city or the region it sits in.`,
@@ -338,7 +345,7 @@ export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
   // turn, and what it finds becomes the card's place and canonical cell. A
   // bucket too wide or too shared to place is refused the way a place would be.
   refuseUnplaceable(bucket!, hint);
-  const hit = resolvePlace(bucket!);
+  const hit = resolvePlaceFor(bucket!, hint);
   if (hit) return placed(bucket!, hit);
 
   // Nothing answers to it. The card keeps the string and meets only cards

@@ -30,6 +30,12 @@
  *                       in `kind`.
  *   anything else       untouched.
  *
+ * Since 26 September 2026 "identifying" is any fact about the thing rather
+ * than about the arrangement (see ARRANGEMENT_KEY below), food and shares are
+ * asked for no make, model or condition, and nothing lent or hired is asked
+ * for a maker. And a second attempt carrying the reference the first refusal
+ * handed over is never asked the same questions again (domain/cards.ts).
+ *
  * The keys are real ones. `attributes` is an open bag at the schema level
  * (lower_snake_case, identity and sensitive keys forbidden), so "identifying"
  * cannot be read off the schema; it is read off the taxonomy instead — the
@@ -135,6 +141,106 @@ function statedKeys(attributes: unknown, keys: readonly string[]): string[] {
   return keys.filter((k) => stated(attributes, k));
 }
 
+// ---------------------------------------------------------------------------
+// WHAT ELSE COUNTS, AND WHAT NEVER DOES (26 September 2026).
+//
+// An edge-case probe on dev posted the things people really post, and the
+// rule above turned most of them back for want of a brand. A black adjustable
+// office chair in good condition; a pine bookshelf with five shelves; a box of
+// croissants and danishes left over at close; a Spanish want for "bicicleta de
+// paseo o híbrida, talla mediana". Every one of those says plainly what the
+// thing is, and every one came back because its facts were written under keys
+// the list above had never heard of — `shelves`, `types`, `tipo`, `adjustable`.
+// The Spanish one came back twice, with the same questions, after its assistant
+// had done exactly what it was asked.
+//
+// The list above was only ever a way of saying "a fact about which one it is".
+// So a fact under any other key counts too, with one exception, written down
+// here: the keys that are about the ARRANGEMENT rather than the thing — when,
+// where, how it changes hands, what it costs, what is swapped for it. "Pick up
+// today, free, swap for a bike" says nothing a stranger could recognise the
+// thing by, and a posting made of those still comes back. The pedal spring the
+// gate was built for, with nothing at all under `attributes`, still comes back
+// exactly as it did.
+//
+// Deterministic, as the rest of this file is: a key is matched on its spelling
+// and nothing reads its value.
+// ---------------------------------------------------------------------------
+
+/** Keys about the arrangement rather than the thing. Never identifying. */
+const ARRANGEMENT_KEY =
+  /^(free|free_only|pick_?up\w*|can_pick_up|collect\w*|deliver\w*|postage|posting|ship\w*|price\w*|cost\w*|budget\w*|rate\w*|payment\w*|pay|swap\w*|trade\w*|in_exchange|exchange\w*|when|date|dates|day|days|time|start\w*|end\w*|until|available\w*|availability|duration\w*|return\w*|order_closes|deadline|urgen\w*|arrangement|seller|buyer|negotiable|location|place|area|suburb|contact\w*|phone|email|slots|spots)$/;
+
+/** Every key on the posting that says something about WHICH thing it is. */
+function identifyingFacts(attributes: unknown): string[] {
+  if (!attributes || typeof attributes !== 'object') return [];
+  return Object.keys(attributes as Record<string, unknown>).filter(
+    (k) =>
+      stated(attributes, k) &&
+      k !== CONDITION_KEY &&
+      (IDENTIFYING_KEYS.includes(k) || !ARRANGEMENT_KEY.test(k)),
+  );
+}
+
+/**
+ * Every key on an errand or something social that says WHAT, WHEN or HOW. The
+ * context keys, and anything else a poster wrote about it except the money:
+ * a hiking group on "Saturday 4 October, 8am, moderate, 12 km" was asked
+ * whether it was in person or online, and a lost kelpie with a red collar how
+ * often it would suit. Both had said what they were.
+ */
+function contextFacts(attributes: unknown): string[] {
+  if (!attributes || typeof attributes !== 'object') return [];
+  return Object.keys(attributes as Record<string, unknown>).filter(
+    (k) =>
+      stated(attributes, k) &&
+      (CONTEXT_KEYS.includes(k) ||
+        !/^(price\w*|cost\w*|budget\w*|rate\w*|payment\w*|pay|contact\w*|phone|email)$/.test(k)),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A MAKE AND MODEL IS A QUESTION ABOUT A PRODUCT.
+//
+// The same probe asked "What make and model is the share of bulk coffee
+// order?", "…the leftover pastries?", "…the surfboard hire?" and "…the
+// extension ladder to borrow?". Food has no model; a share of an order is not
+// a thing with a maker; somebody after a ladder for a Saturday wants one that
+// is tall enough, and which factory made it is beside the point. So the
+// question is asked only of something that is a product in the ordinary sense,
+// and it is decided, like everything else here, on the words: the shelf, the
+// poster's own name for the thing, and the arrangement where they said one.
+//
+// Food and shares also carry no condition. "What condition is the leftover
+// pastries in?" is not a question anybody could answer, and the answer the
+// switchboard would want there (made today, sealed, how many) is a fact about
+// the thing, which the count above already reads.
+// ---------------------------------------------------------------------------
+
+/** Words for something eaten, used up, or split between people. */
+const CONSUMABLE_WORDS =
+  /\b(share|shares|leftovers?|surplus|bulk|food|groceries|produce|pastr(y|ies)|bread|cakes?|biscuits|fruit|veg|vegetables|eggs|honey|jam|preserves)\b/i;
+
+/** Words for a thing lent or hired rather than handed over for good. */
+const LENDING_WORDS = /\b(hire|hiring|borrow|borrowing|lend|lending|loan|rent|rental|renting)\b/i;
+
+/** The shelf of things that are eaten. */
+const FOOD_SHELF = /^goods\.food(\.|$)/;
+
+/** Something eaten or split between people: no make, no model, no condition. */
+function isConsumable(card: { category?: unknown; kind?: unknown }): boolean {
+  if (FOOD_SHELF.test(String(card.category ?? ''))) return true;
+  return typeof card.kind === 'string' && CONSUMABLE_WORDS.test(card.kind);
+}
+
+/** Lent or hired: the maker is beside the point, the condition still matters. */
+function isLending(card: { kind?: unknown; attributes?: unknown }): boolean {
+  if (typeof card.kind === 'string' && LENDING_WORDS.test(card.kind)) return true;
+  const a = card.attributes as Record<string, unknown> | undefined;
+  const arrangement = a && typeof a === 'object' ? a.arrangement : undefined;
+  return typeof arrangement === 'string' && LENDING_WORDS.test(arrangement);
+}
+
 /** The poster's own words, where they gave any, for echoing back in a question. */
 function thingWords(kind: unknown): string | undefined {
   const k = typeof kind === 'string' ? kind.trim() : '';
@@ -177,10 +283,14 @@ export function detailShortfall(card: {
   const thing = naming(card.kind);
 
   if (top === 'goods') {
-    const identifying = statedKeys(card.attributes, IDENTIFYING_KEYS);
+    const identifying = identifyingFacts(card.attributes);
     const hasCondition = stated(card.attributes, CONDITION_KEY);
+    const consumable = isConsumable(card);
+    // A product in the ordinary sense: something with a maker, handed over.
+    const product = !consumable && !isLending(card);
+    const needsCondition = offering && !consumable;
     const need = offering ? OFFERING_IDENTIFYING_MIN : WANT_IDENTIFYING_MIN;
-    const enough = kind && identifying.length >= need && (!offering || hasCondition);
+    const enough = kind && identifying.length >= need && (!needsCondition || hasCondition);
     if (enough) return undefined;
 
     // One question per thing that is missing, in the order a person would ask
@@ -189,19 +299,26 @@ export function detailShortfall(card: {
     const questions: string[] = [];
     if (!kind) questions.push('What is it, in a few plain words?');
     const named = statedKeys(card.attributes, ['brand', 'make', 'model']).length > 0;
-    if (!named) questions.push(`What make and model is ${thing}?`);
-    if (identifying.length < need) {
+    const short = identifying.length < need;
+    // The maker is asked for only where the facts are short and the thing is
+    // a product. A bookshelf with its material and its shelves counted, and
+    // short only of its condition, is asked about its condition and nothing
+    // else.
+    if (short && product && !named) questions.push(`What make and model is ${thing}?`);
+    if (short) {
       questions.push(
-        `Which one is ${thing} exactly — the size, the type, or what it fits?`,
+        product
+          ? `Which one is ${thing} exactly — the size, the type, or what it fits?`
+          : `Can you say a bit more about ${thing}: what sort, and how much or how many?`,
       );
     }
-    if (offering && !hasCondition) questions.push(`What condition is ${thing} in?`);
-    if (offering && identifying.length === 0) questions.push('What comes with it?');
+    if (needsCondition && !hasCondition) questions.push(`What condition is ${thing} in?`);
+    if (offering && product && identifying.length === 0) questions.push('What comes with it?');
     return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_HUMAN_ACTION };
   }
 
   if (top === 'services' || top === 'social') {
-    const context = statedKeys(card.attributes, CONTEXT_KEYS);
+    const context = contextFacts(card.attributes);
     if (kind && context.length >= 1) return undefined;
     const questions: string[] = [];
     if (!kind) questions.push('What is it, in a few plain words?');
@@ -244,6 +361,21 @@ export function detailShortfall(card: {
  */
 export const DETAIL_HUMAN_ACTION =
   'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. What it fits or what sort it is counts; no part number is wanted. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
+
+/**
+ * THE GOODS LINE WITH THE RADIUS QUESTION RIDING ON IT (26 September 2026).
+ *
+ * A goods posting that chose a radius is asked once whether it really is
+ * pick-up only, and that question now comes back beside the detail questions
+ * rather than on a round trip of its own (domain/cards.ts, the radius gate).
+ * The last question's answer goes in a different field, so this line says so.
+ * Room for that under the 300-character cap was made by dropping two clauses
+ * the manual's posting section already carries in full: "write in what you
+ * already know" and "what it fits or what sort it is counts". Every key it
+ * names is still one the count reads, which the suite asserts.
+ */
+export const DETAIL_AND_RADIUS_HUMAN_ACTION =
+  'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. The last one goes in `reach`: "country", or the same radius if pick-up only. No part number is wanted. If they do not know, send it again with detail_unknown.';
 
 /**
  * THE SAME LINE FOR A SERVICE OR A SOCIAL POSTING.

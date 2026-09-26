@@ -33,9 +33,16 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 });
 
 import * as db from '../../src/db.js';
-import { amendIntent, publishIntent, whatHappensNextNote } from '../../src/domain/cards.js';
+import {
+  FIGURE_RADIUS_TAIL,
+  amendIntent,
+  publishIntent,
+  whatHappensNextNote,
+} from '../../src/domain/cards.js';
+import { DETAIL_AND_RADIUS_HUMAN_ACTION } from '../../src/domain/postingDetail.js';
 import { SENTENCES } from '../../src/domain/lanes.js';
 import {
+  FIGURE_HUMAN_ACTION,
   figureAmountsKey,
   figureQuestions,
   figuresOnPosting,
@@ -315,9 +322,14 @@ describe('an amend that moves the money', () => {
  * ONE REFUSAL PER ATTEMPT. The three cheap refusals run in a fixed order —
  * detail, then reach, then figure — so an assistant holding a posting that is
  * short on all three is never handed two different answers to the same call.
+ *
+ * AND THE RADIUS QUESTION RIDES ALONG (26 September 2026). A radius somebody
+ * chose is still confirmed once, but on whichever refusal the attempt gets
+ * first rather than on a round trip of its own: an edge-case probe found every
+ * goods posting paying one extra trip to the human for it.
  */
 describe('the order of the cheap refusals', () => {
-  it('answers detail first, then reach, then the figure, one at a time', async () => {
+  it('answers detail first with the radius beside it, then the figure', async () => {
     const thin = (over: Record<string, unknown> = {}) =>
       listing({
         attributes: {},
@@ -329,24 +341,57 @@ describe('the order of the cheap refusals', () => {
     const first = (await publishRefusal(thin()))!;
     expect(first.code).toBe('NEEDS_DETAIL');
     expect(first.questions!.join(' ')).toContain('make and model');
+    // The radius question is the last one, and the line says where it goes.
+    expect(first.questions![first.questions!.length - 1]).toContain('pick-up only');
+    expect(first.questions!.length).toBeLessThanOrEqual(4);
+    expect(first.human_action).toBe(DETAIL_AND_RADIUS_HUMAN_ACTION);
     const reference = first.reference;
     expect(reference).toBeTruthy();
 
-    // The detail answered: now the one question about how far it goes. Every
+    // The detail and the radius answered: only the figure is left. Every
     // answer after the first carries the number the first one minted.
     const second = (await publishRefusal(thin({ attributes: rich }), { reference }))!;
-    expect(second.code).toBe('NEEDS_DETAIL');
-    expect(second.questions!.join(' ')).toContain('pick-up only');
+    expect(second.code).toBe('CONFIRM_FIGURE');
+    expect(second.questions!.join(' ')).not.toContain('pick-up only');
     expect(second.reference).toBe(reference);
-
-    // And only then the figure.
-    const third = (await publishRefusal(thin({ attributes: rich }), { reference }))!;
-    expect(third.code).toBe('CONFIRM_FIGURE');
-    expect(third.reference).toBe(reference);
 
     const r: any = await publishIntent(cfg, ACCOUNT, thin({ attributes: rich }), { reference });
     // And the posting keeps the number it was asked about all along.
     expect(r.intent_id).toBe(reference);
+  });
+
+  it('puts the radius on the figure read-back where the detail was already enough', async () => {
+    const chosen = listing({
+      attributes: rich,
+      geo: { bucket: 'r3gx', radius_km: 8, reach: 'radius' },
+      price: { band: { min: 10 }, ccy: 'AUD' },
+    });
+    const first = (await publishRefusal(chosen))!;
+    expect(first.code).toBe('CONFIRM_FIGURE');
+    expect(first.questions![first.questions!.length - 1]).toContain('pick-up only');
+    expect(first.human_action).toBe(`${FIGURE_HUMAN_ACTION}${FIGURE_RADIUS_TAIL}`);
+    expect(first.human_action!.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(first.human_action!)).toEqual([]);
+    const r: any = await publishIntent(cfg, ACCOUNT, chosen, { reference: first.reference });
+    expect(r.intent_id).toBe(first.reference);
+  });
+
+  it('still asks about the radius on its own where nothing else is asked', async () => {
+    // The Queanbeyan spring, with no figure and plenty of detail: the radius
+    // question is the only thing between an assistant's guess and a posting,
+    // so it still comes back for it, once.
+    const noFigure = listing({
+      attributes: rich,
+      geo: { bucket: 'r3gx', radius_km: 8, reach: 'radius' },
+    });
+    delete (noFigure as any).price;
+    const first = (await publishRefusal(noFigure))!;
+    expect(first.code).toBe('NEEDS_DETAIL');
+    expect(first.questions).toEqual([
+      'Would you post it to someone further away, or is it pick-up only?',
+    ]);
+    const r: any = await publishIntent(cfg, ACCOUNT, noFigure, { reference: first.reference });
+    expect(r.intent_id).toBe(first.reference);
   });
 });
 

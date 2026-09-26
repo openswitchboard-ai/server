@@ -48,6 +48,9 @@ interface World {
   intros: Intro[];
   /** Every statement the call made, so the extra work can be counted. */
   sql: string[];
+  /** The saved arrangement on the account, and how its human hears. */
+  arrangement: Record<string, unknown> | null;
+  hearsVia: 'email' | 'assistant';
 }
 
 let world: World;
@@ -87,6 +90,12 @@ function fakePool() {
     query: async (sql: string, params: any[] = []) => {
       const s = sql.replace(/\s+/g, ' ').trim();
       world.sql.push(s);
+      if (s.startsWith('SELECT arrangement FROM accounts')) {
+        return { rows: [{ arrangement: world.arrangement }], rowCount: 1 };
+      }
+      if (s.startsWith('SELECT hears_via FROM accounts')) {
+        return { rows: [{ hears_via: world.hearsVia }], rowCount: 1 };
+      }
       if (s.startsWith('SELECT timezone FROM accounts')) {
         return { rows: [{ timezone: null }], rowCount: 0 };
       }
@@ -113,7 +122,7 @@ function fakePool() {
 }
 
 beforeEach(() => {
-  world = { cards: [card()], intros: [], sql: [] };
+  world = { cards: [card()], intros: [], sql: [], arrangement: null, hearsVia: 'email' };
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
 });
 
@@ -172,13 +181,81 @@ describe('the one sentence the agent leads with', () => {
     expect(lintHumanCopy(text)).toEqual([]);
   };
 
-  it('nobody: says so plainly and promises to speak up', async () => {
+  // 26 September 2026: this said "I'll say the moment somebody comes forward"
+  // to every agent, which is a promise only an agent that runs on its own,
+  // with a rhythm saved, can keep. It is the lane table's sentence now.
+  it('nobody, prompted: says so plainly and who writes, and promises nothing', async () => {
     const e = await only();
     expect(e.note.text).toBe(
-      "Nothing yet on your mountain bike. I'll say the moment somebody comes forward.",
+      'Nothing yet on your mountain bike. The switchboard emails you when somebody comes forward, and you can ask me whenever you like.',
     );
+    expect(e.note.text).not.toMatch(/I'?ll (say|tell)|the moment/i);
     expect(e.note.provenance).toBe('switchboard-system');
     clean(e.note.text);
+  });
+
+  it('nobody, and the switchboard writes to nobody: claims no post', async () => {
+    world.hearsVia = 'assistant';
+    const e = await only();
+    expect(e.note.text).toBe('Nothing yet on your mountain bike. Ask me whenever you like and I will look.');
+    clean(e.note.text);
+  });
+
+  it('nobody, on its own with no rhythm agreed: still promises nothing', async () => {
+    world.arrangement = { runs_on_its_own: true };
+    const e = await only();
+    expect(e.note.text).not.toMatch(/I'?ll (say|tell)|the moment/i);
+    clean(e.note.text);
+  });
+
+  it('nobody, on its own with a rhythm agreed: the promise, and the rhythm it keeps', async () => {
+    world.arrangement = { runs_on_its_own: true, check_every_minutes: 60 };
+    const e = await only();
+    expect(e.note.text).toBe(
+      "Nothing yet on your mountain bike. I look every hour, and I'll tell you when somebody comes forward.",
+    );
+    clean(e.note.text);
+  });
+
+  // 26 September 2026: "about your hiking", "your repair cafe", "the crockery
+  // you are after" — the shelf's words, where the poster had given their own.
+  it('names the thing in the poster’s own words where they gave any', async () => {
+    world.cards = [
+      card({ category: 'social.community.repair-cafe', kind: 'leftover pastries' }),
+      card({ id: OTHER, type: 'WANT', category: 'goods.home.tableware', kind: 'cheap pastries' }),
+    ];
+    world.intros = [intro({ live: true }), intro({ card: OTHER, live: true })];
+    const [have, want] = await listIntents(ACCOUNT);
+    expect(have.note.text).toBe(
+      'One person has come forward about your leftover pastries. Check in for what to do next.',
+    );
+    expect(want.note.text).toBe(
+      'One person has come forward about the cheap pastries you are after. Check in for what to do next.',
+    );
+  });
+
+  it('says a pastime grammatically where the poster gave no words of their own', async () => {
+    world.cards = [card({ category: 'social.activity-partner.hiking' })];
+    world.intros = [intro({ live: true }), intro({ live: true })];
+    const e = await only();
+    expect(e.note.text).toBe(
+      '2 people have come forward about the hiking you posted. Check in for what to do next.',
+    );
+    expect(e.note.text).not.toContain('your hiking');
+  });
+
+  it('gives a rejected posting its reason as the ready sentence', async () => {
+    world.cards = [
+      card({
+        lifecycle_state: 'SCREENING_REJECTED',
+        screening: { pass: false, reason_code: 'weapons', at: '2026-09-26T00:00:00Z' },
+      }),
+    ];
+    const e = await only();
+    expect(e.note.text).toBe(e.screening.reason);
+    expect(e.note.text.length).toBeGreaterThan(10);
+    expect(e.note.provenance).toBe('switchboard-system');
+    expect(e.people_here).toBeUndefined();
   });
 
   it('one person, nobody waiting: one person has come forward', async () => {

@@ -1059,6 +1059,63 @@ export function categoryPhrase(labelOrId?: string, kind?: string | null): string
 }
 
 /**
+ * THE THING, NAMED FROM ITS OWNER'S OWN POSTING (26 September 2026).
+ *
+ * categoryPhrase above answers "what is this shelf called" and only lends the
+ * poster's words to a shelf the catalogue has no phrase for. That is right for
+ * a sentence about the shelf and wrong for a sentence about somebody's own
+ * want or have. An edge-case probe on dev heard "2 people have come forward
+ * about your hiking" for a Saturday hiking group, "your repair cafe" for a
+ * café's leftover pastries that had been filed on the nearest shelf, and "the
+ * crockery you are after" for cheap pastries. Every one of those postings said
+ * in its own words what it was.
+ *
+ * So for a sentence about the reader's OWN posting, their own words come first
+ * (the same order categoryLeafLabel and categoryPhraseWithArticle already use),
+ * and the shelf's phrase stands in only where they gave none. `activity` says
+ * the phrase is a pastime rather than a thing ("hiking", "tennis"), which reads
+ * wrongly after "your" and is said another way by the caller.
+ *
+ * Only ever pass the reader's OWN `kind`. The other side's words are theirs.
+ */
+export function ownThingPhrase(
+  category?: string,
+  kind?: string | null,
+): { words: string; activity: boolean } {
+  const own = ownWords(category, kind);
+  if (own) return { words: own, activity: false };
+  const node = phraseNode(category);
+  const words = node?.phrase ?? fallbackPhrase(category);
+  const activity =
+    !!node && node.countable === false && String(category ?? '').startsWith('social.');
+  return { words, activity };
+}
+
+/**
+ * The reader's own want or have, named from their own posting: "your leftover
+ * pastries", "the bike you are after". A pastime on the social shelves with no
+ * words of the poster's own reads wrongly after "your" ("your hiking"), so it is
+ * "the hiking you posted" on that side. Nothing to name at all is "what you
+ * posted", the manual's own phrase for it. See ownThingPhrase.
+ *
+ * The same split as email/templates.ts theirThing, written here rather than
+ * reached for there, because these are the agent-facing sentences and the
+ * email wording is maintained on its own.
+ *
+ * `kind` must be the READER'S own; never pass the other side's words here.
+ */
+export function theirOwnThing(
+  category: string | null | undefined,
+  kind: string | null | undefined,
+  side: 'want' | 'have',
+): string {
+  const { words, activity } = ownThingPhrase(category ?? undefined, kind);
+  if (!words) return 'what you posted';
+  if (activity && side === 'have') return `the ${words} you posted`;
+  return side === 'have' ? `your ${words}` : `the ${words} you are after`;
+}
+
+/**
  * WHERE THE CATALOGUE HAS NO WORD, THE POSTER'S OWN WORD STANDS.
  *
  * Since the catalogue became a deny list a leaf may be one nobody ever wrote

@@ -24,7 +24,7 @@ import {
   describePlace,
   looksLikeStreetAddress,
   regionNamed,
-  resolvePlace,
+  resolvePlaceFor,
   type PlaceHint,
 } from '../geo/gazetteer.js';
 import { homeCountry } from '../geo/homeCountry.js';
@@ -221,18 +221,18 @@ export async function readOwnArea(
   };
 }
 
-/** The area written out in full, when it settles to one place on its own.
+/** The area written out in full, when it settles to one place.
  *
- *  The hint is passed through for consistency with every other reading of an
- *  area — it reorders candidates and never settles a name, so a name in
- *  question is still left unresolved here. */
+ *  The hint is read exactly as the posting path reads it: a shared name the
+ *  human's own country holds only one of is settled to that one, and a name
+ *  still in question is left unresolved here. */
 export function resolvedAreaName(area: string, hint: PlaceHint = {}): string | undefined {
   const raw = (area ?? '').trim();
   if (!raw) return undefined;
   if (looksLikeStreetAddress(raw)) return undefined;
   if (wideAreaNamed(raw)) return undefined;
   if (ambiguousPlaces(raw, hint)) return undefined;
-  const hit = resolvePlace(raw);
+  const hit = resolvePlaceFor(raw, hint);
   return hit ? describePlace(hit) : undefined;
 }
 
