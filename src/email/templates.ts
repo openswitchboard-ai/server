@@ -283,6 +283,24 @@ function notice(
   return { html, text };
 }
 
+/**
+ * THE ONE NOTICE (Lachlan, 26 September 2026). Every notice email now says the
+ * same thing, whatever happened: the switchboard has news, ask your assistant.
+ * The assistant already holds the detail and says it better in context, and a
+ * sentence per event, per side and per kind of thing was wording that had to be
+ * written again for every new case. send.ts puts this in place of whatever a
+ * renderer produced, so no notice template can say more than this.
+ */
+export const NEWS_NOTICE_SUBJECT = 'OpenSwitchboard: your assistant has news';
+
+export function newsNotice(f: FooterLinks): EmailContent {
+  const heading = 'Your assistant has news.';
+  const line = 'Something on OpenSwitchboard is waiting for you.';
+  const html = shell(h1(esc(heading)) + para(esc(line)) + small(ASK_YOUR_ASSISTANT), f, MATCH);
+  const text = `${heading}\n\n${line}\n\n${ASK_YOUR_ASSISTANT}\n\n` + footerText(f);
+  return { subject: NEWS_NOTICE_SUBJECT, html, text };
+}
+
 // ---------------------------------------------------------------------------
 // (b) Something is waiting on this person's own page. A notice like the rest:
 // their assistant knows what it is and can hand them the link to it.

@@ -177,18 +177,19 @@ describe('the notices name the thing the reader named', () => {
   it('summons both sides in their own words', async () => {
     await notifyMatchCreated(cfg, MATCH);
     const [ana, beppe] = bodies();
-    expect(ana).toContain('come forward with a fanatec brake performance kit');
-    expect(ana).not.toContain('sim racing');
-    expect(ana).not.toContain('electronic.');
-    expect(beppe).toContain('come forward about your sim racing pedal set');
-    expect(beppe).not.toContain('fanatec');
+    // Since 26 September 2026 every notice is the one fixed email, which
+    // names nobody's thing at all.
+    for (const b of [ana, beppe]) {
+      expect(b).toContain('Your assistant has news.');
+      expect(b).not.toMatch(/fanatec|sim racing|electronic/);
+    }
   });
 
   it('says your move in the reader’s own words', async () => {
     await notifyYourMove(cfg, MATCH, ANA, 'names');
-    expect(bodies().at(-1)).toContain('the fanatec brake performance kit you are after');
+    expect(bodies().at(-1)).toContain('Your assistant has news.');
     await notifyYourMove(cfg, MATCH, BEPPE, 'names');
-    expect(bodies().at(-1)).toContain('your sim racing pedal set');
+    expect(bodies().at(-1)).not.toMatch(/fanatec|sim racing/);
   });
 
   it('says a message is waiting in the reader’s own words', async () => {
@@ -198,8 +199,8 @@ describe('the notices name the thing the reader named', () => {
       recipientAccount: ANA,
       notifiedAt: '2026-09-19T01:00:00.000Z',
     });
-    expect(bodies().at(-1)).toContain('the fanatec brake performance kit you are after');
-    expect(bodies().at(-1)).not.toContain('sim racing');
+    expect(bodies().at(-1)).toContain('Your assistant has news.');
+    expect(bodies().at(-1)).not.toMatch(/fanatec|sim racing/);
   });
 });
 
