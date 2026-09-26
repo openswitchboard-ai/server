@@ -1,7 +1,7 @@
 import { aboutThing } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { decryptFields, writeConsentEvent } from '../crypto.js';
-import { getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
+import { assertNotSwap, getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
 import { isLadderPattern } from './matchRules.js';
 import { type Arrangement } from './arrangement.js';
 import { sayFor } from './lanes.js';
@@ -144,6 +144,9 @@ export async function proposeOffer(
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
+  // A swap has no figure on it at all (domain/swaps.ts): both people are
+  // looking, so a number is refused in words before anything else is read.
+  assertNotSwap(m);
   if (m.stage < 2) {
     // Unreachable for anything made since 13 September 2026 (an introduction
     // starts at the details step); kept as the floor under a figure.

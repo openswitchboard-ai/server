@@ -42,6 +42,7 @@ import { decryptForChannel, encryptForChannel, generateChannelKey } from '../cry
 import {
   getMatch,
   ownCardId,
+  readerSide,
   sbNote,
   sideOf,
   takenDownSentence,
@@ -362,7 +363,7 @@ async function collectNote(
       const { offerTable, offerTableNote } = await import('./offers.js');
       const table = await offerTable(accountId, m.id);
       if (table.length) {
-        offerText = offerTableNote(table, categoryPhrase(m.category), sideOf(m, accountId));
+        offerText = offerTableNote(table, categoryPhrase(m.category), readerSide(m, accountId));
       }
     }
   } catch {

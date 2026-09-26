@@ -62,7 +62,10 @@ const periodKey = (cadence: Cadence) => (cadence === 'daily' ? dayKey() : isoWee
  * after", and one email template served both until 2026-09-12. Worked out at
  * send time so nothing upstream has to carry it.
  */
-function sideOf(row: { account_want: string }, accountId: string): ReaderSide {
+function sideOf(row: { account_want: string; swap?: boolean | null }, accountId: string): ReaderSide {
+  // A SWAP (domain/swaps.ts): both people posted wants, so both read "the
+  // thing you are after", whichever column the row put them in.
+  if (row.swap) return 'want';
   return accountId === row.account_want ? 'want' : 'have';
 }
 
@@ -92,7 +95,7 @@ function logAccountFailure(label: string, accountId: string, e: any): void {
 // ---------------------------------------------------------------------------
 export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<void> {
   const r = await getPool().query(
-    `SELECT account_want, account_have, card_want, card_have, category, created_at, certainty FROM matches WHERE id = $1`,
+    `SELECT account_want, account_have, card_want, card_have, category, created_at, certainty, swap FROM matches WHERE id = $1`,
     [matchId],
   );
   const m = r.rows[0];
@@ -134,6 +137,7 @@ export async function notifyMatchCreated(cfg: Config, matchId: string): Promise<
             blind: ctx.blind,
             side: sideOf(m, accountId),
             possible: m.certainty === 'possible',
+            swap: m.swap === true,
           },
           ctx.links,
         ),
@@ -161,7 +165,7 @@ export async function sendChannelWaitingNudge(
   args: { matchId: string; channelId: string; recipientAccount: string; notifiedAt: string },
 ): Promise<void> {
   const r = await getPool().query(
-    `SELECT category, account_want, card_want, card_have FROM matches WHERE id = $1`,
+    `SELECT category, account_want, card_want, card_have, swap FROM matches WHERE id = $1`,
     [args.matchId],
   );
   const m = r.rows[0];
@@ -215,7 +219,7 @@ export async function notifyYourMove(
 ): Promise<void> {
   if (step === 'details') return;
   const r = await getPool().query(
-    `SELECT category, account_want, account_have, card_want, card_have FROM matches WHERE id = $1`,
+    `SELECT category, account_want, account_have, card_want, card_have, swap FROM matches WHERE id = $1`,
     [matchId],
   );
   const m = r.rows[0];

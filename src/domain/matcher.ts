@@ -1,7 +1,8 @@
 /**
  * The matching engine (0.F). Consumes 'card-published' messages, retrieves
  * candidates by pgvector cosine similarity over opposite-type cards — the
- * nearest on compatible shelves, and the nearest anywhere on the board —
+ * nearest on compatible shelves, and the nearest anywhere on the board, and on
+ * the social shelves other wants as well (domain/swaps.ts) —
  * applies the hard rules (matchRules.ts documents the full rule set and
  * weights), puts each pair in a tier (matchTiers.ts), and creates sure and
  * possible introductions and near-misses.
@@ -26,6 +27,16 @@ import {
   type PriceBand,
 } from './matchRules.js';
 import { resequenceCard } from './sequencer.js';
+import {
+  SWAP_TOP_LEVEL,
+  isSwapPair,
+  languageComplement,
+  onLanguageExchange,
+  swapCategory,
+  swapKind,
+  swapPairOrder,
+  swapsOnShelf,
+} from './swaps.js';
 import { categoryDenied, categoryGate } from '../denylist.js';
 import {
   CROSS_SHELF_TOP_N,
@@ -237,6 +248,21 @@ function candidateWhere(
 ): { sql: string; params: any[] } {
   const onShelf = opts.shelf !== false;
   const opposite = source.type === 'WANT' ? 'HAVE' : 'WANT';
+  // SWAPS (domain/swaps.ts, 26 September 2026). A want on a social shelf also
+  // takes other wants on social shelves as candidates: two people who are both
+  // looking for a tennis partner, or each after the other's language, are each
+  // other's other half. Only wants, only social, and only on social: a have is
+  // untouched, and a want on goods or services still sees haves alone. Every
+  // other clause below applies to a swap candidate exactly as to any other.
+  // The top level is a constant of ours, never anything a caller sent, so it
+  // is written into the SQL rather than bound.
+  const swaps = source.type === 'WANT' && swapsOnShelf(source.category);
+  const typeClause = swaps
+    ? `(c.type = $1::text
+            OR (c.type = 'WANT'
+                AND (c.category = '${SWAP_TOP_LEVEL}'
+                     OR left(c.category, ${SWAP_TOP_LEVEL.length + 1}) = '${SWAP_TOP_LEVEL}.')))`
+    : `c.type = $1::text`;
   const lat = typeof source.geo.lat === 'number' ? source.geo.lat : null;
   const lon = typeof source.geo.lon === 'number' ? source.geo.lon : null;
   const radius = source.geo.radius_km ?? DEFAULT_GEO_RADIUS_KM;
@@ -260,7 +286,7 @@ function candidateWhere(
   const span = `($7::float8
                  + COALESCE(c.geo_radius_km::float8, (c.geo->>'radius_km')::float8, $11::float8)
                  + $10::float8)`;
-  const sql = `c.type = $1::text
+  const sql = `${typeClause}
        AND c.lifecycle_state = 'PUBLISHED'
        AND c.expires_at > now()
        AND NOT c.paused_by_kill_switch
@@ -615,8 +641,29 @@ export async function runMatchingForCard(
     // Cheap hard rules first; price bands are only decrypted for survivors.
     if (!urgencyRouted(source, cand) || !urgencyRouted(cand, source)) continue;
 
-    const want = sourceIsWant ? source : cand;
-    const have = sourceIsWant ? cand : source;
+    // A SWAP: two wants on the social shelves (domain/swaps.ts). The pair is
+    // written in one canonical order whichever of the two is being processed,
+    // so the second posting's run lands on the first one's row and the unique
+    // key keeps it to one introduction. On a swap "want" and "have" below are
+    // only the two slots of the row; both postings are wants.
+    const swap = isSwapPair(source, cand);
+    // THE COMPLEMENT RULE, on a language exchange only: two people after the
+    // same language who both bring the same other one are not a swap, and the
+    // postings say so. Where they do not say, the pair goes on to be judged
+    // like any other. Not a near miss either — it is not something close to
+    // the thing, it is the wrong way round.
+    if (swap && onLanguageExchange(source.category, cand.category)) {
+      const verdict = languageComplement(source, cand);
+      if (!verdict.ok) {
+        log('matcher: swap is not a complement', { card_id: cardId, candidate_id: cand.id });
+        continue;
+      }
+    }
+    const [want, have] = swap
+      ? swapPairOrder<typeof source | CandidateRow>(source, cand)
+      : sourceIsWant
+        ? [source, cand]
+        : [cand, source];
 
     const pre = evaluatePair({
       semantic: Number(cand.similarity),
@@ -637,12 +684,18 @@ export async function runMatchingForCard(
     });
     if (!pre.hardRulesPass) continue;
 
-    if (sourceBand === 'unloaded') {
-      sourceBand = await decryptBand(source, source.data_key_enc, cand.id);
+    // No money on a swap: neither side is buying, so no band is opened for it
+    // at all (and no decrypt audit line is written for a figure nobody uses).
+    let wantBand: PriceBand | undefined;
+    let haveBand: PriceBand | undefined;
+    if (!swap) {
+      if (sourceBand === 'unloaded') {
+        sourceBand = await decryptBand(source, source.data_key_enc, cand.id);
+      }
+      const candBand = await decryptBand(cand, cand.data_key_enc, source.id);
+      wantBand = sourceIsWant ? (sourceBand as PriceBand | undefined) : candBand;
+      haveBand = sourceIsWant ? candBand : (sourceBand as PriceBand | undefined);
     }
-    const candBand = await decryptBand(cand, cand.data_key_enc, source.id);
-    const wantBand = sourceIsWant ? (sourceBand as PriceBand | undefined) : candBand;
-    const haveBand = sourceIsWant ? candBand : (sourceBand as PriceBand | undefined);
 
     const judged = tierFor({
       semantic: Number(cand.similarity),
@@ -667,8 +720,8 @@ export async function runMatchingForCard(
       },
       wantBand,
       haveBand,
-      bumpWant: Number(sourceIsWant ? source.threshold_bump : cand.threshold_bump),
-      bumpHave: Number(sourceIsWant ? cand.threshold_bump : source.threshold_bump),
+      bumpWant: Number(want.threshold_bump),
+      bumpHave: Number(have.threshold_bump),
     });
     if (!judged.parts.hardRulesPass) continue;
     let tier: Tier = judged.tier;
@@ -720,17 +773,18 @@ export async function runMatchingForCard(
       // floor nor any difference between them is stored or passed on: "these
       // two limits meet" and "the buyer has a quarter's room over the ask" is
       // the whole of what leaves this loop.
-      const ask = (have.ask ?? null) as Ask | null;
-      const overlap = limitsOverlap(wantBand, haveBand, ask);
-      const roomOverAsk = clearsAskWithRoom(wantBand, ask);
+      // On a swap there is no ask and no band, so both are simply false.
+      const ask = swap ? null : ((have.ask ?? null) as Ask | null);
+      const overlap = swap ? false : limitsOverlap(wantBand, haveBand, ask);
+      const roomOverAsk = swap ? false : clearsAskWithRoom(wantBand, ask);
       const ins = await getPool().query(
         // stage 2 with both interest columns true: the posting IS the
         // statement of interest, so an introduction is born with both sides
         // keen and the details open to both (see createMatch in matches.ts).
         `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
                               kind, limits_overlap, clears_ask_25,
-                              stage, interest_want, interest_have, certainty)
-         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10)
+                              stage, interest_want, interest_have, certainty, swap)
+         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10,$11)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
         [
@@ -739,13 +793,16 @@ export async function runMatchingForCard(
           want.account_id,
           have.account_id,
           judged.score,
-          want.category,
+          // On a swap both people read this row, so the shelf and the word
+          // are ones that are true of both (domain/swaps.ts).
+          swap ? swapCategory(want.category, have.category) : want.category,
           overlap,
           roomOverAsk,
           // The word for the thing travels with the category it was filed
           // under: the want's, so the two stay taken from one side.
-          (want as any).kind ?? null,
+          swap ? swapKind((want as any).kind, (have as any).kind) : ((want as any).kind ?? null),
           tier,
+          swap,
         ],
       );
       if (ins.rows[0]) {
@@ -765,6 +822,7 @@ export async function runMatchingForCard(
           // words themselves stay out of the log.
           why: judged.parts.why,
           via_search: viaSearch,
+          swap,
           shelves_compatible: judged.parts.shelvesCompatible,
           semantic: Number(judged.parts.semantic.toFixed(4)),
           word_coverage: judged.parts.words.coverage,
@@ -772,9 +830,11 @@ export async function runMatchingForCard(
       }
     } else if (tier === 'near-miss') {
       await getPool().query(
+        // A swap's near miss is written in the same canonical order as its
+        // introduction would have been, so it is kept once too.
         `INSERT INTO near_misses (card_want, card_have, score, category)
          VALUES ($1,$2,$3,$4) ON CONFLICT (card_want, card_have) DO NOTHING`,
-        [want.id, have.id, judged.score, want.category],
+        [want.id, have.id, judged.score, swap ? swapCategory(want.category, have.category) : want.category],
       );
       outcome.nearMisses++;
     }

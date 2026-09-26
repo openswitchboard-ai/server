@@ -140,7 +140,17 @@ interface LineRow {
   reliability: number;
 }
 
-/** Every open introduction on one want or have, with what the ranking needs. */
+/**
+ * Every open introduction on one want or have, with what the ranking needs.
+ *
+ * A SWAP (two wants on the social shelves, domain/swaps.ts) sits in BOTH
+ * postings' lines, exactly as a want-and-have pair does: each of the two
+ * people is looking, each has their own slots, and the introduction goes live
+ * only when both have one free. Nothing here reads which column a posting is
+ * in except to find the other one, so a swap needs nothing of its own. Its
+ * limits never overlap (there are none), which ranks it level with every
+ * other pair that has no figure on it.
+ */
 async function lineOf(cardId: string): Promise<LineRow[]> {
   const r = await getPool().query(
     `SELECT m.id, m.live, m.certainty, m.limits_overlap, m.created_at,

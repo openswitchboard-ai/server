@@ -23,7 +23,7 @@ import { getPool } from '../db.js';
 import { OsbError } from '../protocol.js';
 import { getHearsVia } from './accounts.js';
 import { readLaneFacts, sayFor } from './lanes.js';
-import { getMatch, ownCardId, sideOf } from './matches.js';
+import { assertNotSwap, getMatch, ownCardId, sideOf } from './matches.js';
 import { categoryPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink, signLink } from '../counter/links.js';
@@ -148,6 +148,9 @@ export async function sendNumberLink(
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
+  // No page for a figure on a swap (domain/swaps.ts): the refusal says why,
+  // and no link is minted that could only ever be refused when pressed.
+  assertNotSwap(m);
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw Object.assign(new Error('a number to send is more than nothing'), { validation: true });
