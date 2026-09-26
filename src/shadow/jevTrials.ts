@@ -153,20 +153,56 @@ export function topProbability(probabilities: Record<string, number>): number {
   return values.length ? Math.max(...values) : 0;
 }
 
+/**
+ * NOTHING THAT REACHES A PERSON LEAVES FOR TYPESAFE (27 September 2026).
+ *
+ * Postings already refuse contact details at the door, and this is the second
+ * line: before a posting's words are sent, anything that looks like a way of
+ * reaching or finding someone — an email, a phone number, a web or social
+ * address, a street address, an exact coordinate — is taken out. A value that
+ * is nothing but such a thing is dropped whole; one that carries it inside a
+ * sentence has it replaced with "[removed]". Keys that name a person or a
+ * place are dropped whatever they hold, because the question sent is only
+ * "are these the same thing", and nobody's name or whereabouts helps answer it.
+ */
+const PERSONAL_PATTERNS: RegExp[] = [
+  /[\w.+-]+@[\w-]+\.[\w.-]+/g, // email
+  /(?:https?:\/\/|www\.)\S+/gi, // web address
+  /(?:^|\s)@[A-Za-z0-9_.]{2,}/g, // social handle
+  /\+?\d[\d\s().-]{7,}\d/g, // phone-like run of digits
+  /\b\d{1,5}\s+[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*)?\s+(?:st|street|rd|road|ave|avenue|cres|crescent|ct|court|pl|place|dr|drive|ln|lane|way|tce|terrace|pde|parade|hwy|highway|blvd|boulevard)\b\.?/gi, // street address
+  /-?\d{1,3}\.\d{4,}\s*,\s*-?\d{1,3}\.\d{4,}/g, // coordinates
+];
+const PERSONAL_KEYS =
+  /(?:^|_)(?:name|first_?name|last_?name|surname|email|phone|mobile|contact|address|street|suburb|postcode|zip|location|lat|lon|lng|coordinates|handle|username|instagram|facebook|whatsapp|telegram)(?:$|_)/i;
+
+export function withoutPersonalDetails(text: string): string {
+  let out = text;
+  for (const re of PERSONAL_PATTERNS) out = out.replace(re, ' [removed] ');
+  return out.replace(/\s{2,}/g, ' ').trim();
+}
+
 function scalarAttributes(attributes: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!attributes || typeof attributes !== 'object') return out;
   for (const [k, v] of Object.entries(attributes as Record<string, unknown>)) {
-    if (['string', 'number', 'boolean'].includes(typeof v)) out[k] = v;
+    if (PERSONAL_KEYS.test(k)) continue;
+    if (typeof v === 'string') {
+      const clean = withoutPersonalDetails(v);
+      if (clean && clean !== '[removed]') out[k] = clean;
+    } else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
   }
   return out;
 }
+
+const cleanKind = (kind: string | null | undefined): string | null =>
+  kind ? withoutPersonalDetails(kind) || null : null;
 
 export function jevCategoryState(card: {
   kind?: string | null;
   attributes?: unknown;
 }): JevCategoryState {
-  return { kind: card.kind ?? null, attributes: scalarAttributes(card.attributes) };
+  return { kind: cleanKind(card.kind), attributes: scalarAttributes(card.attributes) };
 }
 
 function pairSide(card: {
@@ -175,7 +211,7 @@ function pairSide(card: {
   attributes?: unknown;
 }): JevPairSide {
   return {
-    kind: card.kind ?? null,
+    kind: cleanKind(card.kind),
     // The label path in words, not the dotted key: "Goods > Bikes > Road" is a
     // question anybody can answer and 'goods.bikes.road' is a database row.
     category_label: categoryLabelPath(card.category),
