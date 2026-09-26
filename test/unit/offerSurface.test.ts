@@ -313,6 +313,12 @@ describe('when the other side takes the figure', () => {
     expect(entry.what_to_do).toMatch(/good, fine or bad/);
     expect(entry.what_to_do).toMatch(/respond\(verdict\)/);
     expect(entry.what_to_do).toMatch(/take their posting down/);
+    // And whether this switchboard holds money, said right here: a rehearsal
+    // assistant offered escrow at exactly this moment (25 September 2026),
+    // which on a deployment with payments off is a false claim about money.
+    // This test's config has no Stripe secret, so payments are off.
+    expect(entry.what_to_do).toMatch(/does not hold money/);
+    expect(entry.what_to_do).toMatch(/Never offer to hold the money/);
   });
 
   it('says it the other way round when this human was the one who accepted', async () => {
