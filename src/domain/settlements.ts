@@ -699,7 +699,7 @@ export async function proposeSettlement(
   // A swap has no buyer and no seller (domain/swaps.ts), so there is nothing
   // to protect a payment for; partyOf below would otherwise name whoever sits
   // in card_want the buyer.
-  // And lost and found pets carry no money at all (domain/shelfRules.ts).
+  // Nor is there on a shelf that carries no money (domain/shelfRules.ts).
   const noMoney = noMoneySentence(m);
   if (noMoney) {
     throw new OsbError('SETTLEMENT_UNAVAILABLE', { human_action: noMoney });

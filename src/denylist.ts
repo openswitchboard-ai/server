@@ -231,6 +231,52 @@ export function openCategories(): string[] {
   return Object.keys(taxonomy.nodes ?? {}).filter((c) => categoryStatus(c).status === 'open');
 }
 
+/**
+ * The nodes the taxonomy has on a path, outermost first: `goods`, then
+ * `goods.food`, then the leaf where it exists. A leaf it has never heard of
+ * contributes nothing, and its parents still do.
+ */
+export function nodesOnPath(category: string | null | undefined): any[] {
+  if (!category) return [];
+  const parts = String(category).split('.');
+  const out: any[] = [];
+  for (let i = 1; i <= parts.length; i++) {
+    const node = taxonomy.nodes?.[parts.slice(0, i).join('.')];
+    if (node) out.push(node);
+  }
+  return out;
+}
+
+/** Every node the taxonomy has. */
+export function taxonomyNodes(): any[] {
+  return Object.values(taxonomy.nodes ?? {});
+}
+
+/** A closed family's plain name, as the taxonomy writes it (`closed_as`). */
+export function closedAs(path: string): string | undefined {
+  const n = path.includes('.') ? taxonomy.nodes?.[path] : taxonomy.top_levels?.[path];
+  return typeof n?.closed_as === 'string' ? n.closed_as : undefined;
+}
+
+/** The open shelves a closed path's refusal may suggest (`related_open`), most specific first. */
+export function relatedOpenOf(category: string): string[] {
+  const parts = String(category ?? '').split('.');
+  for (let i = parts.length; i >= 1; i--) {
+    const hit = taxonomy.nodes?.[parts.slice(0, i).join('.')]?.related_open;
+    if (Array.isArray(hit)) return hit.filter((c: unknown) => typeof c === 'string');
+  }
+  return [];
+}
+
+/** Every closed path that names its own open neighbours, as the data writes it. */
+export function relatedOpenTable(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [path, node] of Object.entries<any>(taxonomy.nodes ?? {})) {
+    if (Array.isArray(node?.related_open)) out[path] = node.related_open;
+  }
+  return out;
+}
+
 /** The taxonomy node behind a category, if the taxonomy has one. */
 export function taxonomyNode(category: string): { label: string } | undefined {
   return taxonomy.nodes?.[category];

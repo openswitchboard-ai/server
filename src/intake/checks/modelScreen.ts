@@ -14,6 +14,7 @@
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrock } from '../../aws.js';
 import { screeningReasonCodes } from '../../denylist.js';
+import { shelfPolicy } from '../../domain/shelfRules.js';
 import { promptSafe } from '../promptText.js';
 import { passed, type Check, type CheckResult } from '../types.js';
 import type { Config } from '../../config.js';
@@ -47,13 +48,11 @@ export interface ModelFlags {
  * sought as the thing itself, which is the one the network must never carry
  * under any wording at all.
  *
- * LOST AND FOUND PETS (26 September 2026). live-animals is about an animal
- * changing hands, and a found dog going back to its owner is not that. The
- * prompt says so in as many words, because the shelf it is posted on
- * (social.community.lost-pet, domain/shelfRules.ts) is the one place a live
- * animal may now appear, and a screen that refused every found kelpie would
- * close it again. The door has already refused a price, a reward or a sale
- * there; what the model still catches is the sale written in other words.
+ * A SHELF'S OWN NOTE (27 September 2026). A taxonomy node may carry a
+ * `screen_note` (domain/shelfRules.ts): one plain sentence about what that
+ * shelf allows that the screen would otherwise refuse, or the reverse. It rides
+ * in the system prompt beside the shelf's labels, because it comes from the
+ * catalogue and never from the author. The prompt itself names no shelf.
  */
 export const PROHIBITED_REASONS = [
   'weapons',
@@ -77,15 +76,25 @@ Flag, strictly:
 - prohibited: the thing being offered or sought is one this network does not carry, WHATEVER it was filed under. Judge the thing itself, not the category path. When true, set prohibited_reason to exactly one of:
   - weapons: firearms, ammunition, knives kept as weapons, and their parts.
   - prescription-medication: medicines that need a prescription, and veterinary equivalents.
-  - live-animals: a living animal changing hands: sold, bought, given away, rehomed, adopted or bred. A lost pet being looked for, or a found pet waiting for its owner to claim it, is NOT this: that is an owner getting their own animal back, and it is allowed.
+  - live-animals: a living animal changing hands: sold, bought, given away, rehomed, adopted or bred.
   - wildlife-products: ivory, shells, skins, taxidermy, protected species in any form.
   - drugs: illegal drugs, their precursors and the equipment made for taking them.
   - sexual-services: sex sold or sought, escorting, and anything of that kind however it is worded.
   - illegal-activity: anything whose point is unlawful — stolen goods offered as such, counterfeits, hacking or fraud services, forged documents.
   - people: a PERSON offered or sought as the thing itself — labour sold by the person, a companion bought, a surrogate, a child, anything of that shape. Wanting someone to do something WITH, as a partner or a friend, is not this and is what the network is for.
+  Where the shelf below carries a note of its own, judge the thing with that note in mind.
   Set prohibited false and omit prohibited_reason when none of these fits. An ordinary secondhand thing, an ordinary errand and an ordinary request for company are not prohibited.
 
 Respond with ONLY a JSON object: {"prompt_injection":bool,"pii":bool,"stolen_goods_markers":bool,"recalled_goods":bool,"prohibited":bool,"prohibited_reason":"<one of the codes above, or omitted>","note":"<=200 chars"}`;
+
+/**
+ * The shelf as the screen is told it: its labels, and the note its taxonomy
+ * node carries where it carries one (domain/shelfRules.ts).
+ */
+export function shelfForScreen(labels: string, category: string): string {
+  const notes = shelfPolicy(category).screen_notes;
+  return notes.length ? `${labels}\nThat shelf's own note: ${notes.join(' ')}` : labels;
+}
 
 /** The prompt, exported so the suite can hold it to what the doc promises. */
 export const MODEL_SCREEN_SYSTEM_PROMPT = SYSTEM_PROMPT;
@@ -207,7 +216,7 @@ export const modelScreen: Check = {
     const flags = await screenTextWithBedrock(
       cfg,
       [item.text],
-      item.fields?.category ? categoryLabelPath(item.fields.category) : undefined,
+      item.fields?.category ? shelfForScreen(categoryLabelPath(item.fields.category), item.fields.category) : undefined,
     );
     const refuse = (reason_code: string): CheckResult => ({
       name: 'modelScreen',

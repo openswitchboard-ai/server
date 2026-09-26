@@ -252,9 +252,10 @@ describe('screening reasons in plain words', () => {
       'sexual-services',
       'illegal-activity',
       'people',
-      // The two shelf rules of 26 September 2026 (domain/shelfRules.ts).
+      // The shelf rules (domain/shelfRules.ts): the no-money code, and a
+      // not_allowed code the taxonomy data supplies with its own plain words.
       'home-made-food',
-      'no-money-on-lost-pets',
+      'no-money-on-this-shelf',
       // And the verdict with no code this network recognises behind it.
       'prohibited',
     ];

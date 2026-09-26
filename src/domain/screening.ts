@@ -20,11 +20,7 @@ import { getPool } from '../db.js';
 import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
-import {
-  HOME_MADE_FOOD_SENTENCE,
-  LOST_PET_NO_MONEY_SENTENCE,
-  shelfRuleRefusal,
-} from './shelfRules.js';
+import { NO_MONEY_REASON, shelfReasonSentence, shelfRuleRefusal } from './shelfRules.js';
 import type { Config } from '../config.js';
 
 export { screenTextWithBedrock } from '../intake/checks/modelScreen.js';
@@ -61,15 +57,11 @@ const REASON_SENTENCES: Record<string, string> = {
     'Weapons stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
   'prescription-medication':
     'Prescription medication stays off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
-  // One shelf is the exception since 26 September 2026: lost and found pets,
-  // where nothing is sold (domain/shelfRules.ts). The sentence says so, so a
-  // person whose found dog was refused elsewhere hears where it can go.
+  // One shelf is the exception since 26 September 2026 (its taxonomy node's
+  // screen_note, domain/shelfRules.ts). The sentence says so, so a person
+  // refused elsewhere hears where it can go.
   'live-animals':
     'Live animals stay off the switchboard everywhere it runs, apart from lost and found pets going home. This one cannot go back on the board as it stands.',
-  // The two shelf rules of 26 September 2026 (domain/shelfRules.ts), in the
-  // same words the door refuses them in.
-  'home-made-food': HOME_MADE_FOOD_SENTENCE,
-  'no-money-on-lost-pets': LOST_PET_NO_MONEY_SENTENCE,
   'wildlife-products':
     'Wildlife products stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
   alcohol:
@@ -97,9 +89,17 @@ const REASON_SENTENCES: Record<string, string> = {
 const REASON_FALLBACK =
   'Screening held this back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit what you posted and save it to send it through again.';
 
+/** Shelf-rule codes written on rows before the rules moved into the data. */
+const LEGACY_SHELF_CODES: Record<string, string> = { 'no-money-on-lost-pets': NO_MONEY_REASON };
+
 /** One human sentence for a reason code. Unknown codes get the honest fallback. */
 export function screeningReasonInPlainWords(reasonCode?: string): string {
-  return (reasonCode && REASON_SENTENCES[reasonCode]) || REASON_FALLBACK;
+  if (!reasonCode) return REASON_FALLBACK;
+  // A shelf rule's code is the taxonomy's own (domain/shelfRules.ts), and so
+  // is the plain name its one sentence says. A code stored before the rules
+  // moved into the data (27 September 2026) is read as the code it became.
+  const code = LEGACY_SHELF_CODES[reasonCode] ?? reasonCode;
+  return REASON_SENTENCES[code] ?? shelfReasonSentence(code) ?? REASON_FALLBACK;
 }
 
 /**

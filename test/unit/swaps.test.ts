@@ -44,8 +44,7 @@ import {
   searchQueryShape,
 } from '../../src/domain/matcher.js';
 import {
-  LOST_PET_NO_FIGURE_SENTENCE,
-  SWAP_NO_FIGURE_SENTENCE,
+  NO_FIGURE_SENTENCE,
   assertNotSwap,
   noMoneySentence,
   buildSignal,
@@ -602,22 +601,22 @@ describe('downstream: both people are looking, and there is no figure', () => {
       expiry: new Date(Date.now() + 86_400_000).toISOString(),
     });
     await expect(offer).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET', human_action: SWAP_NO_FIGURE_SENTENCE },
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: NO_FIGURE_SENTENCE },
     });
     await expect(sendNumberLink(cfg, BEN, MATCH, { amount: 20, ccy: 'AUD' })).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET', human_action: SWAP_NO_FIGURE_SENTENCE },
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: NO_FIGURE_SENTENCE },
     });
     usePool(swapMatch({ stage: 3 }));
     await expect(
       proposeSettlement(cfg, ANA, { match_id: MATCH, amount: 20, ccy: 'AUD' }),
-    ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: SWAP_NO_FIGURE_SENTENCE } });
-    expect(lintHumanCopy(SWAP_NO_FIGURE_SENTENCE)).toEqual([]);
+    ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: NO_FIGURE_SENTENCE } });
+    expect(lintHumanCopy(NO_FIGURE_SENTENCE)).toEqual([]);
   });
 
-  it('refuses a figure, a figure page and a payment on lost and found pets, in words', async () => {
+  it('refuses a figure, a figure page and a payment on a no-money shelf, in the same words', async () => {
     const pets = swapMatch({ swap: false, category: 'social.community.lost-pet', kind: 'lost kelpie' });
     expect(() => assertNotSwap(pets)).toThrow(OsbError);
-    expect(noMoneySentence(pets)).toBe(LOST_PET_NO_FIGURE_SENTENCE);
+    expect(noMoneySentence(pets)).toBe(NO_FIGURE_SENTENCE);
     expect(noMoneySentence(swapMatch({ swap: false }))).toBeUndefined();
     usePool(pets);
     await expect(
@@ -627,15 +626,15 @@ describe('downstream: both people are looking, and there is no figure', () => {
         ccy: 'AUD',
         expiry: new Date(Date.now() + 86_400_000).toISOString(),
       }),
-    ).rejects.toMatchObject({ payload: { code: 'NOT_UNLOCKED_YET', human_action: LOST_PET_NO_FIGURE_SENTENCE } });
+    ).rejects.toMatchObject({ payload: { code: 'NOT_UNLOCKED_YET', human_action: NO_FIGURE_SENTENCE } });
     await expect(sendNumberLink(cfg, BEN, MATCH, { amount: 50, ccy: 'AUD' })).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET', human_action: LOST_PET_NO_FIGURE_SENTENCE },
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: NO_FIGURE_SENTENCE },
     });
     usePool({ ...pets, stage: 3 });
     await expect(
       proposeSettlement(cfg, ANA, { match_id: MATCH, amount: 50, ccy: 'AUD' }),
-    ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: LOST_PET_NO_FIGURE_SENTENCE } });
-    expect(lintHumanCopy(LOST_PET_NO_FIGURE_SENTENCE)).toEqual([]);
+    ).rejects.toMatchObject({ payload: { code: 'SETTLEMENT_UNAVAILABLE', human_action: NO_FIGURE_SENTENCE } });
+    expect(lintHumanCopy(NO_FIGURE_SENTENCE)).toEqual([]);
   });
 
   it('the summons names the reader’s own thing and says the other is looking too', () => {

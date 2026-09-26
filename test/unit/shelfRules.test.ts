@@ -1,5 +1,9 @@
 /**
- * TWO SHELVES WITH A RULE OF THEIR OWN (Lachlan, 26 September 2026).
+ * TWO SHELVES WITH A RULE OF THEIR OWN (Lachlan, 26 September 2026), and since
+ * 27 September 2026 both rules are DATA on the taxonomy node (`not_allowed`,
+ * `no_money`, `consumable`, `thing`, `screen_note`), read generically by
+ * src/domain/shelfRules.ts. These tests hold the data and the generic reading
+ * to the behaviour the two shelves opened with.
  *
  *  - FOOD IS SHOP-BOUGHT ONLY. goods.food opened today; a posting there whose
  *    own words say it was made, cooked or baked at home is refused before it
@@ -10,7 +14,8 @@
  *    (a want) and a found one (a have) can go up with no price, no asking
  *    price, no best offer and no reward; a posting there that reads as a sale,
  *    a rehoming or an adoption is refused as live-animals. The detail
- *    questions ask what the pet looks like and where it was lost or found.
+ *    question is the general one for a `thing` shelf: what someone would
+ *    recognise it by.
  *
  * The rule itself is src/domain/shelfRules.ts; the door is domain/cards.ts.
  */
@@ -36,16 +41,16 @@ import * as db from '../../src/db.js';
 import { runIntake } from '../../src/intake/pipe.js';
 import { amendIntent, publishIntent } from '../../src/domain/cards.js';
 import {
-  HOME_MADE_FOOD_SENTENCE,
-  LOST_PET_NOT_A_SALE_SENTENCE,
-  LOST_PET_NO_MONEY_SENTENCE,
-  LOST_PET_SHELF,
-  onLostPetShelf,
+  NO_MONEY_POSTING_SENTENCE,
+  NO_MONEY_REASON,
+  noMoneyOnShelf,
+  notAllowedSentence,
+  shelfPolicy,
   shelfRuleRefusal,
 } from '../../src/domain/shelfRules.js';
-import { DETAIL_LOST_PET_HUMAN_ACTION, detailShortfall } from '../../src/domain/postingDetail.js';
+import { DETAIL_RECOGNISE_HUMAN_ACTION, detailShortfall } from '../../src/domain/postingDetail.js';
 import { screenCard, screeningReasonInPlainWords } from '../../src/domain/screening.js';
-import { MODEL_SCREEN_SYSTEM_PROMPT } from '../../src/intake/checks/modelScreen.js';
+import { MODEL_SCREEN_SYSTEM_PROMPT, shelfForScreen } from '../../src/intake/checks/modelScreen.js';
 import { categoryGate, categoryDenied } from '../../src/denylist.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
@@ -59,6 +64,13 @@ const cfg = {
 
 const ACCOUNT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const CARD = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+
+// The two shelves, as the taxonomy names them. The sentences are the generic
+// ones, carrying only the plain words the data supplies.
+const LOST_PET_SHELF = 'social.community.lost-pet';
+const HOME_MADE_FOOD_SENTENCE = notAllowedSentence('food made, cooked or baked at home');
+const LOST_PET_NOT_A_SALE_SENTENCE = notAllowedSentence('animals sold, rehomed, adopted or bred');
+const LOST_PET_NO_MONEY_SENTENCE = NO_MONEY_POSTING_SENTENCE;
 
 // ---------------------------------------------------------------------------
 describe('the shelves exist where the catalogue says', () => {
@@ -81,8 +93,12 @@ describe('the shelves exist where the catalogue says', () => {
     expect(categoryGate('services.food.baking').ok).toBe(false);
     // Animals as goods stay denied by path.
     expect(categoryDenied('goods.animals.dog')?.reason_code).toBe('live-animals');
-    expect(onLostPetShelf('social.community.lost-pet')).toBe(true);
-    expect(onLostPetShelf('social.community.local-group')).toBe(false);
+    expect(noMoneyOnShelf('social.community.lost-pet')).toBe(true);
+    expect(noMoneyOnShelf('social.community.lost-pet.dog')).toBe(true);
+    expect(noMoneyOnShelf('social.community.local-group')).toBe(false);
+    expect(shelfPolicy('goods.food.made-up-leaf').consumable).toBe(true);
+    expect(shelfPolicy('goods.food.made-up-leaf').not_allowed.length).toBe(1);
+    expect(shelfPolicy('goods.home.textiles')).toMatchObject({ no_money: false, consumable: false, thing: false });
   });
 });
 
@@ -150,7 +166,9 @@ describe('food is shop-bought only', () => {
   });
 
   it('says it plainly, inside the cap', () => {
-    expect(HOME_MADE_FOOD_SENTENCE).toMatch(/^Home-made food isn't open on the switchboard yet\./);
+    expect(HOME_MADE_FOOD_SENTENCE).toBe(
+      "That can't go up on this shelf: it takes no food made, cooked or baked at home.",
+    );
     expect(HOME_MADE_FOOD_SENTENCE.length).toBeLessThanOrEqual(300);
     expect(lintHumanCopy(HOME_MADE_FOOD_SENTENCE)).toEqual([]);
   });
@@ -179,7 +197,7 @@ describe('lost and found pets', () => {
       [{ kind: 'lost dog, reward offered' }, 'attributes'],
     ] as const) {
       expect(shelfRuleRefusal(pet(over as any))).toEqual({
-        reason_code: 'no-money-on-lost-pets',
+        reason_code: NO_MONEY_REASON,
         human_action: LOST_PET_NO_MONEY_SENTENCE,
         field,
       });
@@ -196,14 +214,13 @@ describe('lost and found pets', () => {
     ).toBe('live-animals');
   });
 
-  it('asks what the pet looks like and where it went missing or turned up', () => {
+  it('asks the one general question: what someone would recognise it by', () => {
     const lost = detailShortfall({ category: LOST_PET_SHELF, type: 'looking_for', kind: 'lost kelpie' })!;
-    expect(lost.questions.join(' ')).toMatch(/look like/);
-    expect(lost.questions.join(' ')).toMatch(/Where and when was it lost\?/);
+    expect(lost.questions).toEqual(['What would someone need to know to recognise the lost kelpie?']);
     expect(lost.questions.join(' ')).not.toMatch(/condition|in person or online|how often/i);
-    expect(lost.human_action).toBe(DETAIL_LOST_PET_HUMAN_ACTION);
+    expect(lost.human_action).toBe(DETAIL_RECOGNISE_HUMAN_ACTION);
     const found = detailShortfall({ category: LOST_PET_SHELF, type: 'offering', kind: 'found dog' })!;
-    expect(found.questions.join(' ')).toMatch(/Where and when was it found\?/);
+    expect(found.questions).toEqual(['What would someone need to know to recognise the found dog?']);
     // One fact of any kind is enough, as on the rest of social.
     expect(
       detailShortfall({ category: LOST_PET_SHELF, type: 'offering', kind: 'found dog', attributes: { colour: 'brown' } }),
@@ -211,13 +228,18 @@ describe('lost and found pets', () => {
     for (const q of [...lost.questions, ...found.questions]) expect(q.length).toBeLessThanOrEqual(120);
   });
 
-  it('tells the screen that a pet going home is not an animal changing hands', () => {
-    expect(MODEL_SCREEN_SYSTEM_PROMPT).toMatch(/lost pet being looked for, or a found pet waiting for its owner/);
+  it('tells the screen, from the shelf\'s own note, that a pet going home is not an animal changing hands', () => {
+    // The prompt names no shelf; the note rides beside the shelf's labels.
+    expect(MODEL_SCREEN_SYSTEM_PROMPT).not.toMatch(/lost pet/i);
     expect(MODEL_SCREEN_SYSTEM_PROMPT).toMatch(/sold, bought, given away, rehomed, adopted or bred/);
+    expect(shelfForScreen('Lost & found pets', LOST_PET_SHELF)).toMatch(
+      /lost pet being looked for, or a found pet waiting for its owner/,
+    );
+    expect(shelfForScreen('Bicycles', 'goods.bicycle')).toBe('Bicycles');
   });
 
   it('says every sentence plainly, inside the cap', () => {
-    for (const s of [LOST_PET_NO_MONEY_SENTENCE, LOST_PET_NOT_A_SALE_SENTENCE, DETAIL_LOST_PET_HUMAN_ACTION]) {
+    for (const s of [LOST_PET_NO_MONEY_SENTENCE, LOST_PET_NOT_A_SALE_SENTENCE, DETAIL_RECOGNISE_HUMAN_ACTION]) {
       expect(s.length).toBeLessThanOrEqual(300);
       expect(lintHumanCopy(s)).toEqual([]);
     }
@@ -243,9 +265,11 @@ describe('the screening worker applies the same rules to the row', () => {
     expect(await screenCard(cfg, row)).toMatchObject({ pass: false, reason_code: 'home-made-food' });
     expect(
       await screenCard(cfg, { ...row, category: LOST_PET_SHELF, kind: 'lost dog', price_enc: Buffer.from('x') }),
-    ).toMatchObject({ pass: false, reason_code: 'no-money-on-lost-pets' });
+    ).toMatchObject({ pass: false, reason_code: NO_MONEY_REASON });
     expect(runIntake).not.toHaveBeenCalled();
     expect(screeningReasonInPlainWords('home-made-food')).toBe(HOME_MADE_FOOD_SENTENCE);
+    expect(screeningReasonInPlainWords(NO_MONEY_REASON)).toBe(LOST_PET_NO_MONEY_SENTENCE);
+    // A code stored on a row before the rules moved into the data still reads.
     expect(screeningReasonInPlainWords('no-money-on-lost-pets')).toBe(LOST_PET_NO_MONEY_SENTENCE);
     expect(screeningReasonInPlainWords('live-animals')).toMatch(/apart from lost and found pets/);
   });
@@ -400,5 +424,23 @@ describe('the door', () => {
     expect(shelfRuleRefusal(lost)).toBeUndefined();
     expect(shelfRuleRefusal({ ...lost, kind: 'kelpie pups from a breeder' })?.reason_code).toBe('live-animals');
     expect(shelfRuleRefusal({ ...lost, kind: 'kelpie for breeding' })?.reason_code).toBe('live-animals');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE FOUNDER'S RULE (27 September 2026): no wording, notes or logic written
+// for particular goods or services. The shelf rules are data; the code that
+// reads them names no shelf and no kind of thing.
+// ---------------------------------------------------------------------------
+describe('the code that reads the shelf rules names no subject', () => {
+  it('has no taxonomy path and no subject word in the rule files', async () => {
+    const { readFileSync } = await import('node:fs');
+    for (const f of ['src/domain/shelfRules.ts', 'src/domain/postingDetail.ts', 'src/domain/swaps.ts']) {
+      const code = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+      expect(code, f).not.toMatch(/['"`](?:goods|social|services)\.[a-z]/);
+      expect(code, f).not.toMatch(/\b(?:pets?|food|home-?made|animals?|kelpie|pastr(?:y|ies))\b/i);
+    }
   });
 });
