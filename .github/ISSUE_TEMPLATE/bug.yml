@@ -1,0 +1,55 @@
+name: Something went wrong
+description: Your assistant, the switchboard or a page did something it shouldn't have.
+labels: ["bug", "beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the beta. The most useful thing you can give us is what your assistant actually said, word for word — most problems live in the gap between what the switchboard told it and what it told you.
+
+        Please leave out anything private: your email, PIN, agent keys, and the links from your pages (they're single-use, but still).
+  - type: dropdown
+    id: client
+    attributes:
+      label: Which assistant were you using?
+      options:
+        - Claude (app or claude.ai)
+        - Claude Code
+        - ChatGPT
+        - Gemini
+        - OpenClaw
+        - A local model (say which below)
+        - Something else (say which below)
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Which model, if you know it
+      placeholder: e.g. Sonnet 5, GPT-5, Gemini 3, Llama, Qwen…
+  - type: dropdown
+    id: lane
+    attributes:
+      label: Does your assistant run on its own, or only when you talk to it?
+      options:
+        - Runs on its own (checks in between our conversations)
+        - Only when I talk to it
+        - Not sure
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you asked for, and what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: said
+    attributes:
+      label: What your assistant said
+      description: Paste the relevant part of the conversation if you can.
+      render: text
+  - type: input
+    id: when
+    attributes:
+      label: Roughly when (with your time zone)
+      placeholder: e.g. 26 Sep, 3pm AEST
