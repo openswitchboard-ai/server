@@ -705,7 +705,7 @@ async function runPublish(
         // The escape hatch was reached for and did not match: say so, rather
         // than handing back the same questions as though it had never been
         // sent. See DETAIL_UNKNOWN_UNMATCHED in domain/postingDetail.ts.
-        human_action: opts.detailUnknown ? DETAIL_UNKNOWN_UNMATCHED : DETAIL_HUMAN_ACTION,
+        human_action: opts.detailUnknown ? DETAIL_UNKNOWN_UNMATCHED : shortfall.human_action,
         questions: shortfall.questions,
         reference,
       });

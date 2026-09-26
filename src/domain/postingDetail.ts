@@ -154,6 +154,8 @@ const naming = (kind: unknown): string => {
 export interface DetailShortfall {
   /** What to ask the human, in plain words, at most MAX_QUESTIONS of them. */
   questions: string[];
+  /** Which line tells the assistant what to do with them: goods or not. */
+  human_action: string;
 }
 
 /**
@@ -195,7 +197,7 @@ export function detailShortfall(card: {
     }
     if (offering && !hasCondition) questions.push(`What condition is ${thing} in?`);
     if (offering && identifying.length === 0) questions.push('What comes with it?');
-    return { questions: questions.slice(0, MAX_QUESTIONS) };
+    return { questions: questions.slice(0, MAX_QUESTIONS), human_action: DETAIL_HUMAN_ACTION };
   }
 
   if (top === 'services' || top === 'social') {
@@ -207,7 +209,10 @@ export function detailShortfall(card: {
       questions.push('Is this in person or online?');
       questions.push('How often, and when would suit?');
     }
-    return { questions: questions.slice(0, MAX_QUESTIONS) };
+    return {
+      questions: questions.slice(0, MAX_QUESTIONS),
+      human_action: DETAIL_CONTEXT_HUMAN_ACTION,
+    };
   }
 
   return undefined;
@@ -239,6 +244,19 @@ export function detailShortfall(card: {
  */
 export const DETAIL_HUMAN_ACTION =
   'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. What it fits or what sort it is counts; no part number is wanted. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
+
+/**
+ * THE SAME LINE FOR A SERVICE OR A SOCIAL POSTING.
+ *
+ * The goods line above was served to everything until 25 September 2026, when
+ * the first production run posted a Spanish conversation partner and was told
+ * to ask its human for a brand, a model and a condition. The questions that came
+ * with it were right ("Is this in person or online?"); only this line was
+ * written for a pedal spring. Same rule as above: every key it names is one
+ * the count reads (CONTEXT_KEYS).
+ */
+export const DETAIL_CONTEXT_HUMAN_ACTION =
+  'Ask your human these, then post again with the answers in `attributes`: format, frequency, day_part, language, level. In person or online, and how often, is what counts. Write in what you already know without asking. If they do not know, send it again with detail_unknown.';
 
 /**
  * And the one line for an assistant that DID reach for the escape hatch and
