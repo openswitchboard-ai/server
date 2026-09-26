@@ -914,11 +914,21 @@ async function oneRun(
         .filter((sentence) => !/\b(you sent|you picked|your (own )?(photo|picture|pic|image))\b/i.test(sentence))
         .join(' ');
       const described = /\b(shows|it(’|')s showing|looks like|i can see|appears to be|silver|steel-coloured|wooden|coil on)\b/i.test(aboutTheirs);
+      // Describing it is COUNTED, not gated (Lachlan, 26 September 2026 — see
+      // levels.ts, CRITICAL_RULES). Never mentioning the picture at all still
+      // fails: the person was sent something and was not told.
       record(
         !toldIt
           ? fail(`S4.told.${other.id}`, `${other.id}'s assistant said a picture had come and who from.`, 'it never mentioned a picture')
           : described
-            ? fail(`S4.told.${other.id}`, `${other.id}'s assistant said a picture had come and who from, without describing it.`, `it described the picture: "${said.slice(0, 120)}"`)
+            ? {
+                ...pass(
+                  `S4.told.${other.id}`,
+                  `${other.id}'s assistant said a picture had come and who from, without describing it.`,
+                  `told them a picture had come, but also described it — counted as a slip, not gated: "${said.slice(0, 120)}"`,
+                ),
+                countedSlip: 'described a picture before its human had looked',
+              }
             : pass(`S4.told.${other.id}`, `${other.id}'s assistant said a picture had come and who from, without describing it.`, 'told them a picture had come and left the looking to them'),
       );
       void from;
