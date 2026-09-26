@@ -747,6 +747,9 @@ export async function runMatchingForCard(
       haveBand,
       bumpWant: Number(want.threshold_bump),
       bumpHave: Number(have.threshold_bump),
+      // Which side is the want, for THE WANT IS COVERED (matchTiers.ts). Not
+      // on a swap: both sides want there, and that rule reads one direction.
+      ...(swap ? {} : { wantIs: sourceIsWant ? ('a' as const) : ('b' as const) }),
     });
     if (!judged.parts.hardRulesPass) continue;
     let tier: Tier = judged.tier;

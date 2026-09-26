@@ -38,6 +38,9 @@ import {
   POSSIBLE_WORDS_MIN_COSINE,
   SURE_MIN_COSINE,
   SURE_MIN_WORDS,
+  COVERED_MIN_COSINE,
+  agreementSentence,
+  attributeAgreement,
   headStem,
   tierFor,
   tokensOf,
@@ -349,6 +352,159 @@ const found = (over: Record<string, unknown> = {}) =>
   });
 
 const log = vi.fn();
+
+// ---------------------------------------------------------------------------
+// THE WANT IS COVERED (27 September 2026). Found on production: a want for a
+// used 56cm road bike did not meet a Giant Contend 2 56cm road bike on the
+// same shelf, because a thin posting and a rich one embed far apart (0.45).
+// ---------------------------------------------------------------------------
+describe('the want is covered', () => {
+  const ROAD_WANT = { kind: 'used road bike', attributes: { frame_size: '56cm', pedals: 'flat' } };
+  const GIANT = {
+    kind: 'Giant Contend 2 road bike',
+    attributes: {
+      brand: 'Giant',
+      model: 'Contend 2',
+      year: 2019,
+      frame_size: '56cm',
+      material: 'aluminium',
+      condition: 'good, a few scuffs',
+    },
+  };
+  const bike = (over: Partial<PairFacts>): PairFacts =>
+    pair({
+      semantic: 0.45,
+      categoryA: 'goods.bicycle.road',
+      categoryB: 'goods.bicycle.road',
+      a: ROAD_WANT,
+      b: GIANT,
+      wantIs: 'a',
+      wantBand: { band: { max: 400 }, ccy: 'AUD' },
+      haveBand: { band: { min: 300, max: 300 }, ccy: 'AUD' },
+      ...over,
+    });
+
+  it('is SURE for the production pair: a generic want and a specific have of exactly that thing', () => {
+    const t = tierFor(bike({}));
+    expect(t.parts.semantic).toBeLessThan(SURE_MIN_COSINE);
+    expect(t.parts.words.score).toBeLessThan(SURE_MIN_WORDS);
+    expect(t.parts.words.attributes).toBe('agree');
+    expect(t.tier).toBe('sure');
+    // Whichever side the matcher happened to start from.
+    expect(tierFor(bike({ a: GIANT, b: ROAD_WANT, wantIs: 'b' })).tier).toBe('sure');
+  });
+
+  it('reads one direction only: a vague have is not sure for a specific want, and a swap is not read at all', () => {
+    expect(tierFor(bike({ a: GIANT, b: ROAD_WANT, wantIs: 'a' })).tier).not.toBe('sure');
+    expect(tierFor(bike({ wantIs: undefined })).tier).not.toBe('sure');
+  });
+
+  it('is never SURE for a 54cm frame against a 56cm want', () => {
+    const t = tierFor(bike({ b: { ...GIANT, attributes: { ...GIANT.attributes, frame_size: '54cm' } } }));
+    expect(t.parts.words.attributes).toBe('conflict');
+    expect(t.tier).not.toBe('sure');
+    // And the same conflict bars the old sure line, however close the meaning.
+    expect(tierFor(bike({ semantic: 0.95, b: { ...GIANT, attributes: { ...GIANT.attributes, frame_size: '54cm' } } })).tier).toBe(
+      'possible',
+    );
+  });
+
+  it('is never SURE for a bike rack, a mountain bike or a helmet, even on the same shelf', () => {
+    for (const b of [
+      { kind: 'road bike roof rack', attributes: { brand: 'Thule' } },
+      { kind: 'Trek Marlin 5 mountain bike', attributes: { brand: 'Trek', model: 'Marlin 5', frame_size: '56cm' } },
+      { kind: 'Giro road bike helmet', attributes: { brand: 'Giro' } },
+    ]) {
+      expect(tierFor(bike({ b })).tier, b.kind).not.toBe('sure');
+    }
+    // A road bike want on the mountain bike shelf is a sibling shelf: not close enough.
+    expect(tierFor(bike({ categoryB: 'goods.bicycle.mountain' })).tier).not.toBe('sure');
+  });
+
+  it('still fails on price and on a want that says it is not this', () => {
+    const dear = tierFor(bike({ haveBand: { band: { min: 900, max: 900 }, ccy: 'AUD' } }));
+    expect(dear.tier).toBe('nothing');
+    expect(dear.parts.failed).toBe('price');
+    expect(tierFor(bike({ a: { ...ROAD_WANT, not_these: ['Giant Contend'] } })).tier).not.toBe('sure');
+  });
+
+  it('needs the have to say every word the want uses for the thing, and a floor on meaning', () => {
+    expect(tierFor(bike({ a: { ...ROAD_WANT, kind: 'used carbon road bike' } })).tier).not.toBe('sure');
+    expect(tierFor(bike({ a: { ...ROAD_WANT, attributes: { ...ROAD_WANT.attributes, brand: 'Trek' } } })).tier).not.toBe('sure');
+    expect(tierFor(bike({ semantic: COVERED_MIN_COSINE - 0.01 })).tier).not.toBe('sure');
+  });
+
+  it('sets aside one detail the have never answers, and no more than one', () => {
+    const one = { ...ROAD_WANT, attributes: { frame_size: '56cm', pedals: 'flat pedals', condition: 'any' } };
+    expect(tierFor(bike({ a: one })).tier).toBe('sure');
+    const two = { ...ROAD_WANT, attributes: { frame_size: '56cm', pedals: 'flat', groupset: 'Shimano 105' } };
+    expect(tierFor(bike({ a: two })).tier).not.toBe('sure');
+  });
+
+  it('covers a part only where the want says what it fits', () => {
+    const wand = {
+      categoryA: 'goods.appliances.kitchen.coffee',
+      categoryB: 'goods.appliances.kitchen.coffee',
+      semantic: 0.64,
+      wantBand: undefined,
+      haveBand: undefined,
+      b: { kind: 'Gaggia Classic Pro steam wand', attributes: { brand: 'Gaggia', fits: 'Classic Pro 2019+', part: 'steam wand' } },
+    };
+    expect(tierFor(bike({ ...wand, a: { kind: 'Gaggia steam wand', attributes: { brand: 'Gaggia' } } })).tier).not.toBe('sure');
+    expect(
+      tierFor(bike({ ...wand, a: { kind: 'Gaggia steam wand', attributes: { brand: 'Gaggia', fits: 'Classic Pro' } } })).tier,
+    ).toBe('sure');
+  });
+
+  it('covers a want that is only its head on the very same shelf, and nowhere else', () => {
+    const uke = { a: { kind: 'ukulele' }, b: { kind: 'Kala KA-15S soprano ukulele', attributes: { brand: 'Kala', model: 'KA-15S' } } };
+    const same = { categoryA: 'goods.music.strings', categoryB: 'goods.music.strings', wantBand: undefined, haveBand: undefined };
+    expect(tierFor(bike({ ...uke, ...same })).tier).toBe('sure');
+    expect(tierFor(bike({ ...uke, ...same, categoryB: 'goods.music.guitar' })).tier).not.toBe('sure');
+    expect(tierFor(bike({ ...uke, ...same, categoryA: 'goods.music' })).tier).not.toBe('sure');
+  });
+});
+
+describe('the details both sides stated', () => {
+  const said = (x: unknown, y: unknown) => attributeAgreement({ attributes: { size: x } }, { attributes: { size: y } });
+
+  it('compares numbers by value, and only in the same unit', () => {
+    expect(said('56cm', '56 cm')).toBe('agree');
+    expect(said('56', '56cm')).toBe('agree');
+    expect(said('20 inch', '20"')).toBe('agree');
+    expect(said('56cm', '54cm')).toBe('conflict');
+    expect(said('56cm', '22 inch')).toBe('unknown');
+    expect(said('54-56cm', '56cm')).toBe('unknown');
+    expect(said('56cm or larger', '58cm')).toBe('unknown');
+  });
+
+  it('compares words, forgiving a spelling, and never a value that says they do not mind', () => {
+    expect(said('flat', 'clipless')).toBe('conflict');
+    expect(said('aluminium', 'aluminum')).toBe('agree');
+    expect(said('flat', 'flat pedals')).toBe('agree');
+    expect(said('any', 'clipless')).toBe('unknown');
+    expect(said('not fussy', 'clipless')).toBe('unknown');
+  });
+
+  it('never compares a brand, a model, or the state of the copy, and needs the same key', () => {
+    const ask = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+      attributeAgreement({ attributes: a }, { attributes: b });
+    expect(ask({ condition: 'new' }, { condition: 'worn' })).toBe('unknown');
+    expect(ask({ colour: 'red' }, { colour: 'blue' })).toBe('unknown');
+    expect(ask({ model: 'Contend 2' }, { model: 'Defy' })).toBe('unknown');
+    expect(ask({ frame_size: '56cm' }, { size: '54cm' })).toBe('unknown');
+    expect(ask({ Frame_Size: '56cm' }, { frame_size: '54cm' })).toBe('conflict');
+  });
+
+  it('is named, without a figure, where it differs', () => {
+    const s = agreementSentence(
+      wordAgreement({ kind: 'road bike', attributes: { frame_size: '56cm' } }, { kind: 'road bike', attributes: { frame_size: '54cm' } }),
+    );
+    expect(s).toMatch(/differs on a detail you both gave/);
+    expect(s).not.toMatch(/\d/);
+    expect(lintHumanCopy(s), s).toEqual([]);
+  });
+});
 
 describe('the engine searches the whole board, and the hard rules still hold', () => {
   beforeEach(() => {
