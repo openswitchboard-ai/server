@@ -1051,7 +1051,13 @@ async function oneRun(
       const side = sides[id];
       const from = turns.length;
       await drive(side, "we're all sorted, thanks", 6);
-      await converse(side, 6, { rounds: 3 });
+      // FIVE ROUNDS, FROM THREE. The seller's assistant asked "how'd it go
+      // overall: good, fine, or bad?" in the last of three rounds, the stage
+      // ended before its human could answer, and the posting it would then
+      // have taken down was recorded as left up (25 September 2026). Wrapping
+      // up is two questions and two answers; three rounds had no room for the
+      // nudges the simulated human says in between.
+      await converse(side, 6, { rounds: 5 });
       const said = turnsText(turns.slice(from), { role: 'assistant' }).join('\n');
       record(
         // "How'd it go, in a word: good, fine, or bad?" — the question asked in

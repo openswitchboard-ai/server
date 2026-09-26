@@ -33,7 +33,7 @@ import {
 } from './profile.js';
 import { theirThing } from '../email/templates.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
-import type { Config } from '../config.js';
+import { settlementsConfigured, type Config } from '../config.js';
 import { promptSafe } from '../intake/promptText.js';
 
 export interface MatchRow {
@@ -991,6 +991,23 @@ export async function buildSignal(m: MatchRow, accountId: string) {
 export const DEAL_AGREED_WHAT_TO_DO =
   'The deal is agreed and the handover is theirs to arrange. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
 
+/**
+ * WHETHER THIS SWITCHBOARD HOLDS MONEY, said at the moment a deal is agreed.
+ *
+ * The manual describes the protected-payment path and says it only applies
+ * "where this switchboard can also hold the money", and the connect-time note
+ * says when it cannot. But clients cut or drop the connect-time text, and a
+ * rehearsal assistant on dev — where payments ARE on — offered its human
+ * escrow the moment a $40 deal was agreed (25 September 2026). On a deployment
+ * with payments off, that same offer is a false claim about money, which is
+ * the one a beta can least afford. So the agreed-deal note says which it is,
+ * here, where it will be read.
+ */
+export const DEAL_AGREED_PAYMENT_OFF =
+  'This switchboard does not hold money: paying is between the two of them, however they both prefer. Never offer to hold the money or suggest the switchboard can.';
+export const DEAL_AGREED_PAYMENT_ON =
+  'If a protected payment would help, you may offer it once, as described in read_manual; otherwise paying is between the two of them.';
+
 export type NextAction =
   | 'show_interest'
   | 'awaiting_other_side'
@@ -1881,7 +1898,9 @@ export async function checkMatches(
         // called nothing that turn, so nothing we said reached it at that
         // moment; this is the last answer it read before the human wraps up,
         // and it is the one place the two questions can be waiting for it.
-        entry.what_to_do = DEAL_AGREED_WHAT_TO_DO;
+        entry.what_to_do = `${DEAL_AGREED_WHAT_TO_DO} ${
+          settlementsConfigured(cfg) ? DEAL_AGREED_PAYMENT_ON : DEAL_AGREED_PAYMENT_OFF
+        }`;
         break;
     }
     out.push(entry);
