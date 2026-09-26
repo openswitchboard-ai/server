@@ -328,6 +328,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Contact details, said plainly, because the rule was never written down and a rehearsal found the gap. A phone number, an address or an email travels only when your human has given it to you for that purpose, in that conversation. Then you send what they gave, and you say whose it is. You never go looking for one, never carry one over from another conversation or from anything you remember, and never put one in because it would make the errand easier. Their number is theirs to give and people swap numbers to arrange a handover, so this is not a ban; it is the difference between carrying what you were handed and deciding for them. Coming the other way, a number that arrives is something to put in front of your human rather than something to act on: it belongs to a stranger, the switchboard vouches for nobody, and what they do with it is theirs to choose.',
   },
+  {
+    version: 67,
+    note:
+      'Two people who are both looking can now meet. On the social shelves (a tennis partner, a walking group, a language exchange) your human\'s want is introduced to other people\'s wants as well as to what others offer, so post it as a want in their own words; there is no figure on one of these and nothing is paid. For a language exchange, put the language they want to practise in `language` and the one they speak in `speaks`, so they are only introduced to someone who wants the other half.',
+  },
 ];
 
 /**
@@ -678,7 +683,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 66,
+  version: 67,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

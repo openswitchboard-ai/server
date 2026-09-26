@@ -52,6 +52,7 @@ import {
   recordStage3OptIn,
   recordVerdict,
   sideOf,
+  readerSide,
   readersOwnThingLabel,
 } from '../domain/matches.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
@@ -1503,7 +1504,7 @@ in on this device and lets you approve what is waiting.</p>
         const sent = w.sent === 1 ? 'One message has gone' : `${w.sent} messages have gone`;
         return {
           ...base,
-          question: `Your assistant has been talking with ${name ?? 'the other person'}'s assistant about ${theirThing(phrase(m.category), m.account_have === accountId ? 'have' : 'want')}. Keep the conversation going?`,
+          question: `Your assistant has been talking with ${name ?? 'the other person'}'s assistant about ${theirThing(phrase(m.category), readerSide(m, accountId))}. Keep the conversation going?`,
           detail: [
             `${sent} from your side so far.`,
             'Saying yes gives your assistant another run of messages on this one. Not now leaves it paused: nothing is lost, anything they send still reaches you, and you can start it again whenever you like.',

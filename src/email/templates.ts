@@ -336,6 +336,10 @@ export function renderSummons(
     /** A POSSIBLE introduction (domain/matchTiers.ts): the email says it may
      *  be something else, so nobody opens it expecting the very thing. */
     possible?: boolean;
+    /** A SWAP (domain/swaps.ts): the other person is looking for the same
+     *  thing, so they have not come forward WITH one, and there is nothing of
+     *  theirs to see beyond what they are after. */
+    swap?: boolean;
   },
   f: FooterLinks,
 ): EmailContent {
@@ -346,19 +350,32 @@ export function renderSummons(
   // Somebody offering hears about the thing they hold; somebody looking hears
   // that a person turned up WITH one, because they hold nothing yet.
   const named = !!thing && !!v.side;
-  const phrase = v.side === 'want' ? categoryPhraseWithArticle(v.categoryLabel) : thing;
-  const preposition = v.side === 'want' ? 'with' : 'about your';
+  // On a swap the other person is looking too, and not always for the same
+  // thing: the reader wants Spanish and they want English. So the email names
+  // the reader's own thing, the way it is named to somebody after it, and says
+  // nothing about what the other person is after beyond that they are looking.
+  // Never "with a tennis partner", which would say they hold one.
+  const phrase = v.swap
+    ? thing
+    : v.side === 'want'
+      ? categoryPhraseWithArticle(v.categoryLabel)
+      : thing;
+  const preposition = v.swap ? 'about the' : v.side === 'want' ? 'with' : 'about your';
+  const tail = v.swap ? ' you are after' : '';
   // The details are open already, so the notice says so. Which way round it is
   // said depends on the reader's own side: somebody looking hears that their
   // assistant can see what the other person has, somebody offering hears that
   // it can see what they are after.
-  const alreadyOpen =
-    v.side === 'want'
+  const alreadyOpen = v.swap
+    ? "They are looking too, and your assistant can already see what they're after."
+    : v.side === 'want'
       ? 'Your assistant can already see what they have.'
       : v.side === 'have'
         ? "Your assistant can already see what they're after."
         : 'Your assistant can already see more about them.';
-  const arrival = named ? `${who} has come forward ${preposition} ${phrase}.` : `${who} has come forward.`;
+  const arrival = named
+    ? `${who} has come forward ${preposition} ${phrase}${tail}.`
+    : `${who} has come forward.`;
   // A maybe is said as one, in the same plain words, beside the arrival. It
   // names nothing the arrival line does not already name.
   const maybe = v.possible && !v.blind && v.count === 1 ? ` ${POSSIBLE_EMAIL_LINE}` : '';
@@ -371,7 +388,7 @@ export function renderSummons(
       : `${v.count} people have come forward.`;
   const line =
     !v.blind && v.count === 1 && named
-      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>.${esc(maybe)} ${esc(alreadyOpen)}`
+      ? `${who} has come forward ${preposition} <span style="font-family:${SANS};font-weight:600;font-size:16px">${esc(phrase)}</span>${tail}.${esc(maybe)} ${esc(alreadyOpen)}`
       : esc(textLine);
   const html = shell(
     `<tr><td style="font-family:${SANS};font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${MATCH};padding-bottom:14px">Match</td></tr>` +

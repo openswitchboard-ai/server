@@ -70,7 +70,7 @@
  */
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
-import { getMatch, sideOf, type MatchRow } from './matches.js';
+import { SWAP_NO_FIGURE_SENTENCE, getMatch, sideOf, type MatchRow } from './matches.js';
 import { freezeTrackingRecord } from './evidence.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import { formatMinor, fromMinorUnits, settlementBreakdown, toMinorUnits } from '../stripe.js';
@@ -696,6 +696,12 @@ export async function proposeSettlement(
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
+  // A swap has no buyer and no seller (domain/swaps.ts), so there is nothing
+  // to protect a payment for; partyOf below would otherwise name whoever sits
+  // in card_want the buyer.
+  if (m.swap) {
+    throw new OsbError('SETTLEMENT_UNAVAILABLE', { human_action: SWAP_NO_FIGURE_SENTENCE });
+  }
   if (m.stage < 3) {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:

@@ -68,6 +68,13 @@ export interface MatchRow {
    *  or 'sure' is an introduction as ever; 'possible' carries POSSIBLE_NOTE
    *  on every answer that names it. */
   certainty?: 'sure' | 'possible';
+  /**
+   * A SWAP (migration 053, domain/swaps.ts): both postings are wants on the
+   * social shelves. card_want and card_have are then only two slots in a fixed
+   * order, both people are looking, and no figure or payment applies. Absent
+   * reads as false, which every row made before it is.
+   */
+  swap?: boolean;
   /** In a slot right now. An introduction that is not live is in line. */
   live?: boolean;
   live_at?: Date | null;
@@ -95,6 +102,39 @@ export function sideOf(m: MatchRow, accountId: string): 'want' | 'have' {
 }
 
 /**
+ * WHICH SIDE THIS PERSON IS ON, FOR THE WORDS. sideOf says which COLUMN an
+ * account sits in, and that is what picks a card or a counterparty. It is not
+ * always what a sentence should say about them: on a swap (domain/swaps.ts)
+ * both people posted wants, and the one who happens to sit in card_have is
+ * looking for something just as much as the other. So every sentence that
+ * turns on "your thing" against "the thing you are after" reads this, and on a
+ * swap it is 'want' for both of them. Throws exactly as sideOf does for an
+ * account that is not a party.
+ */
+export function readerSide(
+  m: { account_want: string; account_have: string; swap?: boolean | null },
+  accountId: string,
+): 'want' | 'have' {
+  const side = sideOf(m as MatchRow, accountId);
+  return m.swap ? 'want' : side;
+}
+
+/**
+ * NO FIGURE ON A SWAP. Two people who are both looking are giving each other
+ * the same kind of thing, so nobody is buying and nobody is selling, and every
+ * door that would put a number on the table or open a payment refuses a swap
+ * with this sentence rather than asking anybody for a figure.
+ */
+export const SWAP_NO_FIGURE_SENTENCE =
+  'This one is a swap between two people who are both looking, so no money changes hands on it and there is no figure to send. The two of them just need to talk.';
+
+export function assertNotSwap(m: { swap?: boolean | null }): void {
+  if (m.swap) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: SWAP_NO_FIGURE_SENTENCE });
+  }
+}
+
+/**
  * Create a match between a WANT and a HAVE card. In 0.C this is called only
  * by the internal ops interface (the 0.F matching engine will consume the
  * matching queue and call it). Price-band compatibility checking — the only
@@ -117,6 +157,10 @@ export function sideOf(m: MatchRow, accountId: string): 'want' | 'have' {
  * had engaged, so a stale posting from somebody who has already bought the bike
  * kept its details shut. Expiry, withdrawal and the summons email cover that,
  * and the trade was accepted.
+ *
+ * A want and a have, and only that: a SWAP (two wants on the social shelves,
+ * domain/swaps.ts) is made by the matcher alone, which is where its canonical
+ * order and its complement rule live. This ops path refuses one as before.
  */
 export async function createMatch(
   cardWantId: string,
@@ -940,8 +984,10 @@ export async function buildSignal(m: MatchRow, accountId: string) {
     category: m.category,
     // The side the other person is on, said in the words the wire uses: they
     // are offering something, or they are looking for one. WANT/HAVE stay in
-    // the database and the matcher; they stop here.
-    counterparty_type: side === 'want' ? ('offering' as const) : ('looking_for' as const),
+    // the database and the matcher; they stop here. On a swap the other person
+    // is looking too, whichever column they sit in.
+    counterparty_type:
+      side === 'want' && !m.swap ? ('offering' as const) : ('looking_for' as const),
   });
 }
 
@@ -1391,17 +1437,24 @@ export const takenDownSentence = (takenDown: 'yours' | 'theirs'): string =>
  * have is already open to read, and the one thing still to come is the human's
  * own go-ahead on sharing a first name and suburb.
  */
-function signalNote(
+export function signalNote(
   category: string,
   counterpartyType: 'looking_for' | 'offering',
   kind?: string | null,
   certainty?: string | null,
+  swap?: boolean | null,
 ): { text: string; provenance: 'switchboard-system' } {
   const thing = plainLeaf(category, kind);
   // A POSSIBLE one is said as a maybe from its first sentence, so the human
-  // hears "might be" before they hear anything else about it.
-  const opening =
-    certainty === 'possible'
+  // hears "might be" before they hear anything else about it. A SWAP is two
+  // people who are both looking (domain/swaps.ts), so neither sentence about
+  // somebody having the thing or being after "yours" is true of it: it is
+  // said as what it is, somebody looking for the same, to pair up with.
+  const opening = swap
+    ? certainty === 'possible'
+      ? `Someone nearby is looking for something that might be ${thing} too, or might be something close to it. Here is what they're after.`
+      : `Someone nearby is looking for ${thing} too, so the two of you could pair up. Here is what they're after.`
+    : certainty === 'possible'
       ? counterpartyType === 'offering'
         ? `Someone nearby has something that might be ${thing}, or might be something close to it. Here is what they have.`
         : `Someone nearby is looking for something that might be ${thing} like yours, or might be something close to it. Here is what they're after.`
@@ -1430,7 +1483,7 @@ function signalNote(
 
 /** The thing, as the person on this side of it would name it. */
 const ownThing = (m: MatchRow, accountId: string): string =>
-  theirThing(categoryPhrase(m.category, m.kind) || 'this', sideOf(m, accountId));
+  theirThing(categoryPhrase(m.category, m.kind) || 'this', readerSide(m, accountId));
 
 /**
  * What express_interest says now that it does nothing. The rule the wording
@@ -1711,8 +1764,11 @@ export async function checkMatches(
       signal,
       // The ready human sentence for a fresh signal rides right here on the
       // entry, so the agent leads with it instead of naming the machinery.
-      note: signalNote(m.category, signal.counterparty_type, m.kind, m.certainty),
+      note: signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap),
     };
+    // A SWAP says so, as a flag for the agent: both people are looking, and
+    // there is no figure to talk about on it (domain/swaps.ts).
+    if (m.swap) entry.swap = true;
     // A POSSIBLE one says so on every entry, beside whatever else it says.
     const maybe = possibleNote(m);
     if (maybe) {
@@ -1794,7 +1850,7 @@ export async function checkMatches(
       // The offer sentence names the thing the way a person would say it in
       // one — "for your mountain bike" — where the signal sentence wants the
       // article in front of it as well.
-      const noteText = offerTableNote(table, categoryPhrase(m.category, m.kind), sideOf(m, accountId));
+      const noteText = offerTableNote(table, categoryPhrase(m.category, m.kind), readerSide(m, accountId));
       if (noteText) entry.offer_note = sbNote(noteText);
       // The words that came with their figure, beside the sentence rather than
       // inside it, wearing their own label. The sentence above says a note was
@@ -1859,7 +1915,9 @@ export async function checkMatches(
         // sentence already says the whole of it — who has come forward, that
         // what they have is open to read, and that the next step is the
         // human's own go-ahead — so it is the sentence here too, side-aware.
-        entry.note = lead(signalNote(m.category, signal.counterparty_type, m.kind, m.certainty).text);
+        entry.note = lead(
+          signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap).text,
+        );
         break;
       case 'awaiting_their_go_ahead':
         // Their press landed. Confirm it, say what is being waited on, and ask
