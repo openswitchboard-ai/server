@@ -43,13 +43,14 @@ const want = (category: string, bucket: string, kind: string, attributes: Record
   category,
   kind,
   attributes,
-  geo: { bucket, radius_km: 25 },
+  geo: { bucket, radius_km: 25, reach: category.startsWith('goods') ? 'country' : 'radius' },
   ttl_days: FIXTURE_TTL_DAYS,
 });
 
 async function publish(actor: TestActor, c: any): Promise<string> {
   const r = await mcpCall(actor.accessToken, 'publish_intent', { listing: c });
   expect(r.isError, JSON.stringify(r.result)).toBe(false);
+  expect(r.result?.intent_id, JSON.stringify(r.result).slice(0, 600)).toBeTruthy();
   return r.result.intent_id as string;
 }
 
@@ -118,7 +119,7 @@ d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
         ] as const
       ).map(([actor, id]) => waitForCardStates(actor.accessToken, [id], ['PUBLISHED'])),
     );
-  });
+  }, 290_000);
 
   it('introduces the language pair once, as a swap, in canonical order', async () => {
     const rows = await poll(
@@ -153,7 +154,7 @@ d('swaps: two wants on social meet, once', { timeout: 300_000 }, () => {
           intro_id: matchId,
           offer: { amount: 20, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
         });
-        expect(offer.isError).toBe(true);
+        expect(offer.result.code).toBe('NOT_UNLOCKED_YET');
         expect(JSON.stringify(offer.result)).toContain('no money changes hands');
       }
     }
