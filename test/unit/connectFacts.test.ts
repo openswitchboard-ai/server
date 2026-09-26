@@ -32,7 +32,7 @@ import {
   OWN_HUMAN_HEADING,
   ownHumanBlockText,
 } from '../../src/mcp/connectFacts.js';
-import { areaNote } from '../../src/domain/profile.js';
+import { areaNote, areaNotFullNote } from '../../src/domain/profile.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions.js';
 import type { Config } from '../../src/config.js';
@@ -106,14 +106,21 @@ describe('the block of what the switchboard already knows about this human', () 
     expect(ownHumanBlockText({ area: undefined, timezone: null }, NOW)).toBe('');
   });
 
-  it('says an unresolved area exactly as the human typed it, once', () => {
+  it('says an unresolved area exactly as the human typed it, once, and asks for it in full', () => {
+    // 26 September 2026: a posting's place is taken only written in full, so an
+    // area that names no one town is not handed over as the place to use. The
+    // agent is told what they typed and to ask for the town, state and country.
     const typed = {
       area: 'up the back of Bungendore',
-      note: { text: areaNote('up the back of Bungendore'), provenance: 'switchboard-system' as const },
+      note: { text: areaNotFullNote('up the back of Bungendore'), provenance: 'switchboard-system' as const },
     };
     const block = ownHumanBlockText({ area: typed }, NOW);
-    expect(block).toContain('Your human is in up the back of Bungendore.');
+    expect(block).toContain('Your human gave their area as "up the back of Bungendore"');
+    expect(block.match(/up the back of Bungendore/g)?.length).toBe(1);
+    expect(block).toMatch(/ask which town, state and country they mean/);
+    expect(block).not.toMatch(/Your human is in up the back/);
     expect(block).not.toMatch(/which they wrote as/);
+    expect(lintHumanCopy(block)).toEqual([]);
   });
 
   it('passes the human-copy lint and the banned nouns', () => {

@@ -53,6 +53,7 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 
 import * as db from '../../src/db.js';
 import { amendIntent, publishIntent } from '../../src/domain/cards.js';
+import { PLACE_NOT_FULL } from '../../src/geo/normalise.js';
 import { buildAttributes } from '../../src/domain/matches.js';
 import {
   attributeFigureRule,
@@ -546,6 +547,33 @@ describe('the amendment door, which ran no money check at all', () => {
       attributes: { ...rich, wheel_size_in: 29 },
     });
     expect(r.intent_id).toBe(CARD);
+  });
+  /**
+   * 26 September 2026: a posting's place is taken only written in full. A
+   * posting that went up as "Canberra" before that keeps its place through an
+   * amend about something else — the stored centre is not re-resolved — and a
+   * patch that sends a new place is held to today's rule.
+   */
+  it('keeps the place of a posting already up, and holds a new one to the full form', async () => {
+    Object.assign(world.card, {
+      geo: { place: 'Canberra', bucket: 'r3dp', radius_km: 25 },
+      geo_lat: -35.2835,
+      geo_lon: 149.1281,
+      geo_radius_km: 25,
+      geo_country: 'AU',
+    });
+    const r: any = await amendIntent(cfg, ACCOUNT, CARD, { urgency: 'days' });
+    expect(r.intent_id).toBe(CARD);
+    const update = world.sql.find((q) => /UPDATE cards/.test(q.text))!;
+    expect(JSON.parse(update.params[1])).toEqual({ place: 'Canberra', bucket: 'r3dp', radius_km: 25 });
+    expect(update.params.slice(8, 12)).toEqual([-35.2835, 149.1281, 25, 'AU']);
+
+    world.sql = [];
+    const bare = (await refusal(() =>
+      amendIntent(cfg, ACCOUNT, CARD, { geo: { place: 'Hobart', radius_km: 25 } }),
+    ))!;
+    expect(bare.human_action).toBe(PLACE_NOT_FULL);
+    expect(changed()).toBe(false);
   });
 });
 

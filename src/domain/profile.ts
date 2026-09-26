@@ -19,17 +19,15 @@
 import { decryptFields, encryptField, writeConsentEvent } from '../crypto.js';
 import { getPool } from '../db.js';
 import {
-  ambiguousPlaces,
   countryNamed,
   describePlace,
   looksLikeStreetAddress,
   regionNamed,
-  resolvePlaceFor,
+  resolveOwnArea,
   type PlaceHint,
 } from '../geo/gazetteer.js';
-import { homeCountry } from '../geo/homeCountry.js';
 import { OsbError } from '../protocol.js';
-import { getAccount, getTimezone } from './accounts.js';
+import { getAccount } from './accounts.js';
 import type { Config } from '../config.js';
 
 export interface SharedProfile {
@@ -192,10 +190,13 @@ export interface OwnArea {
  * `purpose` is what a later reader sees: the sweep by default, and the connect
  * manual when the block in mcp/connectFacts.ts asks.
  *
- * The resolved line is only offered when the gazetteer settles the name on its
- * own: a name several cities answer to, a whole state and a whole country are
- * all left unresolved, because the posting path would refuse them and an agent
- * reading one out as settled would be saying more than is known.
+ * The resolved line is the area written in full — town, state and country —
+ * which is the one form a posting's place is taken in (26 September 2026). It
+ * is offered only where the area plainly names one town (gazetteer.ts
+ * resolveOwnArea). Where it does not — a name their own country holds two of,
+ * a whole state, a whole country — no resolved line comes, and the note says
+ * to ask them for the town, the state and the country instead, because an
+ * assistant copying the bare words onto a posting would only be refused.
  */
 export async function readOwnArea(
   accountId: string,
@@ -217,48 +218,26 @@ export async function readOwnArea(
   return {
     area,
     ...(resolved ? { area_resolved: resolved } : {}),
-    note: { text: areaNote(resolved ?? area), provenance: 'switchboard-system' },
+    note: {
+      text: resolved ? areaNote(resolved) : areaNotFullNote(area),
+      provenance: 'switchboard-system',
+    },
   };
 }
 
-/** The area written out in full, when it settles to one place.
+/** The area written out in full, when it names one town.
  *
- *  The hint is read exactly as the posting path reads it: a shared name the
- *  human's own country holds only one of is settled to that one, and a name
- *  still in question is left unresolved here. */
+ *  The hint is the country their own clock says they are in, and it settles a
+ *  name only where exactly one of the towns that answer to it is there. This
+ *  is the human's own page and not the posting path, which reads no hint at
+ *  all: see resolveOwnArea for why the two differ. */
 export function resolvedAreaName(area: string, hint: PlaceHint = {}): string | undefined {
   const raw = (area ?? '').trim();
   if (!raw) return undefined;
   if (looksLikeStreetAddress(raw)) return undefined;
   if (wideAreaNamed(raw)) return undefined;
-  if (ambiguousPlaces(raw, hint)) return undefined;
-  const hit = resolvePlaceFor(raw, hint);
+  const hit = resolveOwnArea(raw, hint);
   return hit ? describePlace(hit) : undefined;
-}
-
-/**
- * The country this human is probably in, for ordering the places a shared
- * name could have meant. Their own area first, their time zone second.
- *
- * Fail-soft, like everything else that reads an account for a courtesy: a
- * failed read means no hint, and the caller behaves exactly as it did before
- * hints existed. The read is an identity decrypt, so it carries a purpose of
- * its own rather than borrowing the sweep's.
- */
-export async function ownCountryHint(
-  accountId: string,
-  purpose = 'own-country-for-place-ordering',
-): Promise<PlaceHint> {
-  try {
-    const [profile, timezone] = await Promise.all([
-      readSharedProfile(accountId, { purpose, actor: accountId }).catch(() => undefined),
-      getTimezone(accountId),
-    ]);
-    const country = homeCountry({ area: profile?.locality, timezone });
-    return country ? { country } : {};
-  } catch {
-    return {};
-  }
 }
 
 /**
@@ -272,6 +251,20 @@ export function areaNote(place: string): string {
     `Your human is in ${place}. Use that as the area on anything you post for them ` +
     'unless they say somewhere else, and tell them which area you used so they can ' +
     'correct you. They set it themselves on their own page, and they can change it there.'
+  );
+}
+
+/**
+ * The sentence for an area on file that does not name one town on its own
+ * (26 September 2026). The switchboard takes a posting's place only written in
+ * full, so the area as they typed it would be refused if copied onto one: the
+ * agent asks them once for the town, state and country, and uses that.
+ */
+export function areaNotFullNote(typed: string): string {
+  return (
+    `Your human gave their area as "${typed}", which could be more than one place. ` +
+    'Before you post anything for them, ask which town, state and country they mean, ' +
+    'and write the place in full on what you post. They can change the area on their own page.'
   );
 }
 

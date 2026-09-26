@@ -35,9 +35,12 @@
  *     Tashkent carries "TAS" — so a card reading "ACT" once landed in Texas.
  *     A token of four characters or fewer, or one written in capitals, now has
  *     to match a place's own name.
- *   - a bare name that several cities answer to, unless one of them plainly
- *     owns it. `ambiguousPlaces` lists the candidates so the caller can put
- *     them to a human instead of picking the biggest and saying nothing.
+ *   - for a posting, anything not written in full. Since 26 September 2026 a
+ *     posting's place is town, region and country ("Hobart, Tasmania,
+ *     Australia"), resolved by `resolveFullPlace`, and nothing is chosen by
+ *     size or by where the human probably lives. `resolvePlace` is the
+ *     lenient reader kept for display; `resolveOwnArea` reads the area a
+ *     human typed on their own page.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -395,35 +398,14 @@ export function countryNamed(input: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Homonyms. "Perth", "Richmond", "Springfield" name several real cities, and
-// resolving to the biggest of them silently is how a card crosses an ocean
-// without anyone noticing.
+// Writing a place out, and reading one back.
 // ---------------------------------------------------------------------------
-
-/** How far ahead of every rival a candidate has to be to answer for the name
- *  on its own. Paris is eighty times the size of its nearest namesake.
- *  Eight since 26 September 2026: Hobart, Tasmania is nine times Hobart,
- *  Indiana, and at ten a person in Hobart was asked which one they meant. The
- *  resolved place is always written out in full for them to correct. */
-const DOMINANCE = 8;
-/** A namesake this size is a town in its own right, and somewhere a person
- *  could well have meant, however big the leader is. Perth in Scotland has
- *  47,000 people and is a real answer to "Perth"; Paris in Texas has 25,000
- *  and is not what anyone typing the bare word means. */
-const RIVAL_MATTERS_ABOVE = 40_000;
-
-/** Cities whose own name is exactly this key — the places that genuinely
- *  share the spelling, with alternate names and larger names left out. */
-function sharedNameCities(key: string): number[] {
-  const rows = load().file.rows;
-  return rowsFor(key).filter((i) => rows[i][6] === 0 && normaliseKey(rows[i][0]) === key);
-}
 
 /** A place written for a human, with the exact input that selects it. */
 export interface PlaceChoice {
-  /** "Perth, Scotland, GB" */
+  /** "Perth, Scotland, United Kingdom" */
   display: string;
-  /** "Perth, Scotland" — what goes back in the card's geo.place. */
+  /** What goes back in the posting's geo.place to choose it. */
   place: string;
 }
 
@@ -449,20 +431,32 @@ export function countryNameOf(code: string | null | undefined): string | undefin
   return code ? countryName(code) : undefined;
 }
 
+const sameName = (a: string, b: string) => normaliseKey(a) === normaliseKey(b);
+
 /** The place written out in full: "Canberra, Australian Capital Territory,
  *  Australia". This is what the switchboard reads back to the human whose
  *  card it just placed, so a wrong location is catchable by the one person
- *  who knows the area. */
+ *  who knows the area.
+ *
+ *  SINCE 26 SEPTEMBER 2026 A TOWN ALWAYS CARRIES ITS COUNTRY, even where the
+ *  two share a name ("Singapore, Singapore"). The posting path now takes a
+ *  place only when it is written in full (resolveFullPlace below), and this is
+ *  the form the switchboard hands an assistant to copy — the area on its
+ *  human's own page, the candidates on a refusal — so it has to be a form the
+ *  posting path accepts. A region the town shares its name with is still left
+ *  out, because there is nothing it would add ("Mexico City, Mexico"). */
 export function describePlace(p: Place): string {
   const parts = [p.name];
   const region = p.kind === 'city' ? admin1Name(p.country, p.admin1) : undefined;
-  if (region && region !== p.name) parts.push(region);
+  if (region && !sameName(region, p.name)) parts.push(region);
   const country = countryName(p.country);
-  if (country && country !== p.name) parts.push(country);
+  if (country && (p.kind === 'city' || !sameName(country, p.name))) parts.push(country);
   return parts.join(', ');
 }
 
-/** One candidate, qualified enough to be picked and to resolve back here. */
+/** One candidate, qualified enough to be picked on the area box: "Braddon,
+ *  Australian Capital Territory". The suggestion list stores this as the area
+ *  a human shares, so it stays the short form a person would say. */
 export function qualifyPlace(p: Place): PlaceChoice {
   const region = p.kind === 'city' ? admin1Name(p.country, p.admin1) : undefined;
   const place =
@@ -479,114 +473,234 @@ export interface PlaceHint {
   country?: string;
 }
 
-/**
- * The candidates ordered for the human who asked: their own country first,
- * largest first inside each group.
- */
-function preferCountry(cities: number[], hint?: string): number[] {
-  if (!hint) return cities;
+// ---------------------------------------------------------------------------
+// THE FULL PLACE (26 September 2026).
+//
+// A posting's place is taken only when it is written in full: town, state or
+// region, and country — "Hobart, Tasmania, Australia", or "Hobart, TAS, AU".
+// The switchboard never guesses which town was meant.
+//
+// It used to. A bare name several towns answer to was settled by size (one
+// town ten, then eight, times every namesake answered on its own), then by
+// the human's own country where it held exactly one, and only otherwise put to
+// the human as a list — a list that once offered a person in Hobart four
+// American Hobarts, and before that offered a person in Franklin, ACT five
+// American Franklins. Every one of those layers was a rule about what people
+// probably mean, and each fix for the last surprise made the next one. The
+// founder's decision was to stop guessing altogether: an assistant writing
+// for a human who lives somewhere knows, or can ask, the town, the state and
+// the country, and three words of typing is a small price for a posting that
+// is never in the wrong hemisphere.
+//
+// So what resolves here has a region and a country that both describe the
+// town, and nothing is chosen by population. The one exception is where no
+// fuller writing exists to choose with: two towns of one name in one state
+// (usually one town listed twice in the source data) are the same answer to
+// the same full name, and the larger stands for both.
+//
+// A town that shares its name with its own region needs no region
+// ("Mexico City, Mexico"), and a town in a country the source data divides
+// into no regions needs only the country.
+// ---------------------------------------------------------------------------
+
+/** What a posting's place came to. */
+export type FullPlaceAnswer =
+  /** Written in full, and one town answers to it. */
+  | { kind: 'place'; place: Place }
+  /** Not written in full: a bare name, a town without its region or country,
+   *  a region, a country, or a division code. Refused with one sentence. */
+  | { kind: 'not_full' }
+  /** Written out, but nothing in the asset answers to it that way. */
+  | { kind: 'unknown' }
+  /** Written in full and still more than one town — the hints describe two
+   *  different places at once. Rare; each is written out in full. */
+  | { kind: 'several'; places: Place[] };
+
+/** Country codes people write that ISO 3166-1 reserves for a country under
+ *  another code. "UK" is the one anybody types: the standard keeps it
+ *  exceptionally reserved for the United Kingdom, whose code is GB. */
+const COUNTRY_CODE_ALIASES: Record<string, string> = { uk: 'GB' };
+
+/** Does the hint name the country this row is in? By code or by name. */
+function countryHint(rowIdx: number, hint: string): boolean {
+  const g = load();
+  const cc = g.file.rows[rowIdx][1];
+  if (hint === normaliseKey(cc)) return true;
+  if (COUNTRY_CODE_ALIASES[hint] === cc) return true;
+  const country = g.countryRow.get(cc);
+  if (country === undefined) return false;
+  if (g.file.codes[hint.toUpperCase()] === country) return true;
+  return !!g.coarseKeys.get(country)?.has(hint);
+}
+
+/** The division row a town sits in, where the asset has one. */
+function divisionOf(rowIdx: number): number | undefined {
+  const g = load();
+  const r = g.file.rows[rowIdx];
+  return r[2] ? g.admin1Row.get(`${r[1]}.${r[2]}`) : undefined;
+}
+
+/** Does the hint name the state or region this row is in? By name or code. */
+function regionHint(rowIdx: number, hint: string): boolean {
+  const g = load();
+  const division = divisionOf(rowIdx);
+  if (division === undefined) return false;
+  const keys = g.coarseKeys.get(division);
+  const cc = normaliseKey(g.file.rows[rowIdx][1]);
+  return !!keys && (keys.has(hint) || keys.has(`${cc} ${hint}`));
+}
+
+/** Whether a full writing of this town has to name its region: only where it
+ *  has one, and the region is not simply the town's own name again. */
+function regionRequired(rowIdx: number): boolean {
+  const division = divisionOf(rowIdx);
+  if (division === undefined) return false;
   const rows = load().file.rows;
-  const cc = hint.toUpperCase();
-  const mine = cities.filter((i) => rows[i][1] === cc);
-  if (!mine.length) return cities;
-  return [...mine, ...cities.filter((i) => rows[i][1] !== cc)];
+  return !sameName(rows[division][0], rows[rowIdx][0]);
 }
 
 /**
- * Every distinct place a bare name could have meant, largest first, or
- * undefined when the name is not in question at all — one city answers to it,
- * a comma or a code already settles it, or one candidate is both ten times the
- * size of every rival and leaves no rival that is a town in its own right.
- *
- * Distinct by qualified name: two towns in one division would offer the same
- * qualified form, and the smaller of them could never be picked by it, so the
- * larger stands for both.
+ * Where a town is called exactly what was written, a town that merely has it
+ * in its name is not a second answer: "Galvez, Santa Fe, Argentina" is Galvez,
+ * not Gobernador Galvez down the road. This is the name itself deciding, not
+ * size, and only a town whose own name it is takes precedence.
  */
-function sharedNameCandidates(input: string, hint?: string): Place[] | undefined {
-  const raw = (input ?? '').trim();
-  if (!raw || raw.includes(',')) return undefined;
-  if (CODE_FORM.test(raw)) return undefined;
-  const g = load();
-  if (/^[A-Za-z]{2,3}$/.test(raw) && g.file.codes[raw.toUpperCase()] !== undefined) return undefined;
-  const rows = g.file.rows;
-  const cities = sharedNameCities(normaliseKey(raw)).sort((a, b) => rows[b][5] - rows[a][5]);
-  if (cities.length < 2) return undefined;
-  const [top, ...rest] = cities;
-  const owns =
-    rows[top][5] > 0 &&
-    rest.every((i) => rows[i][5] < RIVAL_MATTERS_ABOVE && rows[top][5] >= rows[i][5] * DOMINANCE);
-  if (owns) return undefined;
+function ownNameFirst(rowIdxs: number[], key: string): number[] {
+  const rows = load().file.rows;
+  const own = rowIdxs.filter((i) => normaliseKey(rows[i][0]) === key);
+  return own.length ? own : rowIdxs;
+}
+
+/** Towns only, largest first, one per full writing: the larger of two towns
+ *  that no fuller writing could tell apart stands for both. That is the one
+ *  place anything here is chosen by size, and only because there is nothing
+ *  left to write that would choose between them. */
+function distinctTowns(rowIdxs: number[]): Place[] {
+  const rows = load().file.rows;
   const seen = new Set<string>();
   const out: Place[] = [];
-  for (const i of preferCountry(cities, hint)) {
+  for (const i of [...rowIdxs].sort((a, b) => rows[b][5] - rows[a][5])) {
     const p = toPlace(i);
-    const { display } = qualifyPlace(p);
-    if (seen.has(display)) continue;
-    seen.add(display);
+    // Compared the way names are looked up, so "Pont-Rouge" and "Pont Rouge"
+    // listed twice in the source data are one town, not a question.
+    const key = normaliseKey(describePlace(p));
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(p);
   }
-  // Two towns of one name in one division leave nothing to choose between:
-  // no qualified form tells them apart, so asking would get nowhere. The
-  // larger one answers, the way it did before.
-  return out.length < 2 ? undefined : out;
+  return out;
 }
 
 /**
- * THE ONE PLACE OF THAT NAME IN THE HUMAN'S OWN COUNTRY, where there is exactly
- * one (26 September 2026).
- *
- * The rule used to be that a hint only ever reordered: a name several real
- * towns answer to was put to the human even when exactly one of them was in
- * their country. An edge-case probe on dev then asked an Australian account
- * whose own area is Hobart which Hobart it meant, and offered Hobart, Indiana.
- * Nobody in Tasmania means Indiana by "Hobart", and asking them is the
- * switchboard pretending not to know what it knows. So where the human's own
- * country holds exactly one place of that name, that place is the answer. It
- * is not silent: the posting's answer writes the place out in full
- * (location_resolved), which the agent reads back and the human can correct.
- *
- * Where their country holds two or more (Franklin, ACT and Franklin, Tasmania),
- * the name is still in question and still asked, with their own first. Where
- * it holds none, the hint says nothing and the question is the one it always
- * was.
+ * A posting's place, taken only when it is written in full. Never picks by
+ * size, never reads the human's country, never takes a spaced hint apart:
+ * the writing has to say which town it is, and commas say where the parts
+ * are. Street addresses are the caller's to refuse first.
  */
-export function settledInCountry(input: string, hint: PlaceHint = {}): Place | undefined {
+export function resolveFullPlace(input: string): FullPlaceAnswer {
+  const raw = (input ?? '').trim();
+  const segments = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (segments.length < 2) return { kind: 'not_full' };
+  const [headText, ...hintTexts] = segments;
+  const head = normaliseKey(headText);
+  const hints = hintTexts.map(normaliseKey).filter(Boolean);
+  if (!head || !hints.length) return { kind: 'not_full' };
+
+  const rows = load().file.rows;
+  const named = rowsNamed(head, exactOnly(headText));
+  const towns = named.filter((i) => rows[i][6] === 0);
+  if (!towns.length) {
+    // "New South Wales, Australia", "AU, Australia": a region or a country
+    // with more written after it is still not a town. A head nothing answers
+    // to at all is simply unknown.
+    return named.length ? { kind: 'not_full' } : { kind: 'unknown' };
+  }
+  const described = towns.filter((i) =>
+    hints.every((h) => hintMatches(i, h) || countryHint(i, h)),
+  );
+  if (!described.length) return { kind: 'unknown' };
+  const full = described.filter(
+    (i) =>
+      hints.some((h) => countryHint(i, h)) &&
+      (!regionRequired(i) || hints.some((h) => regionHint(i, h))),
+  );
+  if (!full.length) return { kind: 'not_full' };
+  const places = distinctTowns(ownNameFirst(full, head));
+  return places.length === 1 ? { kind: 'place', place: places[0] } : { kind: 'several', places: places.slice(0, 5) };
+}
+
+/**
+ * The area a human set on their OWN page, written out in full where it plainly
+ * names one town. This is not the posting path, and it is allowed one thing
+ * the posting path is not.
+ *
+ * The area box is a person typing their own suburb, often picked from the
+ * suggestion list ("Franklin, Tasmania") and sometimes typed bare ("Hobart").
+ * What it settles to is handed to their own assistant as area_resolved, to
+ * copy onto what it posts for them — and the assistant says that area out loud
+ * when it confirms a posting, so the person who typed it is the one who hears
+ * it. So the area settles where exactly one town answers to what they wrote,
+ * or where exactly one of the towns that do is in the country their own clock
+ * says they are in: "Hobart" on a Tasmanian clock is Hobart, Tasmania. Nothing
+ * is settled by size, and a name their own country holds two of ("Franklin",
+ * in Australia) is left unsettled, so their assistant asks them for the town,
+ * the state and the country.
+ */
+export function resolveOwnArea(input: string, hint: PlaceHint = {}): Place | undefined {
+  const full = resolveFullPlace(input);
+  if (full.kind === 'place') return full.place;
+  const towns = townsWritten(input);
+  if (towns.length === 1) return towns[0];
   const cc = hint.country?.toUpperCase();
   if (!cc) return undefined;
-  const all = sharedNameCandidates(input);
-  if (!all) return undefined;
-  const mine = all.filter((p) => p.country === cc);
+  const mine = towns.filter((p) => p.country === cc);
   return mine.length === 1 ? mine[0] : undefined;
 }
 
-/**
- * The places a bare name could have meant, when no single one owns it — and,
- * since 26 September 2026, when the human's own country does not settle it
- * either (settledInCountry above).
- *
- * Returns undefined when the name is not in question. Otherwise: the
- * candidates, one per qualified name, at most five, for the caller to put to
- * a human — their own country's first, largest first inside each group.
- */
-export function ambiguousPlaces(input: string, hint: PlaceHint = {}): Place[] | undefined {
-  if (settledInCountry(input, hint)) return undefined;
-  return sharedNameCandidates(input, hint.country)?.slice(0, 5);
-}
-
-/**
- * Resolve free text for a human whose country is known: the one place of that
- * name in their country where there is exactly one, and resolvePlace's answer
- * otherwise. Every caller that asked ambiguousPlaces with a hint resolves with
- * this, so the question and the answer agree about what was settled.
- */
-export function resolvePlaceFor(input: string, hint: PlaceHint = {}): Place | undefined {
-  return settledInCountry(input, hint) ?? resolvePlace(input);
+/** Every distinct town a free-text area could be, read the way a person
+ *  writes one: with commas, or with the state after a space ("Newtown NSW"). */
+function townsWritten(input: string): Place[] {
+  const raw = (input ?? '').trim();
+  if (!raw || looksLikeStreetAddress(raw)) return [];
+  // A whole state or country is not a town, whatever village shares its name.
+  if (regionNamed(raw) || countryNamed(raw)) return [];
+  const rows = load().file.rows;
+  const segments = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!segments.length) return [];
+  const [headText, ...hintTexts] = segments;
+  const hints = hintTexts.map(normaliseKey).filter(Boolean);
+  const towns = rowsNamed(normaliseKey(headText), exactOnly(headText)).filter(
+    (i) => rows[i][6] === 0 && hints.every((h) => hintMatches(i, h)),
+  );
+  if (towns.length || segments.length > 1) {
+    return distinctTowns(ownNameFirst(towns, normaliseKey(headText)));
+  }
+  // No town of the whole name: try the last words as a region or country.
+  const words = raw.split(/\s+/).filter(Boolean);
+  for (let k = 1; k <= Math.min(SPACED_HINT_WORDS, words.length - 1); k++) {
+    const head = words.slice(0, words.length - k).join(' ');
+    const hint = normaliseKey(words.slice(words.length - k).join(' '));
+    if (!hint || regionNamed(head) || countryNamed(head)) continue;
+    const narrowed = rowsNamed(normaliseKey(head), exactOnly(head)).filter(
+      (i) => rows[i][6] === 0 && hintMatches(i, hint),
+    );
+    if (narrowed.length) return distinctTowns(ownNameFirst(narrowed, normaliseKey(head)));
+  }
+  return [];
 }
 
 /**
  * Resolve free text to one place, or undefined when nothing in the asset
  * answers to it. Street addresses are never resolved — callers check
  * looksLikeStreetAddress first and refuse the card.
+ *
+ * NOT FOR PLACING A POSTING (26 September 2026). This is the lenient reader:
+ * where several places answer to a name it takes the biggest, which is a
+ * guess. It stays for the two jobs where a guess costs nothing — writing a
+ * posting already on the board back out on its owner's page, and telling
+ * whether an old bucket string names somewhere at all, so that it can be
+ * refused rather than kept as a private island. What a posting is placed on
+ * comes from resolveFullPlace, which never guesses.
  */
 export function resolvePlace(input: string): Place | undefined {
   const raw = (input ?? '').trim();

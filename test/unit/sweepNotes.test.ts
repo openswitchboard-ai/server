@@ -270,6 +270,10 @@ describe("the human's own area rides the sweep", () => {
       // ask about: a name several cities answer to, and a whole state.
       expect(r.structuredContent.area_resolved, typed).toBeUndefined();
       expect(r.structuredContent.area_note.text, typed).toContain(typed);
+      // And the sentence says to ask for it in full, because the bare words
+      // would be refused on a posting (26 September 2026).
+      expect(r.structuredContent.area_note.text, typed).toMatch(/town, state and country/);
+      expect(r.structuredContent.area_note.text, typed).not.toMatch(/use that as the area/i);
     }
   });
 

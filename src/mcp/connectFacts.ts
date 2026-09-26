@@ -30,7 +30,7 @@
  */
 import { getTimezone } from '../domain/accounts.js';
 import { clockNote } from '../domain/localTime.js';
-import { areaNote, readOwnArea, type OwnArea } from '../domain/profile.js';
+import { areaNote, areaNotFullNote, readOwnArea, type OwnArea } from '../domain/profile.js';
 import { countryOfTimeZone } from '../geo/homeCountry.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
 
@@ -112,7 +112,12 @@ export interface OwnHumanFacts {
 export function ownHumanBlockText(facts: OwnHumanFacts, now: Date = new Date()): string {
   const lines: string[] = [];
 
-  if (facts.area) {
+  if (facts.area && !facts.area.area_resolved) {
+    // An area that does not name one town on its own (26 September 2026): the
+    // sweep's own sentence, which says to ask for the town, state and country,
+    // because a posting's place is taken only written in full.
+    lines.push(areaNotFullNote(facts.area.area));
+  } else if (facts.area) {
     const place = facts.area.area_resolved ?? facts.area.area;
     // The sweep's sentence, word for word, so an agent that has read one has
     // read the other. Where the gazetteer settled a shorter answer, the words

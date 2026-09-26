@@ -22,7 +22,10 @@ export interface FactSheet {
   /** The name the transcript writes: `**Alex:**`. */
   name: string;
   side: 'seller' | 'buyer';
-  /** First name and locality the account is minted with. */
+  /** First name and locality the account is minted with. The locality is
+   *  written the way the area box's suggestion list stores it (town and
+   *  state), so what the sweep hands the assistant as area_resolved is the
+   *  full place a posting is taken in (26 September 2026). */
   firstName: string;
   locality: string;
   /** The suburb the names step should carry, where the sheet has one. */
@@ -42,7 +45,7 @@ export const ALEX: FactSheet = {
   name: 'Alex',
   side: 'seller',
   firstName: 'Alex',
-  locality: 'Queanbeyan',
+  locality: 'Queanbeyan, New South Wales',
   suburb: 'Queanbeyan',
   opening:
     'I have an upgraded spring for a Fanatec sim racing pedal set I no longer need, want to see if we can get something for it?',
@@ -74,7 +77,7 @@ export const TONY: FactSheet = {
   name: 'Tony',
   side: 'buyer',
   firstName: 'Tony',
-  locality: 'Canberra',
+  locality: 'Canberra, Australian Capital Territory',
   suburb: 'Franklin',
   // Two utterances: the advice question first, then the want, in his own words.
   opening: 'I have Fanatec ClubSport V3 pedals, would an upgraded brake spring help?',

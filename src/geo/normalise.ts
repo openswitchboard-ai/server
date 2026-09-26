@@ -19,10 +19,10 @@
  *     written before 0.3.0 and for run-scoped test islands, and it is the
  *     one case where a card has no coordinates.
  *
- * Resolution is never silent about a doubt. Text that names an area too wide
- * to put a person in, and a name that several real cities answer to, are both
- * refused with something the agent can act on rather than resolved to a point
- * nobody chose. What does resolve comes back written out in full, so the
+ * Resolution never guesses. Since 26 September 2026 a place is taken only
+ * when it is written in full — town, state and country — and anything less
+ * (a bare name, a state, a country) is refused with one fixed sentence saying
+ * to write it out. What does resolve comes back written out in full, so the
  * agent can read it to its human and the human can say it is wrong.
  *
  * PLACE IS NOT REACH. Where a card is and how far its owner will meet someone
@@ -37,17 +37,14 @@ import { OsbError } from '../protocol.js';
 import { decodeGeohash, encodeGeohash, isGeohash } from './geohash.js';
 import type { GeoReach } from '../domain/matchRules.js';
 import {
-  ambiguousPlaces,
-  countryNamed,
   countryNameOf,
+  countryNamed,
   describePlace,
   looksLikeStreetAddress,
-  qualifyPlace,
   regionNamed,
+  resolveFullPlace,
   resolvePlace,
-  resolvePlaceFor,
   type Place,
-  type PlaceHint,
 } from './gazetteer.js';
 
 /** Radius assumed for a bucket the gazetteer cannot place. A card that names
@@ -160,39 +157,40 @@ function clampRadius(km: number | undefined, fallback: number): number {
 // Kept short: the protocol caps human_action at 300 characters, and the
 // place name itself can add 80.
 const NAME_A_PLACE =
-  'Name a suburb, city or region (for example "Canberra" or "AU-ACT"). Locations here are areas, never street addresses.';
+  'Name the town in full, with its state and country (for example "Hobart, Tasmania, Australia"). Locations here are areas, never street addresses.';
 
 /**
- * A state or territory is not a place a human lives in. The switchboard says
- * which one it heard and asks for a town inside it, rather than guessing a
- * point: an agent that means the whole territory can still say so plainly, in
- * the "AU-ACT" form.
+ * THE ONE SENTENCE FOR A PLACE NOT WRITTEN IN FULL (26 September 2026).
+ *
+ * The founder's decision: the switchboard never guesses which town was meant.
+ * A bare name, a town without its state or country, a state, a country and a
+ * division code are all refused the same way, with the same fixed sentence and
+ * no list of candidates — a list is how a person in Hobart was once offered
+ * four towns in Indiana. The sentence names the one thing to do, and points at
+ * the form the switchboard already hands over for the human's own area, which
+ * is written in full and passes as it is.
+ *
+ * Its own code, LOCATION_NOT_FULL, rather than LOCATION_AMBIGUOUS: that one
+ * carries candidates and means "which of these", and this means "write it
+ * out", which an assistant can do without asking anyone when the area on
+ * file already says it.
  */
-const namesARegion = (place: string, region: string) =>
-  `'${place}' is ${region}, a state or territory — name a town or city in it (or "AU-ACT" form for the whole territory).`;
-
-/**
- * A country is wider still. "AU" put a card on the centroid of Australia,
- * 476 km from the city it meant, and said nothing about it. So the
- * switchboard names the country it heard and asks for a town inside it — and,
- * because an agent naming a country usually means a card that reaches one,
- * points at the field that says so. The card lives where the thing lives;
- * reach is how far it travels.
- */
-const namesACountry = (place: string, country: string) =>
-  `'${place}' is ${country}, a whole country — name the town or city your human is near. To offer nationwide, name your town and set reach to "country" (place "Canberra", reach "country").`;
+export const PLACE_NOT_FULL =
+  'Write the place in full: town, state and country, for example "Hobart, Tasmania, Australia". Your human\'s own area on file is written that way already.';
 
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
 
+/** Written out, and nothing answers to it written that way. */
+const doesNotKnow = (place: string) =>
+  `The switchboard does not know '${clip(place, 80)}'. Check the town, state and country, or name the nearest town, written the same way.`;
+
 /**
- * Several real cities answer to some names. Picking the biggest of them and
- * saying nothing is how a Perth card crosses an ocean, so the switchboard
- * hands back the candidates, written out, and the agent asks its human which
- * one. The message carries as many as fit under the protocol's 300-character
- * ceiling; the full list rides in `candidates`.
+ * Written in full and still more than one town: the parts describe two places
+ * at once. The candidates ride along, each written in full, so the agent asks
+ * its human which and posts that one exactly as given.
  */
 function namesSeveralPlaces(place: string, displays: string[]): string {
-  const head = `'${clip(place, 40)}' names more than one place. Ask your human which, then post it in full:`;
+  const head = `'${clip(place, 40)}' names more than one place. Ask your human which, then post it exactly as written here:`;
   let msg = head;
   for (const d of displays) {
     const next = `${msg} ${d};`;
@@ -202,72 +200,48 @@ function namesSeveralPlaces(place: string, displays: string[]): string {
   return msg === head ? `${head} ${clip(displays[0], 60)}.` : `${msg.slice(0, -1)}.`;
 }
 
-/** Refuse a bare region name before anything tries to place it. */
-function refuseRegion(text: string): void {
-  const region = regionNamed(text);
-  if (region) {
-    throw new OsbError('LOCATION_UNRESOLVED', { human_action: namesARegion(text, region) });
+/** The place a posting's text names, or the refusal that says why not. */
+function placeFromText(text: string): Place {
+  const answer = resolveFullPlace(text);
+  switch (answer.kind) {
+    case 'place':
+      return answer.place;
+    case 'not_full':
+      throw new OsbError('LOCATION_NOT_FULL', { human_action: PLACE_NOT_FULL });
+    case 'unknown':
+      throw new OsbError('LOCATION_UNRESOLVED', { human_action: doesNotKnow(text) });
+    case 'several': {
+      const candidates = answer.places.map((p) => {
+        const full = describePlace(p);
+        return { display: full, place: full };
+      });
+      throw new OsbError('LOCATION_AMBIGUOUS', {
+        human_action: namesSeveralPlaces(text, candidates.map((c) => c.display)),
+        candidates,
+      });
+    }
   }
-}
-
-/** Refuse a bare country name or country code, the same way. */
-function refuseCountry(text: string): void {
-  const country = countryNamed(text);
-  if (country) {
-    throw new OsbError('LOCATION_UNRESOLVED', {
-      human_action: namesACountry(clip(text, 60), country),
-    });
-  }
-}
-
-/** Refuse a name several cities answer to, and say which they are.
- *
- *  The hint settles the name where the human's own country holds exactly one
- *  place of it, and otherwise orders the candidates: their own country first,
- *  so the first name their agent says back to them is the likely one. */
-function refuseAmbiguous(text: string, hint: PlaceHint): void {
-  const places = ambiguousPlaces(text, hint);
-  if (!places) return;
-  const candidates = places.map(qualifyPlace);
-  throw new OsbError('LOCATION_AMBIGUOUS', {
-    human_action: namesSeveralPlaces(
-      text,
-      candidates.map((c) => c.display),
-    ),
-    candidates,
-  });
-}
-
-/** Every gate a free-text location passes before anything places it. */
-function refuseUnplaceable(text: string, hint: PlaceHint): void {
-  refuseRegion(text);
-  refuseCountry(text);
-  refuseAmbiguous(text, hint);
 }
 
 /**
  * Resolve a card's geo into stored columns, and say what it resolved to.
  *
- * Throws a machine-readable LOCATION_UNRESOLVED when the text is a street
- * address, names nothing the gazetteer knows, or names an area too wide to
- * put a person in — a state, a country, a country code. Throws
- * LOCATION_AMBIGUOUS, with the candidates, when several real cities answer to
- * the name and none of them plainly owns it.
+ * A `place` is taken only when it is written in full — town, state and
+ * country (gazetteer.ts resolveFullPlace). Throws LOCATION_NOT_FULL for
+ * anything less, LOCATION_UNRESOLVED for a street address or a full writing
+ * nothing answers to, and LOCATION_AMBIGUOUS, with every candidate written
+ * in full, in the rare case a full writing still describes two towns.
+ *
+ * Until 26 September 2026 this took a hint about the human's own country and
+ * settled a shared name with it, and before that settled one by size. Both
+ * are gone: nothing about who is posting changes where a posting goes.
  *
  * The reach rides through untouched by any of that: it is a statement about
  * the human, not about the map, and there is nothing in it to resolve. It is
  * stored only when it is not the default, so a card written before reach
  * existed and a card that means the same thing look the same in the database.
- *
- * `hint` says which country the human is probably in (src/geo/homeCountry.ts).
- * Where their country holds exactly one place of a shared name, that place is
- * the answer (26 September 2026: an Australian account whose own area is
- * Hobart was offered Hobart, Indiana). Where it holds several, they are asked
- * with their own first, so a person in Franklin, ACT hears about their own
- * Franklin first rather than five American ones. A name nobody shares, and a
- * name written out in full, resolve exactly as they did without a hint.
  */
-export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
+export function normaliseGeo(geo: any): NormalisedGeo {
   const place: string | undefined =
     typeof geo?.place === 'string' && geo.place.trim() ? geo.place.trim() : undefined;
   const bucket: string | undefined =
@@ -313,16 +287,7 @@ export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
         human_action: `'${place}' reads like a street address. ${NAME_A_PLACE}`,
       });
     }
-    refuseUnplaceable(place, hint);
-    // The human's own country settles a shared name where it holds exactly one
-    // place of it (gazetteer.ts settledInCountry): Hobart, for someone in
-    // Australia, is Hobart, Tasmania.
-    const hit = resolvePlaceFor(place, hint);
-    if (!hit) {
-      throw new OsbError('LOCATION_UNRESOLVED', {
-        human_action: `The switchboard does not know '${place}'. Try the nearest city or the region it sits in.`,
-      });
-    }
+    const hit = placeFromText(place);
     return placed(place, hit);
   }
 
@@ -341,12 +306,15 @@ export function normaliseGeo(geo: any, hint: PlaceHint = {}): NormalisedGeo {
     };
   }
 
-  // An invented bucket ("canberra", "AU-ACT", "AU"): the gazetteer gets a
-  // turn, and what it finds becomes the card's place and canonical cell. A
-  // bucket too wide or too shared to place is refused the way a place would be.
-  refuseUnplaceable(bucket!, hint);
-  const hit = resolvePlaceFor(bucket!, hint);
-  if (hit) return placed(bucket!, hit);
+  // An invented bucket ("canberra", "AU-ACT", "AU"). Written in full, it is
+  // placed the way a place is. Anything less that still names somewhere on
+  // the map is refused the way a place would be (26 September 2026): the
+  // gazetteer used to pick the biggest of whatever answered to it, which is
+  // the guess the posting path no longer makes.
+  const bucketAnswer = resolveFullPlace(bucket!);
+  if (bucketAnswer.kind === 'place') return placed(bucket!, bucketAnswer.place);
+  const onTheMap = resolvePlace(bucket!) ?? regionNamed(bucket!) ?? countryNamed(bucket!);
+  if (bucketAnswer.kind !== 'unknown' && onTheMap) placeFromText(bucket!);
 
   // Nothing answers to it. The card keeps the string and meets only cards
   // carrying the same one (pre-0.3.0 compatibility). With no country to

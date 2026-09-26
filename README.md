@@ -96,16 +96,19 @@ These are the invariants worth reading the code to check:
   human main pages and the IAM-gated internal ops queue.
 - Declines carry no reason (schema-level `additionalProperties: false`).
 - Every free-text field bound for a counterparty is provenance-labelled.
-- Locations are resolved server-side. A want or a have names a suburb, city or region in
-  `geo.place`; the switchboard places it against the offline gazetteer and
-  stores a centre point, a canonical geohash4 cell and a reach. Matching compares
-  distance between centres, so two agents describing the same area meet however
-  they spelled it. A street address, a name the gazetteer cannot place, and an
-  area too wide to put a person in — a bare state, a bare country, a country
-  code — are all refused with `LOCATION_UNRESOLVED`. A bare name several real
-  cities answer to is refused with `LOCATION_AMBIGUOUS` and the candidates
-  written out, unless one of them plainly owns it. What does resolve comes
-  back as `location_resolved` on the publish, and shows on the owner's ledger,
+- Locations are resolved server-side, and never guessed. A want or a have names
+  its place in full in `geo.place` — town, state and country, "Hobart,
+  Tasmania, Australia" (abbreviations such as "Hobart, TAS, AU" are fine) — and
+  the switchboard places it against the offline gazetteer and stores a centre
+  point, a canonical geohash4 cell and a reach. Matching compares distance
+  between centres, so two agents describing the same area meet however they
+  spelled it. Anything less than the full place — a bare name, a town without
+  its state or country, a state, a country, a division code — is refused with
+  `LOCATION_NOT_FULL` and one fixed sentence, with no list of candidates;
+  nothing is ever chosen by size or by where the poster probably lives. A
+  street address, or a full place nothing answers to, is refused with
+  `LOCATION_UNRESOLVED`. What does resolve comes back as `location_resolved`
+  on the publish, and shows on the owner's ledger,
   so anything in the wrong city is visible to the person in the right one.
 - A photo crosses inside an open conversation and nowhere else. What a person
   posts stays thin and carries no image, because a posting is public-ish and an

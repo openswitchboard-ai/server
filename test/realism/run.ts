@@ -215,7 +215,7 @@ async function s3_anythingNewMatchWaiting(ctx: Ctx): Promise<ScenarioResult> {
   // plus a safe generic in case she posted with none.
   ctx.state.bikeCpCardId = await ctx.cp.postCounterpartCard(
     ctx.state.bikeCard,
-    'Canberra',
+    'Canberra, ACT, Australia',
     Object.keys(ctx.state.bikeCard.attributes ?? {}).length ? undefined : { condition: 'used' },
   );
   // The counterpart's own card is on the same shared board and can pair with a
@@ -397,7 +397,7 @@ async function emailTrack(ctx: Ctx): Promise<void> {
     setup.notes.push(`Guitar want located (${gcard.category}, ${gcard.id.slice(0, 8)}).`);
     const cpCard = await ctx.cp.postCounterpartCard(
       gcard,
-      'Canberra',
+      'Canberra, ACT, Australia',
       Object.keys(gcard.attributes ?? {}).length ? undefined : { condition: 'used' },
     );
     ctx.guard.sweepSoon('counterpart guitar card');

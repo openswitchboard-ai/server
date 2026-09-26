@@ -148,19 +148,17 @@ const geoEdges: Scenario = {
         attributes: { condition: 'good', frame_size: 'L' },
       });
 
-    const ambiguous = await h.publish(a, bike('Perth'), { expectError: true });
-    assert(ambiguous.result?.code === 'LOCATION_AMBIGUOUS',
-      `Perth should be LOCATION_AMBIGUOUS, got ${JSON.stringify(ambiguous.result)}`);
-    const displays = (ambiguous.result.candidates ?? []).map((c: any) => c.display);
-    assert(displays.some((d: string) => /Perth.*AU/.test(d)) && displays.some((d: string) => /Perth.*GB/.test(d)),
-      `Perth candidates missing AU/GB: ${JSON.stringify(displays)}`);
-
-    for (const [place, label] of [['ACT', 'bare region'], ['AU', 'bare country']] as const) {
+    // Since 26 September 2026 a place is taken only written in full, town,
+    // state and country. A bare name, a bare region and a bare country all
+    // come back with one sentence and no list of towns.
+    for (const [place, label] of [['Perth', 'bare name'], ['ACT', 'bare region'], ['AU', 'bare country']] as const) {
       const r = await h.publish(a, bike(place), { expectError: true });
-      assert(r.result?.code === 'LOCATION_UNRESOLVED',
-        `${label} "${place}" should be LOCATION_UNRESOLVED, got ${JSON.stringify(r.result)}`);
+      assert(r.result?.code === 'LOCATION_NOT_FULL',
+        `${label} "${place}" should be LOCATION_NOT_FULL, got ${JSON.stringify(r.result)}`);
+      assert(r.result?.candidates === undefined,
+        `${label} "${place}" should carry no candidates, got ${JSON.stringify(r.result)}`);
     }
-    log('homonym -> AMBIGUOUS with candidates; bare region/country -> UNRESOLVED');
+    log('bare name, region and country -> NOT_FULL, no candidates');
 
     if (process.env.SIM_GEO_REACH === '0') {
       log('reach combos skipped (SIM_GEO_REACH=0)');
@@ -173,9 +171,9 @@ const geoEdges: Scenario = {
       card(type, 'goods.electronics.laptop', geo, {
         attributes: { brand: 'apple', model: 'macbook air', condition: 'good' },
       });
-    const nationwide = await h.publish(seller, laptop('HAVE', { place: 'Canberra', reach: 'country' }));
-    const farWide = await h.publish(buyer, laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25, reach: 'country' }));
-    const farNarrow = await h.publish(buyer, laptop('WANT', { place: 'Perth, Western Australia', radius_km: 25 }));
+    const nationwide = await h.publish(seller, laptop('HAVE', { place: 'Canberra, ACT, Australia', reach: 'country' }));
+    const farWide = await h.publish(buyer, laptop('WANT', { place: 'Perth, Western Australia, Australia', radius_km: 25, reach: 'country' }));
+    const farNarrow = await h.publish(buyer, laptop('WANT', { place: 'Perth, Western Australia, Australia', radius_km: 25 }));
     await Promise.all([
       h.waitCardDB(nationwide.result.intent_id, ['PUBLISHED']),
       h.waitCardDB(farWide.result.intent_id, ['PUBLISHED']),

@@ -463,7 +463,7 @@ async function openRealWire(ctx: Ctx, errand: Errand, session: string): Promise<
   if (!st.card) return;
   st.cpCardId = await ctx.cp.postCounterpartCard(
     st.card,
-    'Canberra',
+    'Canberra, ACT, Australia',
     Object.keys(st.card.attributes ?? {}).length ? undefined : { condition: 'used' },
   );
   // The counterparty card is on the same shared board and pairs with real
