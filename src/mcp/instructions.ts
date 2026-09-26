@@ -338,6 +338,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Five small things about posting, all from one probe of what really gets posted. Nothing is asked twice: once a posting has come back with questions, send it again with the reference and your human\'s answers, in whatever words and keys they came in, and it goes on. A make and a model are asked only of a product; food, a share of an order and something lent or hired are not asked for one, and a thing of food carries no condition. Any plain fact about the thing counts towards describing it, whatever you call the key; only the arrangement (when, where, price, swap) does not. A radius you chose is still confirmed once, but on the same round as the other questions, with the answer going in `reach`. And where your human\'s own country has only one town of a name, that town is used and location_resolved says which, so read it back to them. Separately, a reserved family now says what it is and why in its own sentence, and offers a shelf only where one is genuinely the same errand.',
   },
+  {
+    version: 69,
+    note:
+      'Two small things about talking, from the first production conversation. Times and dates go in messages as they are: "Thursday around 7pm" is words, and only a sum of money has to go on an offer instead. And call the other person by their first name or "they"; a name does not tell you whether to say he or she.',
+  },
 ];
 
 /**
@@ -688,7 +693,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 68,
+  version: 69,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };
