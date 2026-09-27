@@ -1110,7 +1110,7 @@ describe('counter pages: copy-cull render suite', () => {
 
   it('the dashboard leads with what is waiting, and navigation comes after it', () => {
     const html = Object.fromEntries(allPages().map((p) => [p.name, p.html])).dashboard;
-    const waiting = html.indexOf('<h2>Waiting for you</h2>');
+    const waiting = html.indexOf('<h2>Decisions</h2>');
     const nav = html.indexOf('<h2>Your switchboard</h2>');
     expect(waiting).toBeGreaterThan(-1);
     expect(nav).toBeGreaterThan(waiting);
@@ -1136,8 +1136,8 @@ describe('counter pages: copy-cull render suite', () => {
       cardCounts: { total: 0, published: 0, pending: 0 },
       pendingApprovals: [],
     });
-    expect(html).toContain('Nothing is waiting for you.');
-    expect(html).toContain('<h2>Waiting for you</h2>');
+    expect(html).toContain('Nothing to decide right now.');
+    expect(html).toContain('<h2>Decisions</h2>');
   });
 
   it('wants and haves near the end of their clock are something waiting, with no figure in the link', () => {
@@ -1154,7 +1154,7 @@ describe('counter pages: copy-cull render suite', () => {
       'out by <time datetime="2026-09-08T00:00:00.000Z" data-local="day">Tuesday 8 September</time>',
     );
     expect(html).not.toContain('&lt;time');
-    expect(html).not.toContain('Nothing is waiting for you.');
+    expect(html).not.toContain('Nothing to decide right now.');
     expect(lintHumanCopy(html)).toEqual([]);
   });
 
@@ -1251,7 +1251,7 @@ describe('the dashboard the rehearsal left notes on', () => {
       '1 message on your mountain bike conversation. Ask your assistant and it will read it to you.',
     );
     expect(html).toContain('MESSAGES WAITING');
-    expect(html).not.toContain('Nothing is waiting for you.');
+    expect(html).not.toContain('Nothing to decide right now.');
   });
 
   it('counts the rest of them, and reads them out in the plural', () => {
@@ -1267,7 +1267,7 @@ describe('the dashboard the rehearsal left notes on', () => {
       'Agreed at $415 AUD on your mountain bike match. Sort pickup in the conversation; the switchboard&#39;s part is done.',
     );
     expect(html).toContain('href="/matches/m-1"');
-    expect(html).not.toContain('Nothing is waiting for you.');
+    expect(html).not.toContain('Nothing to decide right now.');
   });
 
   // 2026-09-11: the page holds the decisions and nothing else. The one-tap
@@ -1296,7 +1296,7 @@ describe('the dashboard the rehearsal left notes on', () => {
 
   it('an account with nothing to decide still says so', () => {
     const html = dash();
-    expect(html).toContain('Nothing is waiting for you.');
+    expect(html).toContain('Nothing to decide right now.');
   });
 });
 
