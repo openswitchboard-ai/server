@@ -55,7 +55,7 @@ import {
   readerSide,
   readersOwnThingLabel,
 } from '../domain/matches.js';
-import { categoryLeafLabel } from '../domain/matchRules.js';
+import { categoryLeafLabel, ownThingPhrase } from '../domain/matchRules.js';
 import {
   draftToFields,
   newestOfferDraft,
@@ -128,6 +128,7 @@ import {
   groupWaitingByMatch,
   matchOfLink,
   mergeSteps,
+  stepTime,
   type MatchBoxView,
 } from './matchStory.js';
 import { buildSteps, readStoryFacts } from '../domain/matchStory.js';
@@ -155,6 +156,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * the email and then the page meets the same words.
  */
 const phrase = (category: string) => categoryPhrase(category);
+
+/**
+ * The reader's own want or have inside a sentence on a press page, in their
+ * own words: their posting's kind where it has one, the shelf's phrase only
+ * where it has none (27 September 2026: "for Road bikes" was the shelf).
+ * Only ever the reader's own posting; the other side's words are theirs.
+ */
+async function readersOwnPhrase(
+  m: { account_want: string; card_want: string; card_have: string; category: string },
+  accountId: string,
+): Promise<string> {
+  const cardId = accountId === m.account_want ? m.card_want : m.card_have;
+  const r = await getPool().query('SELECT category, kind FROM cards WHERE id = $1', [cardId]);
+  return ownThingPhrase(r.rows[0]?.category ?? m.category, r.rows[0]?.kind ?? null).words;
+}
 
 /** Every registered human-page route (method + url), recorded at registration
  *  time so the isolation test can enumerate the ENTIRE route class. */
@@ -1293,6 +1309,12 @@ in on this device and lets you approve what is waiting.</p>
         });
         return false;
       }
+      return pinCheck(s, reply, pin);
+    };
+
+    /** The PIN itself: checked, counted against the lockout, and on success
+     *  the window opens for the presses that may lean on it. */
+    const pinCheck = async (s: Session, reply: FastifyReply, pin: string): Promise<boolean> => {
       const check = await verifyPinAttempt(s.accountId!, pin);
       if (check.ok) {
         await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
@@ -1309,6 +1331,60 @@ in on this device and lets you approve what is waiting.</p>
       }
       return false;
     };
+
+    // ------------------------------------------------------------------
+    // MONEY ALWAYS TAKES A FRESH CEREMONY (Lachlan, 27 September 2026).
+    //
+    // Accepting a figure, sending one, and approving or confirming a payment
+    // or a settlement are checked here, at the press, whatever window a
+    // sign-in or an earlier press opened (credentials.ts MONEY_ACTIONS). A
+    // passkey comes inside the form itself (the page's script puts the
+    // assertion in a `passkey` field instead of elevating first), so what is
+    // verified is a ceremony made for this press. Otherwise the PIN is
+    // checked. An account holding only a passkey is never asked for a PIN it
+    // does not have.
+    // ------------------------------------------------------------------
+    const moneyCeremony = async (s: Session, reply: FastifyReply, b: any): Promise<boolean> => {
+      const passkey = typeof b?.passkey === 'string' ? b.passkey : '';
+      if (passkey) {
+        const challenge = await sess.takeWebauthnChallenge(s.id);
+        let who: string | undefined;
+        if (challenge) {
+          try {
+            who = await wa.verifyAuthentication(cfg, challenge, JSON.parse(passkey));
+          } catch {
+            who = undefined;
+          }
+        }
+        if (!who || who !== s.accountId) {
+          void reply.code(401).send({
+            error: 'passkey_failed',
+            error_description: 'That passkey did not confirm it. Go back and press again.',
+          });
+          return false;
+        }
+        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+        return true;
+      }
+      const a: any = await getAccount(s.accountId!);
+      if (!a?.pin_hash) {
+        void reply.code(401).send({
+          error: 'ceremony_required',
+          error_description: 'Money takes your passkey every time. Go back and press again with it.',
+        });
+        return false;
+      }
+      return pinCheck(s, reply, String(b?.pin ?? ''));
+    };
+
+    /** The ceremony for one press: fresh for money, the window for the rest. */
+    const pressCeremony = async (
+      s: Session,
+      reply: FastifyReply,
+      b: any,
+      action: string,
+    ): Promise<boolean> =>
+      creds.isMoneyAction(action) ? moneyCeremony(s, reply, b) : ceremony(s, reply, String(b?.pin ?? ''));
 
     counter.post('/pin/verify', async (req, reply) => {
       const s = await requireSession(req, reply);
@@ -1327,7 +1403,7 @@ in on this device and lets you approve what is waiting.</p>
       refId: string,
     ): Promise<pages.ApprovalView | { error: string }> => {
       const anomalies: string[] = [];
-      const facts: { k: string; v: string }[] = [];
+      const facts: pages.ApprovalView['facts'] = [];
       let collectProfile: pages.ApprovalView['collectProfile'];
       if (action === 'settlement-approve') {
         const s = await settlements.getSettlement(refId);
@@ -1381,18 +1457,18 @@ in on this device and lets you approve what is waiting.</p>
         if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
           return { error: `This offer is ${o.state} — nothing to decide.` };
         }
-        // Their agent has not weighed in on this one. For most people the
-        // email is the delivery and nothing is on its way, so the nudge is an
-        // offer of a second opinion, never a suggestion to wait.
-        if (o.state === 'proposed') {
-          anomalies.push(
-            'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details. It is yours to accept now either way.',
-          );
-        }
+        // The second-opinion nudge that stood here went on 27 September 2026:
+        // the page accepts, and anything else about the number is said to the
+        // assistant (OFFER_ELSEWHERE_LINE, under the button). Real warnings —
+        // an unusual amount, a brand-new account — still show below.
+        const om = await getMatch(o.match_id);
         facts.push(
           { k: 'You are agreeing to', v: `${Number(o.amount)} ${o.ccy}` },
-          { k: 'For', v: categoryLeafLabel(o.category) },
-          { k: 'Offer expires', v: new Date(o.expiry).toUTCString() },
+          // The thing in the reader's own words, never the shelf's.
+          { k: 'For', v: om ? await readersOwnThingLabel(om, accountId) : categoryLeafLabel(o.category) },
+          // In the account's own clock where one is set; otherwise UTC,
+          // labelled, and rewritten by the page's clock script.
+          { k: 'Offer expires', v: stepTime(new Date(o.expiry), await getTimezone(accountId)), raw: true },
         );
         const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
         if (amountAnomaly) anomalies.push(amountAnomaly.text);
@@ -1451,6 +1527,8 @@ in on this device and lets you approve what is waiting.</p>
         noLabel: 'Not now',
         // Elevation is stamped on by the caller, which has the session.
         ...(await ceremonyFor(accountId, false)),
+        // Money asks at the press, whatever the window (credentials.ts).
+        money: creds.isMoneyAction(row.action),
       };
       if (row.action === 'offer-send') {
         const m = await getMatch(row.ref_id);
@@ -1480,7 +1558,7 @@ in on this device and lets you approve what is waiting.</p>
         );
         return {
           ...base,
-          question: `Send ${figure} to ${name ?? 'the other side'}${aboutThing(phrase(m.category), m.account_have === accountId ? 'have' : 'want')}?`,
+          question: `Send ${figure} to ${name ?? 'the other side'}${aboutThing(await readersOwnPhrase(m, accountId), m.account_have === accountId ? 'have' : 'want')}?`,
           detail,
           yesLabel: 'Send',
           needsPin: true,
@@ -1488,7 +1566,7 @@ in on this device and lets you approve what is waiting.</p>
       }
       if (row.action === 'offer-accept') {
         const r = await getPool().query(
-          `SELECT o.*, m.category, m.stage, m.account_want, m.account_have FROM offers o
+          `SELECT o.*, m.category, m.stage, m.account_want, m.account_have, m.card_want, m.card_have FROM offers o
            JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
           [row.ref_id],
         );
@@ -1520,7 +1598,7 @@ in on this device and lets you approve what is waiting.</p>
         const detail: string[] = [pages.OFFER_ELSEWHERE_LINE];
         return {
           ...base,
-          question: `${name ?? 'The other side'} ${o.account_have === accountId ? 'offers' : 'wants'} ${figure}${aboutThing(phrase(o.category), o.account_have === accountId ? 'have' : 'want')}.`,
+          question: `${name ?? 'The other side'} ${o.account_have === accountId ? 'offers' : 'wants'} ${figure}${aboutThing(await readersOwnPhrase(o, accountId), o.account_have === accountId ? 'have' : 'want')}.`,
           detail,
           yesLabel: 'Accept',
           needsPin: true,
@@ -1626,7 +1704,7 @@ in on this device and lets you approve what is waiting.</p>
         const sent = w.sent === 1 ? 'One message has gone' : `${w.sent} messages have gone`;
         return {
           ...base,
-          question: `Your assistant has been talking with ${name ?? 'the other person'}'s assistant about ${theirThing(phrase(m.category), readerSide(m, accountId))}. Keep the conversation going?`,
+          question: `Your assistant has been talking with ${name ?? 'the other person'}'s assistant about ${theirThing(await readersOwnPhrase(m, accountId), readerSide(m, accountId))}. Keep the conversation going?`,
           detail: [
             `${sent} from your side so far.`,
             'Saying yes gives your assistant another run of messages on this one. Not now leaves it paused: nothing is lost, anything they send still reaches you, and you can start it again whenever you like.',
@@ -1643,7 +1721,7 @@ in on this device and lets you approve what is waiting.</p>
       }
       // negotiation-auto
       const r = await getPool().query(
-        'SELECT category, type FROM cards WHERE id = $1 AND account_id = $2',
+        'SELECT category, type, kind FROM cards WHERE id = $1 AND account_id = $2',
         [row.ref_id, accountId],
       );
       const card = r.rows[0];
@@ -1661,7 +1739,7 @@ in on this device and lets you approve what is waiting.</p>
       if (m.step !== undefined) bits.push(`move in steps of ${templateMoney(m.step, m.ccy)}`);
       return {
         ...base,
-        question: `Let your assistant negotiate the ${phrase(card.category)}: ${bits.join(', ')}?`,
+        question: `Let your assistant negotiate the ${ownThingPhrase(card.category, card.kind).words}: ${bits.join(', ')}?`,
         detail: [
           'Between those numbers your assistant can put figures on the table without asking you each time. Anything outside them still comes back to you.',
           'Accepting an offer is still yours, every single time.',
@@ -1743,7 +1821,7 @@ in on this device and lets you approve what is waiting.</p>
       return {
         token,
         who: name ?? 'the other side',
-        thing: phrase(m.category),
+        thing: await readersOwnPhrase(m, accountId),
         maxMb: Math.round(MAX_PHOTO_BYTES / (1024 * 1024)),
         ttlDays: PHOTO_TTL_DAYS,
         captionMax: MAX_CAPTION_CHARS,
@@ -1890,7 +1968,7 @@ in on this device and lets you approve what is waiting.</p>
         if ('error' in q) {
           return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
         }
-        q.elevated = sess.isElevated(s);
+        q.elevated = creds.elevationFor(row.action, sess.isElevated(s));
         return html(reply, pages.oneQuestionPage(q));
       }
       // A settlement approval burns on the PRESS, the way the one-question
@@ -1902,7 +1980,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!burnsOnPress) await consumeLink(row.id);
       const v = await approvalView(s.accountId, row.action, row.ref_id);
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = sess.isElevated(s);
+      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
       if (burnsOnPress) v.linkToken = token;
       return html(reply, pages.mainPage(v));
     });
@@ -2113,7 +2191,7 @@ in on this device and lets you approve what is waiting.</p>
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
       // someone the link their assistant gave them.
       if (q.needsPin) {
-        const okNow = await ceremony(s as Session, reply, String(b.pin ?? ''));
+        const okNow = await pressCeremony(s as Session, reply, b, row.action);
         if (!okNow) return;
       }
       // Single-use, enforced here: whoever wins the UPDATE acts, and a second
@@ -2276,7 +2354,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const v = await approvalView(s.accountId!, 'offer-accept', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = sess.isElevated(s);
+      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
       return html(reply, pages.mainPage(v));
     });
 
@@ -2285,7 +2363,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const v = await approvalView(s.accountId!, 'stage3-disclosure', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = sess.isElevated(s);
+      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
       return html(reply, pages.mainPage(v));
     });
 
@@ -2294,7 +2372,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const v = await approvalView(s.accountId!, 'settlement-approve', String((req.params as any).id));
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = sess.isElevated(s);
+      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
       return html(reply, pages.mainPage(v));
     });
 
@@ -2355,8 +2433,9 @@ in on this device and lets you approve what is waiting.</p>
           profileToSave = checked.value;
         }
       }
-      // Sensitive action: PIN (or a passkey ceremony that elevated the session).
-      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
+      // Sensitive action. Money (an offer, a settlement) takes the PIN or the
+      // passkey at this press; the names step may lean on the window.
+      const okNow = await pressCeremony(s, reply, b, action);
       if (!okNow) return;
       // The link this page came from, spent here rather than when the page was
       // opened. After the ceremony, so a mistyped PIN costs a retype and not
@@ -2715,7 +2794,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await pressCeremony(s, reply, req.body, 'settlement-confirm');
       if (!okNow) return;
       let row: settlements.SettlementRow;
       try {
@@ -2890,7 +2969,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await pressCeremony(s, reply, req.body, 'settlement-return-received');
       if (!okNow) return;
       return settlementStep(reply, async () => {
         const row = await settlements.confirmReturnReceived(
@@ -2938,7 +3017,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!found) return settlementNotFound(reply);
       // Proposing IS agreeing — this stamps the proposer's own approval on two
       // figures — so it takes what approving the other side's figures takes.
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await pressCeremony(s, reply, req.body, 'settlement-resolution');
       if (!okNow) return;
       const b: any = req.body ?? {};
       const money = (raw: unknown) => {
@@ -2989,7 +3068,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const found = await loadSettlementFor(s.accountId!, String((req.params as any).id));
       if (!found) return settlementNotFound(reply);
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      const okNow = await pressCeremony(s, reply, req.body, 'settlement-resolution-approve');
       if (!okNow) return;
       const b: any = req.body ?? {};
       return settlementStep(reply, async () => {
@@ -3467,6 +3546,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const note = validateOfferNote(form.note);
       if (!note.ok) return bad(note.error);
       const days = [3, 7, 14].includes(Number(b.good_for)) ? Number(b.good_for) : 7;
+      // Sending a figure is money: the PIN or the passkey at this press, after
+      // the boxes are checked so a typo never costs a PIN attempt.
+      if (!(await pressCeremony(s, reply, b, 'offer-send'))) return;
 
       let sameFigure: string | undefined;
       try {

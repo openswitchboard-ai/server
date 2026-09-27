@@ -388,7 +388,7 @@ async function sweepFigureAuthoring(
     ? `their agent's ${draft.amount} ${draft.ccy} came back refused and was parked for them`
     : 'their agent asked them in so many words to enter a figure on their page';
   try {
-    const res = await humanOffer(side.jar, m.id, { amount, ccy: 'AUD' });
+    const res = await humanOffer(side.jar, m.id, { amount, ccy: 'AUD', pin: side.actor.pin });
     const out = await res.text();
     const ok = res.status === 200 && /on the table for the other side/i.test(out);
     if (ok) side.authored = amount;

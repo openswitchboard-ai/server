@@ -757,6 +757,7 @@ export async function runMoney(
     form({
       refund_to_buyer: (REFUND_PART / 100).toFixed(2),
       release_to_seller: (RELEASE_PART / 100).toFixed(2),
+      pin: seller.pin,
     }),
   );
   const agreed = await counterFetch(

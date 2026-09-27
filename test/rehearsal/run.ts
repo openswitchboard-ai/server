@@ -960,7 +960,7 @@ async function oneRun(
       ? { status: 200, body: 'dry' }
       : already.length
         ? { status: 200, body: `already on the table: $${already[0].amount}` }
-        : await typeFigure(sides.buyer.actor.jar, match.id, figure);
+        : await typeFigure(sides.buyer.actor.jar, match.id, figure, sides.buyer.actor.pin);
     record(
       typed.status === 200
         ? pass(

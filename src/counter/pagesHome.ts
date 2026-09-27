@@ -1016,6 +1016,7 @@ ${
     amount: useDraft ? v.draft!.amount : v.form?.amount,
     note: useDraft ? v.draft!.note : v.form?.note,
     draft: useDraft,
+    ...(v.ceremony ? { ceremony: v.ceremony } : {}),
     heading: v.myOfferOnTable
       ? ''
       : useDraft
@@ -1051,7 +1052,8 @@ ${rows}
 <a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
 <a class="btn secondary" href="/">Back</a>
 ${verdictLine(v)}
-${reportLine(v)}`);
+${reportLine(v)}
+${v.ceremony ? cpages.ceremonyScript(v.ceremony, cpages.moneyCeremony(v.ceremony)) : ''}`);
 }
 
 /**

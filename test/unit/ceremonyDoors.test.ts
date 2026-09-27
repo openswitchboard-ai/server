@@ -79,7 +79,7 @@ describe('the doors that ask again', () => {
   it('every one of them runs the ceremony before it acts', () => {
     for (const path of SENSITIVE) {
       const body = HANDLERS.get(path)!;
-      expect(body, `POST ${path} does not run the ceremony`).toMatch(/await ceremony\(/);
+      expect(body, `POST ${path} does not run the ceremony`).toMatch(/await (ceremony|pressCeremony)\(/);
       expect(body, `POST ${path} runs the ceremony without honouring its answer`).toMatch(
         /if \(!okNow\) return;/,
       );
@@ -111,7 +111,7 @@ describe('the one door that must NOT ask again', () => {
   it('runs no ceremony', () => {
     for (const path of ONE_TAP) {
       expect(HANDLERS.has(path)).toBe(true);
-      expect(HANDLERS.get(path)!).not.toMatch(/await ceremony\(/);
+      expect(HANDLERS.get(path)!).not.toMatch(/await (ceremony|pressCeremony)\(/);
     }
   });
 

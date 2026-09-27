@@ -100,12 +100,15 @@ export async function typeFigure(
   jar: Jar,
   matchId: string,
   amount: number,
+  // Sending a figure is money, and money takes the PIN at the press whatever
+  // window the session is in (27 September 2026).
+  pin: string,
   ccy = 'AUD',
 ): Promise<PressOutcome> {
   const res = await counterFetch(
     jar,
     `/matches/${matchId}/offer`,
-    form({ amount: String(amount), ccy, good_for: '7' }),
+    form({ amount: String(amount), ccy, good_for: '7', pin }),
   );
   return { status: res.status, body: strip(await res.text()).slice(0, 300) };
 }
