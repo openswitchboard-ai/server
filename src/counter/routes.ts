@@ -124,6 +124,7 @@ import { isEmailQueueFull } from '../email/send.js';
 import { emailHashes } from '../domain/accounts.js';
 import * as links from './links.js';
 import {
+  boxTitle,
   groupWaitingByMatch,
   matchOfLink,
   mergeSteps,
@@ -476,6 +477,37 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const lastAt = (b: MatchBoxView) =>
         Math.max(0, ...b.steps.filter((x) => !x.noTime).map((x) => x.at.getTime() || 0));
       matchBoxes.sort((x, y) => lastAt(y) - lastAt(x));
+      // IN PROGRESS (27 September 2026): every other open match, one line
+      // each, so a person sees all that is going on without a decision
+      // attached. The line is the latest step of the same story the boxes
+      // tell, and it links to the match's own page for the rest.
+      const openMatches = await getPool().query(
+        `SELECT id::text FROM matches
+          WHERE (account_want = $1 OR account_have = $1) AND state = 'open'
+          ORDER BY created_at DESC LIMIT 20`,
+        [s.accountId],
+      );
+      const inProgress: { href: string; title: string; last: string; at: number }[] = [];
+      for (const { id } of openMatches.rows as { id: string }[]) {
+        if (grouped.byMatch.has(id)) continue;
+        let story: Awaited<ReturnType<typeof readStoryFacts>>;
+        try {
+          story = await readStoryFacts(s.accountId, id);
+        } catch {
+          story = undefined;
+        }
+        if (!story) continue;
+        const steps = buildSteps(story.facts);
+        const last = steps[steps.length - 1];
+        if (!last) continue;
+        inProgress.push({
+          href: `/matches/${id}`,
+          title: boxTitle(story.head),
+          last: last.text,
+          at: last.at?.getTime?.() || 0,
+        });
+      }
+      inProgress.sort((x, y) => y.at - x.at);
       // A match whose story could not be read falls back to the plain cards.
       const loose = openLinks.filter((l) => {
         const m = matchOfLink(l);
@@ -593,6 +625,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             : {}),
           pendingApprovals,
           matchBoxes,
+          inProgress: inProgress.map(({ href, title, last }) => ({ href, title, last })),
           timezone,
           messagesWaiting: messagesWaiting.filter((m) => unboxed.has(String(m.match_id))).map((m) => ({
             matchId: m.match_id,
