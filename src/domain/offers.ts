@@ -1,4 +1,4 @@
-import { aboutThing } from '../email/templates.js';
+import { aboutThing, offerAmountInWords } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { decryptFields, writeConsentEvent } from '../crypto.js';
 import { assertNotSwap, getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
@@ -123,6 +123,89 @@ async function ownOfferAmounts(accountId: string, matchId: string): Promise<numb
 }
 
 /**
+ * THE SAME FIGURE, PUT UP AGAIN (27 September 2026, production).
+ *
+ * A buyer's $280 was on the table, the seller countered at $290 with a note,
+ * and the buyer's assistant tried to send $280 again with "take it or leave
+ * it". On Pass on that minted a page to send $280, and the main page showed it
+ * beside the seller's $290 as two cards nobody could put in order. Pressed, it
+ * would have put a second $280 beside the first.
+ *
+ * A figure that is already open from this side is not sent twice. The answer
+ * says it is still on the table, in one sentence to say as it stands, and any
+ * note that came with it goes to the other side as an ordinary message, down
+ * the channel's own send path with every check that path makes — so a figure
+ * in the words is refused exactly as it is in any message.
+ */
+export const sameFigureSentence = (amount: number, ccy: string): string =>
+  `Your ${offerAmountInWords(amount, ccy)} is still on the table.`;
+
+export const SAME_FIGURE_NOTE_SENT = 'Your note went to them as a message.';
+
+export interface SameFigureAnswer {
+  already_on_table: true;
+  offer_id: string;
+  amount: number;
+  ccy: string;
+  /** The sentence to say, as it stands. */
+  say: string;
+  /** Present when a note came with the figure: whether it went as a message. */
+  note_sent?: boolean;
+}
+
+/** This side's own offer at exactly this figure, still open, if there is one. */
+async function ownOpenOfferAt(
+  accountId: string,
+  matchId: string,
+  amount: number,
+  ccy: string,
+): Promise<OfferRow | undefined> {
+  const r = await getPool().query(
+    `SELECT * FROM offers
+      WHERE match_id = $1 AND proposer_account = $2
+        AND state IN ('proposed', 'awaiting-human') AND expiry > now()
+        AND amount = $3::numeric AND upper(ccy) = $4
+      ORDER BY created_at DESC LIMIT 1`,
+    [matchId, accountId, amount, String(ccy).toUpperCase()],
+  );
+  return r.rows[0];
+}
+
+async function answerSameFigure(
+  cfg: Config,
+  accountId: string,
+  o: OfferRow,
+  note: string | undefined,
+): Promise<SameFigureAnswer> {
+  const amount = Number(o.amount);
+  let say = sameFigureSentence(amount, o.ccy);
+  const out: SameFigureAnswer = {
+    already_on_table: true,
+    offer_id: o.id,
+    amount,
+    ccy: o.ccy,
+    say,
+  };
+  if (note && note.trim()) {
+    try {
+      const { sendMessage } = await import('./channel.js');
+      await sendMessage(accountId, o.match_id, note, cfg);
+      out.note_sent = true;
+      say = `${say} ${SAME_FIGURE_NOTE_SENT}`;
+    } catch (e: any) {
+      out.note_sent = false;
+      const why =
+        e instanceof OsbError
+          ? String(e.payload?.human_action ?? '').trim()
+          : String(e?.message ?? '').trim();
+      say = `${say} The note did not go${why ? `: ${why.replace(/\.?$/, '.')}` : '.'}`;
+    }
+  }
+  out.say = say;
+  return out;
+}
+
+/**
  * Put a figure on the table.
  *
  * `author` is the whole of the new rule. A figure authored by the human — typed
@@ -171,6 +254,15 @@ export async function proposeOffer(
   // unchecked characters in front of a stranger.
   const note = validateOfferNote(input.message);
   if (!note.ok) throw Object.assign(new Error(note.error), { validation: ['message'] });
+  // The same figure again, while this side's own is still open: nothing new
+  // goes on the table, no page is minted for it, and a note rides as a message.
+  const standing = await ownOpenOfferAt(
+    accountId,
+    m.id,
+    Math.round(Number(input.amount) * 100) / 100,
+    input.ccy,
+  );
+  if (standing) return answerSameFigure(cfg, accountId, standing, note.value);
   if (author === 'agent') {
     // The offer's own amount has been checked against what the human wrote.
     // A SECOND figure in the note beside it has been checked by nothing, and

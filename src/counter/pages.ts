@@ -204,6 +204,37 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .empty { color:var(--muted); font-size:var(--t-sm); border:1px dashed var(--line);
   border-radius:var(--r); padding:var(--s4); margin:var(--s3) 0; }
 
+/* ---- One box per match: its story as a timeline, its buttons underneath ---- */
+.matchbox { border:1.5px solid var(--accent); background:var(--card); border-radius:var(--r);
+  padding:var(--s4); margin:var(--s3) 0; }
+h3.mb-title { font-family:var(--sans); font-weight:700; font-size:var(--t-lg); line-height:1.3;
+  text-transform:none; letter-spacing:0; color:var(--ink); margin:var(--s2) 0 var(--s3);
+  overflow-wrap:anywhere; }
+ol.story { list-style:none; margin:0; padding:0; }
+ol.story > li { position:relative; padding:0 0 var(--s3) 1.6rem; }
+ol.story > li:last-child { padding-bottom:0; }
+/* The line down the left: from this dot to the next one. */
+ol.story > li::before { content:''; position:absolute; left:calc(.45rem - 1px); top:.55rem;
+  bottom:-.45rem; width:2px; background:var(--line); }
+ol.story > li:last-child::before { display:none; }
+ol.story .dot { position:absolute; left:.1rem; top:.4rem; width:.7rem; height:.7rem;
+  border-radius:50%; background:var(--line); border:2px solid var(--line); box-sizing:border-box; }
+ol.story li.now .dot { background:var(--card); border-color:var(--accent); border-width:2.5px; }
+.st-line { font-family:var(--sans); font-size:var(--t-sm); line-height:1.4; }
+ol.story li.past .st-line { color:var(--muted); }
+ol.story li.now .st-line { color:var(--ink); font-weight:600; }
+.st-tag { display:inline-block; font-family:var(--sans); font-weight:600; font-size:.7rem;
+  letter-spacing:.03em; padding:.05rem .45rem; border-radius:var(--r-pill);
+  border:1px solid var(--line); color:var(--muted); white-space:nowrap; vertical-align:1px; }
+ol.story li.now .st-tag { border-color:var(--accent); color:var(--accent); }
+.st-quote { margin:var(--s1) 0 0; padding-left:var(--s3); border-left:2px solid var(--line);
+  font-style:italic; font-size:var(--t-sm); color:var(--ink); overflow-wrap:anywhere; }
+ol.story li.past .st-quote { color:var(--muted); }
+.st-when { font-family:var(--mono); font-size:var(--t-xs); color:var(--muted); margin-top:2px; }
+.story-more { font-family:var(--sans); font-size:var(--t-xs); color:var(--muted); margin:0 0 var(--s2); }
+.mb-actions { display:flex; flex-wrap:wrap; gap:var(--s2); margin-top:var(--s4); }
+.mb-actions .btn { flex:1 1 11rem; margin-top:0; padding:.7rem 1rem; font-size:var(--t-sm); }
+
 /* ---- Past connections: finished, filed away, kept for retrieval ---- */
 .past-connections { border-top:1px solid var(--line); margin:var(--s5) 0 0; padding-top:var(--s4); }
 .small-head { font-family:var(--sans); font-weight:700; font-size:var(--t-md); margin:0 0 var(--s2); }
@@ -279,7 +310,8 @@ const LOCAL_TIME_SCRIPT = `<script>
 (function () {
   var shapes = {
     minute: { dateStyle: 'medium', timeStyle: 'short' },
-    day: { weekday: 'long', day: 'numeric', month: 'long' }
+    day: { weekday: 'long', day: 'numeric', month: 'long' },
+    short: { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }
   };
   var nodes = document.querySelectorAll('time[data-local]');
   for (var i = 0; i < nodes.length; i++) {

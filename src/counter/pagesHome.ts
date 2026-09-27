@@ -39,6 +39,8 @@ import {
   type OfferDraftView,
 } from './pages.js';
 import * as cpages from './pages.js';
+import { matchBoxHtml, timelineHtml, type MatchBoxView } from './matchStory.js';
+import type { MatchStep } from '../domain/matchStory.js';
 
 /**
  * A rendered figure ("415 AUD") said the way a person says it ("$415 AUD").
@@ -300,6 +302,14 @@ export interface DashboardView {
    *  render no such press; the kill switch falls back to asking for a PIN. */
   ceremony?: cpages.CeremonyView;
   cardCounts: { total: number; published: number; pending: number };
+  /** One box per match with anything waiting: its story and its buttons.
+   *  Drawn first under Decisions. */
+  matchBoxes?: MatchBoxView[];
+  /** The account's IANA zone, for the times in the boxes. Absent = UTC,
+   *  labelled, rewritten into the reader's clock by the page. */
+  timezone?: string | null;
+  /** What is waiting that belongs to no match: a shelf to pick, a posting
+   *  screening turned away. Plain cards, as they always were. */
   pendingApprovals: PendingApprovalItem[];
   /** Cards whose clock runs out within the week, if any do. `soonest` is
    *  localTime(…, 'day') markup, so the day reads in the person's own clock. */
@@ -397,6 +407,11 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     )
     .join('');
 
+  // 1a. One box per match. Everything waiting on one match sits together in
+  //     one box, under a timeline of what has happened on it, so an offer and
+  //     the reply to it read in the order they happened (27 September 2026).
+  const boxes = (v.matchBoxes ?? []).map((b) => matchBoxHtml(b, v.timezone)).join('');
+
   // 2. There used to be a window on a clock here: a want or have that several
   //    people had come forward on froze until its timer ran out, and this card
   //    was where the holder closed it early. Nothing blocks a holder now
@@ -442,6 +457,7 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     : '';
 
   const nothingWaiting =
+    !boxes &&
     !v.pendingApprovals.length &&
     !renewals &&
     !messages &&
@@ -484,6 +500,7 @@ var n=0,t=setInterval(function(){if(++n>40){clearInterval(t);return;}if(!documen
 ${emailBanner}
 <h2>Decisions</h2>
 ${nothingWaiting ? `<div class="empty">Nothing to decide right now.</div>` : ''}
+${boxes}
 ${approvals}
 ${agreed}
 ${messages}
@@ -824,6 +841,11 @@ export interface MatchOffersView {
    *  Absent means "ask nothing", which is what the standalone page renderers
    *  in the tests want. */
   ceremony?: cpages.CeremonyView;
+  /** Everything that has happened on this match, oldest first: the same
+   *  timeline the main page's box shows, with nothing cut. */
+  story?: MatchStep[];
+  /** The account's IANA zone for those times, where one is set. */
+  timezone?: string | null;
 }
 
 /**
@@ -1007,6 +1029,8 @@ ${foldedDetail('Change your number', form)}`
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${reply}
+${v.story?.length ? `<h2>What has happened</h2>
+${timelineHtml(v.story, { timezone: v.timezone })}` : ''}
 ${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
