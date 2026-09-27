@@ -22,6 +22,7 @@ import * as nearMiss from '../domain/nearMisses.js';
 import * as offers from '../domain/offers.js';
 import * as refine from '../domain/refine.js';
 import * as settlements from '../domain/settlements.js';
+import { leanSweep } from '../domain/leanSweep.js';
 import { checkReadRate, checkWriteRate } from '../domain/quotas.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
 import { APPROVAL_LINK_TTL_MINUTES } from '../counter/links.js';
@@ -758,6 +759,17 @@ function ok(data: unknown): ToolResult {
 }
 
 /**
+ * The same answer with its text unindented. Only the lean sweep uses it: a
+ * sweep is the longest thing an agent reads, and two spaces of indentation
+ * per level of nesting is a great deal of it for a model that reads every
+ * token (domain/leanSweep.ts).
+ */
+function okCompact(data: unknown): ToolResult {
+  const r = ok(data);
+  return { ...r, content: [{ type: 'text', text: JSON.stringify(data) }] };
+}
+
+/**
  * The refusals that ARE the switchboard working, against the plain word each
  * one is, for an agent to branch on (Lachlan, 2026-09-13).
  *
@@ -1286,12 +1298,19 @@ async function dispatchToolInner(
           // is only true for a human the switchboard posts to (email/send.ts
           // drops the rest). One read for fifty introductions.
           const hearsVia = await getHearsVia(accountId);
+          // THE LEAN SWEEP (domain/leanSweep.ts) honours intro_id without a
+          // step: that one introduction, in full. It is how the details of an
+          // entry carried in its compact form are fetched. Off the flag the
+          // sweep is exactly as it was.
+          const lean = cfg.leanSweep === true;
+          const onlyOne = lean && one ? one : undefined;
           const withNotes = await matches.checkMatches(
             cfg,
             accountId,
             args?.intent_id,
             standing,
             hearsVia,
+            onlyOne,
           );
           // One count for the whole sweep tells a polling agent where there is
           // something to collect, so noticing a waiting message never depends
@@ -1389,8 +1408,12 @@ async function dispatchToolInner(
           // their own posting. It rides the sweep because until now the only
           // place a near miss appeared was a number in a weekly email.
           const nearMisses = await nearMiss.nearMissesForAccount(accountId);
-          return ok({
-            introductions: withNotes,
+          const introductions = lean
+            ? await leanSweep(withNotes as any[], { full: !!onlyOne })
+            : withNotes;
+          return (lean ? okCompact : ok)({
+            ...(lean ? { schema_version: SCHEMA_VERSION } : {}),
+            introductions,
             ...(nearMisses.length ? { near_misses: nearMisses } : {}),
             arrangement: standing,
             arrangement_note: arrangement.arrangementNote(standing),

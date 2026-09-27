@@ -85,7 +85,11 @@ const designedMatch: Scenario = {
       check.matchesView(r, `${a.label} sweep`);
       const entry = r.result.introductions.find((m: any) => m.intro_id === matchId);
       assert(entry, `${a.label} does not see the designed match`);
-      assert(entry.signal?.kind === 'intro.signal', `${a.label} missing stage-1 signal`);
+      // The lean sweep (on in dev) drops the envelope the entry already carries.
+      assert(
+        entry.signal && (entry.signal.kind === undefined || entry.signal.kind === 'intro.signal'),
+        `${a.label} missing stage-1 signal`,
+      );
       assert(entry.signal.category === CAM, `${a.label} signal category wrong`);
       assert(entry.signal.score === undefined, `${a.label} signal carries a score (I7)`);
       // The posting is the statement of interest: a new introduction arrives
