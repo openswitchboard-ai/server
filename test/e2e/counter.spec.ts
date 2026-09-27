@@ -160,7 +160,7 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   // it — the order is the whole point of the page.
   await expect(page.getByRole('heading', { name: 'Waiting for you' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Your switchboard' })).toBeVisible();
-  await expect(page.getByText('Nothing is waiting for you.')).toBeVisible();
+  await expect(page.getByText('Nothing to decide right now.')).toBeVisible();
   // Patch is on the page, and he is a real image served with a year of cache.
   await expect(page.locator('header.site img.patch')).toBeVisible();
   const patch = await page.request.get(`${COUNTER_URL}/assets/patch.png`);

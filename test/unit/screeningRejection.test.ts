@@ -199,7 +199,7 @@ describe('main-page dashboard: something that failed screening', () => {
     const res = await get('/');
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('pass screening');
-    expect(res.body).toContain('Nothing is waiting for you.');
+    expect(res.body).toContain('Nothing to decide right now.');
   });
 });
 
