@@ -248,6 +248,40 @@ export interface PendingApprovalItem {
   cta?: string;
 }
 
+/**
+ * One plain line for an open request, by what its page asks. The same words
+ * for every kind of thing: only the shelf the posting sits on changes, and it
+ * is left out where there is none.
+ */
+export function openRequestLabel(action: string, thing?: string): string {
+  const on = thing ? ` on your ${thing} match` : '';
+  switch (action) {
+    case 'conversation-photo':
+      return `Send a photo${on}`;
+    case 'stage3-disclosure':
+      return `Share your first name and suburb${on}?`;
+    case 'offer-send':
+      return `Send your number${on}?`;
+    case 'offer-accept':
+      return `Take the offer${on}?`;
+    case 'negotiation-auto':
+      return thing
+        ? `Let your assistant talk numbers on your ${thing}?`
+        : 'Let your assistant talk numbers?';
+    case 'conversation-renew':
+      return `Keep talking${on}?`;
+    case 'report':
+      return `Report the person${on}`;
+    case 'shelf-pick':
+      return 'Pick where your posting goes';
+    default:
+      return 'Something is waiting for you';
+  }
+}
+
+/** The button under an open request. */
+export const OPEN_REQUEST_CTA = 'Open it';
+
 export interface DashboardView {
   /** True while an authorised agent has not yet swapped its code for a token:
    *  the page reloads itself when it regains focus and every few seconds. */

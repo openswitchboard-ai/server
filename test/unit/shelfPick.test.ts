@@ -506,7 +506,7 @@ describe('the page', () => {
     const { token } = await toThePage();
     world.links[0].expires_at = new Date(Date.now() - 1000);
     const r = await inject('GET', `/a/${token}`);
-    expect(r.body).toContain('This link has expired');
+    expect(r.body).toContain('This link has run out');
   });
 
   it('can leave it unposted, which records nothing', async () => {

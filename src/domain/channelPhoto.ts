@@ -21,8 +21,9 @@
  * THE BYTES DO NOT PASS THROUGH THIS SERVICE ON THE WAY IN OR OUT. A presigned
  * PUT carries them from the sender's own browser into the photo bucket,
  * encrypted there with the bucket's own key; a presigned GET carries them to
- * the other side's agent. The server signs URLs, keeps a row, and HEADs an
- * object to check it landed. Two checks read the object once at the send
+ * the other side's agent, reached through a short link on this service's own
+ * host that signs it and redirects (collectPhotos, openPhotoLink). The server
+ * signs URLs, keeps a row, and HEADs an object to check it landed. Two checks read the object once at the send
  * step, and only then: Rekognition by reference (intake/checks/
  * photoModeration.ts), and the known-image hash check, which fetches the
  * bytes into memory long enough to hash them and keeps neither the bytes nor
@@ -67,7 +68,7 @@
  * object and the row together once the handed-over link has run out. The bytes
  * outlive the collection by the life of one short link and no longer.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -447,12 +448,41 @@ export interface CollectedPhoto {
   sent_at: string;
   content_type: string;
   size_bytes: number;
-  /** A presigned GET, good for VIEW_URL_TTL_S and then dead. */
+  /**
+   * A short link on the switchboard's own host, good for VIEW_URL_TTL_S from
+   * collection and then dead. Opening it signs a fresh S3 GET and redirects.
+   */
   url: string;
   expires_in_minutes: number;
   /** The sender's own line beside it, when they typed one. */
   caption?: { text: string; provenance: 'counterparty-untrusted' };
 }
+
+/**
+ * THE SHORT LINK (27 September 2026). The collecting agent used to be handed
+ * the presigned S3 GET itself: about 1,500 characters on an amazonaws.com host,
+ * with a signature and a session token in it. A small local model could not
+ * copy it out whole, and its human never saw the picture. So the agent is now
+ * handed `${counterOrigin}/p/<token>`, 22 characters of token, and nothing
+ * about the bucket, the key or the credentials ever reaches agent-facing
+ * output. Opening it signs a GET for whatever is left of the same fifteen
+ * minutes and redirects there, so the bytes still never pass through this
+ * service.
+ *
+ * The rules are the rules the presigned URL had, on purpose: a bearer link
+ * (the recipient's assistant may open it itself to render the picture, and an
+ * assistant holds no session), good for fifteen minutes from collection and
+ * openable as often as the old URL was within them, and handed over once. Only
+ * the SHA-256 of the token is stored.
+ */
+export const PHOTO_LINK_TOKEN_BYTES = 16;
+
+const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
+
+/** The shape of a short photo token: 16 random bytes, base64url, no padding. */
+export const PHOTO_TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
+
+export const photoLinkUrl = (cfg: Config, token: string) => `${cfg.counterOrigin}/p/${token}`;
 
 /**
  * Collect the photos waiting for this human, and spend them.
@@ -463,10 +493,11 @@ export interface CollectedPhoto {
  * suite holds it.
  *
  * Each row is claimed with a conditional UPDATE, so two agents collecting at
- * once cannot both be handed the same photo. Delivery is AT-MOST-ONCE, the
- * same as the words are: an agent that dies between the claim and its own
- * handling of the answer has lost that photo, and there is nowhere to fetch it
- * from again.
+ * once cannot both be handed the same photo. The short link's hash is written
+ * in that same statement, so a row is never spent without its link. Delivery
+ * is AT-MOST-ONCE, the same as the words are: an agent that dies between the
+ * claim and its own handling of the answer has lost that photo, and there is
+ * nowhere to fetch it from again.
  */
 export async function collectPhotos(
   cfg: Config,
@@ -475,29 +506,33 @@ export async function collectPhotos(
   channelId: string,
 ): Promise<CollectedPhoto[]> {
   if (!photosConfigured(cfg)) return [];
-  const bucket = mustBucket(cfg);
+  mustBucket(cfg);
+  // One token for each row this claim could take, in the order it takes them.
+  const tokens = Array.from({ length: MAX_WAITING_PHOTOS }, () =>
+    randomBytes(PHOTO_LINK_TOKEN_BYTES).toString('base64url'),
+  );
   const claimed = await getPool().query(
-    `UPDATE conversation_photos SET collected_at = now()
-      WHERE id IN (
-        SELECT id FROM conversation_photos
-         WHERE recipient_account = $1 AND channel_id = $2
-           AND sent_at IS NOT NULL AND collected_at IS NULL
-         ORDER BY created_at ASC
-         LIMIT ${MAX_WAITING_PHOTOS}
-         FOR UPDATE SKIP LOCKED
-      )
-      RETURNING id, s3_key, content_type, size_bytes, caption_enc, sent_at`,
-    [accountId, channelId],
+    `WITH locked AS (
+       SELECT id, created_at FROM conversation_photos
+        WHERE recipient_account = $1 AND channel_id = $2
+          AND sent_at IS NOT NULL AND collected_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT ${MAX_WAITING_PHOTOS}
+        FOR UPDATE SKIP LOCKED
+     ), picked AS (
+       SELECT id, row_number() OVER (ORDER BY created_at ASC, id ASC)::int AS n FROM locked
+     )
+     UPDATE conversation_photos p SET collected_at = now(), view_token_hash = ($3::text[])[picked.n]
+       FROM picked
+      WHERE p.id = picked.id
+      RETURNING p.id, p.content_type, p.size_bytes, p.caption_enc, p.sent_at, p.created_at, picked.n`,
+    [accountId, channelId, tokens.map(sha256hex)],
   );
   if (!claimed.rowCount) return [];
+  const rows = [...claimed.rows].sort((a: any, b: any) => Number(a.n) - Number(b.n));
   const wrappedKey = await ensureChannelKey(matchId, channelId);
   const out: CollectedPhoto[] = [];
-  for (const row of claimed.rows) {
-    const url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: bucket, Key: row.s3_key }),
-      { expiresIn: VIEW_URL_TTL_S },
-    );
+  for (const row of rows) {
     const caption = row.caption_enc
       ? await decryptForChannel(channelId, wrappedKey, row.caption_enc as Buffer)
       : undefined;
@@ -508,7 +543,7 @@ export async function collectPhotos(
       sent_at: new Date(row.sent_at).toISOString(),
       content_type: row.content_type as string,
       size_bytes: Number(row.size_bytes),
-      url,
+      url: photoLinkUrl(cfg, tokens[Number(row.n) - 1]),
       expires_in_minutes: Math.round(VIEW_URL_TTL_S / 60),
       // The other side's human wrote it, through their own page. Labelled the
       // way every other thing they say is labelled.
@@ -521,6 +556,34 @@ export async function collectPhotos(
     count: out.length,
   });
   return out;
+}
+
+/**
+ * Open a short photo link: a presigned GET for whatever is left of the
+ * fifteen minutes since collection, or null once there is nothing to open.
+ * Null covers a token that never existed, one whose window has passed, and one
+ * whose row the sweep has already taken, and they are not told apart.
+ */
+export async function openPhotoLink(cfg: Config, token: string): Promise<{ url: string } | null> {
+  if (!photosConfigured(cfg) || !PHOTO_TOKEN_RE.test(token)) return null;
+  const bucket = mustBucket(cfg);
+  const r = await getPool().query(
+    `SELECT s3_key,
+            ceil(extract(epoch FROM (collected_at + ($2 || ' seconds')::interval - now())))::int AS left_s
+       FROM conversation_photos
+      WHERE view_token_hash = $1 AND collected_at IS NOT NULL
+        AND collected_at > now() - ($2 || ' seconds')::interval`,
+    [sha256hex(token), String(VIEW_URL_TTL_S)],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  const left = Math.min(VIEW_URL_TTL_S, Math.max(1, Number(row.left_s)));
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: bucket, Key: row.s3_key }),
+    { expiresIn: left },
+  );
+  return { url };
 }
 
 /** How many photos are waiting for an account on each of the given conversations. */

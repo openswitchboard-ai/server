@@ -96,6 +96,7 @@ import {
   PHOTO_TTL_DAYS,
   checkCaption,
   markPhotoSent,
+  openPhotoLink,
   presignPhotoUpload,
 } from '../domain/channelPhoto.js';
 import { settlementsConfigured } from '../config.js';
@@ -412,7 +413,26 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         ops.messagesWaitingFor(s.accountId),
         ops.agreedOnMatches(s.accountId),
       ]);
+      // Every open link this person has been handed, so a request never
+      // depends on them still having the chat it came in. An offer or a
+      // names question that already has its own row below is not listed twice.
+      const offerIds = new Set(offers.map((o) => String(o.offer_id)));
+      const disclosureIds = new Set(disclosures.map((d) => String(d.match_id)));
+      const openLinks = (await links.openLinksFor(s.accountId)).filter(
+        (l) =>
+          !(l.action === 'offer-accept' && offerIds.has(String(l.ref_id))) &&
+          !(l.action === 'stage3-disclosure' && disclosureIds.has(String(l.ref_id))),
+      );
       const pendingApprovals = [
+        // The open requests first: each one is a page an assistant handed
+        // over, and each runs out in minutes. The button goes through the
+        // session (GET /open/:id), so no token is written into this page.
+        ...openLinks.map((l) => ({
+          href: `/open/${l.id}`,
+          label: home.openRequestLabel(l.action, l.category ? phrase(l.category) : undefined),
+          ...(l.amount !== null && l.ccy ? { amount: `${Number(l.amount)} ${l.ccy}` } : {}),
+          cta: home.OPEN_REQUEST_CTA,
+        })),
         // A want or have screening turned away is off the board until this
         // person changes it, so it sits at the top of what is waiting for them.
         ...rejected.map((c) => ({
@@ -1666,6 +1686,48 @@ in on this device and lets you approve what is waiting.</p>
         if (e?.validation || e?.notFound) return reply.code(400).send({ error: String(e.message) });
         throw e;
       }
+    });
+
+    /**
+     * A collected photo's short link (domain/channelPhoto.ts, openPhotoLink).
+     * It signs a fresh S3 GET for what is left of the fifteen minutes since
+     * collection and redirects there, so the bytes never pass through here
+     * and no bucket address ever reaches an assistant.
+     *
+     * A BEARER LINK, like the presigned URL it replaces: the recipient's
+     * assistant may open it itself to show the picture, and an assistant has
+     * no session. It needs no sign-in for the same reason.
+     */
+    counter.get('/p/:token', async (req, reply) => {
+      const token = String((req.params as any).token ?? '');
+      const opened = await openPhotoLink(cfg, token);
+      if (!opened) {
+        return reply
+          .code(404)
+          .header('cache-control', 'no-store')
+          .type('text/html')
+          .send(pages.photoLinkDeadPage());
+      }
+      return reply.header('cache-control', 'no-store').redirect(opened.url, 302);
+    });
+
+    /**
+     * An open request, opened from the main page through the signed-in
+     * session rather than through the link in the chat. The row has to be this
+     * account's own, unpressed and unexpired, and it is sent on to the page its
+     * link opens, so the question is the same question on either road. The
+     * token only ever travels in the redirect, never in the page's HTML.
+     */
+    counter.get('/open/:id', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const found = await links.openLinkFor(s.accountId!, String((req.params as any).id));
+      if (found === 'expired') return html(reply, pages.linkDeadPage('expired'));
+      if (found === 'used') return html(reply, pages.linkDeadPage('used'));
+      if (!found) {
+        return html(reply, pages.messagePage('Not found', '<p>There is nothing here.</p>'), 404);
+      }
+      return reply.header('cache-control', 'no-store').redirect(`/a/${encodeURIComponent(found)}`, 303);
     });
 
     counter.get('/a/:token', async (req, reply) => {
