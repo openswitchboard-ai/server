@@ -1422,6 +1422,9 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
  * question is still waiting there. Saying no is for the person to tell their
  * assistant.
  */
+/** Under an Accept button: everything else about a number goes to the assistant. */
+export const OFFER_ELSEWHERE_LINE = 'To offer a different amount or say no, tell your assistant.';
+
 export function mainPage(v: ApprovalView, error?: string): string {
   const title = {
     'offer-accept': 'Accept this number?',
@@ -1472,6 +1475,7 @@ ${headlineHtml}
   </div>
 </form>
 ${ceremonyAlt(v, 'approveForm')}
+${v.action === 'offer-accept' ? `<p class="small muted">${esc(OFFER_ELSEWHERE_LINE)}</p>` : ''}
 ${ceremonyNote(v)}
 ${restHtml}
 ${ceremonyScript(v)}`);
