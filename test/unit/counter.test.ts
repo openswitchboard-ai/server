@@ -512,10 +512,7 @@ describe('counter pages: copy-cull render suite', () => {
       html: cpages.oneQuestionPage({
         token: 'tok-1',
         question: 'Sam offers $430 AUD for your mountain bike.',
-        detail: [
-          'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details.',
-          'Accepting agrees the number, and your assistant takes it from there.',
-        ],
+        detail: [cpages.OFFER_ELSEWHERE_LINE],
         yesLabel: 'Accept',
         noLabel: 'Not now',
         needsPin: true,

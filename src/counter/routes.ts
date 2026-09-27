@@ -1410,15 +1410,9 @@ in on this device and lets you approve what is waiting.</p>
                 'one-question-page',
               )
             : undefined;
-        const detail: string[] = [];
-        // Their agent has not weighed in on this one. The nudge offers a second
-        // opinion; the figure is theirs to take now either way.
-        if (o.state === 'proposed') {
-          detail.push(
-            'Want a second opinion first? Ask your assistant what it makes of the price — it can see the details.',
-          );
-        }
-        detail.push('Accepting agrees the number, and your assistant takes it from there.');
+        // One line (27 September 2026): the page accepts, and everything else
+        // about the number is said to the assistant.
+        const detail: string[] = [pages.OFFER_ELSEWHERE_LINE];
         return {
           ...base,
           question: `${name ?? 'The other side'} ${o.account_have === accountId ? 'offers' : 'wants'} ${figure}${aboutThing(phrase(o.category), o.account_have === accountId ? 'have' : 'want')}.`,
