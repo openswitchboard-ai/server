@@ -305,6 +305,8 @@ export interface DashboardView {
   /** One box per match with anything waiting: its story and its buttons.
    *  Drawn first under Decisions. */
   matchBoxes?: MatchBoxView[];
+  /** Every other open match, one line each: its title and its latest step. */
+  inProgress?: { href: string; title: string; last: string }[];
   /** The account's IANA zone, for the times in the boxes. Absent = UTC,
    *  labelled, rewritten into the reader's clock by the page. */
   timezone?: string | null;
@@ -411,6 +413,17 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
   //     one box, under a timeline of what has happened on it, so an offer and
   //     the reply to it read in the order they happened (27 September 2026).
   const boxes = (v.matchBoxes ?? []).map((b) => matchBoxHtml(b, v.timezone)).join('');
+  // 1b. In progress: the open matches with nothing waiting on this person,
+  //     one line each, linking to the match's page (27 September 2026).
+  const inProgressHtml = v.inProgress?.length
+    ? `<h2>In progress</h2>
+<div class="navlist">${v.inProgress
+        .map(
+          (m) =>
+            `<a href="${esc(m.href)}"><span class="nav-t">${esc(m.title)}</span><span class="nav-d">${esc(m.last)}</span></a>`,
+        )
+        .join('')}</div>`
+    : '';
 
   // 2. There used to be a window on a clock here: a want or have that several
   //    people had come forward on froze until its timer ran out, and this card
@@ -505,6 +518,7 @@ ${approvals}
 ${agreed}
 ${messages}
 ${renewals}
+${inProgressHtml}
 <h2>Your switchboard</h2>
 ${nav}
 ${kill}

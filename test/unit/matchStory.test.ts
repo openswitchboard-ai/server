@@ -455,3 +455,23 @@ describe('a send link for a figure already on the table', () => {
   });
 });
 
+describe('the In progress list', () => {
+  it('draws one line per open match with its latest step, and nothing when empty', async () => {
+    const home = await import('../../src/counter/pagesHome.js');
+    const base: any = {
+      firstName: 'Locky',
+      pendingApprovals: [],
+      killSwitchOn: false,
+      cardCounts: { total: 1, published: 1, pending: 0 },
+    };
+    const withList = home.dashboardPage({
+      ...base,
+      inProgress: [{ href: '/matches/m1', title: 'Language exchange · with Tony (Braddon)', last: 'Tony sent 2 messages' }],
+    });
+    expect(withList).toContain('<h2>In progress</h2>');
+    expect(withList).toContain('href="/matches/m1"');
+    expect(withList).toContain('Tony sent 2 messages');
+    expect(home.dashboardPage(base)).not.toContain('In progress');
+  });
+});
+
