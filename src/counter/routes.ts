@@ -1861,7 +1861,7 @@ in on this device and lets you approve what is waiting.</p>
             pages.photoPage(
               v,
               e instanceof OsbError
-                ? 'A price goes to your assistant, where your own limits are read first. Take the number out of that line and send the photo.'
+                ? 'Take the price out of the description. Prices go through your assistant.'
                 : why,
             ),
             400,
@@ -1870,6 +1870,9 @@ in on this device and lets you approve what is waiting.</p>
         const photoId = String(pb.photo_id ?? '');
         if (!photoId) {
           return html(reply, pages.photoPage(v, 'Pick a photo first.'), 400);
+        }
+        if (String(pb.confirm ?? '') !== 'yes') {
+          return html(reply, pages.photoPage(v, 'Tick the box to say what the photo does not show.'), 400);
         }
         if (!(await consumeLink(row.id))) return html(reply, pages.linkDeadPage('used'));
         try {
@@ -1887,10 +1890,7 @@ in on this device and lets you approve what is waiting.</p>
         await links.recordLinkDecision(row.id, 'approved');
         return html(
           reply,
-          pages.donePage(
-            'Sent',
-            `<p>${pages.esc(v.who)} picks it up through their own assistant. It is held here until they do and gone the moment they have it.</p>`,
-          ),
+          pages.donePage('Photo sent', '<p>It is only held here until it is passed on.</p>'),
         );
       }
       const b: any = req.body ?? {};

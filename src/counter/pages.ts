@@ -1164,30 +1164,19 @@ export function photoPage(v: PhotoView, error?: string): string {
   return layout(title, `
 <h1>Send ${esc(v.who)} a photo of the ${esc(v.thing)}.</h1>
 ${errBox(error)}
-<p class="small muted">It goes to ${esc(v.who)} and nobody else. They pick it up once and it is gone
-from here; if they never do, it goes by itself after ${v.ttlDays} days. JPEG, PNG or WebP, up to
-${v.maxMb} MB.</p>
-<p class="small muted">This page takes the hidden details out of the file before it leaves your
-device: where the photo was taken, when it was taken, the phone that took it, and the small
-preview tucked inside it. The picture itself is kept, the right way up.</p>
-<p class="small muted">The cleaning happens on your own device and the file goes straight from
-there to the store. Before it is sent on, a machine at the switchboard checks the picture once for
-anything sexual, violent or otherwise not allowed here, and a photo that fails that check is deleted
-and never shown. No person at the switchboard looks at it. What is in shot crosses as it is, so a
-face, a number plate or a house in the background is a thing you are choosing to show this one
-person. A browser that cannot do the cleaning is refused, and nothing is uploaded.</p>
-<noscript><p class="small muted">This page needs scripts switched on. The cleaning happens here
-on your device, and with scripts off it cannot happen, so nothing can be sent from this page.</p></noscript>
+<noscript><p class="small muted">This page needs scripts switched on to prepare the photo on your device.</p></noscript>
 <div id="perr"></div>
 <label for="photo">Your photo</label>
 <input type="file" id="photo" accept="image/jpeg,image/png,image/webp">
+<p class="field-help">JPEG, PNG or WebP, up to ${v.maxMb} MB. Where and when it was taken, and the
+camera details, are removed on your device before it is sent.</p>
 <form method="POST" action="/a/${encodeURIComponent(v.token)}" id="photoForm">
   <input type="hidden" name="photo_id" id="photo_id" value="${esc(v.photoId ?? '')}">
-  <label for="caption">A line beside it (optional)</label>
+  <label for="caption">Description (optional)</label>
   <input id="caption" name="caption" type="text" maxlength="${v.captionMax}"
-         value="${esc(v.caption ?? '')}" placeholder="the scratch on the down tube">
-  <p class="field-help">Words only. A price goes to your assistant, where your own limits are
-  checked before any number leaves.</p>
+         value="${esc(v.caption ?? '')}">
+  <label class="check"><input type="checkbox" name="confirm" value="yes" required>
+  This photo shows nothing sexual, violent or illegal, and no one else's personal details.</label>
   <div class="actions">
   <button type="submit" name="decision" value="yes" class="approve" id="sendBtn"${v.photoId ? '' : ' disabled'}>Send the photo</button>
   <a class="btn secondary" href="/">Not now</a>

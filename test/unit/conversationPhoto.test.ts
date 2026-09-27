@@ -792,16 +792,16 @@ describe('the page the human is handed', () => {
     // happens on the device, a machine checks it once, no person looks.
     expect(page()).not.toContain('No machine reads it either');
     expect(page()).not.toContain('Nothing here opens the picture.');
-    expect(page()).toMatch(/checks the picture once/);
-    expect(page()).toMatch(/No person at the switchboard looks at it\./);
-    expect(page()).toMatch(/where the photo was taken/);
+    // 27 September 2026: the page says only what the person needs, in one
+    // line under the box, and asks them to confirm what it does not show.
+    expect(page()).toMatch(/Where and when it was taken, and the\s+camera details, are removed on your device/);
+    expect(page()).toMatch(/name="confirm" value="yes" required/);
   });
 
   it('takes the three types and nothing else, and says the cap and the days', () => {
     const html = page();
     expect(html).toContain('accept="image/jpeg,image/png,image/webp"');
     expect(html).toMatch(/10 MB/);
-    expect(html).toMatch(/14 days/);
   });
 
   it('cannot be pressed until a photo has actually landed', () => {
