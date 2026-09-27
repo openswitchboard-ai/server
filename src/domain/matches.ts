@@ -1660,13 +1660,21 @@ export async function checkMatches(
   intentId?: string,
   arrangement: Arrangement = {},
   hearsVia?: HearsVia,
+  /** One introduction by id, for check_in({intro_id}) with no step. The
+   *  caller decides whether to ask (the lean sweep does); the default is the
+   *  whole sweep, as it always was. */
+  introId?: string,
 ) {
   const lane: Lane = laneFor(arrangement);
   const params: any[] = [accountId];
   let filter = '';
   if (intentId) {
-    filter = 'AND (m.card_want = $2 OR m.card_have = $2)';
     params.push(intentId);
+    filter = `AND (m.card_want = $${params.length} OR m.card_have = $${params.length})`;
+  }
+  if (introId) {
+    params.push(introId);
+    filter += ` AND m.id = $${params.length}`;
   }
   // ONE query for the sweep, and this side's own recorded press rides on it.
   // A per-introduction read of consent_tokens is what this EXISTS exists to

@@ -202,6 +202,10 @@ export interface Config {
    *  Unset = the /ops/metrics routes are never registered and the path 404s,
    *  the same spirit as the Stripe webhook on a deployment without Stripe. */
   opsMetricsBasicAuth?: string;
+  /** The lean check_in sweep (domain/leanSweep.ts): the same sentences and
+   *  the same named fields, without the copies. LEAN_SWEEP=on|off; unset is
+   *  on in dev and off in prod, so the rehearsal ladder runs it first. */
+  leanSweep: boolean;
 }
 
 export function loadConfig(): Config {
@@ -280,6 +284,7 @@ export function loadConfig(): Config {
     jevEndpoint: process.env.JEV_ENDPOINT || JEV_ENDPOINT,
     jevModel: process.env.JEV_MODEL || JEV_MODEL,
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
+    leanSweep: leanSweepFrom(process.env.LEAN_SWEEP, envName),
   };
 }
 
@@ -297,6 +302,19 @@ export function registrationModeFrom(
 ): 'open' | 'dev-bootstrap' | 'closed' {
   if (raw === 'open' || raw === 'closed' || raw === 'dev-bootstrap') return raw;
   return envName === 'prod' ? 'closed' : 'dev-bootstrap';
+}
+
+/**
+ * LEAN_SWEEP wins when it says on or off; otherwise dev is lean and prod is
+ * not. Anything else set there is a boot failure rather than a silent default,
+ * for the same reason inRange above refuses a typo.
+ */
+export function leanSweepFrom(raw: string | undefined, envName: string): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v) return envName === 'dev';
+  if (v === 'on' || v === 'true' || v === '1') return true;
+  if (v === 'off' || v === 'false' || v === '0') return false;
+  throw new Error('LEAN_SWEEP must be on or off');
 }
 
 /**

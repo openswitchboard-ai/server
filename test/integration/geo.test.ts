@@ -158,7 +158,8 @@ d('one city, two spellings, one match', () => {
       const r = await mcpCall(actor.accessToken, 'check_in', {});
       const ours = (r.result.introductions ?? []).find((m: any) => m.intro_id === matchId);
       expect(ours, JSON.stringify(r.result)).toBeTruthy();
-      expect(ours.signal.kind).toBe('intro.signal');
+      // The lean sweep (on in dev) drops the envelope the entry already carries.
+      expect([undefined, 'intro.signal']).toContain(ours.signal.kind);
       expect(ours.signal.category).toBe('goods.bicycle.mountain');
       expect(ours.signal.counterparty_type).toBe(theirSide);
       expect(ours.signal.score).toBeUndefined();

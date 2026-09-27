@@ -315,7 +315,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       const r = await mcpCall(actor.accessToken, 'check_in', {});
       const entry = r.result.introductions.find((m: any) => m.intro_id === abMatchId);
       expect(entry, `${who} sees the match`).toBeTruthy();
-      expect(entry.signal.kind).toBe('intro.signal');
+      // The lean sweep (on in dev) drops the envelope the entry already carries.
+      expect([undefined, 'intro.signal']).toContain(entry.signal.kind);
       expect(entry.signal.category).toBe('goods.electronics.camera');
       // No machine internals cross to the agent: no score, and a word for what
       // to do next rather than a stage integer. The posting is the statement
@@ -427,7 +428,8 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     const aliceAll = await mcpCall(alice.accessToken, 'check_in', {});
     const abEntry = aliceAll.result.introductions.find((m: any) => m.intro_id === abMatchId);
     expect(abEntry.next).toBe('details_unlocked');
-    expect(abEntry.attributes.kind).toBe('intro.attributes');
+    expect([undefined, 'intro.attributes']).toContain(abEntry.attributes.kind);
+    expect(abEntry.attributes.attributes).toBeDefined();
   });
 
   it('GATE (d): the line - one at a time, the rest in line, and nothing blocks the holder', async () => {
