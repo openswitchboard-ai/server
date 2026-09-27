@@ -245,3 +245,91 @@ export async function consumeLink(id: string): Promise<boolean> {
 export async function recordLinkDecision(id: string, decision: 'approved' | 'declined'): Promise<void> {
   await getPool().query('UPDATE approval_links SET decision = $2 WHERE id = $1', [id, decision]);
 }
+
+// ---------------------------------------------------------------------------
+// Every open request, on the main page.
+//
+// Run of 27 September 2026: an assistant handed over a photo page, the person
+// lost the chat it was in, and the main page's "Waiting for you" had nothing
+// for them to press, because it only listed offers, names and settlements. So
+// every open, unexpired link now shows there too, opened through the signed-in
+// session (GET /open/:id) rather than through the token in the chat.
+// ---------------------------------------------------------------------------
+
+/**
+ * The link actions a person can open from the main page. collection-close is
+ * retired, and a settlement approval already has its own row there.
+ */
+export const OPENABLE_ACTIONS: ApprovalAction[] = [
+  'conversation-photo',
+  'stage3-disclosure',
+  'offer-send',
+  'offer-accept',
+  'negotiation-auto',
+  'conversation-renew',
+  'report',
+  'shelf-pick',
+];
+
+export interface OpenLink {
+  id: string;
+  action: ApprovalAction;
+  ref_id: string;
+  amount: string | null;
+  ccy: string | null;
+  /** The shelf of the posting it is about, where there is one. */
+  category: string | null;
+  expires_at: Date;
+}
+
+/**
+ * This account's open links, newest first, one per question: an assistant
+ * that fetched the same page twice has two live links to one question, and
+ * the person needs one button for it.
+ */
+export async function openLinksFor(accountId: string): Promise<OpenLink[]> {
+  const r = await getPool().query(
+    `SELECT a.id, a.action, a.ref_id, a.amount, a.ccy, a.expires_at,
+            COALESCE(m.category, om.category, c.category) AS category
+       FROM approval_links a
+       LEFT JOIN matches m ON m.id = a.ref_id
+             AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report')
+       LEFT JOIN offers o ON a.action = 'offer-accept' AND o.id = a.ref_id
+       LEFT JOIN matches om ON om.id = o.match_id
+       LEFT JOIN cards c ON a.action = 'negotiation-auto' AND c.id = a.ref_id
+      WHERE a.account_id = $1 AND a.used_at IS NULL AND a.expires_at > now()
+        AND a.action = ANY($2::text[])
+      ORDER BY a.created_at DESC
+      LIMIT 50`,
+    [accountId, OPENABLE_ACTIONS],
+  );
+  const seen = new Set<string>();
+  const out: OpenLink[] = [];
+  for (const row of r.rows as OpenLink[]) {
+    const key = `${row.action}|${row.ref_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+/**
+ * The token for one of this account's open links, worked out again from its
+ * row, or why there is none. Loaded by id AND account, so somebody else's link
+ * is simply not found.
+ */
+export async function openLinkFor(
+  accountId: string,
+  id: string,
+): Promise<string | 'expired' | 'used' | undefined> {
+  const r = await getPool().query(
+    'SELECT * FROM approval_links WHERE id = $1 AND account_id = $2',
+    [id, accountId],
+  );
+  const row: ApprovalLinkRow | undefined = r.rows[0];
+  if (!row || !(OPENABLE_ACTIONS as string[]).includes(row.action)) return undefined;
+  if (row.used_at) return 'used';
+  if (new Date(row.expires_at).getTime() <= Date.now()) return 'expired';
+  return signLink(row);
+}

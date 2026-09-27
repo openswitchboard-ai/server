@@ -25,7 +25,7 @@
  *    batch of words still accounts for a photo that is waiting.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 vi.mock('../../src/crypto.js', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -106,6 +106,8 @@ interface Pic {
   sent_at: Date | null;
   collected_at: Date | null;
   expires_at: Date;
+  send_attempts?: number;
+  view_token_hash?: string;
 }
 
 interface World {
@@ -119,6 +121,8 @@ interface World {
   deleted: string[];
   links: any[];
   clockSkewMs: number;
+  /** Makes the collection claim itself fail, as a database outage would. */
+  failClaim?: boolean;
 }
 
 let world: World;
@@ -234,7 +238,10 @@ function run(sql: string, params: any[] = []) {
     }
     return rows(p ? [{ id: p.id }] : []);
   }
-  if (/UPDATE conversation_photos SET collected_at/.test(sql)) {
+  // The claim: collected and given its short link's hash in one statement,
+  // the hashes handed in as an array in the order the rows are taken.
+  if (/SET collected_at = now\(\), view_token_hash/.test(sql)) {
+    if (world.failClaim) throw new Error('database unavailable');
     const claimed = world.photos
       .filter(
         (p) =>
@@ -244,17 +251,35 @@ function run(sql: string, params: any[] = []) {
           !p.collected_at,
       )
       .sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
-    for (const p of claimed) p.collected_at = new Date(nowMs());
+    claimed.forEach((p, i) => {
+      p.collected_at = new Date(nowMs());
+      p.view_token_hash = (params[2] as string[])[i];
+    });
     return rows(
-      claimed.map((p) => ({
+      claimed.map((p, i) => ({
         id: p.id,
-        s3_key: p.s3_key,
         content_type: p.content_type,
         size_bytes: p.size_bytes,
         caption_enc: p.caption_enc,
         sent_at: p.sent_at,
+        created_at: p.created_at,
+        n: i + 1,
       })),
     );
+  }
+  // Opening a short link: the row whose hash matches, while the fifteen
+  // minutes since collection last.
+  if (/FROM conversation_photos\s+WHERE view_token_hash = \$1/.test(sql)) {
+    const windowMs = Number(params[1]) * 1000;
+    const p = world.photos.find(
+      (x) =>
+        x.view_token_hash === params[0] &&
+        x.collected_at &&
+        x.collected_at.getTime() > nowMs() - windowMs,
+    );
+    if (!p) return rows([]);
+    const left = Math.ceil((p.collected_at!.getTime() + windowMs - nowMs()) / 1000);
+    return rows([{ s3_key: p.s3_key, left_s: left }]);
   }
   if (/SELECT id, s3_key FROM conversation_photos/.test(sql)) {
     const graceMs = Number(params[0]) * 1000;
@@ -420,6 +445,14 @@ describe('an agent cannot upload', () => {
     // Bound to this one conversation at mint time, and the sentence says so:
     // there is nothing for the person to choose on the page.
     expect(link.say).toMatch(/the person you are already talking to on this one and nowhere else/);
+    // WHO SENDS IT, AND FROM WHERE. Asked for a photo, an assistant told its
+    // human to send the photo to it (27 September 2026). The sentence says the
+    // person sends it from the page, and that it never passes the assistant.
+    expect(link.say).toContain('You send it yourself from that page, and it never comes through me');
+    expect(link.what_it_does).toMatch(/never ask them to send it to you/i);
+    expect(TOOLS.find((t) => t.name === 'respond')!.description).toMatch(
+      /sends THEIR picture themselves, from the page; never ask them to send it to you/,
+    );
     expect(link.say).toContain(link.link);
     expect(link.say.trim().endsWith(link.link)).toBe(true);
     // Said to the person pressing it, and in the register everything else is in.
@@ -654,9 +687,14 @@ describe('collection spends it', () => {
     expect(got).toHaveLength(1);
     expect(got[0].kind).toBe('conversation.photo');
     expect(got[0].conversation_id).toBe(CHANNEL);
-    expect(got[0].url).toContain('kind=GetObjectCommand');
+    expect(got[0].url).toMatch(/^https:\/\/my\.test\/p\/[A-Za-z0-9_-]{22}$/);
     expect(got[0].expires_in_minutes).toBe(15);
+    // Nothing is signed at collection: the signing happens when it is opened.
+    expect(signed.find((s) => s.kind === 'GetObjectCommand')).toBeUndefined();
+    const opened = await photo.openPhotoLink(cfg, got[0].url.split('/p/')[1]);
+    expect(opened?.url).toContain('kind=GetObjectCommand');
     const get = signed.find((s) => s.kind === 'GetObjectCommand')!;
+    expect(get.input.Key).toBe(world.photos[0].s3_key);
     expect(get.expiresIn).toBe(photo.VIEW_URL_TTL_S);
     // Spent: a second collection finds nothing, and so does the sender.
     expect(await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL)).toEqual([]);
@@ -710,6 +748,77 @@ describe('collection spends it', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The short link the collecting agent is handed
+// ---------------------------------------------------------------------------
+describe('the short photo link', () => {
+  const tokenOf = (url: string) => url.split('/p/')[1];
+
+  it('is short, on our own host, and carries nothing of the bucket', async () => {
+    await sendPhoto(ANA, MATCH, 'the scratch on the down tube');
+    const got: any = await channel.receiveMessages(BEPPE, MATCH, cfg);
+    const url: string = got.photos[0].url;
+    expect(url.length).toBeLessThan(60);
+    expect(url.startsWith(`${cfg.counterOrigin}/p/`)).toBe(true);
+    // Nothing the agent is handed names the bucket, the key or a signature.
+    const said = JSON.stringify(got);
+    for (const leak of ['bucket.test', 'amazonaws', 'X-Amz', 'sig=', 'conversation-photos/', cfg.photoBucket!]) {
+      expect(said, leak).not.toContain(leak);
+    }
+  });
+
+  it('stores only a hash of the token, and each photo gets its own', async () => {
+    await sendPhoto();
+    await sendPhoto();
+    const got = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    expect(got).toHaveLength(2);
+    const [a, b] = got.map((g) => tokenOf(g.url));
+    expect(a).not.toBe(b);
+    const sha = (t: string) => createHash('sha256').update(t).digest('hex');
+    expect(world.photos.map((p) => p.view_token_hash).sort()).toEqual([sha(a), sha(b)].sort());
+    expect(world.photos.some((p) => p.view_token_hash === a)).toBe(false);
+  });
+
+  it('opens as often as the old link did, for what is left of the fifteen minutes', async () => {
+    await sendPhoto();
+    const [got] = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    world.clockSkewMs = 10 * 60 * 1000;
+    const first = await photo.openPhotoLink(cfg, tokenOf(got.url));
+    const again = await photo.openPhotoLink(cfg, tokenOf(got.url));
+    expect(first).not.toBeNull();
+    expect(again).not.toBeNull();
+    const gets = signed.filter((s) => s.kind === 'GetObjectCommand');
+    // Five minutes left, so the signed GET dies when the short link does.
+    expect(gets[0].expiresIn).toBeLessThanOrEqual(5 * 60);
+    expect(gets[0].expiresIn).toBeGreaterThan(4 * 60);
+  });
+
+  it('opens nothing once the fifteen minutes are up', async () => {
+    await sendPhoto();
+    const [got] = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    world.clockSkewMs = (photo.VIEW_URL_TTL_S + 1) * 1000;
+    expect(await photo.openPhotoLink(cfg, tokenOf(got.url))).toBeNull();
+    expect(signed.filter((s) => s.kind === 'GetObjectCommand')).toHaveLength(0);
+  });
+
+  it('opens nothing for a token it never handed out, or one of the wrong shape', async () => {
+    await sendPhoto();
+    await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    expect(await photo.openPhotoLink(cfg, 'A'.repeat(22))).toBeNull();
+    expect(await photo.openPhotoLink(cfg, '../../etc/passwd')).toBeNull();
+    expect(await photo.openPhotoLink(cfg, '')).toBeNull();
+  });
+
+  it('is gone with the row once the sweep has taken it', async () => {
+    await sendPhoto();
+    const [got] = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    world.clockSkewMs = (photo.COLLECTED_GRACE_S + 60) * 1000;
+    await photo.sweepConversationPhotos(cfg);
+    world.clockSkewMs = 0;
+    expect(await photo.openPhotoLink(cfg, tokenOf(got.url))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // What the collecting agent is told
 // ---------------------------------------------------------------------------
 describe('the sentence that rides back', () => {
@@ -751,11 +860,9 @@ describe('the sentence that rides back', () => {
     expect((await channel.pendingCounts(BEPPE, [CHANNEL])).get(CHANNEL)).toBeUndefined();
   });
 
-  it('still hands the words over when the photos cannot be signed', async () => {
+  it('still hands the words over when the photos cannot be collected', async () => {
     await sendPhoto();
-    vi.mocked(
-      (await import('@aws-sdk/s3-request-presigner')).getSignedUrl,
-    ).mockRejectedValueOnce(new Error('kms unavailable'));
+    world.failClaim = true;
     const got = await channel.receiveMessages(BEPPE, MATCH, cfg);
     expect(got.photos).toBeUndefined();
     expect(got.messages).toEqual([]);

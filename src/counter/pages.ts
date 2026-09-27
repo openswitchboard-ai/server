@@ -926,16 +926,41 @@ export function wrongAccountPage(): string {
   );
 }
 
+/**
+ * A link that no longer opens.
+ *
+ * Run of 27 September 2026: an assistant kept telling its human "the link's
+ * here" after its fifteen minutes were up, and the page said only that links
+ * live fifteen minutes. So the page says what to do in one line, and offers
+ * the main page, where every open request is listed while it is still good.
+ */
+export const FRESH_LINK_ON_MAIN_PAGE =
+  'A fresh one also shows on your main page when you are signed in.';
+
 export function linkDeadPage(reason: 'used' | 'expired' | 'invalid'): string {
+  const title = { used: 'Already used', expired: 'Link run out', invalid: 'Not a valid link' }[reason];
   const text = {
-    used: `<p class="lead">This link has already been used. Each link works exactly once.</p>`,
-    expired: `<p class="lead">This link has expired. Links live for 15 minutes.</p>`,
-    invalid: `<p class="lead">This approval link isn't valid.</p>`,
+    used: `<h1>This link has already been used.</h1>
+<p class="lead">Each link works once. Ask your assistant for a fresh one.</p>`,
+    expired: `<h1>This link has run out.</h1>
+<p class="lead">Ask your assistant for a fresh one.</p>`,
+    invalid: `<h1>This link isn't valid.</h1>
+<p class="lead">Ask your assistant for a fresh one.</p>`,
   }[reason];
-  const title = { used: 'Already used', expired: 'Link expired', invalid: 'Not a valid link' }[reason];
-  return layout(title, `<h1>${esc(title)}.</h1>${text}
-<p>Ask your assistant for a fresh one.</p>
-${DONE_BLOCK}`);
+  return layout(title, `${text}
+<p>${esc(FRESH_LINK_ON_MAIN_PAGE)}</p>
+<a class="btn secondary" href="/">Go to your main page</a>`);
+}
+
+/**
+ * A photo's short link once its fifteen minutes are up (routes.ts, /p/:token).
+ * There is no fresh copy of a photo to fetch, so the page says what is true:
+ * it was handed over once, and the other person can send it again.
+ */
+export function photoLinkDeadPage(): string {
+  return layout('Photo link run out', `<h1>This photo link has run out.</h1>
+<p class="lead">A photo can be opened for fifteen minutes after it is passed on, and then it is gone.</p>
+<p>If you still need it, ask the other person to send it again.</p>`);
 }
 
 // ---------------------------------------------------------------------------

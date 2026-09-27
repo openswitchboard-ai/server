@@ -240,8 +240,46 @@ describe('holding the line', () => {
     expect(r.link).toBeUndefined();
     expect(r.what_to_do).toBe(PRESS_WHAT_TO_DO.expired);
     expect(r.what_to_do).toMatch(/fetch a fresh link/i);
+    // RUN OUT MEANS DEAD, said to both halves (27 September 2026): the human
+    // hears the old one will not open, the agent is told never to point to it
+    // again and exactly which call fetches the fresh one.
+    expect(r.note.text).toMatch(/run out and will not open/);
+    expect(r.what_to_do).toMatch(/never point your human to it again/);
+    expect(r.fetch_again).toEqual({
+      tool: 'respond',
+      action: 'request_share_name',
+      intro_id: links[0].ref_id,
+    });
     // It let go early rather than holding to the cap for a dead page.
     expect(Date.now() - started).toBeLessThan(PRESS_WAIT_CAP_MS);
+  });
+
+  it('names the same action that minted it, for every kind of page', async () => {
+    const cases: [string, Record<string, string>][] = [
+      ['conversation-photo', { tool: 'respond', action: 'request_photo', intro_id: 'REF' }],
+      ['stage3-disclosure', { tool: 'respond', action: 'request_share_name', intro_id: 'REF' }],
+      ['conversation-renew', { tool: 'respond', action: 'request_keep_talking', intro_id: 'REF' }],
+      ['report', { tool: 'respond', action: 'request_report', intro_id: 'REF' }],
+      ['offer-send', { tool: 'respond', action: 'propose_offer', intro_id: 'REF' }],
+      ['offer-accept', { tool: 'respond', action: 'request_accept', offer_id: 'REF' }],
+      ['negotiation-auto', { tool: 'respond', action: 'request_auto_negotiate', intent_id: 'REF' }],
+      ['shelf-pick', { tool: 'publish_intent' }],
+    ];
+    for (const [action, want] of cases) {
+      links = [theLink({ action, ref_id: 'REF', expires_at: new Date(Date.now() - 1000) })];
+      const r = await waitForPress(cfg, ANA, PRESS);
+      expect(r.fetch_again, action).toEqual(want);
+    }
+  });
+
+  it('says how long a page still waiting has left, before the address', async () => {
+    links = [theLink({ expires_at: new Date(Date.now() + 8.5 * 60_000 + PRESS_WAIT_CAP_MS) })];
+    const waiting = waitForPress(cfg, ANA, PRESS);
+    await vi.advanceTimersByTimeAsync(PRESS_WAIT_CAP_MS);
+    const r = await waiting;
+    expect(r.expires_in_minutes).toBe(9);
+    expect(r.note.text).toContain('It runs out in 9 minutes.');
+    expect(r.note.text.split('\n').at(-1)).toBe(r.link);
   });
 
   it('answers a link that was already dead on the first look', async () => {

@@ -357,15 +357,19 @@ export async function photoLink(
   });
   const page = url(cfg, token);
   return {
+    // THE PERSON SENDS IT, FROM THE PAGE (27 September 2026). Asked for a
+    // photo, a small model told its human "send the photo to me". The
+    // sentence now says in so many words who sends it and from where, and
+    // that it never passes through the assistant.
     say: saySentence(
-      'you to pick a photo from your own phone and press Send, and it goes to the person you are already talking to on this one and nowhere else',
+      'you to pick a photo from your own phone and press Send, and it goes to the person you are already talking to on this one and nowhere else. You send it yourself from that page, and it never comes through me',
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page where your human picks a photo from their own phone and presses Send. It goes to the person they are already talking to on this one and nowhere else, it is held until that side picks it up, and then it is gone. You cannot send a photo yourself. A machine looks at the picture once before it is delivered, no person at the switchboard sees it, and one that is turned back comes back with one plain sentence to say.',
+      'Opens one page where your human picks a photo from their own phone and presses Send. They send it themselves from that page: never ask them to send it to you, because you never receive or handle it. It goes to the person they are already talking to on this one and nowhere else, it is held until that side picks it up, and then it is gone. You cannot send a photo yourself. A machine looks at the picture once before it is delivered, no person at the switchboard sees it, and one that is turned back comes back with one plain sentence to say.',
   };
 }
 
@@ -571,6 +575,19 @@ export interface PressAnswer {
   link?: string;
   /** What the agent does next, in plain words, when waiting again is wrong. */
   what_to_do?: string;
+  /** While still waiting: whole minutes left before the page stops opening. */
+  expires_in_minutes?: number;
+  /**
+   * On an expired answer: the call that fetches a fresh page for the same
+   * question, so an agent does not have to work out which one it was.
+   */
+  fetch_again?: {
+    tool: 'respond' | 'publish_intent';
+    action?: string;
+    intro_id?: string;
+    offer_id?: string;
+    intent_id?: string;
+  };
   /**
    * On the shelf page (SHELF_PICK): the shelf the human chose, as the path to
    * post again with and in the words to say. The posting is still the
@@ -632,7 +649,10 @@ export const PRESS_SENTENCES = {
    * of its human — an address on a line, not a sentence about one.
    */
   waiting: 'Here is the page again — nothing has come through yet. The address is the whole of what they need:',
-  expired: 'That page has run out. I can fetch you a fresh one whenever you are ready.',
+  // RUN OUT MEANS DEAD (27 September 2026). An assistant kept telling its
+  // human "the link's here" after the fifteen minutes were up. The sentence
+  // says the old one will not open, so nobody is sent back to it.
+  expired: 'That link has run out and will not open now. I will get you a fresh one.',
 } as const;
 
 /**
@@ -663,8 +683,46 @@ export const PRESS_WHAT_TO_DO = {
   waiting:
     'Paste the web address above into your next message, on its own line. A sentence about a link is not a link. Say what the page asks, then wait again: this call answers the instant they press, so asking them to report it hands them a job that was yours. Where waiting will not hold on your client, say so plainly and ask them to say once they have pressed — then look at the board before answering.',
   expired:
-    'There is nothing left to hand over, so fetch a fresh link, give them that one, and wait on the press that comes back with it.',
+    'That link has run out and no longer opens: never point your human to it again or say it is still there. Fetch a fresh link with the same call that gave you this one, lead with the sentence that comes back with it, and wait on the new press.',
 } as const;
+
+/**
+ * How a fresh page for the same question is fetched, by what the old one
+ * asked. The same respond action that minted it, on the same thing; the shelf
+ * page comes back from posting again, and a number to send from proposing it
+ * again.
+ */
+export function fetchAgainFor(row: {
+  action: string;
+  ref_id: string;
+}): NonNullable<PressAnswer['fetch_again']> | undefined {
+  switch (row.action) {
+    case 'conversation-photo':
+      return { tool: 'respond', action: 'request_photo', intro_id: row.ref_id };
+    case 'stage3-disclosure':
+      return { tool: 'respond', action: 'request_share_name', intro_id: row.ref_id };
+    case 'conversation-renew':
+      return { tool: 'respond', action: 'request_keep_talking', intro_id: row.ref_id };
+    case 'report':
+      return { tool: 'respond', action: 'request_report', intro_id: row.ref_id };
+    case 'offer-send':
+      return { tool: 'respond', action: 'propose_offer', intro_id: row.ref_id };
+    case 'offer-accept':
+      return { tool: 'respond', action: 'request_accept', offer_id: row.ref_id };
+    case 'negotiation-auto':
+      return { tool: 'respond', action: 'request_auto_negotiate', intent_id: row.ref_id };
+    case 'shelf-pick':
+      return { tool: 'publish_intent' };
+    default:
+      return undefined;
+  }
+}
+
+/** Whole minutes left on a link, never less than one while it still opens. */
+const minutesLeft = (expiresAt: Date | string): number =>
+  Math.max(1, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 60_000));
+
+const runsOutIn = (m: number) => `It runs out in ${m === 1 ? 'a minute' : `${m} minutes`}.`;
 
 const pressNote = (text: string) => ({ text, provenance: 'switchboard-system' as const });
 
@@ -776,22 +834,26 @@ export async function waitForPress(
       };
     }
     if (!row.used_at && new Date(row.expires_at).getTime() <= Date.now()) {
+      const again = fetchAgainFor(row);
       return {
         pressed: false,
         expired: true,
         what_to_do: PRESS_WHAT_TO_DO.expired,
+        ...(again ? { fetch_again: again } : {}),
         note: pressNote(PRESS_SENTENCES.expired),
       };
     }
     if (Date.now() + pollMs > deadline) {
       const link = linkFromRow(cfg, row);
       const asks = PAGE_ASKS[row.action];
+      const left = minutesLeft(row.expires_at);
       return {
         pressed: false,
         link,
+        expires_in_minutes: left,
         what_to_do: PRESS_WHAT_TO_DO.waiting,
         note: pressNote(
-          `${asks ? `Here is the page again — it asks ${asks}, and nothing has come through yet.` : PRESS_SENTENCES.waiting}\n${link}`,
+          `${asks ? `Here is the page again — it asks ${asks}, and nothing has come through yet. ${runsOutIn(left)}` : `${runsOutIn(left)} ${PRESS_SENTENCES.waiting}`}\n${link}`,
         ),
       };
     }
