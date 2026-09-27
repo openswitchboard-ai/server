@@ -372,9 +372,8 @@ export function dashboardPage(v: DashboardView): string {
   const backOnWord = c.hasPin && c.hasPasskey ? 'your PIN or passkey' : c.hasPin ? 'your PIN' : 'your passkey';
   const kill = v.killSwitchOn
     ? `<div class="kill">
-<h2>Everything is paused.</h2>
-<p class="small">The kill switch is ON: your wants and haves are excluded from
-matching and your agents' tokens are suspended. Turning back on needs ${esc(backOnWord)}.</p>
+<h2>Everything is stopped.</h2>
+<p class="small">Your wants and haves are stopped and your assistants cannot act. Turning it back on needs ${esc(backOnWord)}.</p>
 <form method="POST" action="/kill/off" id="killOffForm">
   ${cpages.ceremonyField(c, 'kill')}
   ${cpages.ceremonySubmit(c, { formId: 'killOffForm', label: 'Turn everything back on' })}
@@ -389,13 +388,10 @@ ${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
       // cross-site check on this whole page class is what stops another site
       // pressing it, and the tap is paced so it cannot be held down.
       `<div class="kill">
-<h2>Kill switch</h2>
-<p class="small">Every want and have paused, every agent token suspended,
-confirmation email sent. One tap, no PIN — it stops things rather than starting
-them. Turning back on needs ${esc(backOnWord)}.</p>
 <form method="POST" action="/kill" id="killOnForm">
-  <button type="submit" class="danger">Pause everything now</button>
-</form></div>`;
+  <button type="submit" class="danger">Stop all wants and haves</button>
+</form>
+<p class="small muted">Your assistants are stopped too. You can turn it back on.</p></div>`;
 
   // 1. Decisions. Whole card is the tap target; the wording of the button
   //    stays on the card so the person knows what they are opening.

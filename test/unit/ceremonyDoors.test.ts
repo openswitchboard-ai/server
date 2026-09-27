@@ -190,7 +190,7 @@ describe('the pages those doors are pressed from carry the box', () => {
     const on = view(false);
     expect(on).toContain('id="killOnForm"');
     expect(on).not.toContain(PIN_BOX);
-    expect(on).toContain('One tap, no PIN');
+    expect(on).toContain('Stop all wants and haves');
   });
 
   it('setting the band an agent may spend inside', () => {

@@ -494,7 +494,7 @@ test('6 wrong PINs lock the PIN with backoff', async () => {
 
 test('kill switch suspends agent tokens; PIN un-pauses', async () => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Pause everything now' }).click();
+  await page.getByRole('button', { name: 'Stop all wants and haves' }).click();
   await expect(page.getByText('Everything is paused.')).toBeVisible();
   await shot(page, '17-kill-switch-on');
 
@@ -511,7 +511,7 @@ test('kill switch suspends agent tokens; PIN un-pauses', async () => {
 
   await page.getByLabel('PIN').fill(ALICE_PIN);
   await page.getByRole('button', { name: 'Turn everything back on' }).click();
-  await expect(page.getByText('Kill switch')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop all wants and haves' })).toBeVisible();
   const alive = await mcpCall(aliceToken, 'list_intents', {});
   expect(alive.isError).toBe(false);
   await shot(page, '18-kill-switch-off');
