@@ -158,7 +158,7 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
 
   // The dashboard opens on what is waiting, with the quiet navigation under
   // it — the order is the whole point of the page.
-  await expect(page.getByRole('heading', { name: 'Waiting for you' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Your switchboard' })).toBeVisible();
   await expect(page.getByText('Nothing to decide right now.')).toBeVisible();
   // Patch is on the page, and he is a real image served with a year of cache.
