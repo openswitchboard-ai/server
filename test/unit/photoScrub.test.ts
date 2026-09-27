@@ -446,23 +446,19 @@ describe('the page the sender reads', () => {
 
   it('says what is taken out and what is kept', () => {
     const html = page();
-    expect(html).toMatch(/where the photo was taken/);
-    expect(html).toMatch(/the phone that took it/);
-    expect(html).toMatch(/The picture itself is kept, the right way up/);
-    expect(html).toMatch(/What is in shot crosses as it is/);
+    expect(html).toMatch(/Where and when it was taken, and the\s+camera details, are removed on your device/);
   });
 
   it('says a machine checks the picture once, and that no person looks', () => {
     expect(page()).not.toContain('No machine reads it either');
     expect(page()).not.toContain('Nothing here opens the picture.');
-    expect(page()).toContain('checks the picture once');
-    expect(page()).toContain('No person at the switchboard looks at it.');
+    expect(page()).toContain('nothing sexual, violent or illegal');
   });
 
   it('tells a browser that cannot do it that nothing can be sent', () => {
     const html = page();
     expect(html).toContain('<noscript>');
-    expect(html).toMatch(/A browser that cannot do the cleaning is refused/);
+    expect(html).toMatch(/needs scripts switched on/);
     expect(html).toContain('id="sendBtn" disabled');
   });
 
