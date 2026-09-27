@@ -482,8 +482,8 @@ window.addEventListener('focus',again);document.addEventListener('visibilitychan
 var n=0,t=setInterval(function(){if(++n>40){clearInterval(t);return;}if(!document.hidden)location.reload();},4000);})();
 </script>` : ''}
 ${emailBanner}
-<h2>Waiting for you</h2>
-${nothingWaiting ? `<div class="empty">Nothing is waiting for you.</div>` : ''}
+<h2>Decisions</h2>
+${nothingWaiting ? `<div class="empty">Nothing to decide right now.</div>` : ''}
 ${approvals}
 ${agreed}
 ${messages}
