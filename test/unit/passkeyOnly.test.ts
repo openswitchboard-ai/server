@@ -113,11 +113,13 @@ describe('the choice screen', () => {
 // ---------------------------------------------------------------------------
 // Every surface that used to print a PIN box, in all three states.
 // ---------------------------------------------------------------------------
+// The names step: a press that may lean on the window. Money never does, and
+// is held to that in moneyCeremony.test.ts.
 const approval = (c: cpages.CeremonyView) =>
   cpages.mainPage({
-    action: 'offer-accept',
+    action: 'stage3-disclosure',
     refId: 'ref-1',
-    facts: [{ k: 'You are agreeing to', v: '620 AUD' }],
+    facts: [{ k: 'What gets shared', v: 'first name + locality' }],
     anomalies: [],
     postPath: '/approve',
     ...c,
@@ -126,8 +128,8 @@ const approval = (c: cpages.CeremonyView) =>
 const oneQuestion = (c: cpages.CeremonyView) =>
   cpages.oneQuestionPage({
     token: 'tok-1',
-    question: 'Sam offers $430 AUD for your mountain bike.',
-    yesLabel: 'Accept',
+    question: 'Share your first name and area with the other side?',
+    yesLabel: 'Share',
     noLabel: 'Not now',
     needsPin: true,
     ...c,
@@ -148,9 +150,10 @@ const settlement = (c: cpages.CeremonyView) =>
     canPay: false,
     needsPaymentSetup: false,
     canLockEvidence: false,
-    canConfirm: true,
+    // Raising a dispute freezes money and moves none, so it keeps the window.
+    canConfirm: false,
     canRetryRelease: false,
-    canDispute: false,
+    canDispute: true,
     evidence: [],
     autoReleaseDays: 7,
     inDispute: false,
@@ -176,7 +179,7 @@ const killSwitch = (c: cpages.CeremonyView) =>
 const SURFACES: [string, (c: cpages.CeremonyView) => string][] = [
   ['the main page', approval],
   ['the one-question page', oneQuestion],
-  ['a settlement release', settlement],
+  ['a settlement dispute', settlement],
   ['making an agent key', agentKeys],
   ['turning the kill switch off', killSwitch],
 ];
@@ -308,7 +311,7 @@ describe('the passkey ceremony script', () => {
   });
 
   it('elevates without re-attaching the session, then submits the press', () => {
-    expect(html).toContain('elevate_only: true');
+    expect(html).toContain('assertion.elevate_only = true');
     expect(html).toContain('form.submit()');
     // The rest of the form still has to be filled in before a ceremony runs.
     expect(html).toContain('form.reportValidity()');

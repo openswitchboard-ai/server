@@ -41,6 +41,43 @@ export function needsFreshCeremony(c: CredentialState, elevated: boolean): boole
   return holdsCredential(c) && !elevated;
 }
 
+/**
+ * MONEY ALWAYS TAKES A FRESH CEREMONY (Lachlan, 27 September 2026).
+ *
+ * Accepting a figure, sending a figure, and approving or confirming a payment
+ * or a settlement ask for the PIN or the passkey at the moment of the press,
+ * every time. The five-minute window a sign-in or an earlier press opens does
+ * not count for these: a session left open on a shared laptop can share names
+ * or keep a conversation going, and it cannot move money.
+ *
+ * Every other press keeps the window. The names here are the approval-link
+ * actions plus the money buttons on the settlement page and the human's own
+ * offer box, so one list answers the question wherever it is asked.
+ */
+export const MONEY_ACTIONS: ReadonlySet<string> = new Set([
+  'offer-accept',
+  'offer-send',
+  'settlement-approve',
+  'settlement-confirm',
+  'settlement-return-received',
+  'settlement-resolution',
+  'settlement-resolution-approve',
+]);
+
+export function isMoneyAction(action: string): boolean {
+  return MONEY_ACTIONS.has(action);
+}
+
+/** The elevation a press may lean on: none at all for money. */
+export function elevationFor(action: string, elevated: boolean): boolean {
+  return isMoneyAction(action) ? false : elevated;
+}
+
+/** Whether this press has to run a ceremony now, for this action. */
+export function needsCeremonyAtPress(c: CredentialState, elevated: boolean, action: string): boolean {
+  return needsFreshCeremony(c, elevationFor(action, elevated));
+}
+
 /** What a sensitive press can ask for. 'none' means nothing is set up yet. */
 export function ceremonyKind(c: CredentialState): 'none' | 'pin' | 'passkey' | 'either' {
   if (c.hasPin && c.hasPasskey) return 'either';

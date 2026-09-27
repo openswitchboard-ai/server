@@ -460,6 +460,7 @@ d('integration gates against live deployment', () => {
     const sent = await humanOffer(dana.jar, mid, {
       amount: 505,
       note: 'Cash, and I can collect this weekend.',
+      pin: dana.pin,
     });
     expect(sent.status).toBe(200);
     const eliSees = await mcpCall(eli.accessToken, 'respond', { intro_id: mid, action: 'list_offers' });
@@ -476,7 +477,7 @@ d('integration gates against live deployment', () => {
     expect(eliSees.raw).not.toContain('authored_by');
 
     // A note shaped like a way to reach someone never leaves the page.
-    const leak = await humanOffer(dana.jar, mid, { amount: 510, note: 'ring me on 0412 345 678' });
+    const leak = await humanOffer(dana.jar, mid, { amount: 510, note: 'ring me on 0412 345 678', pin: dana.pin });
     expect(leak.status).toBe(400);
 
     // Eli switches HIS card to Auto-negotiate and writes his numbers: a floor

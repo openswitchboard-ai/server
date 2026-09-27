@@ -253,7 +253,9 @@ export async function setAutoNegotiate(
 export async function humanOffer(
   jar: Jar,
   matchId: string,
-  o: { amount: number; ccy?: string; note?: string; goodFor?: 3 | 7 | 14 },
+  // Sending a figure is money: the PIN goes with the press, whatever window
+  // the session is in (27 September 2026).
+  o: { amount: number; ccy?: string; note?: string; goodFor?: 3 | 7 | 14; pin: string },
 ): Promise<Response> {
   return counterFetch(
     jar,
@@ -263,6 +265,7 @@ export async function humanOffer(
       ccy: o.ccy ?? 'AUD',
       ...(o.note ? { note: o.note } : {}),
       good_for: String(o.goodFor ?? 7),
+      pin: o.pin,
     }),
   );
 }

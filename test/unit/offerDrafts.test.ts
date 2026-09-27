@@ -36,6 +36,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 import { createHash } from 'node:crypto';
 import { buildApp } from '../../src/app.js';
 import * as db from '../../src/db.js';
+import { hashPin } from '../../src/counter/pin.js';
 import * as drafts from '../../src/domain/offerDrafts.js';
 import * as offers from '../../src/domain/offers.js';
 import * as cpages from '../../src/counter/pages.js';
@@ -98,6 +99,11 @@ interface World {
 }
 let world: World;
 let offerSeq = 0;
+
+// Sending a figure is money, and money asks for the PIN at the press whatever
+// window the session is in (credentials.ts MONEY_ACTIONS). The account's PIN.
+const PIN = '246810';
+const PIN_HASH = await hashPin(PIN);
 
 const theMatch = () => ({
   id: MATCH,
@@ -176,6 +182,9 @@ function fakePool() {
             mandate_enc: null,
           },
         ]);
+      }
+      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
+        return rows([{ pin_hash: PIN_HASH, pin_failed_attempts: 0, pin_locked_until: null }]);
       }
       if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
         return rows([
@@ -384,6 +393,7 @@ describe('the box opens on the number the agent carried', () => {
       amount: '505',
       ccy: 'AUD',
       good_for: '7',
+      pin: PIN,
     });
     expect(sent.statusCode).toBe(200);
     expect(world.offers).toHaveLength(1);
@@ -424,6 +434,7 @@ describe('the box opens on the number the agent carried', () => {
       ccy: 'AUD',
       note: 'Cash, and I can collect this weekend.',
       good_for: '7',
+      pin: PIN,
     });
     expect(sent.statusCode).toBe(200);
 

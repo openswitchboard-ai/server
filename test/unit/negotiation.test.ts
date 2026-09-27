@@ -43,6 +43,7 @@ import { createHash } from 'node:crypto';
 import { buildApp } from '../../src/app.js';
 import { writeConsentEvent } from '../../src/crypto.js';
 import * as db from '../../src/db.js';
+import { hashPin } from '../../src/counter/pin.js';
 import { bedrock } from '../../src/aws.js';
 import { messageSafety } from '../../src/intake/checks/messageSafety.js';
 import * as neg from '../../src/domain/negotiation.js';
@@ -127,6 +128,11 @@ interface World {
 let world: World;
 let offerSeq = 0;
 
+// Sending a figure is money, and money asks for the PIN at the press whatever
+// window the session is in (credentials.ts MONEY_ACTIONS). The account's PIN.
+const PIN = '246810';
+const PIN_HASH = await hashPin(PIN);
+
 const theMatch = () => ({
   id: MATCH,
   card_want: CARD_W,
@@ -166,6 +172,9 @@ function fakePool() {
       if (/SELECT account_id, type, negotiation_mode, mandate_enc FROM cards/.test(sql)) {
         const c = world.cards[params[0]];
         return c ? rows([c]) : rows([]);
+      }
+      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
+        return rows([{ pin_hash: PIN_HASH, pin_failed_attempts: 0, pin_locked_until: null }]);
       }
       if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
         return rows([
@@ -675,6 +684,7 @@ describe('the human page class owns both settings', () => {
       ccy: 'aud',
       note: 'Can collect Saturday morning.',
       good_for: '7',
+      pin: PIN,
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('Sent. Your number is on the table');
@@ -686,6 +696,21 @@ describe('the human page class owns both settings', () => {
       authored_by: 'human',
     });
     expect(world.offers[0].message.text).toBe('Can collect Saturday morning.');
+  });
+
+  it('sending a figure is money: an elevated session still types the PIN at the press', async () => {
+    // The session here is inside a ceremony's window (world.elevated), which
+    // counts for nothing when a figure goes out.
+    expect(world.elevated).toBe(true);
+    const bare = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' });
+    expect(bare.statusCode).toBe(401);
+    const wrong = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD', pin: '135799' });
+    expect(wrong.statusCode).toBe(401);
+    expect(world.offers).toHaveLength(0);
+    // The page carries the PIN box, window or no.
+    const page = await inject('GET', `/matches/${MATCH}`);
+    expect(page.body).toContain('Confirm with your PIN');
+    expect(page.body).toContain('Money takes your PIN every time.');
   });
 
   it('turns away a figure that is not one, and a note shaped like a way to reach someone', async () => {
@@ -716,16 +741,16 @@ describe('the human page class owns both settings', () => {
 
   it('the per-match rail is shown to the human rather than swallowed', async () => {
     for (let i = 0; i < 3; i++) {
-      await inject('POST', `/matches/${MATCH}/offer`, { amount: String(400 + i), ccy: 'AUD' });
+      await inject('POST', `/matches/${MATCH}/offer`, { amount: String(400 + i), ccy: 'AUD', pin: PIN });
     }
-    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '500', ccy: 'AUD' });
+    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '500', ccy: 'AUD', pin: PIN });
     expect(res.statusCode).toBe(429);
     expect(world.offers).toHaveLength(3);
   });
 
   it('a match that has moved on says so rather than 500ing', async () => {
     world.matchState = 'closed';
-    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD' });
+    const res = await inject('POST', `/matches/${MATCH}/offer`, { amount: '400', ccy: 'AUD', pin: PIN });
     expect(res.statusCode).toBe(409);
     expect(world.offers).toHaveLength(0);
   });
@@ -892,7 +917,7 @@ describe('the pages say it in plain words', () => {
     expect(html).not.toContain(`/matches/${MATCH}/offer`);
     expect(html).toContain('>Accept<');
     expect(html).toContain('>Not now<');
-    expect(html).toMatch(/This takes your PIN\./);
+    expect(html).toMatch(/Money takes your PIN every time\./);
   });
 
   it('the front page reaches a negotiation through the decision waiting on it', () => {

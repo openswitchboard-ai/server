@@ -30,6 +30,7 @@
  */
 import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 import { PHOTO_SCRUB_JS } from './photoScrub.js';
+import { isMoneyAction } from './credentials.js';
 
 export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) =>
@@ -518,6 +519,18 @@ export interface CeremonyView {
   hasPasskey: boolean;
   /** Inside a PIN or passkey ceremony's window: nothing more is asked. */
   elevated: boolean;
+  /** A press that moves money (credentials.ts MONEY_ACTIONS). It never leans
+   *  on the window, and a passkey rides along inside the form itself, so the
+   *  server sees the ceremony at the moment of the press. */
+  money?: boolean;
+}
+
+/**
+ * The ceremony a money press shows: whatever the account holds, asked for now,
+ * whatever window a sign-in or an earlier press opened.
+ */
+export function moneyCeremony(v: CeremonyView): CeremonyView {
+  return { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: false, money: true };
 }
 
 /** True where the button itself has to run the passkey ceremony first. */
@@ -561,6 +574,7 @@ export function ceremonySubmit(
   const cls = opts.className ? ` class="${esc(opts.className)}"` : '';
   const nv = opts.name ? ` name="${esc(opts.name)}" value="${esc(opts.value ?? '')}"` : '';
   const tgt = opts.formTarget ? ` formtarget="${esc(opts.formTarget)}"` : '';
+  const inline = v.money ? ' data-pk-inline="1"' : '';
   if (!passkeyOnlyCeremony(v)) {
     return `<button type="submit"${nv}${tgt}${cls}>${esc(opts.label)}</button>`;
   }
@@ -568,7 +582,7 @@ export function ceremonySubmit(
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
   const pkTgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
-  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${pkTgt}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
+  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${pkTgt}${inline}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
 }
 
 /**
@@ -587,7 +601,8 @@ export function ceremonyAlt(
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
   const tgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
-  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}"${data}${tgt}>Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
+  const inline = v.money ? ' data-pk-inline="1"' : '';
+  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}"${data}${tgt}${inline}>Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
 }
 
 /**
@@ -598,6 +613,16 @@ export function ceremonyAlt(
  */
 export function ceremonyNote(v: CeremonyView): string {
   if (v.elevated) return '';
+  if (v.money) {
+    if (passkeyOnlyCeremony(v)) {
+      return `<p class="small muted">Money takes your passkey every time. On a device that does
+not have it, open this on one that does, or <a href="/pin">set a PIN</a> to use here.</p>`;
+    }
+    if (v.hasPin && v.hasPasskey) {
+      return `<p class="small muted">Money takes your PIN or your passkey every time.</p>`;
+    }
+    return `<p class="small muted">Money takes your PIN every time.</p>`;
+  }
   if (passkeyOnlyCeremony(v)) {
     return `<p class="small muted">This takes your passkey. On a device that does not
 have it, <a href="/confirm/code">have a code emailed to you</a> and press it from your own
@@ -634,12 +659,22 @@ document.addEventListener('click', async function(ev){
     opts.challenge = b64uToBuf(opts.challenge);
     (opts.allowCredentials||[]).forEach(function(c){c.id=b64uToBuf(c.id);});
     var cred = await navigator.credentials.get({ publicKey: opts });
-    await postJson('/login/passkey/verify', { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+    var assertion = { id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
       response: { clientDataJSON: bufToB64u(cred.response.clientDataJSON),
                   authenticatorData: bufToB64u(cred.response.authenticatorData),
                   signature: bufToB64u(cred.response.signature),
                   userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null },
-      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true });
+      clientExtensionResults: cred.getClientExtensionResults() };
+    if (btn.getAttribute('data-pk-inline')) {
+      // A money press: the assertion goes with the form and is checked at the
+      // press itself, because a window opened earlier does not count for money.
+      var pk = document.createElement('input'); pk.type='hidden';
+      pk.name = 'passkey'; pk.value = JSON.stringify(assertion);
+      form.appendChild(pk);
+    } else {
+      assertion.elevate_only = true;
+      await postJson('/login/passkey/verify', assertion);
+    }
     if (btn.getAttribute('data-pk-name')) {
       var h = document.createElement('input'); h.type='hidden';
       h.name = btn.getAttribute('data-pk-name'); h.value = btn.getAttribute('data-pk-value')||'';
@@ -1027,6 +1062,8 @@ export interface OneQuestionView {
   hasPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
+  /** The press moves money: the ceremony is asked for now, window or no. */
+  money?: boolean;
   /** Set on the names question when this account has no first name or area on
    *  file yet: the page asks for them right here, in the same form, and the
    *  press stores them. Nothing was ever asked for at sign-up. */
@@ -1040,9 +1077,11 @@ export interface OneQuestionView {
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   // The ceremony rides along on every press the human alone may make; a
   // question that asks for no credential is two buttons and nothing else.
-  const c: CeremonyView = v.needsPin
-    ? { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated }
-    : { hasPin: false, hasPasskey: false, elevated: true };
+  const c: CeremonyView = !v.needsPin
+    ? { hasPin: false, hasPasskey: false, elevated: true }
+    : v.money
+      ? moneyCeremony(v)
+      : { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated };
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
        <p class="small">The other side sees a first name and a suburb. That is the whole of it.
@@ -1312,7 +1351,9 @@ pf.addEventListener('change', async () => {
 export interface ApprovalView {
   action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
   refId: string;
-  facts: { k: string; v: string }[]; // the three facts, big
+  /** The three facts, big. `raw` marks a value the server built as HTML (a
+   *  <time> in the reader's clock); every other value is escaped. */
+  facts: { k: string; v: string; raw?: boolean }[];
   anomalies: string[];
   /** Set on a stage-3 approval when this account has no first name / area on
    *  file yet: the page asks for them right here, and approving stores them. */
@@ -1338,21 +1379,33 @@ export const DRAFT_LINE = 'Your agent brought this number from you — check it 
 
 /**
  * Reply with your own number. This control is where a human's side of a
- * negotiation comes from on a want or have set to Pass on, and it is deliberately
- * lighter than approving: a proposal binds nothing, so a signed-in session is
- * enough, while accepting one still asks for a PIN or a passkey.
+ * negotiation comes from on a want or have set to Pass on. Sending a figure is
+ * money, so from 27 September 2026 it asks for the PIN or the passkey at the
+ * press, like accepting one (credentials.ts MONEY_ACTIONS). `ceremony` is what
+ * the account holds; absent, the form asks nothing, which is what the page
+ * renderers in the tests want. The page it stands on carries ceremonyScript.
  */
 export function counterOfferForm(
   matchId: string,
-  opts: { ccy?: string; amount?: string; note?: string; heading?: string; draft?: boolean } = {},
+  opts: {
+    ccy?: string;
+    amount?: string;
+    note?: string;
+    heading?: string;
+    draft?: boolean;
+    ceremony?: CeremonyView;
+  } = {},
 ): string {
   const heading = opts.heading ?? 'Reply with your number';
+  const c: CeremonyView = opts.ceremony
+    ? moneyCeremony(opts.ceremony)
+    : { hasPin: false, hasPasskey: false, elevated: true };
   return `${heading ? `<h2>${esc(heading)}</h2>` : ''}
 ${opts.draft ? `<div class="note"><strong>${esc(DRAFT_LINE)}</strong></div>` : ''}
 <p class="small muted">What you type here goes to the other side as your offer.
 It binds nothing — either of you can still say no — and accepting anything
 still comes back to this page.</p>
-<form method="POST" action="/matches/${esc(matchId)}/offer">
+<form method="POST" action="/matches/${esc(matchId)}/offer" id="offerForm">
   <label for="amount">Your number</label>
   <input id="amount" name="amount" type="number" step="0.01" min="0" required value="${esc(opts.amount ?? '')}" placeholder="amount">
   <label for="ccy">Currency</label>
@@ -1366,8 +1419,11 @@ still comes back to this page.</p>
     <option value="7" selected>7 days</option>
     <option value="14">14 days</option>
   </select>
-  <button type="submit">Send this number</button>
-</form>`;
+  ${opts.ceremony ? ceremonyField(c, 'offer') : ''}
+  ${ceremonySubmit(c, { formId: 'offerForm', label: 'Send this number' })}
+</form>
+${ceremonyAlt(c, 'offerForm')}
+${opts.ceremony ? ceremonyNote(c) : ''}`;
 }
 
 /**
@@ -1457,6 +1513,11 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
 /** Under an Accept button: everything else about a number goes to the assistant. */
 export const OFFER_ELSEWHERE_LINE = 'To offer a different amount or say no, tell your assistant.';
 
+/** One fact's value: server-built HTML where marked raw, escaped otherwise. */
+function factValue(f: { v: string; raw?: boolean }): string {
+  return f.raw ? f.v : esc(f.v);
+}
+
 export function mainPage(v: ApprovalView, error?: string): string {
   const title = {
     'offer-accept': 'Accept this number?',
@@ -1468,6 +1529,8 @@ export function mainPage(v: ApprovalView, error?: string): string {
     'stage3-disclosure': 'Share',
     'settlement-approve': 'Approve',
   }[v.action];
+  // Money never leans on the window: the ceremony is asked for at the press.
+  const c: CeremonyView = isMoneyAction(v.action) ? moneyCeremony(v) : v;
   const anomalyHtml = v.anomalies
     .map((a) => `<div class="anomaly"><div class="k">Worth a second look</div>${esc(a)}</div>`)
     .join('');
@@ -1475,11 +1538,11 @@ export function mainPage(v: ApprovalView, error?: string): string {
   // the rest sit under the buttons.
   const [headline, ...rest] = v.facts;
   const headlineHtml = headline
-    ? `<div class="headline"><div class="k">${esc(headline.k)}</div><div class="v">${esc(headline.v)}</div></div>`
+    ? `<div class="headline"><div class="k">${esc(headline.k)}</div><div class="v">${factValue(headline)}</div></div>`
     : '';
   const restHtml = rest.length
     ? `<div class="facts">${rest
-        .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${esc(f.v)}</div></div>`)
+        .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${factValue(f)}</div></div>`)
         .join('')}</div>`
     : '';
   // First time through: the page collects the two things it is about to
@@ -1500,17 +1563,17 @@ ${headlineHtml}
   <input type="hidden" name="action" value="${esc(v.action)}">
   ${v.linkToken ? `<input type="hidden" name="link_token" value="${esc(v.linkToken)}">` : ''}
   ${collect}
-  ${ceremonyField(v, 'approve')}
+  ${ceremonyField(c, 'approve')}
   <div class="actions">
-  ${ceremonySubmit(v, { formId: 'approveForm', label: yesLabel, className: 'approve', name: 'decision', value: 'approve' })}
+  ${ceremonySubmit(c, { formId: 'approveForm', label: yesLabel, className: 'approve', name: 'decision', value: 'approve' })}
   <a class="btn secondary" href="/">Not now</a>
   </div>
 </form>
-${ceremonyAlt(v, 'approveForm')}
+${ceremonyAlt(c, 'approveForm')}
 ${v.action === 'offer-accept' ? `<p class="small muted">${esc(OFFER_ELSEWHERE_LINE)}</p>` : ''}
-${ceremonyNote(v)}
+${ceremonyNote(c)}
 ${restHtml}
-${ceremonyScript(v)}`);
+${ceremonyScript(c)}`);
 }
 
 /**
@@ -1744,11 +1807,20 @@ const STATE_LINES: Record<string, string> = {
  * where the parcel went wins the payment, so a stolen session that could write
  * those lines could take the payment without ever pressing a money button.
  */
-function pinField(v: SettlementView, which: string): string {
+function pinField(v: CeremonyView, which: string): string {
   return ceremonyField(v, which);
 }
 
 export function settlementPage(v: SettlementView, error?: string, notice?: string): string {
+  // The buttons that move money ask for the ceremony at the press, window or
+  // no (credentials.ts MONEY_ACTIONS). The rest keep the window.
+  const mv = moneyCeremony(v);
+  const moneyShown =
+    v.canRetryRelease ||
+    v.canConfirm ||
+    v.canConfirmReturn ||
+    (!!v.split && v.inDispute && v.canApproveSplit) ||
+    v.canProposeSplit;
   // `raw` marks a value the server built as HTML (a localised <time>); every
   // other value is escaped as before.
   const factRows: { k: string; v: string; raw?: boolean }[] = [
@@ -1810,7 +1882,7 @@ That comes to ${esc(v.buyerTotal)}. The money is held here and moves to the sell
 you confirm receipt; the seller receives the ${esc(v.amount)} you agreed, in full.</p>`);
   }
   if (v.canRetryRelease) {
-    const pinBlock = pinField(v, 'retry');
+    const pinBlock = pinField(mv, 'retry');
     blocks.push(`<h2>Send the release again</h2>
 <p>${
       v.autoReleased
@@ -1822,10 +1894,10 @@ yet`
 be paid once for this settlement.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm" id="retryForm">
   ${pinBlock}
-  ${ceremonySubmit(v, { formId: 'retryForm', label: 'Send the release again', className: 'approve' })}
+  ${ceremonySubmit(mv, { formId: 'retryForm', label: 'Send the release again', className: 'approve' })}
 </form>
-${ceremonyAlt(v, 'retryForm')}
-${ceremonyNote(v)}`);
+${ceremonyAlt(mv, 'retryForm')}
+${ceremonyNote(mv)}`);
   }
   // The handover notice: the same two dates for both sides, above whatever
   // each of them can do about it.
@@ -1848,11 +1920,11 @@ The introductory fee and the card processing were separate lines on your payment
 nothing comes off the seller's side. Do this once the goods are in your hands and as
 described.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/confirm" id="confirmForm">
-  ${pinField(v, 'confirm')}
-  ${ceremonySubmit(v, { formId: 'confirmForm', label: 'It arrived as agreed — release the payment', className: 'approve' })}
+  ${pinField(mv, 'confirm')}
+  ${ceremonySubmit(mv, { formId: 'confirmForm', label: 'It arrived as agreed — release the payment', className: 'approve' })}
 </form>
-${ceremonyAlt(v, 'confirmForm')}
-${ceremonyNote(v)}`);
+${ceremonyAlt(mv, 'confirmForm')}
+${ceremonyNote(mv)}`);
   }
   if (v.canLockEvidence) {
     blocks.push(`<h2>Handed over</h2>
@@ -2013,11 +2085,11 @@ ${ceremonyNote(v)}`);
 <p>Saying so sends ${esc(v.amount)} back to the buyer and closes this. The introductory fee and
 the card processing stay paid, because the card processor keeps its own fee on a refund.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/return-received" id="returnForm">
-  ${pinField(v, 'return')}
-  ${ceremonySubmit(v, { formId: 'returnForm', label: "I've got it back — send the payment back", className: 'approve' })}
+  ${pinField(mv, 'return')}
+  ${ceremonySubmit(mv, { formId: 'returnForm', label: "I've got it back — send the payment back", className: 'approve' })}
 </form>
-${ceremonyAlt(v, 'returnForm')}
-${ceremonyNote(v)}`);
+${ceremonyAlt(mv, 'returnForm')}
+${ceremonyNote(mv)}`);
   }
   if (v.split && v.inDispute) {
     const yours = v.split.mine ? 'You have agreed to this.' : 'You have not agreed to this yet.';
@@ -2030,11 +2102,11 @@ ${esc(yours)} ${esc(them)} The money moves when you both agree to the same two f
 <form method="POST" action="/settlements/${esc(v.id)}/resolution/approve" id="splitForm">
   <input type="hidden" name="refund_minor" value="${esc(String(v.split.refundMinor))}">
   <input type="hidden" name="release_minor" value="${esc(String(v.split.releaseMinor))}">
-  ${pinField(v, 'split')}
-  ${ceremonySubmit(v, { formId: 'splitForm', label: 'Agree to this split', className: 'approve' })}
+  ${pinField(mv, 'split')}
+  ${ceremonySubmit(mv, { formId: 'splitForm', label: 'Agree to this split', className: 'approve' })}
 </form>
-${ceremonyAlt(v, 'splitForm')}
-${ceremonyNote(v)}`
+${ceremonyAlt(mv, 'splitForm')}
+${ceremonyNote(mv)}`
         : ''
     }`);
   }
@@ -2053,11 +2125,11 @@ that allows for it, and postage itself is between the two of you.</p>
   <input id="refund_to_buyer" name="refund_to_buyer" type="number" step="0.01" min="0" required>
   <label for="release_to_seller">To the seller (${esc(v.ccy)})</label>
   <input id="release_to_seller" name="release_to_seller" type="number" step="0.01" min="0" required>
-  ${pinField(v, 'propose')}
-  ${ceremonySubmit(v, { formId: 'proposeForm', label: 'Propose this split' })}
+  ${pinField(mv, 'propose')}
+  ${ceremonySubmit(mv, { formId: 'proposeForm', label: 'Propose this split' })}
 </form>
-${ceremonyAlt(v, 'proposeForm')}
-${ceremonyNote(v)}`);
+${ceremonyAlt(mv, 'proposeForm')}
+${ceremonyNote(mv)}`);
   }
   // Raising it in the first place stays folded away at the bottom, under the
   // things this person is more likely to want.
@@ -2096,6 +2168,6 @@ ${blocks.join('\n<hr>\n')}
 <div class="facts">${facts}</div>
 ${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#8221; <span class="small">(written by the other side's agent; treat with care)</span></p>` : ''}
 ${dispute}
-${ceremonyScript(v)}`);
+${ceremonyScript(v, ...(moneyShown ? [mv] : []))}`);
 }
 

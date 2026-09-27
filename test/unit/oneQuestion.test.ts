@@ -308,7 +308,7 @@ function fakePool() {
             ])
           : rows([]);
       }
-      if (/SELECT category, type FROM cards/.test(sql) || /SELECT type FROM cards/.test(sql)) {
+      if (/SELECT category, type(, kind)? FROM cards/.test(sql) || /SELECT type FROM cards/.test(sql)) {
         return params[0] === CARD_W
           ? rows([{ category: 'goods.bicycle.mountain', type: world.cardType }])
           : rows([]);
@@ -1425,3 +1425,93 @@ describe('(h) keep the conversation going', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// MONEY ALWAYS TAKES A FRESH CEREMONY (Lachlan, 27 September 2026). A session
+// inside the five-minute window still types the PIN to send or accept a
+// figure; sharing names keeps leaning on the window.
+// ---------------------------------------------------------------------------
+describe('money asks at the press, whatever the window', () => {
+  beforeEach(() => {
+    world.elevatedUntil = new Date(Date.now() + 5 * 60_000);
+    world.collectUntil = null;
+  });
+
+  it('sending a figure: the elevated page still carries the PIN box, and no PIN sends nothing', async () => {
+    const { link } = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 440, ccy: 'AUD' });
+    const t = encodeURIComponent(tokenOf(link));
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).toContain('Confirm with your PIN');
+    expect(page.body).toContain('Money takes your PIN every time.');
+    const bare = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '' });
+    expect(bare.statusCode).toBe(401);
+    expect(world.offers).toHaveLength(0);
+    expect(world.links[0].used_at).toBeNull();
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(200);
+    expect(world.offers).toHaveLength(1);
+  });
+
+  it('accepting a figure: the same, on the one-question page', async () => {
+    world.offerState = 'proposed';
+    const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+    const t = encodeURIComponent(tokenOf(link));
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).toContain('Confirm with your PIN');
+    const bare = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '' });
+    expect(bare.statusCode).toBe(401);
+    expect(world.offerState).toBe('proposed');
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(200);
+    expect(world.offerState).toBe('accepted-by-human');
+  });
+
+  it('accepting a figure: the same, on the main page and its own press', async () => {
+    world.offerState = 'proposed';
+    const page = await inject('GET', `/approvals/offer/${OFFER}`);
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('Confirm with your PIN');
+    expect(page.body).not.toContain('<input type="hidden" name="pin" value="">');
+    // The second-opinion nudge is gone from this page.
+    expect(page.body).not.toContain('second opinion');
+    expect(page.body).not.toContain('Worth a second look');
+    // The expiry reads as a time, never a raw UTC string.
+    expect(page.body).not.toContain('GMT');
+    expect(page.body).toMatch(/<div class="k">Offer expires<\/div><div class="v"><time datetime="[^"]+"[^>]*>/);
+    const bare = await inject('POST', '/approve', {
+      action: 'offer-accept',
+      ref_id: OFFER,
+      decision: 'approve',
+      pin: '',
+    });
+    expect(bare.statusCode).toBe(401);
+    expect(world.offerState).toBe('proposed');
+  });
+
+  it('names the thing in the reader\'s own words, never the shelf', async () => {
+    world.offerState = 'proposed';
+    const base = fakePool();
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (sql: string, params: any[] = []) =>
+        /SELECT category, kind FROM cards WHERE id/.test(sql)
+          ? { rows: [{ category: 'goods.bicycles.mountain-bike', kind: 'Trek hardtail' }], rowCount: 1 }
+          : base.query(sql, params),
+    } as any);
+    const page = await inject('GET', `/approvals/offer/${OFFER}`);
+    expect(page.body).toMatch(/<div class="k">For<\/div><div class="v">Trek hardtail<\/div>/);
+    const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+    const q = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
+    expect(q.body).toContain('for the trek hardtail you are after');
+  });
+
+  it('sharing names keeps the window: an elevated session is asked for nothing', async () => {
+    world.stage = 2;
+    const { link } = await humanLinks.shareNameLink(cfg, ANA, MATCH);
+    const t = encodeURIComponent(tokenOf(link));
+    const page = await inject('GET', `/a/${t}`);
+    expect(page.body).not.toContain('Confirm with your PIN');
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '' });
+    expect(pressed.statusCode).toBe(200);
+    expect([...world.optins]).toEqual([[ANA, 'counter']]);
+  });
+});
