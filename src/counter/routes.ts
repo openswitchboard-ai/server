@@ -123,6 +123,13 @@ import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
 import { isEmailQueueFull } from '../email/send.js';
 import { emailHashes } from '../domain/accounts.js';
 import * as links from './links.js';
+import {
+  groupWaitingByMatch,
+  matchOfLink,
+  mergeSteps,
+  type MatchBoxView,
+} from './matchStory.js';
+import { buildSteps, readStoryFacts } from '../domain/matchStory.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
@@ -414,25 +421,86 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         ops.agreedOnMatches(s.accountId),
       ]);
       // Every open link this person has been handed, so a request never
-      // depends on them still having the chat it came in. An offer or a
-      // names question that already has its own row below is not listed twice.
+      // depends on them still having the chat it came in.
+      const openLinks = await links.openLinksFor(s.accountId);
+      const settlementsWaiting = liveSettlements.rows.map((st: any) => {
+        const mine = st.buyer_account === s.accountId ? st.buyer_approved_at : st.seller_approved_at;
+        return {
+          id: String(st.id),
+          match_id: String(st.match_id),
+          amount: st.amount,
+          ccy: st.ccy,
+          created_at: st.created_at,
+          needsApproval:
+            !mine && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(st.state),
+        };
+      });
+      // ONE BOX PER MATCH (27 September 2026). Everything waiting on one match
+      // is gathered into one box under the story of that match, so a figure
+      // and the reply to it read in the order they happened. What belongs to
+      // no match keeps a plain card below.
+      const ownOpen = await getPool().query(
+        `SELECT match_id::text, amount, ccy FROM offers
+          WHERE proposer_account = $1 AND state IN ('proposed', 'awaiting-human') AND expiry > now()`,
+        [s.accountId],
+      );
+      const grouped = groupWaitingByMatch({
+        openLinks,
+        offers,
+        disclosures,
+        settlements: settlementsWaiting,
+        messages: messagesWaiting,
+        ownOpenOffers: ownOpen.rows,
+      });
+      const timezone: string | null = typeof a.timezone === 'string' && a.timezone ? a.timezone : null;
+      const matchBoxes: MatchBoxView[] = [];
+      const unboxed = new Set<string>();
+      for (const [matchId, waiting] of grouped.byMatch) {
+        let story: Awaited<ReturnType<typeof readStoryFacts>>;
+        try {
+          story = await readStoryFacts(s.accountId, matchId);
+        } catch {
+          story = undefined;
+        }
+        if (!story) {
+          unboxed.add(matchId);
+          continue;
+        }
+        matchBoxes.push({
+          head: story.head,
+          steps: mergeSteps(buildSteps(story.facts), waiting.steps),
+          actions: waiting.actions,
+        });
+      }
+      // Newest activity first.
+      const lastAt = (b: MatchBoxView) =>
+        Math.max(0, ...b.steps.filter((x) => !x.noTime).map((x) => x.at.getTime() || 0));
+      matchBoxes.sort((x, y) => lastAt(y) - lastAt(x));
+      // A match whose story could not be read falls back to the plain cards.
+      const loose = openLinks.filter((l) => {
+        const m = matchOfLink(l);
+        return !m || unboxed.has(m);
+      });
       const offerIds = new Set(offers.map((o) => String(o.offer_id)));
       const disclosureIds = new Set(disclosures.map((d) => String(d.match_id)));
-      const openLinks = (await links.openLinksFor(s.accountId)).filter(
-        (l) =>
-          !(l.action === 'offer-accept' && offerIds.has(String(l.ref_id))) &&
-          !(l.action === 'stage3-disclosure' && disclosureIds.has(String(l.ref_id))),
-      );
       const pendingApprovals = [
         // The open requests first: each one is a page an assistant handed
         // over, and each runs out in minutes. The button goes through the
-        // session (GET /open/:id), so no token is written into this page.
-        ...openLinks.map((l) => ({
-          href: `/open/${l.id}`,
-          label: home.openRequestLabel(l.action, l.category ? phrase(l.category) : undefined),
-          ...(l.amount !== null && l.ccy ? { amount: `${Number(l.amount)} ${l.ccy}` } : {}),
-          cta: home.OPEN_REQUEST_CTA,
-        })),
+        // session (GET /open/:id), so no token is written into this page. An
+        // offer or a names question that has its own row below is not listed
+        // twice.
+        ...loose
+          .filter(
+            (l) =>
+              !(l.action === 'offer-accept' && offerIds.has(String(l.ref_id))) &&
+              !(l.action === 'stage3-disclosure' && disclosureIds.has(String(l.ref_id))),
+          )
+          .map((l) => ({
+            href: `/open/${l.id}`,
+            label: home.openRequestLabel(l.action, l.category ? phrase(l.category) : undefined),
+            ...(l.amount !== null && l.ccy ? { amount: `${Number(l.amount)} ${l.ccy}` } : {}),
+            cta: home.OPEN_REQUEST_CTA,
+          })),
         // A want or have screening turned away is off the board until this
         // person changes it, so it sits at the top of what is waiting for them.
         ...rejected.map((c) => ({
@@ -442,27 +510,29 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           label: `Your ${phrase(c.category)} didn't pass screening`,
           cta: 'See why and fix it',
         })),
-        ...offers.map((o) => ({
-          href: `/approvals/offer/${o.offer_id}`,
-          label: `Offer on your ${phrase(o.category)} match`,
-          amount: `${Number(o.amount)} ${o.ccy}`,
-        })),
-        ...disclosures.map((d) => ({
-          href: `/approvals/match/${d.match_id}`,
-          label: `Share your details on your ${phrase(d.category)} match?`,
-        })),
-        ...liveSettlements.rows.map((st: any) => {
-          const mine = st.buyer_account === s.accountId ? st.buyer_approved_at : st.seller_approved_at;
-          const needsApproval =
-            !mine && ['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(st.state);
-          return {
-            href: needsApproval
-              ? `/approvals/settlement/${st.id}`
-              : `/settlements/${st.id}`,
-            label: `Settlement on your ${phrase(st.category)} match (${st.state})`,
-            amount: `${Number(st.amount)} ${st.ccy}`,
-          };
-        }),
+        ...offers
+          .filter((o) => unboxed.has(String(o.match_id)))
+          .map((o) => ({
+            href: `/approvals/offer/${o.offer_id}`,
+            label: `Offer on your ${phrase(o.category)} match`,
+            amount: `${Number(o.amount)} ${o.ccy}`,
+          })),
+        ...disclosures
+          .filter((d) => unboxed.has(String(d.match_id)))
+          .map((d) => ({
+            href: `/approvals/match/${d.match_id}`,
+            label: `Share your details on your ${phrase(d.category)} match?`,
+          })),
+        ...liveSettlements.rows
+          .filter((st: any) => unboxed.has(String(st.match_id)))
+          .map((st: any) => {
+            const w = settlementsWaiting.find((x) => x.id === String(st.id));
+            return {
+              href: w?.needsApproval ? `/approvals/settlement/${st.id}` : `/settlements/${st.id}`,
+              label: `Settlement on your ${phrase(st.category)} match (${st.state})`,
+              amount: `${Number(st.amount)} ${st.ccy}`,
+            };
+          }),
       ];
       // Sent here by the Authorize page after the agent's callback opened in
       // its own tab. The agent proves it finished by exchanging its code for a
@@ -522,7 +592,9 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
               }
             : {}),
           pendingApprovals,
-          messagesWaiting: messagesWaiting.map((m) => ({
+          matchBoxes,
+          timezone,
+          messagesWaiting: messagesWaiting.filter((m) => unboxed.has(String(m.match_id))).map((m) => ({
             matchId: m.match_id,
             category: categoryLeafLabel(m.category),
             count: m.count,
@@ -2045,7 +2117,7 @@ in on this device and lets you approve what is waiting.</p>
           );
         }
         if (row.action === 'offer-send') {
-          await proposeOffer(
+          const placed = await proposeOffer(
             cfg,
             s.accountId!,
             {
@@ -2062,6 +2134,12 @@ in on this device and lets you approve what is waiting.</p>
             { author: 'human' },
           );
           await links.recordLinkDecision(row.id, 'approved');
+          if ('already_on_table' in placed) {
+            return html(
+              reply,
+              pages.donePage('Already on the table', `<p>${pages.esc(placed.say)}</p>`),
+            );
+          }
           return html(
             reply,
             pages.donePage('Sent', '<p>Your number is on the table for the other side.</p>'),
@@ -3265,6 +3343,21 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         ...(agreed ? { agreedAmount: `${Number(agreed.amount)} ${agreed.ccy}` } : {}),
         ...(draft ? { draft: draftToFields(draft) } : {}),
         ...(verdict ? { verdict } : {}),
+        ...(await (async () => {
+          // The whole story of this match, drawn by the same renderer as the
+          // main page's box. A read that fails leaves the page as it was.
+          try {
+            const story = await readStoryFacts(accountId, matchId);
+            if (!story) return {};
+            const acct: any = await getAccount(accountId);
+            return {
+              story: buildSteps(story.facts),
+              timezone: typeof acct?.timezone === 'string' && acct.timezone ? acct.timezone : null,
+            };
+          } catch {
+            return {};
+          }
+        })()),
         offers: offers.map((o) => ({
           amount: `${Number(o.amount)} ${o.ccy}`,
           mine: o.proposer_account === accountId,
@@ -3342,8 +3435,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!note.ok) return bad(note.error);
       const days = [3, 7, 14].includes(Number(b.good_for)) ? Number(b.good_for) : 7;
 
+      let sameFigure: string | undefined;
       try {
-        await proposeOffer(
+        const placed = await proposeOffer(
           cfg,
           s.accountId!,
           {
@@ -3358,6 +3452,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           // what an AGENT may author, and this is the human authoring.
           { author: 'human' },
         );
+        if ('already_on_table' in placed) sameFigure = placed.say;
       } catch (e: any) {
         if (e instanceof OsbError) {
           const rateLimited =
@@ -3375,7 +3470,11 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const after = await offersView(s.accountId!, matchId, s);
       return html(
         reply,
-        home.matchOffersPage(after!, undefined, 'Sent. Your number is on the table for the other side.'),
+        home.matchOffersPage(
+          after!,
+          undefined,
+          sameFigure ?? 'Sent. Your number is on the table for the other side.',
+        ),
       );
     });
 

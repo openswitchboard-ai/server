@@ -1608,6 +1608,12 @@ async function dispatchToolInner(
               ...offer,
               match_id: intro_id,
             });
+            // The same figure again, while theirs is still open: nothing new
+            // went up, and the sentence says so (domain/offers.ts).
+            if ('already_on_table' in placed) {
+              const { say, ...rest } = placed;
+              return ok({ ...rest, note: matches.sbNote(say) });
+            }
             return ok({
               ...placed,
               note: matches.sbNote(

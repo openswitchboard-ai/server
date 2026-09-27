@@ -279,6 +279,12 @@ export interface OpenLink {
   ccy: string | null;
   /** The shelf of the posting it is about, where there is one. */
   category: string | null;
+  /** The match it is about, where it is about one: the ref itself for the
+   *  match-bound actions, the offer's match for an accept. */
+  match_id?: string | null;
+  /** The figures it was minted for (a number to send carries its note). */
+  payload?: string | null;
+  created_at?: Date;
   expires_at: Date;
 }
 
@@ -289,8 +295,9 @@ export interface OpenLink {
  */
 export async function openLinksFor(accountId: string): Promise<OpenLink[]> {
   const r = await getPool().query(
-    `SELECT a.id, a.action, a.ref_id, a.amount, a.ccy, a.expires_at,
-            COALESCE(m.category, om.category, c.category) AS category
+    `SELECT a.id, a.action, a.ref_id, a.amount, a.ccy, a.payload, a.created_at, a.expires_at,
+            COALESCE(m.category, om.category, c.category) AS category,
+            COALESCE(m.id, om.id) AS match_id
        FROM approval_links a
        LEFT JOIN matches m ON m.id = a.ref_id
              AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report')
