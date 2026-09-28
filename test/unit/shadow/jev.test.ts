@@ -170,7 +170,7 @@ describe('what goes on the wire', () => {
     let seen: { url: string; init: any } | undefined;
     vi.stubGlobal('fetch', async (url: string, init: any) => {
       seen = { url: String(url), init };
-      return { ok: true, status: 200, json: async () => ({ answers: {} }) } as any;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ answers: {} }) } as any;
     });
     await askJev({ kind: 'a bike' }, { fit: { type: 'noul', instructions: 'is it?' } });
 
@@ -270,7 +270,7 @@ describe('the three answer shapes', () => {
     vi.stubGlobal('fetch', async () => ({
       ok: true,
       status: 200,
-      json: async () => ({
+      text: async () => JSON.stringify({
         answers: { q: { type: 'noul', noul: 0.4 } },
         usage: { input_tokens: 120, output_tokens: 8 },
       }),
@@ -288,7 +288,7 @@ describe('the three answer shapes', () => {
     vi.stubGlobal('fetch', async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ something: 'else' }),
+      text: async () => JSON.stringify({ something: 'else' }),
     }));
     expect(await askJev({ kind: 'x' }, { q: { type: 'noul', instructions: 'y' } })).toEqual({
       ok: false,
@@ -341,7 +341,7 @@ describe('nothing gets out through a failure', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ answers: { q: { type: 'noul', noul: 0.9 } } }),
+          text: async () => JSON.stringify({ answers: { q: { type: 'noul', noul: 0.9 } } }),
         } as any;
       });
       const r = await askJev({ kind: 'x' }, { q: { type: 'noul', instructions: 'y' } });
@@ -692,7 +692,7 @@ describe('the hooks swallow everything', () => {
     vi.stubGlobal('fetch', async () => ({
       ok: true,
       status: 200,
-      json: async () => ({
+      text: async () => JSON.stringify({
         answers: {
           category: {
             type: 'choice',
@@ -731,7 +731,7 @@ describe('the hooks swallow everything', () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ answers: { compatible: { type: 'noul', noul: 0.5 } } }),
+        text: async () => JSON.stringify({ answers: { compatible: { type: 'noul', noul: 0.5 } } }),
       } as any;
     });
     const pairs = Array.from({ length: 12 }, (_, i) => ({
@@ -810,7 +810,7 @@ describe('what trial A puts on the ballot', () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({
+        text: async () => JSON.stringify({
           answers: {
             category: {
               type: 'choice',
@@ -879,5 +879,93 @@ describe('what trial A puts on the ballot', () => {
       'goods.electronics.console.accessories',
       'goods.bicycle.parts',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The 2026-09-28 review: where the key may go, how much is read back, and
+// what of it is kept.
+// ---------------------------------------------------------------------------
+describe('the endpoint, the body and the answers are held to what was asked', () => {
+  it('outside the suite, sends the key only over https to the documented host', async () => {
+    const { jevEndpointAllowed } = await import('../../../src/shadow/jev.js');
+    expect(jevEndpointAllowed(JEV_ENDPOINT, 'production')).toBe(true);
+    expect(jevEndpointAllowed('https://api.typesafe.ai/v2/other', 'production')).toBe(true);
+    expect(jevEndpointAllowed('http://api.typesafe.ai/v1/systemone', 'production')).toBe(false);
+    expect(jevEndpointAllowed('https://evil.example/v1/systemone', 'production')).toBe(false);
+    expect(jevEndpointAllowed('https://api.typesafe.ai.evil.example/', 'production')).toBe(false);
+    expect(jevEndpointAllowed('not a url', 'production')).toBe(false);
+    expect(jevEndpointAllowed('http://localhost:9/x', 'test')).toBe(true);
+  });
+
+  it('refuses a body past 64 KiB without parsing it, streamed or not', async () => {
+    const { postToJev, JEV_MAX_BODY_BYTES } = await import('../../../src/shadow/jev.js');
+    expect(JEV_MAX_BODY_BYTES).toBe(64 * 1024);
+    const big = JSON.stringify({ answers: { q: { type: 'noul', noul: 0.5 } }, pad: 'x'.repeat(70_000) });
+    vi.stubGlobal('fetch', async () => new Response(big, { status: 200 }));
+    const q = { q: { type: 'noul' as const, instructions: 'y' } };
+    expect(await postToJev({ state: {}, questions: q, apiKey: 'k' })).toEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+    vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, text: async () => big }));
+    expect(await postToJev({ state: {}, questions: q, apiKey: 'k' })).toEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+    // A declared length past the cap is refused before a byte is read.
+    let read = false;
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (h: string) => (h === 'content-length' ? '999999' : null) },
+      text: async () => {
+        read = true;
+        return '{}';
+      },
+    }));
+    expect(await postToJev({ state: {}, questions: q, apiKey: 'k' })).toMatchObject({
+      reason: 'too-large',
+    });
+    expect(read).toBe(false);
+  });
+
+  it('keeps only answers to questions asked, a choice among the offered keys, and nothing extra', async () => {
+    const { postToJev } = await import('../../../src/shadow/jev.js');
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          JSON.stringify({
+            answers: {
+              pick: {
+                type: 'choice',
+                choice: 'a',
+                probabilities: { a: 0.7, b: 0.2, injected: 0.1 },
+                confidence: 7,
+                extra: '<script>',
+              },
+              bogus: { type: 'choice', choice: 'a', probabilities: {}, confidence: 1 },
+              made_up: { type: 'choice', choice: 'z', probabilities: {}, confidence: 1 },
+            },
+            usage: { input_tokens: 'lots', output_tokens: 12.7 },
+          }),
+          { status: 200 },
+        ),
+    );
+    const r = await postToJev({
+      state: {},
+      apiKey: 'k',
+      questions: {
+        pick: { type: 'choice', instructions: 'which', criteria: { a: 'A', b: 'B' } },
+        made_up: { type: 'choice', instructions: 'which', criteria: { a: 'A' } },
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.answers).toEqual({
+      pick: { type: 'choice', choice: 'a', probabilities: { a: 0.7, b: 0.2 }, confidence: 1 },
+    });
+    expect(r.usage).toEqual({ input_tokens: 0, output_tokens: 12 });
   });
 });
