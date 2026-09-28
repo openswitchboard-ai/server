@@ -57,6 +57,7 @@ import {
 import { POSSIBLE_EMAIL_LINE, renderSummons } from '../../src/email/templates.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg = { quotas: { maxOpenCards: 20 } } as unknown as Config;
 
@@ -703,7 +704,7 @@ describe('a POSSIBLE says so, everywhere it is named', () => {
         const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
         if (/FROM matches/.test(sql) && /SELECT (\*|m\.\*)/.test(sql)) return rows([theMatch(certainty)]);
         if (/SELECT \* FROM cards WHERE id/.test(sql)) {
-          return rows([found({ lifecycle_state: 'PUBLISHED' })]);
+          return rows([asScreened(found({ lifecycle_state: 'PUBLISHED' }))]);
         }
         return rows([]);
       },

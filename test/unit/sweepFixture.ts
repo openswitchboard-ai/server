@@ -14,6 +14,7 @@
  * file); `cryptoMock` below is the factory to hand it.
  */
 import type { Config } from '../../src/config.js';
+import { asScreened } from './screenedFixture.js';
 
 export const ANA = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb'; // the WANT side throughout
 export const BEPPE = 'cccccccc-3333-4333-8333-cccccccccccc';
@@ -264,7 +265,7 @@ export function fakeSweepPool(world: SweepWorld, unknown: string[] = []) {
         if (!c) return rows([]);
         const down = c.f.withdrawn === c.side;
         return rows([
-          {
+          asScreened({
             id: params[0],
             account_id: c.side === 'want' ? ANA : BEPPE,
             type: c.side === 'want' ? 'WANT' : 'HAVE',
@@ -277,7 +278,7 @@ export function fakeSweepPool(world: SweepWorld, unknown: string[] = []) {
             lifecycle_state: down ? 'WITHDRAWN' : 'PUBLISHED',
             updated_at: down ? ago(c.f.withdrawnAgoDays ?? 0) : ago(15),
             expires_at: new Date(world.now.getTime() + 30 * DAY),
-          },
+          }),
         ]);
       }
       if (/SELECT amount, ccy, message FROM offers/.test(sql)) {
