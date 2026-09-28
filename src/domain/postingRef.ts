@@ -75,7 +75,7 @@ export interface PostingRef {
 }
 
 /** A uuid and nothing else. Anything else the agent sends is not a reference. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The reference as it arrived, or undefined where nothing usable did. */
 export const referenceOf = (v: unknown): string | undefined => {

@@ -27,7 +27,12 @@ import { checkReadRate, checkWriteRate } from '../domain/quotas.js';
 import { SUSPENDED_WORDS, isSuspended } from '../safety/suspend.js';
 import { APPROVAL_LINK_TTL_MINUTES } from '../counter/links.js';
 import { settlementsConfigured, type Config } from '../config.js';
-import { formatMinor, settlementBreakdown, toMinorUnits } from '../stripe.js';
+import { formatMinor, isZeroDecimal, settlementBreakdown, toMinorUnits } from '../stripe.js';
+import { UUID } from '../domain/postingRef.js';
+import { looksLikeContactDetail } from '../domain/arrangement.js';
+import { MANDATE_AMOUNT_MAX } from '../domain/negotiation.js';
+import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 
 export interface ToolDef {
   name: string;
@@ -742,7 +747,197 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+// The schemas as written, before the grammar pass below takes the formats and
+// the long bounds off them for strict clients. The server validates against
+// these (argumentComplaint).
+const WRITTEN_SCHEMAS = new Map(TOOLS.map((t) => [t.name, t.inputSchema]));
+
 for (const t of TOOLS) t.inputSchema = grammarFriendly(t.inputSchema);
+
+// ---------------------------------------------------------------------------
+// EVERY CALL'S ARGUMENTS, CHECKED IN ONE PLACE (28 September 2026 review).
+//
+// Until now each handler read what it needed off `args` and nothing looked at
+// the rest: the schemas an agent is shown were never held against what it
+// sent, an id that was not an id went straight into a query, and a database
+// that choked on one sent its own words back up the wire. So every call is
+// checked here first, against the schema it was shown, and anything that is
+// not an id where an id belongs is answered before any query runs.
+//
+// WHAT IS LOOSER HERE THAN THE SCHEMA SHOWN, AND WHY. Several handlers take
+// older argument names a client holding an earlier tool schema still sends,
+// and several validate a field themselves with a plain sentence of their own
+// that a schema complaint would pre-empt. Those are declared or opened up
+// below, so every call that worked before this still reaches its handler and
+// is answered in the same words:
+//
+//   - match_id beside intro_id, and card beside listing (introId, wireListing);
+//   - the posting itself and an amend's patch, which the domain holds to the
+//     protocol's own document with the plain-words refusals it has always given;
+//   - check_in's step, which still takes the old stage numbers;
+//   - respond's action and verdict, which still take the retired words and
+//     answer them plainly, and any key naming a reason, which a decline turns
+//     away in its own words;
+//   - the arrangement, and refine's two lists, which their handlers check with
+//     sentences meant for a human.
+//
+// read_manual is not checked at all: it is always readable, whatever is sent.
+// ---------------------------------------------------------------------------
+
+/** The arguments that name something the switchboard handed out. */
+const ID_ARGS = ['intent_id', 'intro_id', 'match_id', 'offer_id', 'settlement_id', 'press_id'] as const;
+
+/** A written schema with every uuid format taken off: ids are checked by
+ *  ID_ARGS, in plain words, before the schema is. */
+function withoutUuidFormat(node: any): any {
+  if (Array.isArray(node)) return node.map(withoutUuidFormat);
+  if (node === null || typeof node !== 'object') return node;
+  const out: any = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'format' && v === 'uuid') continue;
+    out[k] = withoutUuidFormat(v);
+  }
+  return out;
+}
+
+const OPEN_FIELD = {};
+
+function checkedSchemaFor(name: string, written: any): any {
+  const schema = withoutUuidFormat(structuredClone(written));
+  const props: Record<string, any> = (schema.properties ??= {});
+  const dropRequired = (k: string) => {
+    if (Array.isArray(schema.required)) schema.required = schema.required.filter((r: string) => r !== k);
+  };
+  switch (name) {
+    case 'publish_intent':
+      props.listing = { type: 'object' };
+      props.card = { type: 'object' };
+      dropRequired('listing');
+      break;
+    case 'check_in':
+      props.match_id = { type: 'string' };
+      props.step = { type: ['string', 'integer'] };
+      break;
+    case 'respond':
+      props.match_id = { type: 'string' };
+      props.action = { type: 'string' };
+      props.verdict = { type: 'string' };
+      // An offer from an older client may carry the introduction's id inside
+      // it. The handler puts the checked intro_id over it either way.
+      if (props.offer?.properties) props.offer.properties.match_id = { type: 'string' };
+      schema.patternProperties = { '[Rr][Ee][Aa][Ss][Oo][Nn]': OPEN_FIELD };
+      break;
+    case 'open_conversation':
+    case 'send_message':
+    case 'collect_messages':
+    case 'settle':
+      props.match_id = { type: 'string' };
+      dropRequired('intro_id');
+      break;
+    case 'amend_intent':
+      props.patch = { type: 'object' };
+      break;
+    case 'standing_arrangement':
+      props.arrangement = OPEN_FIELD;
+      break;
+    case 'refine_intent':
+      props.also_called = OPEN_FIELD;
+      props.not_these = OPEN_FIELD;
+      break;
+  }
+  return schema;
+}
+
+const toolAjv = new Ajv2020({ allErrors: false, strict: false, allowUnionTypes: true });
+(addFormats as any).default ? (addFormats as any).default(toolAjv) : (addFormats as any)(toolAjv);
+
+const CHECKS_BY_TOOL = new Map<string, ValidateFunction>(
+  [...WRITTEN_SCHEMAS]
+    .filter(([name]) => name !== 'read_manual')
+    .map(([name, written]) => [name, toolAjv.compile(checkedSchemaFor(name, written))]),
+);
+
+/** One schema complaint, in words: where it is, and what is wrong with it. */
+function plainComplaint(tool: string, e: ErrorObject): string {
+  const at = e.instancePath.replace(/^\//, '').replace(/\//g, '.');
+  const field = at || 'the call';
+  switch (e.keyword) {
+    case 'required':
+      return `${tool} needs ${at ? `${at}.` : ''}${(e.params as any).missingProperty}`;
+    case 'additionalProperties':
+      return `${tool} takes no '${(e.params as any).additionalProperty}'${at ? ` inside ${at}` : ''}`;
+    case 'type':
+      return `${field} has to be ${(e.params as any).type === 'integer' ? 'a whole number' : `a ${(e.params as any).type}`}`;
+    case 'enum':
+      return `${field} is one of: ${((e.params as any).allowedValues ?? []).join(', ')}`;
+    default:
+      return `${field} ${e.message ?? 'is not right'}`;
+  }
+}
+
+/**
+ * What is wrong with this call's arguments, in words, or undefined where
+ * nothing is. Ids first, so an id that is not one never reaches a query.
+ */
+export function argumentComplaint(name: string, args: any): string | undefined {
+  if (name === 'read_manual') return undefined;
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+    return `${name} takes its arguments as an object`;
+  }
+  for (const k of ID_ARGS) {
+    const v = args[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !UUID.test(v)) {
+      return `${k} is not an id the switchboard handed out`;
+    }
+  }
+  const check = CHECKS_BY_TOOL.get(name);
+  if (!check) return undefined;
+  if (check(args)) return undefined;
+  const first = check.errors?.[0];
+  return first ? plainComplaint(name, first) : `${name} could not be read`;
+}
+
+/** Plain text only in a settlement's description: no control characters bar
+ *  the newline, no angle brackets. The offer note's rule, with room for lines. */
+const SETTLE_TEXT_BAD = /[\u0000-\u0009\u000b-\u001f\u007f<>]/;
+
+/**
+ * A settlement's amount and description, before either is stored. The amount
+ * is the figure the buyer is charged, so it is held to the same ceiling as the
+ * numbers a human gives for negotiating (negotiation.ts MANDATE_AMOUNT_MAX) and
+ * to whole minor units of its currency: cents, or whole yen. The description
+ * is rendered on the other human's settlement page, so it is held to the rule
+ * an offer note is held to — plain text and no way of reaching anybody
+ * (arrangement.ts looksLikeContactDetail) — at the length the schema allows.
+ */
+export function settleArgumentComplaint(
+  amount: unknown,
+  ccy: unknown,
+  description: unknown,
+): string | undefined {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+    return 'amount has to be a figure above nothing';
+  }
+  if (amount > MANDATE_AMOUNT_MAX) return 'amount runs past what this switchboard carries';
+  const scaled = isZeroDecimal(String(ccy)) ? amount : amount * 100;
+  if (Math.abs(scaled - Math.round(scaled)) > 1e-6) {
+    return isZeroDecimal(String(ccy))
+      ? 'amount goes no finer than whole units in that currency'
+      : 'amount goes no finer than cents';
+  }
+  if (description === undefined || description === null) return undefined;
+  if (typeof description !== 'string') return 'description is a line of text';
+  if (description.length > 2000) return 'description runs past 2000 characters';
+  if (SETTLE_TEXT_BAD.test(description)) return 'description takes plain text only';
+  if (looksLikeContactDetail(description)) {
+    return 'description holds an email, phone number or web address. Keep ways of reaching anybody out of it; a first name and an area are shared only when both humans approve it.';
+  }
+  return undefined;
+}
+
+/** The introduction id the three conversation tools cannot do without. */
+const NEEDS_INTRO = new Set(['open_conversation', 'send_message', 'collect_messages']);
 
 export interface ToolResult {
   [key: string]: unknown;
@@ -1232,6 +1427,12 @@ async function dispatchToolInner(
     // And one over everything that changes something. Checked before the work,
     // for the same reason: a refused call costs the switchboard one statement.
     if (WRITE_TOOLS.has(name)) await checkWriteRate(accountId, cfg.quotas);
+    // THE ARGUMENTS, against the schema this tool was shown with, before any of
+    // them reaches a query (argumentComplaint above). After the two ceilings,
+    // so a call that cannot be read still costs what a call costs.
+    const complaint = argumentComplaint(name, args ?? {});
+    if (complaint) return invalidInput(complaint);
+    if (NEEDS_INTRO.has(name) && !introId(args)) return invalidInput(`${name} requires intro_id`);
     switch (name) {
       case 'publish_intent': {
         // `listing` is the wire's name for the field. `card` is still accepted so
@@ -1518,6 +1719,10 @@ async function dispatchToolInner(
         if (amount === undefined || ccy === undefined) {
           return invalidInput('proposing a settlement requires both amount and ccy');
         }
+        // THE FIGURE AND THE WORDS, checked here before they are stored,
+        // because both are shown on the other human's settlement page.
+        const settleComplaint = settleArgumentComplaint(amount, ccy, description);
+        if (settleComplaint) return invalidInput(settleComplaint);
         const r = await settlements.proposeSettlement(cfg, accountId, {
           match_id,
           amount,
@@ -1781,8 +1986,39 @@ async function dispatchToolInner(
     if (e instanceof OsbError) return protocolAnswer(e.payload, name);
     if (e?.notFound) return invalidInput(e.message);
     if (e?.validation) return invalidInput(e.message);
-    throw e;
+    return internalError(name, e);
   }
+}
+
+/**
+ * ANYTHING ELSE IS OURS, AND ITS WORDS STAY HERE. A thrown error that is not
+ * one of the answers above used to go back up the wire as it was, and the SDK
+ * put its message in the reply — so a database that choked on an argument
+ * told the agent so in its own words, table names and all. It is answered
+ * with one fixed sentence now, and the real error is written to the log with
+ * the tool's name beside it and nothing else about the call.
+ */
+export function internalError(tool: string, e: any): ToolResult {
+  console.error(
+    JSON.stringify({
+      level: 50,
+      time: Date.now(),
+      msg: 'tool failed',
+      tool: String(tool).slice(0, 40),
+      error: e?.message ? String(e.message).slice(0, 500) : String(e).slice(0, 500),
+      ...(typeof e?.code === 'string' ? { code: e.code.slice(0, 20) } : {}),
+    }),
+  );
+  const payload = {
+    what_happened: 'the switchboard could not finish that',
+    error: 'internal_error',
+    message: 'Something went wrong on the switchboard. Nothing was changed by this call; try it again in a little while.',
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    structuredContent: payload,
+    isError: true,
+  };
 }
 
 export { SCHEMA_VERSION };

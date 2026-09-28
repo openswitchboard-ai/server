@@ -203,7 +203,9 @@ describe('the refusals an author has to fix', () => {
     for (const [name, args, want] of [
       ['wait_for_press', {}, 'press_id'],
       ['no_such_tool', {}, 'no_such_tool'],
-      ['respond', { intro_id: 'x', action: 'no_such_action' }, 'no_such_action'],
+      ['respond', { intro_id: '00000000-0000-4000-8000-000000000001', action: 'no_such_action' }, 'no_such_action'],
+      // An id that is not one is answered before any query runs.
+      ['respond', { intro_id: 'x', action: 'decline' }, 'intro_id'],
     ] as const) {
       const r: any = await dispatchTool(cfg, ANA, name, args as Record<string, unknown>);
       expect(r.isError, name).toBe(true);

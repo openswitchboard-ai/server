@@ -13,7 +13,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { authenticate, recordManualVersion, unauthorized, type AuthContext } from '../auth/oauth.js';
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
-import { TOOLS, dispatchTool } from './tools.js';
+import { TOOLS, dispatchTool, internalError } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
@@ -101,12 +101,20 @@ async function buildMcpServer(
     const section =
       called === 'read_manual' ? String((req.params.arguments as any)?.section ?? 'start').slice(0, 40) : undefined;
     console.log(JSON.stringify({ level: 30, time: Date.now(), msg: 'tool call', tool: called.slice(0, 40), ...(section ? { section } : {}) }));
-    return dispatchTool(cfg, auth.accountId, req.params.name, req.params.arguments ?? {}, {
-      tokenHash: auth.tokenHash,
-      manualVersion: auth.manualVersion,
-      manualNotifiedAt: auth.manualNotifiedAt,
-      manualStartSentAt: auth.manualStartSentAt,
-    });
+    // Nothing thrown below reaches the wire in its own words: the SDK would put
+    // the message in the reply, and a database error's message is the
+    // database talking. dispatchTool answers its own failures; this is the
+    // net under whatever it did not.
+    try {
+      return await dispatchTool(cfg, auth.accountId, req.params.name, req.params.arguments ?? {}, {
+        tokenHash: auth.tokenHash,
+        manualVersion: auth.manualVersion,
+        manualNotifiedAt: auth.manualNotifiedAt,
+        manualStartSentAt: auth.manualStartSentAt,
+      });
+    } catch (e) {
+      return internalError(called, e);
+    }
   });
   return server;
 }
