@@ -272,6 +272,10 @@ describe('screening reasons in plain words', () => {
       // And the verdict with no code this network recognises behind it.
       'prohibited',
     ];
+    // The families held back because of the law around them share the one
+    // general sentence their seed entries carry (denylist.ts, heldBackReason),
+    // so they count once between them.
+    const heldBack = new Set(['wildlife-products', 'alcohol', 'event-tickets']);
     const seen = new Set<string>();
     for (const c of codes) {
       const s = screeningReasonInPlainWords(c);
@@ -279,7 +283,10 @@ describe('screening reasons in plain words', () => {
       expect(s, c).not.toContain('_');
       seen.add(s);
     }
-    expect(seen.size).toBe(codes.length);
+    expect(seen.size).toBe(codes.length - heldBack.size + 1);
+    const shared = [...heldBack].map((c) => screeningReasonInPlainWords(c));
+    expect(new Set(shared).size).toBe(1);
+    expect(shared[0]).toMatch(/licensed or restricted by law/);
   });
 
   it('says no to a person as a thing without saying no to company', () => {

@@ -57,9 +57,14 @@ The PhotoDNA licence covers this deployment only; a fork needs its own licence f
 - **Refusals**: the reason code and the sender only. Never the words.
 - **A reported introduction**: its ledger entries are preserved for
   **ninety days**.
-- **A photo stopped for sexual content**: held in quarantine, unseen, for up
-  to **ninety days** so that a referral can be made; deleted once a person has
-  reviewed and cleared it; anything referred is kept as the law requires.
+- **A photo stopped for sexual content**: held in quarantine, unseen, for
+  **ninety days** so that a referral can be made, then deleted. It is kept
+  longer only while a report, a safety flag or a lawful request is linked to
+  it, and then a person decides. Anything referred is kept as the law
+  requires.
+- **Reports and safety flags**: kept for **twelve months**, then deleted,
+  unless referred to police, held under a lawful request, or part of a
+  suspension that is still in place.
 - **A photo that matched a known abuse image**: held the same way, marked as a
   match, and referred to the police. Nothing referred is ever deleted.
 - **Message bodies never go into logs.** Operator log lines carry ids and

@@ -68,9 +68,29 @@ export function isMoneyAction(action: string): boolean {
   return MONEY_ACTIONS.has(action);
 }
 
-/** The elevation a press may lean on: none at all for money. */
+/**
+ * DELETING THE ACCOUNT TAKES A FRESH CEREMONY TOO (Lachlan, 28 September 2026).
+ *
+ * It moves no money, and it cannot be undone, so it is held to the money rule:
+ * the PIN or the passkey at the press, whatever window a sign-in opened. A
+ * session left open on a shared laptop must not be able to close somebody's
+ * account for them.
+ */
+export const ACCOUNT_DELETE_ACTION = 'account-delete';
+
+/** Every press that ignores the window: the money presses, and deletion. */
+export const FRESH_CEREMONY_ACTIONS: ReadonlySet<string> = new Set([
+  ...MONEY_ACTIONS,
+  ACCOUNT_DELETE_ACTION,
+]);
+
+export function isFreshCeremonyAction(action: string): boolean {
+  return FRESH_CEREMONY_ACTIONS.has(action);
+}
+
+/** The elevation a press may lean on: none at all for money or deletion. */
 export function elevationFor(action: string, elevated: boolean): boolean {
-  return isMoneyAction(action) ? false : elevated;
+  return isFreshCeremonyAction(action) ? false : elevated;
 }
 
 /** Whether this press has to run a ceremony now, for this action. */

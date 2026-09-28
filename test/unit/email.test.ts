@@ -11,6 +11,7 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import {
   categoryPhrase,
+  renderAccountDeleted,
   renderApproval,
   renderChannelWaiting,
   renderDealAgreed,
@@ -225,6 +226,11 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'kill-switch-on',
       blind: false,
       content: renderKillSwitch({ on: true, counterUrl: `${COUNTER}/` }, links),
+    },
+    {
+      name: 'account-deleted',
+      blind: false,
+      content: renderAccountDeleted(links),
     },
     {
       name: 'kill-switch-off',
@@ -568,7 +574,8 @@ describe('the email rule: a notice carries no link and no button', () => {
       (t) =>
         !t.name.startsWith('verification') &&
         !t.name.startsWith('security') &&
-        !t.name.startsWith('kill-switch'),
+        !t.name.startsWith('kill-switch') &&
+        !t.name.startsWith('account-deleted'),
     );
 
   it('every notice passes the notice lint: nothing but the footer controls', () => {
