@@ -54,18 +54,23 @@ describe('applyVerdict reports whether the state change landed', () => {
 
   it('writes the verdict with its timestamp and reports the row it changed', async () => {
     const calls = fakePool(1);
-    const r = await applyVerdict(cfg, 'card-1', { pass: false, reason_code: 'weapons' });
+    const r = await applyVerdict(cfg, { id: 'card-1', category: 'goods.bicycle.mountain', content_version: 3 }, { pass: false, reason_code: 'weapons' });
     expect(r.applied).toBe(true);
     expect(r.screening).toMatchObject({ pass: false, reason_code: 'weapons' });
     expect(Date.parse(r.screening.at)).toBeGreaterThan(0);
     expect(calls[0].sql).toContain("lifecycle_state='SCREENING_REJECTED'");
     expect(calls[0].sql).toContain("AND lifecycle_state='PENDING_SCREENING'");
+    // Only on the words it read: the version it screened (migration 055).
+    expect(calls[0].sql).toContain('AND content_version=$3');
+    expect(calls[0].params[2]).toBe(3);
+    // A refusal leaves the screened copy alone, so refused words never cross.
+    expect(calls[0].sql).not.toContain('screened_content');
     expect(JSON.parse(calls[0].params[1])).toEqual(r.screening);
   });
 
   it('reports no change when the card had already left PENDING_SCREENING', async () => {
     fakePool(0);
-    const r = await applyVerdict(cfg, 'card-1', { pass: false, reason_code: 'weapons' });
+    const r = await applyVerdict(cfg, { id: 'card-1', category: 'goods.bicycle.mountain', content_version: 3 }, { pass: false, reason_code: 'weapons' });
     expect(r.applied).toBe(false);
   });
 });

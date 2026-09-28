@@ -66,6 +66,7 @@ import { lintHumanCopy } from '../../src/email/lint.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 import { refsFake, type RefsFake } from './postingRefsFake.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -567,6 +568,11 @@ describe('the amendment door, which ran no money check at all', () => {
     const update = world.sql.find((q) => /UPDATE cards/.test(q.text))!;
     expect(JSON.parse(update.params[1])).toEqual({ place: 'Canberra', bucket: 'r3dp', radius_km: 25 });
     expect(update.params.slice(8, 12)).toEqual([-35.2835, 149.1281, 25, 'AU']);
+    // An amend is new words, so their version moves on in the same statement
+    // and the screened copy the other side reads is left alone (migration 055).
+    expect(update.text).toContain('content_version = content_version + 1');
+    expect(update.text).toContain('RETURNING content_version');
+    expect(update.text).not.toContain('screened_content');
 
     world.sql = [];
     const bare = (await refusal(() =>
@@ -620,7 +626,7 @@ describe('what the counterparty is handed at the details step', () => {
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string) =>
         /FROM cards WHERE id/.test(sql) || /SELECT \* FROM cards/.test(sql)
-          ? { rows: [theirs], rowCount: 1 }
+          ? { rows: [asScreened(theirs)], rowCount: 1 }
           : { rows: [], rowCount: 0 },
     } as any);
   });

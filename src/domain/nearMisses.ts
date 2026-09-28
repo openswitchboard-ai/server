@@ -35,7 +35,7 @@
  * already describes.
  */
 import { getPool } from '../db.js';
-import { categoryLeafLabel } from './matchRules.js';
+import { categoryLeafLabel, quotedTheirWords } from './matchRules.js';
 
 /** How far back a near miss is worth mentioning. */
 export const NEAR_MISS_WINDOW_DAYS = 7;
@@ -110,6 +110,10 @@ interface Row {
 /**
  * Every near miss worth mentioning on the given postings, newest first.
  *
+ * The other posting's words are read off its screened snapshot (migration 055,
+ * domain/screenedContent.ts) like everything else one person is shown about
+ * another's posting, never off its live row.
+ *
  * One statement for the whole sweep, never one per posting. A pair the
  * matcher wrote down twice — once from each side — is deduped to the newest,
  * and a pair whose other posting has since been taken down, expired or been
@@ -124,7 +128,7 @@ export async function nearMissesForCards(
   if (!cardIds.length) return out;
   const r = await getPool().query(
     `SELECT t.mine AS card_id, t.other AS other_id, o.type AS other_type,
-            o.category AS other_category, o.kind AS other_kind, nm.created_at
+            o.category AS other_category, o.screened_content->>'kind' AS other_kind, nm.created_at
        FROM near_misses nm
        CROSS JOIN LATERAL (VALUES (nm.card_want, nm.card_have), (nm.card_have, nm.card_want))
                        AS t(mine, other)
@@ -157,9 +161,14 @@ export async function nearMissesForCards(
         ? { their_words: { text: kind, provenance: 'counterparty-untrusted' as const } }
         : {}),
       note: {
+        // Their words, where the thing is named in them, sit inside quotation
+        // marks in the switchboard's sentence, so whose words are whose can be
+        // seen at a glance. The shelf's own label needs none.
         text: nearMissSentence(
           row.other_type === 'HAVE' ? 'have' : 'want',
-          categoryLeafLabel(row.other_category, kind || null),
+          kind
+            ? quotedTheirWords(categoryLeafLabel(row.other_category, kind))
+            : categoryLeafLabel(row.other_category, null),
         ),
         provenance: 'switchboard-system' as const,
       },

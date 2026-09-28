@@ -43,6 +43,7 @@ import { categoryLeafLabel } from '../../src/domain/matchRules.js';
 import { categoryPhrase } from '../../src/email/templates.js';
 import * as db from '../../src/db.js';
 import type { Config } from '../../src/config.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg: Config = {
   envName: 'dev',
@@ -370,7 +371,7 @@ describe('who may see a rejection reason', () => {
 
   it('no counterparty payload carries the screening record, whatever the row holds', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(
-      fakePool({ 'SELECT * FROM cards WHERE id': [{ ...rejectedRow(), lifecycle_state: 'PUBLISHED' }] }),
+      fakePool({ 'SELECT * FROM cards WHERE id': [asScreened({ ...rejectedRow(), lifecycle_state: 'PUBLISHED' })] }),
     );
     const match: any = {
       id: '00000000-0000-4000-8000-0000000000m1'.replace('m', '0'),

@@ -266,6 +266,11 @@ export interface CardRow {
   slots?: number;
   /** Haves only: 'straight' or 'best-offer'. */
   sale?: 'straight' | 'best-offer';
+  /** Counts the card's words: 1 at publish, one more per amend and refine (055). */
+  content_version?: number;
+  /** The words as the screen last passed them; what a counterparty is shown
+   *  (055, domain/screenedContent.ts). Never read for the owner's own views. */
+  screened_content?: unknown;
 }
 
 /**
@@ -1052,7 +1057,7 @@ async function runPublish(
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
              $18::int, $19, $20, $22
       WHERE ${OPEN_CARDS_GUARD_SQL('$21::int')}
-     RETURNING id`,
+     RETURNING id, content_version`,
     [
       accountId,
       card.schema_version,
@@ -1097,6 +1102,9 @@ async function runPublish(
     });
   }
   const id = r.rows[0].id as string;
+  // A new row's words are version 1 (migration 055); the screening message
+  // carries the number so a verdict lands only on the words it read.
+  const contentVersion = Number(r.rows[0].content_version ?? 1);
   // THE ATTEMPT IS OVER, so what it was asked is forgotten. The number lives on
   // as the posting's id, which is the point; the going-back-and-forth it stood
   // for is finished, and a row left standing would excuse a question on a
@@ -1145,7 +1153,7 @@ async function runPublish(
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,
-      MessageBody: JSON.stringify({ kind: 'screen-card', card_id: id }),
+      MessageBody: JSON.stringify({ kind: 'screen-card', card_id: id, content_version: contentVersion }),
     }),
   );
   return {
@@ -1598,17 +1606,25 @@ export async function amendIntent(
         : null
       : card.price_enc;
 
-  await getPool().query(
+  const amended = await getPool().query(
     // category_as_posted is only ever written where it is empty: the original
     // path is the one thing here that must never be overwritten, and on a row
     // that predates the column the pre-amend category IS the original.
+    //
+    // THE WORDS CHANGE, SO THEIR VERSION DOES, in this same statement
+    // (migration 055). The screening message below carries the new number, and
+    // a verdict still in flight on the old words can no longer land on these.
+    // screened_content is left exactly as it was: the other side goes on
+    // seeing the last words that passed until these pass as well.
     `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
         attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
         ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
         renewal_notified_at = NULL, slots=$13::int, sale=$14,
         category=$15, category_as_posted = COALESCE(category_as_posted, $16),
-        price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL, updated_at=now()
-     WHERE id=$1`,
+        price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL,
+        content_version = content_version + 1, updated_at=now()
+     WHERE id=$1
+     RETURNING content_version`,
     [
       intentId,
       JSON.stringify(geo.geo),
@@ -1636,7 +1652,11 @@ export async function amendIntent(
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,
-      MessageBody: JSON.stringify({ kind: 'screen-card', card_id: intentId }),
+      MessageBody: JSON.stringify({
+        kind: 'screen-card',
+        card_id: intentId,
+        content_version: amended.rows[0]?.content_version,
+      }),
     }),
   );
   // The echo rides on an amend that moved the card, which is also the call an

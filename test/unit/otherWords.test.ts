@@ -65,6 +65,7 @@ import {
 } from '../../src/domain/matches.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg = {
   screeningQueueUrl: 'https://sqs.test/screening',
@@ -335,6 +336,8 @@ describe('refining a posting', () => {
         if (/SELECT \* FROM cards WHERE id/.test(sql)) {
           return { rows: [cardRow(over)], rowCount: 1 };
         }
+        // The words' version after this change (migration 055).
+        if (/UPDATE cards/.test(sql)) return { rows: [{ content_version: 4 }], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       },
     } as any);
@@ -364,11 +367,18 @@ describe('refining a posting', () => {
     // worker re-embeds and re-runs the search from there.
     expect(update.sql).toContain("lifecycle_state = 'PENDING_SCREENING'");
     expect(update.sql).toContain('screening = NULL');
+    // The words changed, so their version moves on in the same statement, and
+    // the screening message carries it: a verdict still in flight on the old
+    // words cannot land on these (migration 055).
+    expect(update.sql).toContain('content_version = content_version + 1');
+    // The screened copy is left alone: whoever is already introduced goes on
+    // seeing the last words that passed until these pass too.
+    expect(update.sql).not.toContain('screened_content');
     expect(JSON.parse(update.params[1])).toEqual(['BPK', 'brake performance kit']);
     expect(JSON.parse(update.params[2])).toEqual(['elastomer kit']);
     expect(sqsSend).toHaveBeenCalledTimes(1);
     const body = JSON.parse((sqsSend.mock.calls[0][0] as any).input.MessageBody);
-    expect(body).toEqual({ kind: 'screen-card', card_id: WANT });
+    expect(body).toEqual({ kind: 'screen-card', card_id: WANT, content_version: 4 });
   });
 
   it('says what was added and that it is looking again, and nothing about the board', async () => {
@@ -444,16 +454,18 @@ function matchPool(certainty: 'sure' | 'possible', seen: Seen[], haveOver: Recor
       if (/SELECT \* FROM cards WHERE id/.test(sql)) {
         return params[0] === HAVE
           ? rows([
-              cardRow({
-                id: HAVE,
-                account_id: BEPPE,
-                type: 'HAVE',
-                kind: 'elastomer kit',
-                attributes: { brand: 'thrustmaster' },
-                ...haveOver,
-              }),
+              asScreened(
+                cardRow({
+                  id: HAVE,
+                  account_id: BEPPE,
+                  type: 'HAVE',
+                  kind: 'elastomer kit',
+                  attributes: { brand: 'thrustmaster' },
+                  ...haveOver,
+                }),
+              ),
             ])
-          : rows([cardRow()]);
+          : rows([asScreened(cardRow())]);
       }
       return rows([]);
     },
