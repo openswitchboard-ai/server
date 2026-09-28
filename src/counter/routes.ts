@@ -4743,19 +4743,21 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
 
 /**
  * The one extra place the assistant-connect page's form may lead, as a CSP
- * source: the origin of the (already validated) redirect_uri for http(s), or
- * its scheme for an app's own scheme ("cursor:"). Anything unparseable adds
- * nothing, so the page keeps form-action 'self' alone.
+ * source: the origin of the (already validated) redirect_uri, and only when
+ * it is a plain http(s) origin. It goes into a response header, so anything
+ * that is not letters, digits, dots, hyphens and a port (a ';' would start a
+ * new directive) adds nothing, and the page keeps form-action 'self' alone.
+ * Registration refuses custom schemes, so there is no scheme branch.
  */
+const PLAIN_ORIGIN = /^https?:\/\/(?:[a-z0-9-]+\.)*[a-z0-9-]+(?::\d{1,5})?$/i;
+const LOOPBACK_V6 = /^http:\/\/\[::1\](?::\d{1,5})?$/;
 export function formActionSource(redirectUri: string | undefined): string | undefined {
   if (!redirectUri) return undefined;
   try {
-    const u = new URL(redirectUri);
-    if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
-    if (/^[a-z][a-z0-9+.-]*:$/i.test(u.protocol)) return u.protocol;
+    const origin = new URL(redirectUri).origin;
+    if (PLAIN_ORIGIN.test(origin) || LOOPBACK_V6.test(origin)) return origin;
   } catch {
     /* nothing added */
   }
   return undefined;
 }
-
