@@ -100,9 +100,15 @@ export function judgeRun(r: RunSummary): Cleanliness {
   }
   // The non-critical ones are rated, but a rate is a series-level number and a
   // single run can still be bad enough to stop on. This is that stop.
-  if (r.otherSlips > MAX_NONCRITICAL_SLIPS_PER_RUN) {
+  //
+  // UNBACKED PROMISES ARE LEFT OUT OF THIS STOP (Lachlan, 28 September 2026,
+  // option A). "I'll let you know when he replies" held at two to six a run
+  // through every wording tried; it is reported on its own line every run
+  // and in every series, and it never stops one.
+  const ceilingSlips = r.otherSlips - (r.promiseSlips ?? 0);
+  if (ceilingSlips > MAX_NONCRITICAL_SLIPS_PER_RUN) {
     why.push(
-      `${r.otherSlips} non-critical speech slip(s) in one run (ceiling is ${MAX_NONCRITICAL_SLIPS_PER_RUN}; they are printed verbatim)`,
+      `${ceilingSlips} non-critical speech slip(s) in one run, not counting unbacked promises (ceiling is ${MAX_NONCRITICAL_SLIPS_PER_RUN}; they are printed verbatim)`,
     );
   }
   // DOUBT IS REPORTED AND NO LONGER DECIDES A RUN.
