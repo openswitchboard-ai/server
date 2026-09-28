@@ -137,6 +137,7 @@ button, .btn { display:block; width:100%; margin-top:var(--s4); padding:.85rem 1
   font-family:var(--sans); font-weight:600; font-size:var(--t-md); line-height:1.3;
   cursor:pointer; text-align:center; text-decoration:none; }
 button:hover, .btn:hover { opacity:.88; }
+button:disabled { opacity:.6; cursor:default; }
 button.secondary, .btn.secondary { background:transparent; color:var(--ink); border-color:var(--line); }
 button.danger, .btn.danger { background:var(--danger); color:var(--on-solid); border-color:var(--danger); }
 button.approve, .btn.approve { background:var(--have); color:var(--on-solid); border-color:var(--have); }
@@ -167,11 +168,6 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
   text-transform:uppercase; letter-spacing:.06em; }
 .headline .v { font-family:var(--mono); font-size:2rem; line-height:1.15; margin-top:var(--s1);
   overflow-wrap:anywhere; }
-.anomaly { border:2px solid var(--want); background:color-mix(in srgb, var(--want) 12%, var(--paper));
-  border-radius:var(--r); padding:var(--s4); margin:var(--s3) 0;
-  font-family:var(--sans); font-weight:700; font-size:1.05rem; line-height:1.35; }
-.anomaly .k { font-size:var(--t-xs); letter-spacing:.06em; text-transform:uppercase; font-weight:600;
-  color:var(--want); margin-bottom:2px; }
 
 /* ---- Rows: wants and haves, keys, offers ---- */
 .card-row { border:1px solid var(--line); background:var(--card); border-radius:var(--r);
@@ -189,7 +185,7 @@ button.approve, .btn.approve { background:var(--have); color:var(--on-solid); bo
 .row-actions form { margin:0; flex:1 1 7rem; }
 .row-actions > .btn { flex:1 1 7rem; }
 .row-actions .btn, .row-actions button { margin-top:0; padding:.5rem .7rem; font-size:var(--t-sm);
-  white-space:nowrap; }
+  white-space:nowrap; min-height:44px; }
 
 /* ---- Waiting-on-you action tiles (the dashboard's first screen) ---- */
 .todo { display:block; border:1.5px solid var(--line); background:var(--card); border-radius:var(--r);
@@ -264,6 +260,14 @@ details.more[open] > summary::after { content:' –'; }
 details.more > .inner { padding:0 var(--s4) var(--s4); }
 details.more > .inner > :first-child { margin-top:0; }
 details.more form { margin-top:var(--s3); }
+
+/* ---- A set of radio buttons under one question ---- */
+fieldset.choice { border:0; padding:0; margin:var(--s4) 0 0; min-width:0; }
+fieldset.choice > legend { font-family:var(--sans); font-weight:600; font-size:var(--t-sm);
+  padding:0; margin:0 0 var(--s2); }
+fieldset.choice label { display:flex; gap:var(--s3); align-items:flex-start; margin:var(--s2) 0;
+  font-family:var(--serif); font-weight:400; font-size:var(--t-md); }
+fieldset.choice input { width:1.2rem; height:1.2rem; margin-top:.25rem; flex:none; }
 
 /* ---- Consent checkboxes ---- */
 .consent-box { border:1.5px solid var(--line); background:var(--card); border-radius:var(--r);
@@ -392,7 +396,8 @@ ${body}
 ${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}</body></html>`;
 }
 
-export const errBox = (msg?: string) => (msg ? `<div class="err">${esc(msg)}</div>` : '');
+export const errBox = (msg?: string) =>
+  msg ? `<div class="err" role="alert">${esc(msg)}</div>` : '';
 
 /** Supporting detail, folded away until someone wants it. */
 export function foldedDetail(summary: string, inner: string, open = false): string {
@@ -453,8 +458,9 @@ ${errBox(params.error)}
 </form>`);
 }
 
-const PIN_FIELDS = `  <label for="pin">PIN (6+ digits)</label>
-  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+const PIN_FIELDS = `  <label for="pin">PIN</label>
+  <input id="pin" name="pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" aria-describedby="pin-help" required>
+  <p class="field-help" id="pin-help">Six or more digits.</p>
   <label for="pin2">PIN again</label>
   <input id="pin2" name="pin2" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>`;
 
@@ -462,14 +468,14 @@ export function pinSetPage(error?: string, v?: { hasPin?: boolean }): string {
   const title = v?.hasPin ? 'Change your PIN' : 'Set a PIN';
   return layout(title, `
 <h1>${v?.hasPin ? 'Change your PIN.' : 'Set a PIN.'}</h1>
-<p class="lead">Six or more digits. Your PIN approves the sensitive stuff.</p>
+<p class="lead">Your PIN approves what you share and what you pay.</p>
 ${errBox(error)}
 <form method="POST" action="/pin/set">
 ${PIN_FIELDS}
   <button type="submit">${v?.hasPin ? 'Change my PIN' : 'Set my PIN'}</button>
 </form>
-<p class="small muted">Disclosures, settlements and turning things back on all ask
-for it. It never touches your agent.</p>
+<p class="small muted">Sharing your name, payments and turning things back on all ask
+for it. It never goes to your assistant.</p>
 <p class="small muted">Keep this PIN to yourself. Do not give it to your assistant; the PIN is how we know it is you.</p>`);
 }
 
@@ -582,7 +588,7 @@ export function ceremonySubmit(
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
   const pkTgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
-  return `<button type="button" data-pk-form="${esc(opts.formId)}"${data}${pkTgt}${inline}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err hidden></div>`;
+  return `<button type="button" data-pk-form="${esc(opts.formId)}" data-pk-fallback="code"${data}${pkTgt}${inline}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err role="alert" hidden></div>`;
 }
 
 /**
@@ -602,7 +608,7 @@ export function ceremonyAlt(
     : '';
   const tgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
   const inline = v.money ? ' data-pk-inline="1"' : '';
-  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}"${data}${tgt}${inline}>Use your passkey instead</button><div class="err-slot" data-pk-err hidden></div>`;
+  return `<button type="button" class="secondary" data-pk-form="${esc(formId)}" data-pk-fallback="pin"${data}${tgt}${inline}>Use your passkey instead</button><div class="err-slot" data-pk-err role="alert" hidden></div>`;
 }
 
 /**
@@ -612,27 +618,40 @@ export function ceremonyAlt(
  * staring at a box they cannot fill.
  */
 export function ceremonyNote(v: CeremonyView): string {
+  const t = ceremonyNoteInner(v);
+  return t ? `<p class="small muted">${t}</p>` : '';
+}
+
+/** The same line without its paragraph, for a page that puts it beside
+ *  another short line. Server-built HTML: it may carry a link. */
+export function ceremonyNoteInner(v: CeremonyView): string {
   if (v.elevated) return '';
   if (v.money) {
     if (passkeyOnlyCeremony(v)) {
-      return `<p class="small muted">Money takes your passkey every time. On a device that does
-not have it, open this on one that does, or <a href="/pin">set a PIN</a> to use here.</p>`;
+      return `Money takes your passkey every time. On a device that does
+not have it, open this on one that does, or <a href="/pin">set a PIN</a> to use here.`;
     }
-    if (v.hasPin && v.hasPasskey) {
-      return `<p class="small muted">Money takes your PIN or your passkey every time.</p>`;
-    }
-    return `<p class="small muted">Money takes your PIN every time.</p>`;
+    if (v.hasPin && v.hasPasskey) return 'Money takes your PIN or your passkey every time.';
+    return 'Money takes your PIN every time.';
   }
   if (passkeyOnlyCeremony(v)) {
-    return `<p class="small muted">This takes your passkey. On a device that does not
+    return `This takes your passkey. On a device that does not
 have it, <a href="/confirm/code">have a code emailed to you</a> and press it from your own
-page once you are back in.</p>`;
+page once you are back in.`;
   }
-  if (v.hasPin && v.hasPasskey) {
-    return `<p class="small muted">This takes your PIN or your passkey.</p>`;
-  }
-  return `<p class="small muted">This takes your PIN.</p>`;
+  if (v.hasPin && v.hasPasskey) return 'This takes your PIN or your passkey.';
+  return 'This takes your PIN.';
 }
+
+/**
+ * What a passkey button says when the passkey did not come through. The
+ * browser's own words ("NotAllowedError: The operation either timed out or
+ * was not allowed") mean nothing to a person, so they are never shown; the
+ * line says what to do instead, and the way out depends on what else the
+ * account holds.
+ */
+export const PASSKEY_FAILED_PIN = "That didn't work. Try again, or use your PIN.";
+export const PASSKEY_FAILED_CODE = "That didn't work. Try again, or have a code emailed.";
 
 /**
  * The one passkey handler for a whole page. Any number of buttons can carry
@@ -687,8 +706,9 @@ document.addEventListener('click', async function(ev){
   } catch (e) {
     btn.disabled = false;
     for (var j=0;j<pins.length;j++) pins[j].setAttribute('required','');
-    if (slot) { slot.hidden = false; slot.innerHTML = '<div class="err">Passkey ceremony failed: '
-      + String(e.message||e).replace(/[<>&]/g,'') + '</div>'; }
+    if (slot) { slot.hidden = false; slot.innerHTML = '<div class="err">'
+      + (btn.getAttribute('data-pk-fallback') === 'pin' ? ${JSON.stringify(PASSKEY_FAILED_PIN)} : ${JSON.stringify(PASSKEY_FAILED_CODE)})
+      + '</div>'; }
   }
 });
 </script>`;
@@ -704,7 +724,7 @@ export function ceremonyScript(...views: CeremonyView[]): string {
  * server hands back, so the same block serves the registration choice and the
  * add-one-later page.
  */
-const ENROL_SCRIPT = (buttonId: string, errId: string) => `${WEBAUTHN_HELPERS}<script>
+const ENROL_SCRIPT = (buttonId: string, errId: string, failed: string) => `${WEBAUTHN_HELPERS}<script>
 document.getElementById('${buttonId}').addEventListener('click', async () => {
   try {
     const opts = await postJson('/passkey/options');
@@ -720,8 +740,7 @@ document.getElementById('${buttonId}').addEventListener('click', async () => {
     const r = await postJson('/passkey/verify', body);
     location.href = r.next || '/';
   } catch (e) {
-    document.getElementById('${errId}').innerHTML = '<div class="err">Passkey enrolment failed: '
-      + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
+    document.getElementById('${errId}').innerHTML = '<div class="err">' + ${JSON.stringify(failed)} + '</div>';
   }
 });
 </script>`;
@@ -764,11 +783,11 @@ ${errBox(error)}
   <h2>A passkey</h2>
   <p>A passkey uses the fingerprint or face check your device already has, so there is
   nothing for you to remember and nothing for you to type. We recommend it.</p>
-  <div id="pkerr"></div>
+  <div id="pkerr" role="alert"></div>
   <button id="enrol">Use a passkey</button>
 </div>
 <h2>A PIN</h2>
-<p>A PIN is six digits you type. Every device can use one.</p>
+<p>A PIN is six or more digits you type. Every device can use one.</p>
 <form method="POST" action="/pin/set">
 ${PIN_FIELDS}
   <button type="submit" class="secondary">Set my PIN</button>
@@ -776,10 +795,10 @@ ${PIN_FIELDS}
 <p class="small muted">You can add the other one later on your own page. Signing in on a
 new device uses a code we email you either way.</p>
 ${PLATFORM_AUTHENTICATOR_PROBE}
-${ENROL_SCRIPT('enrol', 'pkerr')}`);
+${ENROL_SCRIPT('enrol', 'pkerr', PASSKEY_FAILED_PIN)}`);
 }
 
-export function passkeyOfferPage(v?: { hasPasskey?: boolean; skipLabel?: string }): string {
+export function passkeyOfferPage(v?: { hasPasskey?: boolean; skipLabel?: string; hasPin?: boolean }): string {
   return layout('Add a passkey', `
 <h1>Add a passkey${v?.hasPasskey ? '' : '?'}</h1>
 <p class="lead">${
@@ -787,12 +806,12 @@ export function passkeyOfferPage(v?: { hasPasskey?: boolean; skipLabel?: string 
       ? 'You already have one. Do this on a device that does not, so that device can approve things too.'
       : 'Sign in and approve with Face ID, a fingerprint, or your device passcode. There is nothing to remember and nothing to type.'
   }</p>
-<div id="pkerr"></div>
+<div id="pkerr" role="alert"></div>
 <div class="actions">
   <button id="enrol">Add a passkey</button>
   <form method="POST" action="/passkey/skip"><button class="secondary" type="submit">${esc(v?.skipLabel ?? 'Skip for now')}</button></form>
 </div>
-${ENROL_SCRIPT('enrol', 'pkerr')}`);
+${ENROL_SCRIPT('enrol', 'pkerr', v?.hasPin === false ? PASSKEY_FAILED_CODE : PASSKEY_FAILED_PIN)}`);
 }
 
 /**
@@ -801,6 +820,12 @@ ${ENROL_SCRIPT('enrol', 'pkerr')}`);
  * holds now, so a borrowed session cannot quietly fit itself a key.
  */
 export function confirmItsYouPage(v: CeremonyView, next: string, error?: string): string {
+  // An emailed code does not change how you approve things (28 September
+  // 2026), so a passkey-only account is not pointed at one here. The way
+  // through for a lost passkey is its own page, which says what it does.
+  const note = passkeyOnlyCeremony(v)
+    ? `<p class="small muted">This takes your passkey. Lost it? <a href="/pin/recover">Set a PIN with a code we email you</a>.</p>`
+    : ceremonyNote(v);
   return layout('Confirm it is you', `
 <h1>Confirm it is you.</h1>
 <p class="lead">Changing how you approve things takes the way you approve things now.</p>
@@ -813,9 +838,54 @@ ${errBox(error)}
   ${ceremonyAlt(v, 'confirmForm')}
   </div>
 </form>
-${ceremonyNote(v)}
+${note}
 <a class="btn secondary" href="/security">Back</a>
 ${ceremonyScript(v)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Lost your passkey (28 September 2026).
+//
+// An account holding a passkey and no PIN, on a device that cannot produce the
+// passkey. An emailed code sets a PIN here, and the page says plainly what that
+// PIN can do and when: the everyday presses straight away, money and new ways
+// in after 24 hours. We email the person the moment it is set.
+// ---------------------------------------------------------------------------
+export const RECOVERY_WAIT_LINE =
+  'Straight away it can share your first name and suburb and keep conversations going. Money, a new passkey and a new assistant wait 24 hours.';
+
+export function pinRecoverStartPage(): string {
+  return layout('Lost your passkey?', `
+<h1>Lost your passkey?</h1>
+<p class="lead">Set a PIN with a code we email you.</p>
+<p class="small muted">${esc(RECOVERY_WAIT_LINE)}</p>
+<form method="POST" action="/pin/recover/code"><button type="submit">Email me a code</button></form>
+<p class="small muted">We email you as soon as the PIN is set, so you will know if it was not you.
+Your passkey keeps working.</p>
+<a class="btn secondary" href="/">Back</a>`);
+}
+
+export function pinRecoverPage(error?: string): string {
+  return layout('Set a PIN', `
+<h1>Set a PIN.</h1>
+<p class="lead">${esc(RECOVERY_WAIT_LINE)}</p>
+${errBox(error)}
+<form method="POST" action="/pin/recover">
+${PIN_FIELDS}
+  <button type="submit">Set my PIN</button>
+</form>
+<p class="small muted">Keep this PIN to yourself. Do not give it to your assistant; the PIN is how we know it is you.</p>`);
+}
+
+/** `from` is already the person's own clock, as plain text. */
+export function pinRecoveredPage(from: string): string {
+  return messagePage(
+    'PIN set',
+    `<p class="lead">A new PIN can move money from ${esc(from)}. Your passkey works now.</p>
+<p>We have emailed you to say a PIN was set.</p>`,
+    '/',
+    'Back to your main page',
+  );
 }
 
 /**
@@ -842,7 +912,7 @@ ${detail ? `<span class="nav-d">${esc(detail)}</span>` : ''}
     : `<a href="/passkey"><span class="nav-t">Add a passkey</span>
 <span class="nav-d">Face, fingerprint or device passcode. Nothing to remember.</span></a>`}
 <a href="/pin"><span class="nav-t">${v.hasPin ? 'Change your PIN' : 'Set a PIN'}</span>
-<span class="nav-d">Six digits you type.</span></a>
+<span class="nav-d">Six or more digits you type.</span></a>
 </div>
 <p class="small muted">Lost both? A code we email you signs you back in.</p>
 <a class="btn secondary" href="/">Back</a>`);
@@ -870,7 +940,7 @@ export function loginEmailPage(error?: string): string {
   return layout('Sign in', `
 <h1>Sign in.</h1>
 ${errBox(error)}
-<div id="pkerr"></div>
+<div id="pkerr" role="alert"></div>
 <button id="pk" class="secondary">Sign in with a passkey</button>
 <form method="POST" action="/login">
   <label for="email">Or use email</label>
@@ -895,8 +965,7 @@ document.getElementById('pk').addEventListener('click', async () => {
     const r = await postJson('/login/passkey/verify', body);
     location.href = r.next || '/';
   } catch (e) {
-    document.getElementById('pkerr').innerHTML = '<div class="err">Passkey sign-in failed: '
-      + String(e.message||e).replace(/[<>&]/g,'') + '</div>';
+    document.getElementById('pkerr').innerHTML = '<div class="err">' + ${JSON.stringify(PASSKEY_FAILED_CODE)} + '</div>';
   }
 });
 </script>`);
@@ -966,7 +1035,8 @@ const IN_PLACE_SCRIPT = `<script>
     fetch(f.action,{method:'POST',body:new URLSearchParams(fd),credentials:'same-origin',headers:{'accept':'text/html'}})
       .then(function(r){return r.text();})
       .then(function(html){var d=new DOMParser().parseFromString(html,'text/html');var n=d.getElementById('page');var p=document.getElementById('page');
-        if(!n||!p)throw new Error('no page');p.innerHTML=n.innerHTML;document.title=d.title||document.title;window.scrollTo(0,0);armDone();})
+        if(!n||!p)throw new Error('no page');p.innerHTML=n.innerHTML;document.title=d.title||document.title;window.scrollTo(0,0);
+        var h=p.querySelector('h1');if(h){h.setAttribute('tabindex','-1');h.focus();}armDone();})
       .catch(function(){for(var i=0;i<btns.length;i++)btns[i].disabled=false;f.submit();});
   },true);
   armDone();
@@ -977,6 +1047,16 @@ export function donePage(title: string, html: string, backHref?: string, backLab
   if (backHref) return messagePage(title, html, backHref, backLabel);
   return layout(title, `<h1>${esc(title)}</h1>${html}
 ${DONE_BLOCK}`);
+}
+
+/**
+ * A link opened while signed out. The link is still good and the path is kept
+ * (session.ts), so signing in comes straight back here.
+ */
+export function signInToSeePage(): string {
+  return layout('Sign in to see this', `<h1>Sign in to see this</h1>
+<p>You'll come straight back here.</p>
+<a class="btn" href="/login">Sign in</a>`);
 }
 
 /**
@@ -1045,8 +1125,13 @@ export function photoLinkDeadPage(): string {
 // form where a person could edit them.
 // ---------------------------------------------------------------------------
 export interface OneQuestionView {
-  /** The link this page was opened with; the form posts it straight back. */
-  token: string;
+  /** The link this page was opened with; the form posts it straight back.
+   *  Absent on the main page's road, which carries `session` instead. */
+  token?: string;
+  /** Set when the page was opened from the main page through the signed-in
+   *  session (/approvals/offer/:id, /approvals/match/:id). The form posts to
+   *  /approve with the decision's action and ref, and no link is involved. */
+  session?: { action: string; refId: string };
   /** The one sentence. Mostly a question; where the two buttons already ask it
    *  — Accept or Not now on a figure — the sentence states the figure instead. */
   question: string;
@@ -1094,11 +1179,23 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
        <p class="small muted">${esc(v.collectReason.hint)}</p>`
     : '';
   const detail = (v.detail ?? []).map((d) => `<p class="small muted">${esc(d)}</p>`).join('');
+  // Two roads to one page. The link posts itself back; the main page's road
+  // posts the decision to /approve and has no link to spend.
+  const action = v.session ? '/approve' : `/a/${encodeURIComponent(v.token ?? '')}`;
+  const hidden = v.session
+    ? `<input type="hidden" name="action" value="${esc(v.session.action)}">
+  <input type="hidden" name="ref_id" value="${esc(v.session.refId)}">`
+    : '';
+  // One short line at the foot: the link's one use, and what the press takes.
+  const foot = [v.session ? '' : 'This link works once.', v.needsPin ? ceremonyNoteInner(c) : '']
+    .filter(Boolean)
+    .join(' ');
   return layout(v.question, `
 <h1>${esc(v.question)}</h1>
 ${errBox(error)}
 ${detail}
-<form method="POST" action="/a/${encodeURIComponent(v.token)}" id="oneQuestion">
+<form method="POST" action="${action}" id="oneQuestion">
+  ${hidden}
   ${collect}
   ${reason}
   ${v.needsPin ? ceremonyField(c, 'q') : ''}
@@ -1107,9 +1204,8 @@ ${detail}
   <a class="btn secondary" href="/">${esc(v.noLabel)}</a>
   </div>
 </form>
-${ceremonyAlt(c, 'oneQuestion')}
-<p class="small muted">This link works once.</p>
-${v.needsPin ? ceremonyNote(c) : ''}
+${ceremonyAlt(c, 'oneQuestion', { name: 'decision', value: 'yes' })}
+${foot ? `<p class="small muted">${foot}</p>` : ''}
 ${ceremonyScript(c)}`);
 }
 
@@ -1261,7 +1357,7 @@ export function photoPage(v: PhotoView, error?: string): string {
 <h1>Send ${esc(v.who)} a photo of the ${esc(v.thing)}.</h1>
 ${errBox(error)}
 <noscript><p class="small muted">This page needs scripts switched on to prepare the photo on your device.</p></noscript>
-<div id="perr"></div>
+<div id="perr" role="alert"></div>
 <label for="photo">Your photo</label>
 <input type="file" id="photo" accept="image/jpeg,image/png,image/webp">
 <p class="field-help">JPEG, PNG or WebP, up to ${v.maxMb} MB. Where and when it was taken, and the
@@ -1271,8 +1367,10 @@ camera details, are removed on your device before it is sent.</p>
   <label for="caption">Description (optional)</label>
   <input id="caption" name="caption" type="text" maxlength="${v.captionMax}"
          value="${esc(v.caption ?? '')}">
-  <label class="check"><input type="checkbox" name="confirm" value="yes" required>
-  This photo shows nothing sexual, violent or illegal, and no one else's personal details.</label>
+  <div class="consent-box">
+    <label><input type="checkbox" name="confirm" value="yes" required>
+    This photo shows nothing sexual, violent or illegal, and no one else's personal details.</label>
+  </div>
   <div class="actions">
   <button type="submit" name="decision" value="yes" class="approve" id="sendBtn"${v.photoId ? '' : ' disabled'}>Send the photo</button>
   <a class="btn secondary" href="/">Not now</a>
@@ -1348,20 +1446,21 @@ pf.addEventListener('change', async () => {
 </script>`);
 }
 
-export interface ApprovalView {
-  action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve';
+/**
+ * The payment approval: one question in the same shape as the one-question
+ * pages, the money written out in two or three plain sentences, and the
+ * ceremony at the press. Reached from the assistant's link (which it carries
+ * back, so the press is what spends it) or from the main page.
+ */
+export interface SettlementApprovalView {
   refId: string;
-  /** The three facts, big. `raw` marks a value the server built as HTML (a
-   *  <time> in the reader's clock); every other value is escaped. */
-  facts: { k: string; v: string; raw?: boolean }[];
-  anomalies: string[];
-  /** Set on a stage-3 approval when this account has no first name / area on
-   *  file yet: the page asks for them right here, and approving stores them. */
-  collectProfile?: { firstName: string; locality: string };
+  /** "Agree to pay $421 AUD for the Trek?" */
+  question: string;
+  /** The money in sentences, and any anomaly line after them. */
+  detail: string[];
   hasPin: boolean;
   hasPasskey: boolean;
   elevated: boolean;
-  postPath: string; // decision endpoint
   /** Set when this page was reached by a one-use link that has NOT been spent
    *  yet: the form carries it back so the press is what spends it. */
   linkToken?: string;
@@ -1513,66 +1612,29 @@ export function sharedFieldsFieldset(v: { firstName: string; locality: string })
 /** Under an Accept button: everything else about a number goes to the assistant. */
 export const OFFER_ELSEWHERE_LINE = 'To offer a different amount or say no, tell your assistant.';
 
-/** One fact's value: server-built HTML where marked raw, escaped otherwise. */
-function factValue(f: { v: string; raw?: boolean }): string {
-  return f.raw ? f.v : esc(f.v);
-}
-
-export function mainPage(v: ApprovalView, error?: string): string {
-  const title = {
-    'offer-accept': 'Accept this number?',
-    'stage3-disclosure': 'Share your first name and area?',
-    'settlement-approve': 'Approve this payment?',
-  }[v.action];
-  const yesLabel = {
-    'offer-accept': 'Accept',
-    'stage3-disclosure': 'Share',
-    'settlement-approve': 'Approve',
-  }[v.action];
+export function settlementApprovalPage(v: SettlementApprovalView, error?: string): string {
   // Money never leans on the window: the ceremony is asked for at the press.
-  const c: CeremonyView = isMoneyAction(v.action) ? moneyCeremony(v) : v;
-  const anomalyHtml = v.anomalies
-    .map((a) => `<div class="anomaly"><div class="k">Worth a second look</div>${esc(a)}</div>`)
-    .join('');
-  // The first fact is what the decision turns on, so it leads at full size and
-  // the rest sit under the buttons.
-  const [headline, ...rest] = v.facts;
-  const headlineHtml = headline
-    ? `<div class="headline"><div class="k">${esc(headline.k)}</div><div class="v">${factValue(headline)}</div></div>`
-    : '';
-  const restHtml = rest.length
-    ? `<div class="facts">${rest
-        .map((f) => `<div class="fact"><div class="k">${esc(f.k)}</div><div class="v">${factValue(f)}</div></div>`)
-        .join('')}</div>`
-    : '';
-  // First time through: the page collects the two things it is about to
-  // share. They are stored under this account's own key when you approve.
-  const collect = v.collectProfile
-    ? `<h2>What should we share?</h2>
-  <p class="small">Your match sees a first name and a suburb. That is the whole of it.
-  You can change both any time on <a href="/profile">what you share on a match</a>.</p>
-  ${sharedFieldsFieldset(v.collectProfile)}`
-    : '';
-  return layout(title, `
-<h1>${esc(title)}</h1>
+  const c = moneyCeremony(v);
+  const detail = v.detail.map((d) => `<p class="small muted">${esc(d)}</p>`).join('');
+  const foot = [v.linkToken ? 'This link works once.' : '', ceremonyNoteInner(c)]
+    .filter(Boolean)
+    .join(' ');
+  return layout(v.question, `
+<h1>${esc(v.question)}</h1>
 ${errBox(error)}
-${anomalyHtml}
-${headlineHtml}
-<form method="POST" action="${esc(v.postPath)}" id="approveForm">
+${detail}
+<form method="POST" action="/approve" id="approveForm">
   <input type="hidden" name="ref_id" value="${esc(v.refId)}">
-  <input type="hidden" name="action" value="${esc(v.action)}">
+  <input type="hidden" name="action" value="settlement-approve">
   ${v.linkToken ? `<input type="hidden" name="link_token" value="${esc(v.linkToken)}">` : ''}
-  ${collect}
   ${ceremonyField(c, 'approve')}
   <div class="actions">
-  ${ceremonySubmit(c, { formId: 'approveForm', label: yesLabel, className: 'approve', name: 'decision', value: 'approve' })}
+  ${ceremonySubmit(c, { formId: 'approveForm', label: 'Approve', className: 'approve', name: 'decision', value: 'approve' })}
   <a class="btn secondary" href="/">Not now</a>
   </div>
 </form>
-${ceremonyAlt(c, 'approveForm')}
-${v.action === 'offer-accept' ? `<p class="small muted">${esc(OFFER_ELSEWHERE_LINE)}</p>` : ''}
-${ceremonyNote(c)}
-${restHtml}
+${ceremonyAlt(c, 'approveForm', { name: 'decision', value: 'approve' })}
+${foot ? `<p class="small muted">${foot}</p>` : ''}
 ${ceremonyScript(c)}`);
 }
 
@@ -1606,13 +1668,13 @@ export function authorizePage(
   // Handing an agent a key is a sensitive action, so approving takes the same
   // ceremony an approval takes. Cancelling takes nothing: it skips the PIN
   // box's own validation and sends the refusal straight through.
-  return layout('Authorize your agent', `
-<h1>Let this agent work the switchboard for you?</h1>
-<div class="headline"><div class="k">Agent</div><div class="v">${esc(clientName)}</div></div>
+  return layout('Authorise your assistant', `
+<h1>Let this assistant work the switchboard for you?</h1>
+<div class="headline"><div class="k">Assistant</div><div class="v">${esc(clientName)}</div></div>
 ${
   redirectUri
     ? `<p class="small muted">Its key goes to <strong>${esc(redirectHost(redirectUri))}</strong>.
-Any agent can register under any name, so check that address is the one you meant
+Any assistant can register under any name, so check that address is the one you meant
 to connect. If you do not recognise it, press Cancel.</p>`
     : ''
 }
@@ -1622,7 +1684,7 @@ ${hiddenInputs}
   <div class="actions">
   ${ceremonySubmit(c, {
     formId: 'authorize-form',
-    label: 'Authorize',
+    label: 'Authorise',
     name: 'decision',
     value: 'approve',
     formTarget: '_blank',
@@ -1635,7 +1697,7 @@ ${ceremonyNote(c)}
 <p class="small muted">It can post wants &amp; haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
 waits for you, here on your main page.</p>
-<p class="small muted">Authorising hands the agent its key in a new tab, which you can close;
+<p class="small muted">Authorising hands the assistant its key in a new tab, which you can close;
 this tab comes back to your main page.</p>
 <script>
 // The agent's callback (often a localhost page the agent is listening on)
@@ -1937,7 +1999,7 @@ show where the parcel went.</p>
 <p>Photos are optional and worth adding. Anything you add is frozen in write-once storage
 and shown to the buyer alongside the confirmation request.</p>
 <div id="evlist" class="note" style="display:none"></div>
-<div id="everr"></div>
+<div id="everr" role="alert"></div>
 <label for="evfile">Photos of the handover (optional)</label>
 <input type="file" id="evfile" accept="image/jpeg,image/png,image/webp" multiple>
 <form method="POST" action="/settlements/${esc(v.id)}/evidence/lock" id="lockForm">
@@ -2145,11 +2207,11 @@ days the payment goes to whichever side can show where the item went.${
         } The introductory fee and the card processing stay paid whatever happens, because the card
 processor keeps its own fee on a refund.</p>
 <form method="POST" action="/settlements/${esc(v.id)}/dispute" id="disputeForm">
-  <label for="ground">What went wrong</label>
-  <div class="choice">
+  <fieldset class="choice">
+    <legend>What went wrong</legend>
     <label><input type="radio" name="ground" value="not_arrived"> It never arrived</label>
     <label><input type="radio" name="ground" value="not_as_described" checked> It arrived and something is wrong with it</label>
-  </div>
+  </fieldset>
   <p class="small muted">Picked it up in person? That is the second one — there is no parcel to go astray.</p>
   ${pinField(v, 'dispute')}
   ${ceremonySubmit(v, { formId: 'disputeForm', label: 'Something is wrong — hold the payment', className: 'danger' })}

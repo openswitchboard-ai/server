@@ -272,7 +272,7 @@ function fakePool() {
       if (/FROM webauthn_credentials/.test(sql)) {
         return world.credential === 'passkey' ? rows([{ '?column?': 1 }]) : rows([]);
       }
-      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
+      if (/SET pin_failed_attempts = pin_failed_attempts \+ 1/.test(sql)) {
         return rows([
           {
             pin_hash: world.credential === 'pin' ? pinHash : null,
@@ -381,7 +381,7 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     url,
     headers: {
       host: 'my.test',
-      cookie: `osb_counter=${SID}`,
+      cookie: `__Host-osb_counter=${SID}`,
       ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
     },
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),

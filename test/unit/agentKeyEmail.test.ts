@@ -60,13 +60,16 @@ let tokenRows: any[] = [];
 const fakePool = {
   query: async (sql: string, params: any[] = []) => {
     const s = sql.replace(/\s+/g, ' ').trim();
-    if (s.startsWith('SELECT id, account_id, pin_ok_until, oauth_ctx FROM counter_sessions')) {
+    if (s.startsWith('SELECT id, account_id, pin_ok_until, elevated_via, oauth_ctx FROM counter_sessions')) {
       return {
         rows: [
           {
             id: 'sess-1',
             account_id: ACCOUNT,
             pin_ok_until: new Date(Date.now() + 600_000), // elevated: no PIN ceremony
+            // A passkey opened the window. An emailed code's window would not
+            // do for a key (routes.ts, credentialCeremony).
+            elevated_via: 'passkey',
             oauth_ctx: null,
           },
         ],
@@ -113,7 +116,7 @@ const createKey = (name = 'the laptop agent') =>
     headers: {
       host: 'my.test',
       'content-type': 'application/x-www-form-urlencoded',
-      cookie: 'osb_counter=osb_cs_test-session',
+      cookie: '__Host-osb_counter=osb_cs_test-session',
     },
     payload: new URLSearchParams({ name }).toString(),
   });

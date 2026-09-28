@@ -47,8 +47,9 @@ export type ApprovalAction =
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
- * and the press itself is what consumes the link. The one left open opens the
- * main page instead, which burns its link on the first authenticated view.
+ * and the press itself is what consumes the link. The one left over, a payment
+ * approval, opens its own page in the same shape, and it too burns on the
+ * press.
  *
  * conversation-photo is deliberately NOT one of them. It is still one page and
  * still one press, but the person picks a file before they press, so it has a
@@ -60,7 +61,8 @@ export type ApprovalAction =
  * stage3-disclosure joined them on 2026-09-12, when sharing a first name and an
  * area became a press the human makes every time rather than something an agent
  * could attest to. The "Waiting for you" list still reaches the same decision by
- * its own session-authorized route, so there are two roads to one question.
+ * its own session-authorized route, and from 28 September 2026 that route opens
+ * this same page: two roads, one question, one page.
  */
 export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   'offer-send',

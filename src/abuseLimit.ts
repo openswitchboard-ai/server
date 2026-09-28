@@ -15,6 +15,8 @@ interface Window {
 export interface IpLimiter {
   /** Returns true when this hit exceeds the limit and should be refused. */
   limited(ip: string): boolean;
+  /** Forget every window. For tests, which press the same account all day. */
+  reset(): void;
 }
 
 export function makeIpLimiter(maxPerWindow: number, windowMs: number): IpLimiter {
@@ -33,6 +35,9 @@ export function makeIpLimiter(maxPerWindow: number, windowMs: number): IpLimiter
       h.n += 1;
       return h.n > maxPerWindow;
     },
+    reset(): void {
+      hits.clear();
+    },
   };
 }
 
@@ -42,8 +47,18 @@ export function makeIpLimiter(maxPerWindow: number, windowMs: number): IpLimiter
  * matching x-osb-ratelimit-bypass header skips the per-IP limiters so the
  * e2e suite can bootstrap several actors from one runner IP. It exempts
  * nothing else: screening, consent gates and quotas still apply.
+ *
+ * NEVER IN PROD, IN CODE (28 September 2026). "Infra only sets it in dev" was
+ * the whole of the guard, so one stray variable on a prod task would have
+ * switched every per-IP limit off for whoever held the token. The environment
+ * name comes from the config the process booted with, the same way the Jev
+ * shadow refuses prod, and prod answers no whatever the token says.
  */
-export function rateLimitBypassed(headers: Record<string, unknown>): boolean {
+export function rateLimitBypassed(
+  headers: Record<string, unknown>,
+  cfg: { envName: string },
+): boolean {
+  if (cfg.envName !== 'dev') return false;
   const token = process.env.RATELIMIT_BYPASS_TOKEN;
   if (!token || token.length < 32) return false;
   const given = headers['x-osb-ratelimit-bypass'];
@@ -147,3 +162,25 @@ export const areaSuggestLimiter = makeIpLimiter(60, 60 * 1000);
  * inbox of the person who just paused everything.
  */
 export const killSwitchLimiter = makeIpLimiter(5, 60 * 60 * 1000);
+
+
+/**
+ * PIN tries: 10 per ACCOUNT per minute, on top of the lockout in the database.
+ *
+ * The lockout counts every attempt atomically and locks on the fifth wrong one
+ * (counter/pin.ts). This sits in front of it so a burst never reaches argon2
+ * and the database at all: a person typing their own PIN makes one or two
+ * tries a minute, and anything past ten is a script. Keyed on the account, so
+ * it follows the account across connections.
+ */
+export const pinAttemptLimiter = makeIpLimiter(10, 60 * 1000);
+
+/**
+ * Sessions made for nobody yet: 10 per IP per minute.
+ *
+ * The passkey sign-in button and the start of an assistant's authorisation
+ * both need a session row before anybody is signed in, and each request that
+ * arrives without a cookie makes one. A person makes one of these and then
+ * carries its cookie; a loop without cookies makes a row per request.
+ */
+export const anonymousSessionLimiter = makeIpLimiter(10, 60 * 1000);

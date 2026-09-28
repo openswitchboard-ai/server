@@ -173,7 +173,7 @@ function fakePool() {
         const c = world.cards[params[0]];
         return c ? rows([c]) : rows([]);
       }
-      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
+      if (/SET pin_failed_attempts = pin_failed_attempts \+ 1/.test(sql)) {
         return rows([{ pin_hash: PIN_HASH, pin_failed_attempts: 0, pin_locked_until: null }]);
       }
       if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
@@ -635,7 +635,7 @@ describe('the human page class owns both settings', () => {
       url,
       headers: {
         host: 'my.test',
-        ...(cookie ? { cookie: `osb_counter=${SID}` } : {}),
+        ...(cookie ? { cookie: `__Host-osb_counter=${SID}` } : {}),
         ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
       },
       ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
@@ -885,15 +885,17 @@ describe('the pages say it in plain words', () => {
     },
     {
       name: 'offer-approval',
-      html: cpages.mainPage({
-        action: 'offer-accept',
-        refId: offerId(1),
-        facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
-        anomalies: [],
+      html: cpages.oneQuestionPage({
+        session: { action: 'offer-accept', refId: offerId(1) },
+        question: 'Accept $400 AUD for your Mountain bike?',
+        detail: [cpages.OFFER_ELSEWHERE_LINE],
+        yesLabel: 'Accept',
+        noLabel: 'Not now',
+        needsPin: true,
+        money: true,
         hasPin: true,
         hasPasskey: false,
         elevated: false,
-        postPath: '/approve',
       }),
     },
   ];

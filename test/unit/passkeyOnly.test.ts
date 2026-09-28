@@ -81,7 +81,7 @@ describe('the choice screen', () => {
     expect(html).toContain('How will you approve things?');
     expect(html).toContain('fingerprint or face check your device already has');
     expect(html).toContain('nothing for you to remember');
-    expect(html).toContain('A PIN is six digits you type');
+    expect(html).toContain('A PIN is six or more digits you type');
     expect(html).toContain('<button id="enrol">Use a passkey</button>');
     expect(html).toContain('name="pin2"');
     expect(html).toContain('action="/pin/set"');
@@ -115,20 +115,22 @@ describe('the choice screen', () => {
 // ---------------------------------------------------------------------------
 // The names step: a press that may lean on the window. Money never does, and
 // is held to that in moneyCeremony.test.ts.
+// From 28 September 2026 the main page's button opens the one-question page
+// too, on its session road.
 const approval = (c: cpages.CeremonyView) =>
-  cpages.mainPage({
-    action: 'stage3-disclosure',
-    refId: 'ref-1',
-    facts: [{ k: 'What gets shared', v: 'first name + locality' }],
-    anomalies: [],
-    postPath: '/approve',
+  cpages.oneQuestionPage({
+    session: { action: 'stage3-disclosure', refId: 'ref-1' },
+    question: 'Share your first name and suburb with the other side?',
+    yesLabel: 'Share',
+    noLabel: 'Not now',
+    needsPin: true,
     ...c,
   });
 
 const oneQuestion = (c: cpages.CeremonyView) =>
   cpages.oneQuestionPage({
     token: 'tok-1',
-    question: 'Share your first name and area with the other side?',
+    question: 'Share your first name and suburb with the other side?',
     yesLabel: 'Share',
     noLabel: 'Not now',
     needsPin: true,
@@ -318,7 +320,7 @@ describe('the passkey ceremony script', () => {
   });
 
   it('carries the decision the button was going to send', () => {
-    expect(html).toContain('data-pk-name="decision" data-pk-value="approve"');
+    expect(html).toContain('data-pk-name="decision" data-pk-value="yes"');
     expect(oneQuestion({ ...PASSKEY_ONLY, elevated: false })).toContain(
       'data-pk-name="decision" data-pk-value="yes"',
     );

@@ -346,7 +346,7 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     url,
     headers: {
       host: 'my.test',
-      cookie: `osb_counter=${SID}`,
+      cookie: `__Host-osb_counter=${SID}`,
       ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
     },
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),

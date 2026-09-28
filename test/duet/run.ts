@@ -263,7 +263,7 @@ async function sweepApprovals(
         }),
       );
       const out = await res.text();
-      const ok = res.status === 200 && /Approved|opt-in is recorded|mutually shared/i.test(out);
+      const ok = res.status === 200 && /<h1>Shared<\/h1>|go-ahead is recorded|Both of you have said yes/i.test(out);
       if (ok || n === 0) {
         harnessActions.push({
           ts: now(),
