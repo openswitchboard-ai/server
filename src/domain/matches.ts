@@ -13,6 +13,7 @@ import { getPool } from '../db.js';
 import { decryptFields, generateChannelKey, writeConsentEvent } from '../crypto.js';
 import { getAccount, getHearsVia, getTimezone, type HearsVia } from './accounts.js';
 import { getCard } from './cards.js';
+import { screenedContentOf, type ScreenedContent } from './screenedContent.js';
 import {
   MAX_THRESHOLD_BUMP,
   THRESHOLD_BUMP_STEP,
@@ -1124,7 +1125,26 @@ async function waitingOnTheirGoAhead(accountId: string): Promise<string> {
   return sayFor('waiting_on_their_go_ahead', await arrangementOrNothing(accountId));
 }
 
-export async function buildAttributes(m: MatchRow, accountId: string) {
+/**
+ * WHAT THE OTHER SIDE IS SHOWN IS WHAT THE SCREEN PASSED (migration 055).
+ *
+ * Every word below comes off the counterparty card's screened snapshot
+ * (domain/screenedContent.ts), never off its live columns. An amend or a
+ * refine on the other side sends their card back through the screen, and until
+ * it passes, the reader goes on seeing the last words that did; a refusal
+ * means the new words never reach the reader at all.
+ *
+ * A card that has never been screened through has no snapshot and serves
+ * nothing: asked for directly, the details are not open yet. On the sweep
+ * (`unscreened: 'empty'`) the entry keeps its shape and carries no words of
+ * theirs, because a sweep answers for every introduction at once and one card
+ * waiting on the screen is no reason to refuse the rest.
+ */
+export async function buildAttributes(
+  m: MatchRow,
+  accountId: string,
+  opts: { unscreened?: 'refuse' | 'empty' } = {},
+) {
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
   if (m.stage < 2) {
     // Unreachable for anything made since 13 September 2026: the details are
@@ -1138,14 +1158,29 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   const card = await getCard(counterCardId);
   if (!card) throw new Error('counterparty card missing');
   if (card.lifecycle_state === 'EXPIRED') throw new OsbError('INTENT_EXPIRED');
+  const screened = screenedContentOf(card);
+  if (!screened && opts.unscreened !== 'empty') {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: 'The details on this one are not open yet.',
+    });
+  }
+  const theirs: ScreenedContent = screened ?? {
+    version: 0,
+    at: '',
+    kind: null,
+    also_called: null,
+    not_these: null,
+    attributes: {},
+    ask: null,
+  };
   const payload: any = {
     schema_version: SCHEMA_VERSION,
     kind: 'intro.attributes' as const,
     intro_id: m.id,
-    attributes: card.attributes ?? {},
+    attributes: theirs.attributes,
   };
   // Only the deliberate, disclosable ask ever crosses — never the price band.
-  if (card.type === 'HAVE' && card.ask) payload.ask = card.ask;
+  if (card.type === 'HAVE' && theirs.ask) payload.ask = theirs.ask;
   // WHOSE WORDS THE ATTRIBUTES ARE. Every value in that map was typed by the
   // other side; the map itself has nowhere to say so, because `attributes` is
   // a plain object in the schema package and intro.attributes is
@@ -1164,8 +1199,8 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
       provenance: 'switchboard-system',
     },
   ];
-  if (typeof card.kind === 'string' && card.kind.trim()) {
-    notes.push({ text: promptSafe(card.kind.trim(), KIND_MAX_CHARS), provenance: 'counterparty-untrusted' });
+  if (typeof theirs.kind === 'string' && theirs.kind.trim()) {
+    notes.push({ text: promptSafe(theirs.kind.trim(), KIND_MAX_CHARS), provenance: 'counterparty-untrusted' });
   }
   // AND THEIR OTHER WORDS FOR THE SAME THING (migration 050). It is free text
   // the other side wrote about their own thing, so it wears their label exactly
@@ -1174,7 +1209,7 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
   // said the thing is NOT stays here inside the engine: it is a search signal,
   // and reading somebody else's exclusions aloud is not material for a
   // decision.
-  for (const phrase of otherWordsOf(card.also_called)) {
+  for (const phrase of otherWordsOf(theirs.also_called)) {
     notes.push({
       text: promptSafe(phrase, KIND_MAX_CHARS),
       provenance: 'counterparty-untrusted',
@@ -1197,7 +1232,9 @@ export async function buildAttributes(m: MatchRow, accountId: string) {
           agreementSentence(
             wordAgreement(
               { kind: own.kind, also_called: own.also_called, not_these: own.not_these, attributes: own.attributes },
-              { kind: card.kind, also_called: card.also_called, not_these: card.not_these, attributes: card.attributes },
+              // Theirs as screened, like everything else here; the reader's
+              // own words are their own and are read as they stand.
+              { kind: theirs.kind, also_called: theirs.also_called, not_these: theirs.not_these, attributes: theirs.attributes },
             ),
           ),
         ),
@@ -1430,8 +1467,19 @@ export const OFFER_NOTE_SENTENCE =
  *  heard of the leaf, from the poster's own `kind`, which is required on
  *  exactly those postings for exactly this reason: "a bouldering partner",
  *  "vintage synth repair". */
-const plainLeaf = (category: string, kind?: string | null) =>
-  categoryPhraseWithArticle(category, kind);
+const plainLeaf = (category: string, kind?: string | null, opts: { quoteOwn?: boolean } = {}) =>
+  categoryPhraseWithArticle(category, kind, opts);
+
+/**
+ * WHOSE WORDS `m.kind` ARE, for the sentence about to carry them. A matches row
+ * holds the want's `kind`, so for the person on the want side they are their
+ * own words and for everybody else they are the other side's — and the other
+ * side's words go inside quotation marks in a sentence the switchboard signs
+ * (matchRules.ts quotedTheirWords).
+ */
+const kindQuoting = (m: { account_want: string }, accountId: string): { quoteOwn: boolean } => ({
+  quoteOwn: m.account_want !== accountId,
+});
 
 /** What "taken down" means, in the words the agent says it in. The thing this
  *  was about is off the switchboard, so nobody new comes into it; the two
@@ -1457,8 +1505,11 @@ export function signalNote(
   kind?: string | null,
   certainty?: string | null,
   swap?: boolean | null,
+  /** True where `kind` is the READER'S own words. Anybody else's go inside
+   *  quotation marks, and that is the default. */
+  kindIsReaders = false,
 ): { text: string; provenance: 'switchboard-system' } {
-  const thing = plainLeaf(category, kind);
+  const thing = plainLeaf(category, kind, { quoteOwn: !kindIsReaders });
   // A POSSIBLE one is said as a maybe from its first sentence, so the human
   // hears "might be" before they hear anything else about it. A SWAP is two
   // people who are both looking (domain/swaps.ts), so neither sentence about
@@ -1745,7 +1796,7 @@ export async function checkMatches(
       const c = entry.mutual?.counterparty;
       if (m.archived_via === 'lapsed') {
         entry.note = sbNote(
-          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category, m.kind)}; say the word if you would like me to look again.`,
+          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))}; say the word if you would like me to look again.`,
         );
       } else if (m.archived_via === 'not-chosen') {
         // No figure, no count, nothing about anyone else: the losing side is
@@ -1759,8 +1810,8 @@ export async function checkMatches(
         );
       } else {
         entry.note = c
-          ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category, m.kind)} a while back. The conversation and any number you swapped are here in our chat.`)
-          : sbNote(`You had ${plainLeaf(m.category, m.kind)} sorted with someone a while back; it has since been filed away.`);
+          ? sbNote(`You got chatting with ${c.first_name} over in ${c.locality} about ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))} a while back. The conversation and any number you swapped are here in our chat.`)
+          : sbNote(`You had ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))} sorted with someone a while back; it has since been filed away.`);
       }
       out.push(entry);
       continue;
@@ -1800,7 +1851,7 @@ export async function checkMatches(
       signal,
       // The ready human sentence for a fresh signal rides right here on the
       // entry, so the agent leads with it instead of naming the machinery.
-      note: signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap),
+      note: signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap, !kindQuoting(m, accountId).quoteOwn),
     };
     // A SWAP says so, as a flag for the agent: both people are looking, and
     // there is no figure to talk about on it (domain/swaps.ts).
@@ -1906,7 +1957,7 @@ export async function checkMatches(
         entry.next = 'deal_agreed';
       }
     }
-    if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId);
+    if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId, { unscreened: 'empty' });
     if (m.stage >= 3) {
       try {
         entry.mutual = await buildMutual(cfg, m, accountId, await ownProfile());
@@ -1956,7 +2007,7 @@ export async function checkMatches(
         // what they have is open to read, and that the next step is the
         // human's own go-ahead — so it is the sentence here too, side-aware.
         entry.note = lead(
-          signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap).text,
+          signalNote(m.category, signal.counterparty_type, m.kind, m.certainty, m.swap, !kindQuoting(m, accountId).quoteOwn).text,
         );
         break;
       case 'awaiting_their_go_ahead':

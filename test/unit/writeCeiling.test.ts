@@ -179,7 +179,9 @@ describe('three waits at a time, and no more', () => {
     return release;
   };
 
-  const wait = () => dispatchTool(cfg, ANA, 'wait_for_press', { press_id: 'p' });
+  // A real id: one that is not is answered before any wait is held.
+  const PRESS_ID = '00000000-0000-4000-8000-0000000000aa';
+  const wait = () => dispatchTool(cfg, ANA, 'wait_for_press', { press_id: PRESS_ID });
 
   it('holds three, refuses the fourth, and says what to do about it', async () => {
     const release = pending();
@@ -210,7 +212,7 @@ describe('three waits at a time, and no more', () => {
     vi.spyOn(humanLinks, 'waitForPress').mockRejectedValue(
       Object.assign(new Error('press not found'), { notFound: true }),
     );
-    await dispatchTool(cfg, ANA, 'wait_for_press', { press_id: 'p' });
+    await dispatchTool(cfg, ANA, 'wait_for_press', { press_id: PRESS_ID });
     expect(waitsHeldFor(ANA)).toBe(0);
   });
 
@@ -218,7 +220,7 @@ describe('three waits at a time, and no more', () => {
     const release = pending();
     const open = [wait(), wait(), wait()];
     await Promise.resolve();
-    const theirs = dispatchTool(cfg, BEPPE, 'wait_for_press', { press_id: 'p' });
+    const theirs = dispatchTool(cfg, BEPPE, 'wait_for_press', { press_id: PRESS_ID });
     release();
     const r: any = await theirs;
     expect(r.structuredContent?.code).not.toBe('RATE_LIMITED');

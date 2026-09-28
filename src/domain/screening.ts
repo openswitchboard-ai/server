@@ -20,6 +20,7 @@ import { getPool } from '../db.js';
 import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
+import { snapshotOf, type ScreenableWords } from './screenedContent.js';
 import { NO_MONEY_REASON, shelfReasonSentence, shelfRuleRefusal } from './shelfRules.js';
 import type { Config } from '../config.js';
 
@@ -82,6 +83,10 @@ const REASON_SENTENCES: Record<string, string> = {
     'A person is not a thing to be offered or asked for, so this cannot go on the board. Looking for somebody to do something WITH — a partner, a hand, company — is what the switchboard is for, so if that is what was meant, say it that way and it can go up.',
   prohibited:
     'This is not something the switchboard carries, whatever it was filed under. It cannot go back on the board as it stands.',
+  // No verdict could be reached in time (rejectStuckScreening below). Nothing
+  // was found wrong with it; it simply never got checked.
+  'could-not-screen':
+    'This could not be checked, so it did not go on the board. Post it again.',
 };
 
 // True wherever it renders: the main page shows the raw code beneath it,
@@ -231,42 +236,114 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
  * rejection notice hangs off `applied`: the state change is the ONE rejection
  * event, so a redelivered queue message that finds the card already rejected
  * changes nothing and mails nothing.
+ *
+ * THE VERDICT LANDS ONLY ON THE WORDS IT READ (migration 055). `card` is the
+ * row the worker read and screened, never a fresh read, and both statements
+ * below require the row's content_version to still be the one on it. An amend
+ * or a refine that landed while the model was thinking has moved the version
+ * on and sent a message of its own; this verdict then changes nothing, and the
+ * newer message screens the newer words. The embedding, the published state
+ * and the screened snapshot are all written in the one guarded statement, from
+ * these same values, so what the other side is shown is exactly what passed.
+ *
+ * A refusal leaves screened_content alone. Whatever last passed stays the
+ * last thing anybody else is shown; the refused words never cross.
  */
 export interface AppliedVerdict {
   applied: boolean;
   screening: StoredScreening;
 }
 
+/** The row as the worker read it: what was screened, and which version it was. */
+export type ScreenedCard = Pick<CardRow, 'id' | 'category'> & ScreenableWords;
+
 export async function applyVerdict(
   cfg: Config,
-  cardId: string,
+  card: ScreenedCard,
   verdict: ScreeningVerdict,
 ): Promise<AppliedVerdict> {
   const screening: StoredScreening = { ...verdict, at: new Date().toISOString() };
+  const version = Number(card.content_version ?? 1);
   if (verdict.pass) {
-    const { embedCard } = await import('./embeddings.js');
-    const card = await getPool().query(
-      'SELECT id, category, kind, also_called, attributes FROM cards WHERE id = $1',
-      [cardId],
-    );
-    if (card.rows[0]) await embedCard(cfg, card.rows[0]);
-    const r = await getPool().query(
-      `UPDATE cards SET lifecycle_state='PUBLISHED', screening=$2, updated_at=now()
-       WHERE id=$1 AND lifecycle_state='PENDING_SCREENING'`,
-      [cardId, JSON.stringify(screening)],
-    );
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: cfg.matchingQueueUrl,
-        MessageBody: JSON.stringify({ kind: 'card-published', card_id: cardId }),
+    const { embedText, vectorLiteral } = await import('./embeddings.js');
+    const { projectionText } = await import('./matchRules.js');
+    const vec = await embedText(
+      cfg,
+      projectionText({
+        category: card.category,
+        kind: card.kind,
+        also_called: card.also_called,
+        attributes: card.attributes,
       }),
     );
+    const r = await getPool().query(
+      `UPDATE cards SET lifecycle_state='PUBLISHED', screening=$2, screened_content=$4::jsonb,
+              embedding=$5::vector, updated_at=now()
+       WHERE id=$1 AND lifecycle_state='PENDING_SCREENING' AND content_version=$3`,
+      [
+        card.id,
+        JSON.stringify(screening),
+        version,
+        JSON.stringify(snapshotOf(card, screening.at)),
+        vectorLiteral(vec),
+      ],
+    );
+    // Only a card this verdict actually published goes to the matcher. One
+    // whose words moved on is published, if at all, by the message that
+    // carries them.
+    if (r.rowCount) {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: cfg.matchingQueueUrl,
+          MessageBody: JSON.stringify({ kind: 'card-published', card_id: card.id }),
+        }),
+      );
+    }
     return { applied: !!r.rowCount, screening };
   }
   const r = await getPool().query(
     `UPDATE cards SET lifecycle_state='SCREENING_REJECTED', screening=$2, updated_at=now()
-     WHERE id=$1 AND lifecycle_state='PENDING_SCREENING'`,
-    [cardId, JSON.stringify(screening)],
+     WHERE id=$1 AND lifecycle_state='PENDING_SCREENING' AND content_version=$3`,
+    [card.id, JSON.stringify(screening), version],
   );
   return { applied: !!r.rowCount, screening };
+}
+
+/**
+ * HOW LONG A POSTING MAY WAIT FOR A VERDICT. A posting the model cannot give a
+ * verdict on is held rather than published — the message redelivers, and after
+ * its last try it lands on the dead-letter queue — and until this sweep it then
+ * stayed pending for ever: not on the board, not refused, and nothing the
+ * human could do about it but wait on a verdict that was never coming.
+ */
+export const STUCK_SCREENING_HOURS = 6;
+
+/** The reason code a posting refused for want of a verdict carries. */
+export const COULD_NOT_SCREEN = 'could-not-screen';
+
+/**
+ * Refuse every posting that has waited on the screen for longer than
+ * STUCK_SCREENING_HOURS, with the plain reason that it could not be checked.
+ * Driven by the ttl-expiry tick (workers/opsWorker.ts), beside expireDueCards.
+ *
+ * A refusal like any other: the words never went up, the owner reads the
+ * reason on their main page, and posting it again sends it back through. The
+ * clock is updated_at, which publish, amend and refine all set, so a posting
+ * changed a minute ago is a minute old here. Returns how many it refused.
+ */
+export async function rejectStuckScreening(): Promise<number> {
+  const screening: StoredScreening = {
+    pass: false,
+    reason_code: COULD_NOT_SCREEN,
+    detail: `no verdict after ${STUCK_SCREENING_HOURS} hours`,
+    at: new Date().toISOString(),
+  };
+  const r = await getPool().query(
+    `UPDATE cards SET lifecycle_state='SCREENING_REJECTED', screening=$1::jsonb, updated_at=now()
+      WHERE lifecycle_state='PENDING_SCREENING'
+        AND updated_at < now() - make_interval(hours => $2::int)
+      RETURNING id`,
+    [JSON.stringify(screening), STUCK_SCREENING_HOURS],
+  );
+  return r.rowCount ?? 0;
 }

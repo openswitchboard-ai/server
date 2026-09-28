@@ -167,18 +167,29 @@ export async function refineIntent(
     );
   }
 
-  await getPool().query(
+  // The words change, so their version does, in the same statement (migration
+  // 055): a verdict still in flight on the old words cannot land on these. The
+  // screened snapshot is left alone, so whoever this posting was already
+  // introduced to goes on seeing the last words that passed, and these reach
+  // them only once the screen has passed them too.
+  const refined = await getPool().query(
     `UPDATE cards
         SET also_called = $2::jsonb,
             not_these = $3::jsonb,
-            lifecycle_state = 'PENDING_SCREENING', screening = NULL, updated_at = now()
-      WHERE id = $1`,
+            lifecycle_state = 'PENDING_SCREENING', screening = NULL,
+            content_version = content_version + 1, updated_at = now()
+      WHERE id = $1
+      RETURNING content_version`,
     [intentId, JSON.stringify(also.phrases), JSON.stringify(nots.phrases)],
   );
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: cfg.screeningQueueUrl,
-      MessageBody: JSON.stringify({ kind: 'screen-card', card_id: intentId }),
+      MessageBody: JSON.stringify({
+        kind: 'screen-card',
+        card_id: intentId,
+        content_version: refined.rows[0]?.content_version,
+      }),
     }),
   );
   const facts = await readLaneFacts(accountId);

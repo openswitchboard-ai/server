@@ -57,6 +57,7 @@ import {
 } from '../../src/domain/matches.js';
 import { OsbError } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg = {
   envName: 'dev',
@@ -131,7 +132,7 @@ function fakePool() {
       if (/^\s*SELECT \* FROM cards WHERE id/.test(sql)) {
         const id = params[0] as string;
         return rows([
-          {
+          asScreened({
             id,
             account_id: id === CARD_W ? ANA : BEPPE,
             type: id === CARD_W ? 'WANT' : 'HAVE',
@@ -139,7 +140,7 @@ function fakePool() {
             attributes: { frame: 'medium' },
             ask: id === CARD_H ? { amount: 420, ccy: 'AUD' } : null,
             lifecycle_state: 'PUBLISHED',
-          },
+          }),
         ]);
       }
       return rows([]);
