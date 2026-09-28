@@ -883,7 +883,12 @@ export async function waitForPress(
         expires_in_minutes: left,
         what_to_do: PRESS_WHAT_TO_DO.waiting,
         note: pressNote(
-          `${asks ? `Here is the page again — it asks ${asks}, and nothing has come through yet. ${runsOutIn(left)}` : `${runsOutIn(left)} ${PRESS_SENTENCES.waiting}`}\n${link}`,
+          // THE ADDRESS FIRST (28 September 2026). With "It runs out in 14
+          // minutes." leading and the address last, an assistant repeated the
+          // minutes to its human and dropped the address, three times running,
+          // even when asked to paste it. An address on the first line is the
+          // part of the sentence nobody can summarise away.
+          `${link}\n${asks ? `That page asks ${asks}, and nothing has come through yet. ${runsOutIn(left)}` : `${PRESS_SENTENCES.waiting} ${runsOutIn(left)}`}`,
         ),
       };
     }

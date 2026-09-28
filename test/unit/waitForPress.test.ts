@@ -180,10 +180,12 @@ describe('holding the line', () => {
     // link, so this is often the only description of the page its human ever
     // hears: it said "unlock names" and never the word suburb (22 September
     // 2026). The address stays on its own line, because a trim takes the tail.
-    expect(r.note.text).toMatch(/^Here is the page again — it asks /);
+    // The address comes first, then what the page asks (28 September 2026).
+    expect(r.note.text.split('\n')[0]).toBe(r.link);
+    expect(r.note.text).toContain('That page asks ');
     expect(r.note.text).toContain('their first name and their suburb');
     expect(r.note.text).toContain('nothing has come through yet');
-    expect(r.note.text.split('\n').at(-1)).toBe(r.link);
+    expect(r.note.text.split('\n')[0]).toBe(r.link);
     expect(r.note.text).toMatch(/here is the page again/i);
     // It puts the page in front of the human rather than reporting a state,
     // and it reads sanely whether or not they were handed it a minute ago.
@@ -272,7 +274,7 @@ describe('holding the line', () => {
     }
   });
 
-  it('says how long a page still waiting has left, before the address', async () => {
+  it('says how long a page still waiting has left, after the address', async () => {
     links = [theLink({ expires_at: new Date(Date.now() + 8.5 * 60_000 + PRESS_WAIT_CAP_MS) })];
     const waiting = waitForPress(cfg, ANA, PRESS);
     await vi.advanceTimersByTimeAsync(PRESS_WAIT_CAP_MS);
