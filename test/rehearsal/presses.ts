@@ -168,7 +168,7 @@ export async function sendPhoto(
   const pressed = await counterFetch(
     actor.jar,
     link,
-    form({ decision: 'yes', photo_id: photoId, ...(caption ? { caption } : {}) }),
+    form({ decision: 'yes', photo_id: photoId, confirm: 'yes', ...(caption ? { caption } : {}) }),
   );
   return { status: pressed.status, body: strip(await pressed.text()).slice(0, 300), photoId };
 }
