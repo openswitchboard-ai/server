@@ -2,24 +2,31 @@
  * 0.D gate suite — Playwright against LIVE dev, phone viewport (390x844).
  *
  * Gates evidenced here:
- *  (a) full register -> set PIN -> consent -> agent OAuth -> post card via
- *      MCP -> match-less state -> ledger shows card -> withdraw;
- *  (b) approval link single-use (second GET -> clean "already used" page)
- *      and expiry (expires_at manipulated in the TEST database);
+ *  (a) full register -> set PIN -> two confirmations -> the one onboarding
+ *      question -> assistant OAuth -> post a want via MCP (kind, reach and the
+ *      figure read-back) -> nobody introduced yet -> it shows on "Your wants
+ *      and haves" -> take it down;
+ *  (b) the accept link opens one question and looking does not spend it; the
+ *      press spends it (second GET -> "already been used"); expiry
+ *      (expires_at manipulated in the TEST database); the main page reaches
+ *      the same question, with the warnings on it;
  *  (c) route isolation live: an MCP bearer token 403s on EVERY /
  *      route (enumerated from the app's own route table) and a counter
  *      session cookie 401s on /mcp;
  *  (d) 6 wrong PINs -> lockout with backoff;
  *  (e) prod: the create-account door is closed (separate spec: prod.spec.ts).
  *
+ * Locators are roles, headings, labels and short fragments rather than whole
+ * paragraphs, so a reworded sentence under a heading does not fail a gate that
+ * is about something else.
+ *
  * SES sandbox note: every flow really attempts the SES send; verification
  * codes are stamped/read via the RDS Data API purely as sandbox-era test
  * observability (single-use + 15-min TTL semantics untouched).
  */
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { COUNTER_COOKIE } from '../../src/counter/session.js';
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import {
   BASE_URL,
   COUNTER_URL,
@@ -66,10 +73,10 @@ test.afterAll(async () => {
 const aliceEmail = `success+e2e-${randomBytes(5).toString('hex')}@simulator.amazonses.com`;
 const ALICE_PIN = '731642';
 let aliceAccountId: string;
-let aliceToken: string; // alice's AGENT bearer token
+let aliceToken: string; // alice's assistant's bearer token
 let aliceCardId: string;
 let bob: TestActor;
-let matchId: string;
+let introId: string;
 
 async function stampCode(verificationId: string, code: string): Promise<void> {
   await dbExec('UPDATE email_verifications SET code_hash = :h WHERE id = :id::uuid', [
@@ -78,33 +85,42 @@ async function stampCode(verificationId: string, code: string): Promise<void> {
   ]);
 }
 
-let hmacKey: Buffer | undefined;
-async function linkHmacKey(): Promise<Buffer> {
-  if (!hmacKey) {
-    const sm = new SecretsManagerClient({ region: 'us-east-1' });
-    const r = await sm.send(new GetSecretValueCommand({ SecretId: 'osb/dev/counter/keys' }));
-    hmacKey = Buffer.from(JSON.parse(r.SecretString!).link_hmac_key, 'hex');
+/**
+ * Post a want or have the way an assistant does now. The first attempt can
+ * come back unposted — more detail, how far it reaches, a figure read back to
+ * the human — and every one of those refusals carries a `reference`. Sending
+ * it back on the next try is what tells the switchboard the question has been
+ * put, so the same posting then goes up as it stands. (mcpCall already resends
+ * once on a figure read-back; it resends the same arguments, so it only gets
+ * past the gate once the reference is in them.)
+ */
+async function post(token: string, listing: Record<string, unknown>) {
+  let reference: string | undefined;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = await mcpCall(token, 'publish_intent', {
+      listing,
+      ...(reference ? { reference } : {}),
+    });
+    const asked = ['more_detail_needed', 'confirm_figure'].includes(r.result?.what_happened);
+    if (r.isError || !asked || !r.result?.reference) return r;
+    reference = r.result.reference as string;
   }
-  return hmacKey;
+  throw new Error('the posting was still being asked about after five tries');
 }
 
-/** Reconstruct the newest pending approval-link token for an account (the
- *  email is unreadable in the SES sandbox; the DB stores only the hash, so
- *  the harness re-signs from the row + the HMAC key it is entitled to read). */
-async function latestLinkToken(accountId: string): Promise<{ id: string; token: string }> {
-  const rows = await poll(async () => {
-    const r = await dbExec(
-      `SELECT id, account_id, action, ref_id, amount, ccy, counterparty_account
-       FROM approval_links WHERE account_id = :a::uuid AND used_at IS NULL
-       ORDER BY created_at DESC LIMIT 1`,
-      [{ name: 'a', value: accountId }],
-    );
-    return r.length ? r : undefined;
-  }, 'approval link row');
-  const [id, account_id, action, ref_id, amount, ccy, counterparty_account] = rows[0] as string[];
-  const binding = [id, account_id, action, ref_id, amount === null ? '' : String(Number(amount)), ccy ?? '', counterparty_account].join('|');
-  const mac = createHmac('sha256', await linkHmacKey()).update(binding).digest('base64url');
-  return { id, token: `${id}.${mac}` };
+/** A near-term expiry for an offer, as the protocol wants it. */
+const inAnHour = () => new Date(Date.now() + 3600_000).toISOString();
+
+/** The single-use accept page for one offer, fetched the way an assistant does. */
+async function acceptLink(offerId: string): Promise<{ link: string; pressId: string }> {
+  const r = await mcpCall(aliceToken, 'respond', {
+    intro_id: introId,
+    action: 'request_accept',
+    offer_id: offerId,
+  });
+  expect(r.isError, JSON.stringify(r.result)).toBe(false);
+  expect(r.result.link).toMatch(/\/a\/[0-9a-f-]{36}\./);
+  return { link: r.result.link as string, pressId: r.result.press_id as string };
 }
 
 async function shot(page: Page, name: string): Promise<void> {
@@ -115,7 +131,7 @@ async function shot(page: Page, name: string): Promise<void> {
 // Gate (a): the full human journey at phone viewport.
 // ---------------------------------------------------------------------------
 
-test('register: email -> code -> PIN -> consent -> account live', async () => {
+test('register: email -> code -> PIN -> two confirmations -> one question -> main page', async () => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Your main page.' })).toBeVisible();
   await shot(page, '01-landing');
@@ -141,27 +157,28 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   await shot(page, '04-set-pin');
   await page.getByRole('button', { name: 'Set my PIN' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Add a passkey?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Add a passkey/ })).toBeVisible();
   await shot(page, '05-passkey-offer');
   await page.getByRole('button', { name: 'Skip for now' }).click();
 
-  await expect(page.getByText('I am 18 or older.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Two things to confirm.' })).toBeVisible();
-  await expect(
-    page.getByText('My assistant may post wants and haves for me.'),
-  ).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
-  await page
-    .getByLabel('My assistant may post wants and haves for me. I can see or take down anything on my main page.')
-    .check();
+  await page.getByLabel(/^My assistant may post wants and haves for me\./).check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
 
-  // The dashboard opens on what is waiting, with the quiet navigation under
-  // it — the order is the whole point of the page.
+  // The one onboarding question. Email is where a fresh account already sits,
+  // and the name boxes are left for the names step to ask when it matters.
+  await expect(page.getByRole('heading', { name: 'How do you hear about things?' })).toBeVisible();
+  await page.locator('input[name="hears_via"][value="email"]').check();
+  await shot(page, '06b-hears-via');
+  await page.getByRole('button', { name: 'Save and carry on' }).click();
+
+  // The main page opens on what is waiting, with the two quiet rows under it.
   await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Your switchboard' })).toBeVisible();
   await expect(page.getByText('Nothing to decide right now.')).toBeVisible();
+  await expect(page.getByRole('link', { name: /^Your wants and haves/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /^Settings/ })).toBeVisible();
   // Patch is on the page, and he is a real image served with a year of cache.
   await expect(page.locator('header.site img.patch')).toBeVisible();
   const patch = await page.request.get(`${COUNTER_URL}/assets/patch.png`);
@@ -179,8 +196,8 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   expect(rows[0][1]).toBe('active');
 });
 
-test('agent OAuth: authorize hand-off happens on the counter, in-browser', async () => {
-  // DCR + PKCE as alice's agent.
+test('assistant OAuth: the authorize hand-off happens on the main page host, in-browser', async () => {
+  // DCR + PKCE as alice's assistant.
   const redirectUri = 'https://example.com/cb';
   const reg = await fetch(`${BASE_URL}/oauth/register`, {
     method: 'POST',
@@ -200,15 +217,23 @@ test('agent OAuth: authorize hand-off happens on the counter, in-browser', async
     scope: 'switchboard',
     state: 'e2e-state',
   });
-  // The browser (holding only the counter session) walks the hand-off.
+  // The browser (holding only the main-page session) walks the hand-off.
   await page.goto(`${BASE_URL}/oauth/authorize?${q}`);
-  await expect(page.getByRole('heading', { name: /Let this agent work/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Let this (agent|assistant) work/ })).toBeVisible();
   await expect(page.getByText('e2e-agent')).toBeVisible();
   await shot(page, '08-authorize-agent');
+  // The ceremony rides along where the session is not inside its window.
+  const pin = page.getByLabel(/PIN/);
+  if (await pin.count()) await pin.fill(ALICE_PIN);
+  // Authorize hands the key over in a new tab, so the callback is caught as a
+  // request on the whole context rather than as this tab's URL.
+  const callback = ctx.waitForEvent('request', {
+    predicate: (r) => r.url().startsWith(redirectUri),
+  });
   await page.getByRole('button', { name: 'Authorize' }).click();
-  await page.waitForURL(/example\.com\/cb/);
-  const code = new URL(page.url()).searchParams.get('code')!;
+  const code = new URL((await callback).url()).searchParams.get('code')!;
   expect(code).toBeTruthy();
+  for (const p of ctx.pages()) if (p !== page) await p.close();
   const tok = await fetch(`${BASE_URL}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -225,165 +250,190 @@ test('agent OAuth: authorize hand-off happens on the counter, in-browser', async
   expect(aliceToken).toBeTruthy();
 });
 
-test('agent posts a card; matches are empty; ledger shows it', async () => {
-  const w = await mcpCall(aliceToken, 'publish_intent', {
-    listing: minimalWant({
+test('assistant posts a want; nobody introduced yet; it shows on Your wants and haves', async () => {
+  const w = await post(
+    aliceToken,
+    minimalWant({
+      kind: 'mountain bike',
+      geo: { ...(minimalWant().geo as object), reach: 'radius' },
       price: { band: { min: 0, max: 800 }, ccy: 'AUD' },
       attributes: { condition: 'good' },
     }),
-  });
-  expect(w.isError).toBe(false);
+  );
+  expect(w.isError, JSON.stringify(w.result)).toBe(false);
   aliceCardId = w.result.intent_id;
+  expect(aliceCardId).toBeTruthy();
   expect(w.result.state).toBe('PENDING_SCREENING');
   await waitForCardState(aliceToken, aliceCardId, ['PUBLISHED']);
 
-  // Match-less state for a fresh card.
-  const m = await mcpCall(aliceToken, 'check_matches', { intent_id: aliceCardId });
-  expect(m.result.matches).toEqual([]);
+  // Nobody has been introduced to a fresh want.
+  const m = await mcpCall(aliceToken, 'check_in', { intent_id: aliceCardId });
+  expect(m.isError).toBe(false);
+  expect(m.result.introductions ?? []).toEqual([]);
 
   await page.goto('/ledger');
-  // COPY CULL (0.H): the ledger shows the taxonomy's human label, and the raw
-  // slug appears nowhere on the page.
-  await expect(page.getByText('Mountain bikes')).toBeVisible();
-  expect(await page.content()).not.toContain('goods.bicycle.mountain');
-  expect((await page.content()).toLowerCase()).not.toContain('the counter');
-  await expect(page.getByText(/Live until/)).toBeVisible();
-  await expect(page.getByText(/your limit is private/)).toBeVisible(); // owner-only, no figure
-  await expect(page.getByText(/nobody introduced yet/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Your wants and haves/ })).toBeVisible();
+  const row = page.locator(`[data-card-id="${aliceCardId}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(/mountain bike/i);
+  // COPY CULL (0.H): the raw slug and the old name appear nowhere on the page.
+  const html = await page.content();
+  expect(html).not.toContain('goods.bicycle.mountain');
+  expect(html.toLowerCase()).not.toContain('the counter');
+  // The private band is the owner's alone to see, and nobody is introduced yet.
+  await expect(row).toContainText(/private band 0–800 AUD|your limit is private/);
+  await expect(row).toContainText(/no matches yet|nobody introduced yet/);
   await shot(page, '09-ledger-card');
 });
 
 // ---------------------------------------------------------------------------
-// Gate (b) setup: a counterparty, a match, an offer parked for the human.
+// Gate (b): a counterparty, an introduction, offers parked for the human.
 // ---------------------------------------------------------------------------
 
-test('offer arrives: approval link is single-use', async () => {
+test('offer arrives: the accept link opens one question, and looking does not spend it', async () => {
   bob = await bootstrapActor('Bob', 'Subiaco');
-  const h = await mcpCall(bob.accessToken, 'publish_intent', {
-    listing: minimalHave({
+  const h = await post(
+    bob.accessToken,
+    minimalHave({
+      kind: 'mountain bike',
+      geo: { ...(minimalHave().geo as object), reach: 'radius' },
       price: { band: { min: 400, max: 400 }, ccy: 'AUD' },
       ask: { amount: 620, ccy: 'AUD' },
       attributes: { condition: 'good', model: 'Trek Marlin 5', year: 2019 },
     }),
-  });
-  expect(h.isError).toBe(false);
+  );
+  expect(h.isError, JSON.stringify(h.result)).toBe(false);
   const haveId = h.result.intent_id;
   await waitForCardState(bob.accessToken, haveId, ['PUBLISHED']);
 
   await sendOp({ op: 'create-match', card_want: aliceCardId, card_have: haveId, score: 0.9 });
-  matchId = await poll(async () => {
-    const r = await mcpCall(aliceToken, 'check_matches', { intent_id: aliceCardId });
-    return r.result.matches?.[0]?.match_id as string | undefined;
-  }, 'match to appear');
+  introId = await poll(async () => {
+    const r = await mcpCall(aliceToken, 'check_in', { intent_id: aliceCardId });
+    return r.result.introductions?.[0]?.intro_id as string | undefined;
+  }, 'introduction to appear');
 
-  // Stage 1 -> 2 (offers unlock), then bob proposes and alice's agent parks it.
-  await mcpCall(aliceToken, 'respond', { match_id: matchId, action: 'express_interest' });
-  await mcpCall(bob.accessToken, 'respond', { match_id: matchId, action: 'express_interest' });
-  // Bob's card starts on "Pass on", so his human writes a floor on it before
-  // his agent can name any figure at all.
+  // Bob's have starts on "Pass on", so his human writes a floor on it before
+  // his assistant can name any figure at all.
   await setAutoNegotiate(bob.jar, haveId, { limit: 50 });
   const offer = await mcpCall(bob.accessToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'propose_offer',
-    offer: { amount: 100, ccy: 'AUD', expiry: new Date(Date.now() + 3600_000).toISOString() },
+    offer: { amount: 100, ccy: 'AUD', expiry: inAnHour() },
   });
-  expect(offer.isError).toBe(false);
+  expect(offer.isError, JSON.stringify(offer.result)).toBe(false);
+  // The one accept-direction action an assistant has: park it for the human.
   const sent = await mcpCall(aliceToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'send_to_human',
     offer_id: offer.result.offer_id,
   });
   expect(sent.result.state).toBe('awaiting-human');
 
-  const { token } = await latestLinkToken(aliceAccountId);
-  // First authenticated GET renders the main page and burns the link.
-  await page.goto(`/a/${token}`);
-  await expect(page.getByRole('heading', { name: 'Approve this settlement?' })).toBeVisible();
-  await expect(page.getByText('100 AUD')).toBeVisible();
-  await shot(page, '10-approval-from-link');
-  // Second GET: clean "already used" page.
-  await page.goto(`/a/${token}`);
-  await expect(page.getByRole('heading', { name: 'Already used.' })).toBeVisible();
-  await expect(page.getByText('works exactly once')).toBeVisible();
-  await shot(page, '11-link-already-used');
+  const { link } = await acceptLink(offer.result.offer_id);
+  await page.goto(link);
+  await expect(page.getByRole('heading', { name: /^Accept \$100 AUD for / })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Accept', exact: true })).toBeVisible();
+  await expect(page.getByText('This link works once.')).toBeVisible();
+  await shot(page, '10-accept-from-link');
+  // The press spends a one-question link, never the look: open it again and
+  // the same question is still there.
+  await page.goto(link);
+  await expect(page.getByRole('heading', { name: /^Accept \$100 AUD for / })).toBeVisible();
 });
 
-test('approval link expires (created_at/expires_at manipulated in test DB)', async () => {
+test('accept link runs out (expires_at manipulated in test DB)', async () => {
   // A second offer -> a fresh link, then age it out in the DB.
   const offer = await mcpCall(bob.accessToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'propose_offer',
-    offer: { amount: 110, ccy: 'AUD', expiry: new Date(Date.now() + 3600_000).toISOString() },
+    offer: { amount: 110, ccy: 'AUD', expiry: inAnHour() },
   });
-  await mcpCall(aliceToken, 'respond', {
-    match_id: matchId,
-    action: 'send_to_human',
-    offer_id: offer.result.offer_id,
-  });
-  const { id, token } = await latestLinkToken(aliceAccountId);
+  expect(offer.isError, JSON.stringify(offer.result)).toBe(false);
+  const { link, pressId } = await acceptLink(offer.result.offer_id);
   await dbExec(
     `UPDATE approval_links SET created_at = now() - interval '16 minutes',
         expires_at = now() - interval '1 minute' WHERE id = :id::uuid`,
-    [{ name: 'id', value: id }],
+    [{ name: 'id', value: pressId }],
   );
-  await page.goto(`/a/${token}`);
-  await expect(page.getByRole('heading', { name: 'Link expired.' })).toBeVisible();
-  await expect(page.getByText('links live for 15 minutes')).toBeVisible();
+  await page.goto(link);
+  await expect(page.getByRole('heading', { name: /run out/ })).toBeVisible();
+  await expect(page.getByText(/fresh one/).first()).toBeVisible();
   await shot(page, '12-link-expired');
 });
 
-test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async () => {
+test('warnings are LOUD; accepting takes the PIN; the press spends the link', async () => {
   // A big third offer: > 3x alice's median (100, 110) and from a < 7-day-old
-  // account -> both anomaly banners.
+  // account -> both warnings.
   const offer = await mcpCall(bob.accessToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'propose_offer',
-    offer: { amount: 1000, ccy: 'AUD', expiry: new Date(Date.now() + 3600_000).toISOString() },
+    offer: { amount: 1000, ccy: 'AUD', expiry: inAnHour() },
   });
+  expect(offer.isError, JSON.stringify(offer.result)).toBe(false);
   await mcpCall(aliceToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'send_to_human',
     offer_id: offer.result.offer_id,
   });
 
+  // The main page's road to it: the tile opens the same one question.
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
+  const tile = page.getByRole('link', { name: /1,?000 AUD/ }).first();
+  await expect(tile).toBeVisible();
   await shot(page, '13-dashboard-pending');
-  await page.getByRole('link', { name: 'Review & decide' }).first().click();
-
-  await expect(page.getByRole('heading', { name: 'Approve this settlement?' })).toBeVisible();
-  await expect(page.getByText('1000 AUD')).toBeVisible();
+  await tile.click();
+  const question = page.getByRole('heading', { name: /^Accept \$1,?000 AUD for / });
+  await expect(question).toBeVisible();
   await expect(page.getByText(/× your usual amount/)).toBeVisible();
   await expect(page.getByText('this offer comes from a brand-new account')).toBeVisible();
-  await shot(page, '14-approval-anomalies');
+  await shot(page, '14-accept-warnings');
 
-  await page.getByLabel('Confirm with your PIN').fill(ALICE_PIN);
-  await page.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Approved' })).toBeVisible();
-  await shot(page, '15-approved');
+  // The press, on the link the assistant was handed.
+  const { link } = await acceptLink(offer.result.offer_id);
+  await page.goto(link);
+  await expect(question).toBeVisible();
+  await page.getByLabel(/PIN/).fill(ALICE_PIN);
+  await page.getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /^(Accepted|Approved)/ })).toBeVisible();
+  await shot(page, '15-accepted');
+
+  // Pressed once, it is spent.
+  await page.goto(link);
+  await expect(page.getByRole('heading', { name: /already been used/ })).toBeVisible();
+  await shot(page, '11-link-already-used');
 
   const offers = await mcpCall(bob.accessToken, 'respond', {
-    match_id: matchId,
+    intro_id: introId,
     action: 'list_offers',
   });
   const accepted = offers.result.offers.find((o: any) => o.offer_id === offer.result.offer_id);
   expect(accepted.state).toBe('accepted-by-human');
 });
 
-test('ledger: withdraw is immediate', async () => {
+test('Your wants and haves: taking one down is immediate', async () => {
   await page.goto('/ledger');
-  await page
-    .locator(`[data-card-id="${aliceCardId}"]`)
+  const row = page.locator(`[data-card-id="${aliceCardId}"]`);
+  await row
     .getByRole('link', { name: 'Take it down' })
+    .or(row.getByRole('button', { name: /^(Take it down|Withdraw)$/ }))
     .click();
-  await expect(page.getByRole('heading', { name: /^Take down your .* want\?$/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Take it down' }).click();
-  await expect(page.getByText('Taken down.', { exact: true })).toBeVisible();
-  await expect(page.locator(`[data-card-id="${aliceCardId}"]`).getByText(/^Taken down/)).toBeVisible();
+  // It asks once before it does anything, where the page has that step.
+  const asked = page.getByRole('heading', { name: /^Take down / });
+  const back = page.getByRole('heading', { name: /^Your wants and haves/ });
+  await expect(asked.or(back)).toBeVisible();
+  if (await asked.isVisible()) {
+    await shot(page, '16a-take-down-question');
+    await page.getByRole('button', { name: 'Take it down' }).click();
+    await expect(back).toBeVisible();
+  }
   await shot(page, '16-withdrawn');
   const li = await mcpCall(aliceToken, 'list_intents', {});
   const card = li.result.intents.find((i: any) => i.intent_id === aliceCardId);
   expect(card.state).toBe('WITHDRAWN');
+  // Nothing left to take down on that one.
+  await page.goto('/ledger');
+  await expect(row.getByRole('link', { name: 'Take it down' })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: /^(Take it down|Withdraw)$/ })).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -492,13 +542,13 @@ test('6 wrong PINs lock the PIN with backoff', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Kill switch: one tap pauses everything; agent token dies; PIN restores.
+// Stop everything: one tap stops it all; the assistant's token dies; the PIN restores.
 // ---------------------------------------------------------------------------
 
-test('kill switch suspends agent tokens; PIN un-pauses', async () => {
+test('stop everything suspends assistant tokens; the PIN turns it back on', async () => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Stop all wants and haves' }).click();
-  await expect(page.getByText('Everything is paused.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Everything is stopped/ })).toBeVisible();
   await shot(page, '17-kill-switch-on');
 
   const dead = await fetch(`${BASE_URL}/mcp`, {
@@ -512,7 +562,8 @@ test('kill switch suspends agent tokens; PIN un-pauses', async () => {
   });
   expect(dead.status).toBe(401); // suspended, not revoked
 
-  await page.getByLabel('PIN').fill(ALICE_PIN);
+  const pin = page.getByLabel(/PIN/);
+  if (await pin.count()) await pin.fill(ALICE_PIN);
   await page.getByRole('button', { name: 'Turn everything back on' }).click();
   await expect(page.getByRole('button', { name: 'Stop all wants and haves' })).toBeVisible();
   const alive = await mcpCall(aliceToken, 'list_intents', {});
