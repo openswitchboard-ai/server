@@ -1087,7 +1087,7 @@ async function oneRun(
         // …and "take the 'looking for' posting down" failed on the quoted words
         // in the middle (29 September 2026). So the verbs, with up to forty
         // characters of anything between the verb and its end, in one sentence.
-        /\b(archive|take down)\b|\b(take|pull)\b[^.?!\n]{0,40}\b(down|off)\b|\b(file|close|wind)\b[^.?!\n]{0,40}\b(away|off|out|up)\b/i.test(said)
+        /\b(archive|take down)\b|\b(take|taken|taking|pull|pulled|pulling)\b[^.?!\n]{0,40}\b(down|off)\b|\b(file|close|wind)\b[^.?!\n]{0,40}\b(away|off|out|up)\b/i.test(said)
           ? pass(`S6.offered_to_file.${id}`, `${id}'s assistant offered, once, to file the introduction away.`, 'it offered')
           : fail(`S6.offered_to_file.${id}`, `${id}'s assistant offered, once, to file the introduction away.`, `no offer in: "${said.slice(0, 140)}"`),
       );
