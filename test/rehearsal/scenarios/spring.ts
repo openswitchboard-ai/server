@@ -57,6 +57,7 @@ export const ALEX: FactSheet = {
     'You want to sell it by best offer — everybody who is interested puts in one figure — rather than naming an asking price.',
     'You would not take less than $10 for it. Only say that number if you are asked what your lowest is, or what you want for it.',
     'You are happy to post it anywhere in Australia. The buyer pays the postage.',
+    'You can post it on Thursday this week.',
     // By the wrap-up it is done (29 September 2026): the simulated seller said
     // "we're all sorted" and then, asked, "still sorting the postage", and his
     // assistant rightly left the posting up.
@@ -152,7 +153,9 @@ export const WRONG_THING =
 export const FIRST_WORDS = {
   buyer: [
     'ask him if it is just the spring or whether the elastomers come with it',
-    'ask him how long he used it and who pays the postage',
+    // Was "how long he used it and who pays the postage": both are on the card
+    // now, and the assistant rightly answered from it (29 September 2026).
+    'ask him which day this week he could post it',
     // NOT A QUESTION THE CARD ALREADY ANSWERS. This was "is anything bent or
     // worn on it", and the buyer's assistant declined to send it — rightly:
     // "his listing says used, good condition, not bent or broken. No need to
