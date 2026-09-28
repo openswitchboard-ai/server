@@ -314,6 +314,11 @@ export async function recordVerdict(
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId); // throws notFound if not a party
+  // An introduction still in line has not been made yet, so there is nothing
+  // to say how it went. It answers as the match page does: not found.
+  if (m.state === 'open' && m.live === false) {
+    throw Object.assign(new Error('introduction not found'), { notFound: true });
+  }
   const pool = getPool();
   await pool.query(
     `INSERT INTO match_verdicts (match_id, account_id, verdict, recorded_via)

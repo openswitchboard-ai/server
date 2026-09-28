@@ -192,8 +192,10 @@ describe('the handlers', () => {
 
   it('every money press runs the fresh ceremony, named for what it is', () => {
     const wired: [string, RegExp][] = [
-      ['/approve', /pressCeremony\(s, reply, b, action\)/],
-      ['/a/:token', /pressCeremony\(s as Session, reply, b, row\.action\)/],
+      // The two one-question roads pass the page's own refusal as a fifth
+      // argument, so a refused press redraws the question.
+      ['/approve', /pressCeremony\(s, reply, b, action, refuseOnPage\(/],
+      ['/a/:token', /pressCeremony\(\s*s as Session,\s*reply,\s*b,\s*row\.action,\s*refuseOnPage\(/],
       ['/matches/:id/offer', /pressCeremony\(s, reply, b, 'offer-send'\)/],
       ['/settlements/:id/confirm', /pressCeremony\(s, reply, req\.body, 'settlement-confirm'\)/],
       ['/settlements/:id/return-received', /pressCeremony\(s, reply, req\.body, 'settlement-return-received'\)/],

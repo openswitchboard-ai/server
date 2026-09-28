@@ -572,6 +572,9 @@ export function ceremonySubmit(
     value?: string;
     /** Where the submission should land, for a form that opens a new tab. */
     formTarget?: string;
+    /** A press an emailed code cannot stand behind, so a failed passkey is
+     *  not told to have one emailed. */
+    strong?: boolean;
   },
 ): string {
   const cls = opts.className ? ` class="${esc(opts.className)}"` : '';
@@ -585,7 +588,8 @@ export function ceremonySubmit(
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
   const pkTgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
-  return `<button type="button" data-pk-form="${esc(opts.formId)}" data-pk-fallback="code"${data}${pkTgt}${inline}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err role="alert" hidden></div>`;
+  const fallback = opts.strong ? 'retry' : 'code';
+  return `<button type="button" data-pk-form="${esc(opts.formId)}" data-pk-fallback="${fallback}"${data}${pkTgt}${inline}${cls}>${esc(opts.label)}</button><div class="err-slot" data-pk-err role="alert" hidden></div>`;
 }
 
 /**
@@ -649,6 +653,7 @@ page once you are back in.`;
  */
 export const PASSKEY_FAILED_PIN = "That didn't work. Try again, or use your PIN.";
 export const PASSKEY_FAILED_CODE = "That didn't work. Try again, or have a code emailed.";
+export const PASSKEY_FAILED_RETRY = "That didn't work. Try again.";
 
 /**
  * The one passkey handler for a whole page. Any number of buttons can carry
@@ -704,7 +709,9 @@ document.addEventListener('click', async function(ev){
     btn.disabled = false;
     for (var j=0;j<pins.length;j++) pins[j].setAttribute('required','');
     if (slot) { slot.hidden = false; slot.innerHTML = '<div class="err">'
-      + (btn.getAttribute('data-pk-fallback') === 'pin' ? ${JSON.stringify(PASSKEY_FAILED_PIN)} : ${JSON.stringify(PASSKEY_FAILED_CODE)})
+      + (btn.getAttribute('data-pk-fallback') === 'pin' ? ${JSON.stringify(PASSKEY_FAILED_PIN)}
+        : btn.getAttribute('data-pk-fallback') === 'retry' ? ${JSON.stringify(PASSKEY_FAILED_RETRY)}
+        : ${JSON.stringify(PASSKEY_FAILED_CODE)})
       + '</div>'; }
   }
 });
@@ -997,6 +1004,11 @@ const DONE_BLOCK = `<p class="lead" data-done>Done. Close this tab and carry on 
  * appears beside the sentence. Safari and Firefox refuse the close whatever
  * the history, so if the tab is still here a beat later the hint takes over.
  */
+/** The line a one-question page shows after a wrong PIN. */
+export const PIN_WRONG_SENTENCE = 'That PIN is not right. Try again.';
+/** What the in-place script says for a JSON refusal that carries no sentence. */
+export const PRESS_FAILED_SENTENCE = 'That did not go through. Try again.';
+
 const IN_PLACE_SCRIPT = `<script>
 (function(){
   function armDone(){
@@ -1011,9 +1023,20 @@ const IN_PLACE_SCRIPT = `<script>
     e.preventDefault();
     var fd=new FormData(f);var sub=e.submitter;if(sub&&sub.name)fd.append(sub.name,sub.value);
     var btns=f.querySelectorAll('button');for(var i=0;i<btns.length;i++)btns[i].disabled=true;
+    function showErr(j){
+      var msg=j&&j.error==='pin_incorrect'?${JSON.stringify(PIN_WRONG_SENTENCE)}
+        :(j&&j.error_description)||${JSON.stringify(PRESS_FAILED_SENTENCE)};
+      var p=document.getElementById('page');var box=p&&p.querySelector('.err[role="alert"]');
+      if(!box){box=document.createElement('div');box.className='err';box.setAttribute('role','alert');f.parentNode.insertBefore(box,f);}
+      box.textContent=msg;
+      var pins=f.querySelectorAll('input.pinbox');for(var k=0;k<pins.length;k++)pins[k].value='';
+      for(var i=0;i<btns.length;i++)btns[i].disabled=false;
+    }
     fetch(f.action,{method:'POST',body:new URLSearchParams(fd),credentials:'same-origin',headers:{'accept':'text/html'}})
-      .then(function(r){return r.text();})
-      .then(function(html){var d=new DOMParser().parseFromString(html,'text/html');var n=d.getElementById('page');var p=document.getElementById('page');
+      .then(function(r){var ct=r.headers.get('content-type')||'';
+        if(/json/i.test(ct))return r.json().then(function(j){showErr(j);return null;});
+        return r.text();})
+      .then(function(html){if(html===null)return;var d=new DOMParser().parseFromString(html,'text/html');var n=d.getElementById('page');var p=document.getElementById('page');
         if(!n||!p)throw new Error('no page');p.innerHTML=n.innerHTML;document.title=d.title||document.title;window.scrollTo(0,0);
         var h=p.querySelector('h1');if(h){h.setAttribute('tabindex','-1');h.focus();}armDone();})
       .catch(function(){for(var i=0;i<btns.length;i++)btns[i].disabled=false;f.submit();});
