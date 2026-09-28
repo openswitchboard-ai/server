@@ -31,13 +31,16 @@ import {
   BASE_URL,
   COUNTER_URL,
   Jar,
+  liveFetch,
   bootstrapActor,
   counterFetch,
   dbExec,
   mcpCall,
+  oauthFlow,
   minimalHave,
   minimalWant,
   poll,
+  retireAccountCards,
   sendOp,
   setAutoNegotiate,
   sha256hex,
@@ -62,10 +65,17 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
       ? { extraHTTPHeaders: { 'x-osb-ratelimit-bypass': process.env.OSB_RATELIMIT_BYPASS } }
       : {}),
   });
+  // Fail a step in 30s, not at the 300s test timeout, so a stale locator
+  // names itself instead of eating the whole budget.
+  ctx.setDefaultTimeout(30_000);
   page = await ctx.newPage();
 });
 test.afterAll(async () => {
   await ctx?.close();
+  // Every account this run made is throwaway: leave nothing of theirs on the
+  // board (a rehearsal ladder that runs next refuses a non-empty one).
+  console.log(`run accounts: alice=${aliceAccountId ?? '-'} bob=${bob?.accountId ?? '-'}`);
+  await retireAccountCards([aliceAccountId, bob?.accountId], 'e2e teardown');
 });
 
 // Simulator address, same reason as helpers.ts testEmail(): real e2e+…@openswitchboard.ai
@@ -163,7 +173,10 @@ test('register: email -> code -> PIN -> two confirmations -> one question -> mai
 
   await expect(page.getByRole('heading', { name: 'Two things to confirm.' })).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
-  await page.getByLabel(/^My assistant may post wants and haves for me\./).check();
+  // By role, not by label: a regex label match runs against the raw label text,
+  // which starts with the template's newline and indent, so ^ never matches
+  // (and the check waited out the whole test timeout).
+  await page.getByRole('checkbox', { name: /^My assistant may post wants and haves for me\./ }).check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
 
@@ -197,9 +210,16 @@ test('register: email -> code -> PIN -> two confirmations -> one question -> mai
 });
 
 test('assistant OAuth: the authorize hand-off happens on the main page host, in-browser', async () => {
+  // KNOWN PRODUCT FAULT (found 2026-09-28, dev 628a1e7+): the human pages'
+  // CSP says form-action 'self', and Chrome applies form-action to the
+  // redirect a form POST gets. POST /authorize mints the code and answers 303
+  // to the assistant's redirect_uri — another origin — so the browser blocks
+  // it ("violates ... form-action 'self'") and the callback never arrives.
+  // Marked expected-to-fail so the rest of the journey still runs; it turns
+  // red by itself the day the hand-off works, and this line comes out then.
   // DCR + PKCE as alice's assistant.
   const redirectUri = 'https://example.com/cb';
-  const reg = await fetch(`${BASE_URL}/oauth/register`, {
+  const reg = await liveFetch(`${BASE_URL}/oauth/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ client_name: 'e2e-agent', redirect_uris: [redirectUri] }),
@@ -229,12 +249,24 @@ test('assistant OAuth: the authorize hand-off happens on the main page host, in-
   // request on the whole context rather than as this tab's URL.
   const callback = ctx.waitForEvent('request', {
     predicate: (r) => r.url().startsWith(redirectUri),
+    timeout: 15_000,
   });
   await page.getByRole('button', { name: /^Authori[sz]e$/ }).click();
-  const code = new URL((await callback).url()).searchParams.get('code')!;
-  expect(code).toBeTruthy();
+  const callbackUrl = await callback.then((r) => r.url()).catch(() => undefined);
   for (const p of ctx.pages()) if (p !== page) await p.close();
-  const tok = await fetch(`${BASE_URL}/oauth/token`, {
+  if (!callbackUrl) {
+    // The hand-off did not reach the assistant. Alice still needs an
+    // assistant for the gates after this one, so connect one the way the
+    // integration suite does (same server doors, no browser), then fail here.
+    const jar = new Jar();
+    for (const c of await ctx.cookies(COUNTER_URL)) jar.cookies.set(c.name, c.value);
+    aliceToken = await oauthFlow(jar);
+    expect(callbackUrl, 'the in-browser Authorise reached the redirect_uri').toBeTruthy();
+    return;
+  }
+  const code = new URL(callbackUrl).searchParams.get('code')!;
+  expect(code).toBeTruthy();
+  const tok = await liveFetch(`${BASE_URL}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -291,6 +323,9 @@ test('assistant posts a want; nobody introduced yet; it shows on Your wants and 
 // ---------------------------------------------------------------------------
 
 test('offer arrives: the accept link opens one question, and looking does not spend it', async () => {
+  // bootstrapActor waits up to OPS_ACCOUNT_WAIT_MS (300s) on the shared ops
+  // queue alone, so this gate needs more than the default test budget.
+  test.setTimeout(600_000);
   bob = await bootstrapActor('Bob', 'Subiaco');
   const h = await post(
     bob.accessToken,
@@ -479,7 +514,7 @@ test('route isolation live: bearer x every human-page route; cookie x /mcp', asy
     const url = r.url
       .replace(':token', 'sometoken')
       .replace(':id', '00000000-0000-0000-0000-000000000000');
-    const res = await fetch(`${COUNTER_URL}${url}`, {
+    const res = await liveFetch(`${COUNTER_URL}${url}`, {
       method: r.method,
       headers: { authorization: `Bearer ${aliceToken}` }, // a REAL, live token
       redirect: 'manual',
@@ -492,7 +527,7 @@ test('route isolation live: bearer x every human-page route; cookie x /mcp', asy
   const cookies = await page.context().cookies(COUNTER_URL);
   const session = cookies.find((c) => c.name === COUNTER_COOKIE);
   expect(session).toBeTruthy();
-  const mcpRes = await fetch(`${BASE_URL}/mcp`, {
+  const mcpRes = await liveFetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -554,7 +589,7 @@ test('stop everything suspends assistant tokens; the PIN turns it back on', asyn
   await expect(page.getByRole('heading', { name: /^Everything is stopped/ })).toBeVisible();
   await shot(page, '17-kill-switch-on');
 
-  const dead = await fetch(`${BASE_URL}/mcp`, {
+  const dead = await liveFetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

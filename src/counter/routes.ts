@@ -4669,6 +4669,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending') {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
+      (reply as any).osbFormActionExtra = formActionSource(ctx.redirect_uri);
       return html(
         reply,
         pages.authorizePage(
@@ -4739,3 +4740,22 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
     });
   });
 }
+
+/**
+ * The one extra place the assistant-connect page's form may lead, as a CSP
+ * source: the origin of the (already validated) redirect_uri for http(s), or
+ * its scheme for an app's own scheme ("cursor:"). Anything unparseable adds
+ * nothing, so the page keeps form-action 'self' alone.
+ */
+export function formActionSource(redirectUri: string | undefined): string | undefined {
+  if (!redirectUri) return undefined;
+  try {
+    const u = new URL(redirectUri);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(u.protocol)) return u.protocol;
+  } catch {
+    /* nothing added */
+  }
+  return undefined;
+}
+

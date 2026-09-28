@@ -160,9 +160,17 @@ export function buildApp(cfg: Config): FastifyInstance {
     // redirect to it — and a wrong guess there would break a page rather than
     // merely loosen a host that renders nothing.
     const strict = host === mcpHost;
+    // THE ASSISTANT-CONNECT PAGE MAY SEND ITS FORM ON TO ONE MORE PLACE
+    // (28 September 2026). Its Authorise press answers with a redirect to the
+    // assistant's own registered redirect_uri, always another origin, and
+    // Chrome applies form-action to that redirect: with 'self' alone the code
+    // never reached the assistant. The handler names that one origin (see
+    // formActionSource in counter/routes.ts), and only that page gets it.
+    const extra = (reply as any).osbFormActionExtra as string | undefined;
+    const counterCsp = extra ? COUNTER_CSP.replace("form-action 'self'", `form-action 'self' ${extra}`) : COUNTER_CSP;
     reply.header(
       'content-security-policy',
-      strict ? (pathOf(req.url).startsWith('/ops') ? OPS_CSP : STRICT_CSP) : COUNTER_CSP,
+      strict ? (pathOf(req.url).startsWith('/ops') ? OPS_CSP : STRICT_CSP) : counterCsp,
     );
     return payload;
   });
