@@ -470,6 +470,7 @@ describe('where a code may be sent back to', () => {
       'javascript:alert(1)',
       'data:text/html,x',
       'file:///tmp/cb',
+      'https://a.com;sandbox/cb',
     ]) {
       const r = await register([u]);
       expect(r.statusCode, u).toBe(400);

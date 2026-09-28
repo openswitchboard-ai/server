@@ -7,7 +7,10 @@ describe('the connect page may send its form on to the assistant', () => {
   it('names the redirect origin, or an app scheme, and nothing else', () => {
     expect(formActionSource('https://chatgpt.com/connector/oauth/abc?x=1')).toBe('https://chatgpt.com');
     expect(formActionSource('http://127.0.0.1:53682/callback')).toBe('http://127.0.0.1:53682');
-    expect(formActionSource('cursor://anysphere.cursor-mcp/oauth')).toBe('cursor:');
+    expect(formActionSource('http://[::1]:8123/cb')).toBe('http://[::1]:8123');
+    // A ';' in a host would start a new directive in the header.
+    expect(formActionSource('https://a.com;sandbox/cb')).toBeUndefined();
+    expect(formActionSource('cursor://anysphere.cursor-mcp/oauth')).toBeUndefined();
     expect(formActionSource('not a url')).toBeUndefined();
     expect(formActionSource(undefined)).toBeUndefined();
   });

@@ -239,7 +239,13 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
         parsed.hostname === 'localhost' ||
         parsed.hostname === '[::1]' ||
         parsed.hostname === '::1';
-      const allowed = parsed.protocol === 'https:' || (parsed.protocol === 'http:' && isLoopback);
+      // A host is letters, digits, dots and hyphens (or the bracketed IPv6
+      // loopback). WHATWG URL lets ';' and other characters through in a
+      // host, and a redirect origin is written into the connect page's
+      // security header, so anything else is refused (28 September 2026).
+      const plainHost = parsed.hostname === '[::1]' || /^[a-z0-9.-]+$/i.test(parsed.hostname);
+      const allowed =
+        plainHost && (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && isLoopback));
       if (!allowed) {
         return reply.code(400).send({
           error: 'invalid_redirect_uri',
