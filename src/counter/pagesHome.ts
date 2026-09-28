@@ -11,7 +11,6 @@ import {
   SUGGESTION_APPETITES,
   arrangementInPlainWords,
   isEmpty as arrangementIsEmpty,
-  CHECK_EVERY_MINUTES_HELP,
   CHECK_EVERY_MINUTES_MAX,
   CHECK_EVERY_MINUTES_MIN,
   INTERRUPT_ITEM_MAX,
@@ -26,7 +25,6 @@ import {
   type Mandate,
   type NegotiationMode,
 } from '../domain/negotiation.js';
-import { wideAreaNudge } from '../domain/profile.js';
 import { categoryPhrase, offerAmountInWords } from '../email/templates.js';
 import {
   counterOfferForm,
@@ -55,6 +53,31 @@ function moneyPhrase(amount: string): string {
   return offerAmountInWords(Number(m[1]), m[2]!.toUpperCase());
 }
 
+/** The one line under the suburb box on these pages (28 September 2026). */
+export const AREA_LINE = 'Pick your suburb from the list, or type a wider area if you prefer.';
+
+/**
+ * The two shared boxes as pages.ts draws them, with the long help paragraph
+ * under the suburb swapped for AREA_LINE, and, where `optional`, neither box
+ * required. pages.ts owns the fieldset (the approval page draws it too); this
+ * only trims what these pages say under it, and a unit test pins that the
+ * swap still finds its mark.
+ */
+export function plainSharedFields(
+  v: { firstName: string; locality: string },
+  opts: { optional?: boolean } = {},
+): string {
+  let html = sharedFieldsFieldset(v).replace(
+    `<p class="field-help">${cpages.AREA_HELP}</p>`,
+    `<p class="field-help">${esc(AREA_LINE)}</p>`,
+  );
+  if (opts.optional) html = html.replace(/ required>/g, '>');
+  return html;
+}
+
+/** Shown on the profile page while nothing is filled in. */
+export const PROFILE_EMPTY_NOTE = "Nothing filled in yet. You'll be asked the first time you share them.";
+
 /**
  * What you share on a match. Two boxes, viewable and changeable whenever the
  * person likes — a signed-in session is enough, because typing a suburb into
@@ -66,49 +89,32 @@ export function sharedProfilePage(
   opts: { error?: string; notice?: string } = {},
 ): string {
   const filled = v.firstName && v.locality;
-  // Nothing is refused here. An area already on file that turns out to be a
-  // whole state, territory or country gets one quiet line pointing at the
-  // suburb; anything narrower, or anything the gazetteer does not know, gets
-  // silence.
-  const wide = wideAreaNudge(v.locality);
   return layout('What you share on a match', `
 <h1>What you share on a match.</h1>
 <p class="lead">When you and someone else have both said yes, you each see a
 first name and a suburb.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
-${
-  filled
-    ? ''
-    : `<div class="note">Nothing is filled in yet. Until it is, a match can get to
-the point of swapping details and then stall there.</div>`
-}
-${wide ? `<div class="note">${esc(wide)}</div>` : ''}
+${filled ? '' : `<div class="note">${esc(PROFILE_EMPTY_NOTE)}</div>`}
 <form method="POST" action="/profile">
-  ${sharedFieldsFieldset(v)}
+  ${plainSharedFields(v)}
   <button type="submit">Save</button>
 </form>
-<p class="small muted">Keep phone numbers, addresses and links out of these boxes —
-swap those in the channel once you have both agreed.</p>
-<a class="btn secondary" href="/">Back</a>`);
+<p class="small muted">Keep phone numbers, addresses and links out of these boxes.
+Swap those in the conversation once you have both agreed.</p>
+<a class="btn secondary" href="/settings">Back</a>`);
 }
 
 // ---------------------------------------------------------------------------
-// How your agents behave (1.D). The account-level standing arrangement, shown
-// back in plain words and editable here. An agent can write one too — it is
-// the agent that hears "check twice a day" mid-conversation — and this page is
-// what keeps that honest: the human reads the whole of it and has the last
-// word on every line.
+// How your assistant works (1.D). The account-level standing arrangement,
+// shown back in plain words and editable here. An assistant can write one too
+// (it is the one that hears "check twice a day" mid-conversation) and this
+// page is what keeps that honest: the person reads the whole of it and has the
+// last word on every line.
+//
+// No product names on any of these pages (28 September 2026): a person knows
+// which kind of assistant they use without being handed a list of brands.
 // ---------------------------------------------------------------------------
-
-/**
- * "Always-on" is our words, not anyone else's, so every question of this shape
- * names the products a person would recognise instead. Kept here once: two
- * pages ask about this and a list that drifts between them is a list that
- * tells two different stories.
- */
-const ALWAYS_ON_EXAMPLES = 'such as OpenClaw, Grok Bot, Hermes and Meta Muse';
-const CHAT_EXAMPLES = 'such as ChatGPT, Antigravity and Claude';
 
 /**
  * The two-way choice, drawn once. Onboarding, settings and the arrangement
@@ -142,22 +148,22 @@ function modeOptions(
 }
 
 /**
- * Whether the agent runs between conversations. This is NOT the onboarding
- * question: that one is how the person hears about things and decides whether
- * the switchboard writes to them; this one decides what an agent may promise.
- * They are asked the same way because they are the same shape of question, not
- * because they are the same answer.
+ * Whether the assistant runs between conversations (arrangement
+ * runs_on_its_own). This is NOT hears_via: that one decides whether the
+ * switchboard emails the person and lives on the settings page; this one
+ * decides what an assistant may promise to do later. The arrangement page
+ * shows hears_via as a fact with a link rather than asking it a second time.
  */
 const RUNS_ON_ITS_OWN_OPTIONS: ModeOption[] = [
   {
     value: 'on',
     head: 'It runs on its own.',
-    rest: `It checks between our conversations, so it can watch for things without me asking — ${ALWAYS_ON_EXAMPLES}.`,
+    rest: 'It checks between our conversations, so it can watch for things without me asking.',
   },
   {
     value: 'off',
     head: 'It waits for me.',
-    rest: `It only acts while we are talking — ${CHAT_EXAMPLES}.`,
+    rest: 'It only acts while we are talking.',
   },
 ];
 
@@ -168,18 +174,51 @@ const APPETITE_LABELS: Record<string, string> = {
   never: 'Never suggest anything on your own',
 };
 
+/**
+ * The arrangement's plain-words lines are written in domain/arrangement.ts,
+ * where two of the headings still say "agent". A person reads "assistant",
+ * and the headings read the same as the form's labels below them, so the
+ * page renames them here and passes any heading it does not know through.
+ */
+const ARRANGEMENT_HEADINGS: Record<string, string> = {
+  'Your agent between conversations': 'Between conversations',
+  'How often your agents check': 'How often it checks',
+  'Worth interrupting you for': "What's worth interrupting you for",
+  'Everything else waits for': 'What can wait for a round-up',
+  Suggestions: 'How often it should suggest things',
+  'Also standing': 'Anything else',
+};
+
+/** "Set: between conversations, how often it checks, quiet hours." Undefined when nothing is. */
+export function arrangementSummaryLine(lines: { k: string }[]): string | undefined {
+  if (!lines.length) return undefined;
+  const heads = lines.map((l) => lowerFirst(ARRANGEMENT_HEADINGS[l.k] ?? l.k));
+  return `Set: ${heads.join(', ')}.`;
+}
+
+/** The page's own wording for the cadence rule, in place of the one written for assistants. */
+export const CADENCE_NEEDS_RUNS_ON_ITS_OWN_PAGE =
+  'How often it checks only applies when your assistant runs on its own. Pick "It runs on its own" or leave the minutes empty.';
+
+/** How this person hears about things, as a fact. */
+export function hearsViaFact(h: HearsVia): string {
+  return h === 'assistant' ? 'You hear about things through your assistant.' : 'You hear about things by email.';
+}
+
 export function arrangementPage(
   a: Arrangement,
   // `updated` is localTime() markup, not plain text: it goes in unescaped.
-  opts: { error?: string; notice?: string; updated?: string } = {},
+  opts: { error?: string; notice?: string; updated?: string; hearsVia?: HearsVia } = {},
 ): string {
   const lines = arrangementInPlainWords(a);
   const plain = lines.length
     ? `<div class="facts">${lines
-        .map((l) => `<div class="fact"><div class="k">${esc(l.k)}</div><div class="v" style="font-size:1.05rem">${esc(l.v)}</div></div>`)
+        .map(
+          (l) =>
+            `<div class="fact"><div class="k">${esc(ARRANGEMENT_HEADINGS[l.k] ?? l.k)}</div><div class="v" style="font-size:1.05rem">${esc(l.v)}</div></div>`,
+        )
         .join('')}</div>${opts.updated ? `<p class="small muted">Last changed ${opts.updated}.</p>` : ''}`
-    : `<div class="note">Nothing is set yet. Until it is, each agent works this
-out with you again from scratch every time it starts up.</div>`;
+    : `<div class="note">Nothing set yet.</div>`;
 
   const appetite = ['', ...SUGGESTION_APPETITES]
     .map(
@@ -190,61 +229,65 @@ out with you again from scratch every time it starts up.</div>`;
     )
     .join('');
 
-  return layout('How your agents behave', `
-<h1>How your agents behave.</h1>
-<p class="lead">Every agent you connect works to this.</p>
+  return layout('How your assistant works', `
+<h1>How your assistant works.</h1>
+<p class="lead">Every assistant you connect works to this.</p>
 ${errBox(opts.error)}
 ${opts.notice ? `<div class="note">${esc(opts.notice)}</div>` : ''}
+${opts.hearsVia ? `<p class="small muted">${esc(hearsViaFact(opts.hearsVia))} <a href="/settings">Change</a></p>` : ''}
 ${plain}
 <h2>Change it</h2>
 <form method="POST" action="/arrangement">
   <h3>Does your assistant run on its own?</h3>
   ${modeOptions('runs_on_its_own', 'runs', RUNS_ON_ITS_OWN_OPTIONS, a.runs_on_its_own ? 'on' : 'off')}
-  <label for="check_every_minutes">How often should your agents check? In minutes. Needs the first of those two.</label>
+  <label for="check_every_minutes">How often it checks (minutes, 30 or more)</label>
   <input id="check_every_minutes" name="check_every_minutes" type="number" inputmode="numeric"
     min="${CHECK_EVERY_MINUTES_MIN}" max="${CHECK_EVERY_MINUTES_MAX}" step="1"
     value="${esc(Number.isFinite(a.check_every_minutes as number) ? String(a.check_every_minutes) : '')}"
     placeholder="720">
-  <p class="field-help">${esc(CHECK_EVERY_MINUTES_HELP)}</p>
-  <label for="interrupt_for">What is worth interrupting you for? One per line.</label>
+  <label for="interrupt_for">What's worth interrupting you for (one per line)</label>
   <textarea id="interrupt_for" name="interrupt_for" placeholder="a new match&#10;a message on a match we are talking on&#10;anything waiting on my main page">${esc((a.interrupt_for ?? []).join('\n'))}</textarea>
-  <label for="summarize">Everything else waits for&hellip;</label>
+  <label for="summarize">What can wait for a round-up</label>
   <input id="summarize" name="summarize" type="text" maxlength="${SHORT_FIELD_MAX}"
     value="${esc(a.summarize ?? '')}" placeholder="a round-up on Sunday evening">
   <label for="quiet_hours">Quiet hours</label>
   <input id="quiet_hours" name="quiet_hours" type="text" maxlength="${SHORT_FIELD_MAX}"
     value="${esc(a.quiet_hours ?? '')}" placeholder="after 9pm and before 7am">
-  <label for="suggestion_appetite">How keen should they be with suggestions?</label>
+  <label for="suggestion_appetite">How often it should suggest things</label>
   <select id="suggestion_appetite" name="suggestion_appetite">${appetite}</select>
-  <label for="notes">Anything else standing</label>
+  <label for="notes">Anything else</label>
   <textarea id="notes" name="notes" maxlength="${NOTES_MAX}">${esc(a.notes ?? '')}</textarea>
   <button type="submit">Save</button>
 </form>
 ${foldedDetail(
-  'What an arrangement can and cannot do',
-  `<p class="small">Every agent you connect is handed this each time it checks the
-switchboard, so an agent that has never met you still knows how often to check,
+  'What this can and cannot do',
+  `<p class="small">Every assistant you connect is handed this each time it checks
+the switchboard, so one that has never met you still knows how often to check,
 what to wake you for, and when to leave you alone.</p>
-<p class="small">Preferences only, please: how you want to be treated, and never
-who you are. Emails, phone numbers and web addresses are turned away, and each
-line stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
-<p class="small">One thing an arrangement can never do is approve something for
-you. Sharing your details, accepting an offer and confirming a payment come to
-this page every single time, whatever any agent has agreed.</p>`,
+<p class="small">Preferences only: how you want to be treated, and never who you
+are. Emails, phone numbers and web addresses are turned away, and each line
+stays under ${INTERRUPT_ITEM_MAX}&ndash;${NOTES_MAX} characters.</p>
+<p class="small">It can never approve anything for you. Sharing your name,
+accepting an offer and confirming a payment come to your main page every time.</p>`,
 )}
 ${
   arrangementIsEmpty(a)
     ? ''
     : `<form method="POST" action="/arrangement/clear">
-  <button type="submit" class="secondary">Clear the whole arrangement</button>
+  <button type="submit" class="secondary">Clear all of it</button>
 </form>`
 }
-<a class="btn secondary" href="/">Back</a>`);
+<a class="btn secondary" href="/settings">Back</a>`);
 }
 
 export interface PendingApprovalItem {
-  href: string;
+  /** Where the tile goes. Absent for a tile that is a fact with nothing to
+   *  open, such as a want or have screening turned away: the fix is the
+   *  assistant's to make. */
+  href?: string;
   label: string;
+  /** Plain lines under the label, e.g. screening's reason and what to do. */
+  lines?: string[];
   amount?: string;
   /** Button wording. Defaults to the decide-on-something wording. */
   cta?: string;
@@ -291,12 +334,8 @@ export interface DashboardView {
   firstName?: string;
   /** One line at the top, e.g. "Google Antigravity is connected." */
   notice?: string;
-  /** "Ana, Fremantle" — what a stage-3 match would see. Absent = not set yet. */
-  sharedProfile?: string;
   /** Set when a permanent bounce flagged the account's address unreachable. */
   emailUnreachable?: boolean;
-  /** One line of the standing arrangement. Absent = nothing set yet. */
-  arrangementSummary?: string;
   killSwitchOn: boolean;
   /** What a sensitive press on this page takes. Absent on the callers that
    *  render no such press; the kill switch falls back to asking for a PIN. */
@@ -393,16 +432,20 @@ ${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
 </form>
 <p class="small muted">Your assistants are stopped too. You can turn it back on.</p></div>`;
 
-  // 1. Decisions. Whole card is the tap target; the wording of the button
-  //    stays on the card so the person knows what they are opening.
+  // 1. Decisions. Whole tile is the tap target; the wording of the button
+  //    stays on the tile so the person knows what they are opening. There is
+  //    no "waiting for you" badge on anything under Decisions: everything
+  //    there is waiting by definition, and the accent border says so.
   const approvals = v.pendingApprovals
-    .map(
-      (a) => `<a class="todo urgent" href="${esc(a.href)}">
-<span class="badge match">WAITING FOR YOU</span>
-<div class="what">${esc(a.label)}</div>
-${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
-<div class="go">${esc(a.cta ?? 'Review & decide')}</div></a>`,
-    )
+    .map((a) => {
+      const body = `<div class="what">${esc(a.label)}</div>
+${(a.lines ?? []).map((l) => `<p class="small">${esc(l)}</p>`).join('')}
+${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}`;
+      return a.href
+        ? `<a class="todo urgent" href="${esc(a.href)}">${body}
+<div class="go">${esc(a.cta ?? 'Review & decide')}</div></a>`
+        : `<div class="todo urgent">${body}</div>`;
+    })
     .join('');
 
   // 1a. One box per match. Everything waiting on one match sits together in
@@ -429,8 +472,8 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
 
   // 2b. Messages nobody has collected. The switchboard carries a conversation
   //     without keeping it, so this block can say how many and what about, and
-  //     never a word of what is in them. The agent is the one that can read
-  //     them out, so that is what the line asks for.
+  //     never a word of what is in them. The assistant is the one that can
+  //     read them out, so that is what the line asks for.
   const messages = (v.messagesWaiting ?? [])
     .map((m) => {
       const one = m.count === 1;
@@ -456,13 +499,16 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}
     })
     .join('');
 
-  // 3. Wants and haves whose clock is nearly out. The day is markup the
-  //    reader's own clock fills in, so it goes in without esc().
+  // 3. Wants and haves whose clock is nearly out, with the press that keeps
+  //    them (28 September 2026: the tile used to point at the ledger, which
+  //    had no way to renew anything). The day is markup the reader's own
+  //    clock fills in, so it goes in without esc().
   const renewals = v.lapsingSoon?.count
-    ? `<a class="todo" href="/ledger">
+    ? `<div class="todo">
 <span class="badge state">LAPSING</span>
-<div class="what">${v.lapsingSoon.count === 1 ? 'One of your wants and haves runs' : `${v.lapsingSoon.count} of your wants and haves run`} out by ${v.lapsingSoon.soonest}</div>
-<div class="go">Check they are still true</div></a>`
+<div class="what">${v.lapsingSoon.count === 1 ? 'One of your wants and haves runs' : `${v.lapsingSoon.count} of your wants and haves run`} out by ${v.lapsingSoon.soonest}.</div>
+<form method="POST" action="/renew/lapsing"><button type="submit">${esc(KEEP_THEM_ALL)}</button></form>
+<p class="small"><a href="/ledger">See which</a></p></div>`
     : '';
 
   const nothingWaiting =
@@ -479,25 +525,13 @@ hold. Re-verify your address to switch it back on.
 <form method="POST" action="/reverify"><button type="submit">Re-verify my email</button></form></div>`
     : '';
 
-  const cards = `${v.cardCounts.total === 1 ? '1 want or have' : `${v.cardCounts.total} wants and haves`} — ${v.cardCounts.published} live, ${v.cardCounts.pending} in screening.`;
   const nav = `<div class="navlist">
-<a href="/ledger"><span class="nav-t">Your ledger</span><span class="nav-d">${esc(cards)}</span></a>
-<a href="/profile"><span class="nav-t">What you share on a match</span><span class="nav-d">${
-    v.sharedProfile
-      ? `A match that gets that far sees ${esc(v.sharedProfile)}.`
-      : 'A match that gets that far sees a first name and a suburb. Yours are empty.'
-  }</span></a>
-<a href="/arrangement"><span class="nav-t">How your agents behave</span><span class="nav-d">${
-    v.arrangementSummary
-      ? `Every agent you connect is told: ${esc(v.arrangementSummary)}`
-      : 'Nothing is set yet, so each agent works out how often to check and when to leave you alone from scratch every time it starts.'
-  }</span></a>
-<a href="/agent-keys"><span class="nav-t">Agent keys</span><span class="nav-d">Long passwords for agents that cannot sign in through a browser.</span></a>
-<a href="/security"><span class="nav-t">How you approve things</span><span class="nav-d">Your passkey and your PIN.</span></a>
-<a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">How you hear about things, how often we may email you, and blind mode.</span></a>
+<a href="/ledger"><span class="nav-t">Your wants and haves</span><span class="nav-d">${esc(countLine(v.cardCounts))}</span></a>
+<a href="/settings"><span class="nav-t">Settings</span><span class="nav-d">What you share, how you approve things and how you hear about them.</span></a>
 </div>`;
 
   return layout('Your main page', `
+<style>.mb-theirs { color:var(--muted); font-size:var(--t-sm); margin:calc(-1 * var(--s2)) 0 var(--s3); overflow-wrap:anywhere; }</style>
 <h1>${v.firstName ? `G'day, ${esc(v.firstName)}.` : 'Your main page.'}</h1>
 <p class="lead">${esc(FRONT_PAGE_LEAD)}</p>
 ${v.notice ? `<div class="note">${esc(v.notice)}</div>` : ''}
@@ -522,25 +556,49 @@ ${kill}
 ${cpages.ceremonyScript(c)}`);
 }
 
+/** Under a want or have screening turned away, after screening's reason. */
+export const REJECTED_TILE_LINE =
+  'Tell your assistant what to change and it will send it back to be checked.';
+
+/** The main page's line after "Keep them all", and the ledger's after "Keep it". */
+export const RENEWED_NOTICE = 'Renewed.';
+
+/** The lapsing tile's button. */
+export const KEEP_THEM_ALL = 'Keep them all';
+
+/** The count under "Your wants and haves": "2 live · 1 being checked". */
+export function countLine(c: { total: number; published: number; pending: number }): string {
+  if (!c.total) return 'Nothing posted yet.';
+  const parts = [`${c.published} live`];
+  if (c.pending) parts.push(`${c.pending} being checked`);
+  return parts.join(' · ');
+}
+
+/** Where a want or have stands, in the words the ledger says it. */
+export type LedgerState = 'live' | 'paused' | 'being checked' | 'needs a change' | 'taken down' | 'lapsed';
+
 export interface LedgerCardView {
   id: string;
   type: 'WANT' | 'HAVE';
-  category: string;
-  /** Where it sits and how far it reaches, in one line: "Canberra,
-   *  Australian Capital Territory, Australia — matching within 150 km", or
-   *  "— reaching all of Australia", or "— reaching anywhere". The point of
-   *  showing it is that only the person who lives there can tell when it is
-   *  wrong. */
-  location?: string;
-  state: string;
-  status: string;
-  expiresAt: string;
-  priceBand?: string; // decrypted server-side, audit-logged
-  ask?: string;
-  matchSummary: string;
-  attributes?: string;
+  /** The person's own name for the thing (their `kind`), else its shelf. */
+  title: string;
+  /** The attributes' values in plain order, as one sentence. No keys. */
+  sentence?: string;
+  state: LedgerState;
+  /** For 'needs a change': screening's reason in plain words. */
+  reason?: string;
+  /** localTime(…, 'day') markup for when it lapses. Inserted without esc(). */
+  until: string;
+  /** "within 25 km of Braddon, …", "anywhere in Australia", "anywhere". */
+  reach: string;
+  /** True where the owner wrote a private limit on it. */
+  hasLimit: boolean;
+  /** Introductions that reached them on this one. */
+  introduced: number;
   /** Who writes its negotiating figures. Defaults to Pass on. */
   mode: NegotiationMode;
+  /** Runs out inside the week: the row offers "Keep it". */
+  lapsingSoon?: boolean;
 }
 
 /** A finished connection the human filed away — shown in a quiet "past
@@ -554,6 +612,74 @@ export interface PastConnectionView {
   archivedOn?: string;
 }
 
+/** How the assistant handles figures on one want or have, in a phrase. */
+export function figuresPhrase(mode: NegotiationMode): string {
+  return mode === 'mandate'
+    ? 'your assistant handles figures between your limits'
+    : 'your assistant brings every figure to you';
+}
+
+/** The line under the ledger's list. */
+export const LEDGER_CHANGE_LINE = 'To change what one says, tell your assistant.';
+
+/** "Hardtail mountain bike" from "hardtail mountain bike"; "iPhone" stays. */
+export function upperFirst(t: string): string {
+  const s = String(t ?? '').trim();
+  return s ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
+
+/** "hardtail mountain bike" from "Hardtail mountain bike"; "TV" and "iPhone" stay. */
+export function lowerFirst(t: string): string {
+  const s = String(t ?? '').trim();
+  if (s.length > 1 && s[1] === s[1]!.toUpperCase() && s[1] !== s[1]!.toLowerCase()) return s;
+  return s ? s[0]!.toLowerCase() + s.slice(1) : s;
+}
+
+/**
+ * A posting's attributes as one plain sentence: the values in the order they
+ * were written, no keys. `true` says its key ("boxed"), `false` and anything
+ * nested say nothing, a list reads as a list.
+ */
+export function attributesSentence(attrs: unknown): string | undefined {
+  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs)) return undefined;
+  const words: string[] = [];
+  for (const [k, v] of Object.entries(attrs as Record<string, unknown>)) {
+    if (v === true) words.push(k.replace(/_/g, ' '));
+    else if (typeof v === 'string' && v.trim()) words.push(v.trim());
+    else if (typeof v === 'number' && Number.isFinite(v)) words.push(String(v));
+    else if (Array.isArray(v)) {
+      const list = v.filter((x) => typeof x === 'string' || typeof x === 'number').map(String);
+      if (list.length) words.push(list.join(', '));
+    }
+  }
+  if (!words.length) return undefined;
+  const joined = words.join(', ');
+  return `${upperFirst(joined)}${/[.!?]$/.test(joined) ? '' : '.'}`;
+}
+
+/** The muted line under a ledger row. Returns markup: `until` is markup. */
+function ledgerFacts(c: LedgerCardView): string {
+  const head =
+    c.state === 'live'
+      ? `Live until ${c.until}`
+      : c.state === 'paused'
+        ? `Paused, lapses ${c.until}`
+        : c.state === 'being checked'
+          ? 'Being checked'
+          : c.state === 'needs a change'
+            ? 'Needs a change'
+            : c.state === 'taken down'
+              ? 'Taken down'
+              : 'Lapsed';
+  const open = c.state !== 'taken down' && c.state !== 'lapsed';
+  const parts = [head];
+  if (c.reach) parts.push(esc(c.reach));
+  if (open && c.hasLimit) parts.push('your limit is private');
+  parts.push(c.introduced ? `${c.introduced} introduced` : 'nobody introduced yet');
+  if (open) parts.push(esc(figuresPhrase(c.mode)));
+  return parts.join(' · ');
+}
+
 export function ledgerPage(
   cards: LedgerCardView[],
   notice?: string,
@@ -561,138 +687,78 @@ export function ledgerPage(
 ): string {
   const rows = cards.length
     ? cards
-        .map(
-          (c) => `<div class="card-row" data-card-id="${esc(c.id)}">
+        .map((c) => {
+          const open = c.state !== 'taken down' && c.state !== 'lapsed';
+          return `<div class="card-row" data-card-id="${esc(c.id)}">
 <div class="top">
-  <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${c.type}</span>
-  <span class="cat">${esc(c.category)}</span>
-  <span class="badge state">${esc(c.state)}${c.status === 'latent' ? ' · paused' : ''}</span>
+  <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${c.type === 'WANT' ? 'Want' : 'Have'}</span>
+  <span class="led-title">${esc(upperFirst(c.title))}</span>
 </div>
-${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
-${c.location ? `<div class="kv">${esc(c.location)}</div>` : ''}
-<div class="kv">${c.priceBand ? `private band ${esc(c.priceBand)} · ` : ''}${c.ask ? `ask ${esc(c.ask)} · ` : ''}until ${esc(c.expiresAt)}</div>
-<div class="kv">${esc(c.matchSummary)} · negotiating: ${esc(MODE_NAMES[c.mode])}</div>
+${c.sentence ? `<p class="led-sum">${esc(c.sentence)}</p>` : ''}
+<p class="led-facts">${ledgerFacts(c)}</p>
+${c.state === 'needs a change' && c.reason ? `<p class="small">${esc(c.reason)}</p>` : ''}
 ${
-  c.state === 'WITHDRAWN' || c.state === 'EXPIRED'
-    ? ''
-    : `<div class="row-actions">
-  <a class="btn secondary" href="/ledger/${esc(c.id)}/edit">Edit</a>
+  open
+    ? `<div class="row-actions">
+  ${c.lapsingSoon && (c.state === 'live' || c.state === 'paused') ? `<form method="POST" action="/ledger/${esc(c.id)}/renew"><button type="submit">Keep it</button></form>` : ''}
   <a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers</a>
-  <form method="POST" action="/ledger/${esc(c.id)}/withdraw"><button type="submit" class="secondary">Withdraw</button></form>
+  <a class="btn secondary" href="/ledger/${esc(c.id)}/withdraw">Take it down</a>
 </div>`
+    : ''
 }
-</div>`,
-        )
+</div>`;
+        })
         .join('')
-    : `<div class="empty">Nothing posted yet. Your agent posts your wants and haves; they all show up here.</div>`;
+    : `<div class="empty">Nothing posted yet. What your assistant posts for you shows up here.</div>`;
   const past = pastConnections.length
     ? `<section class="past-connections">
 <h2 class="small-head">Past connections</h2>
-<p class="small">Connections you have filed away as finished. The record stays here so you can look one back up any time; the switchboard kept the first name and area they shared, what it was about, and the date. Anything you said to each other, and any number you swapped, lives in your own chat with your agent.</p>
+<p class="small">Connections you filed away as finished. The switchboard keeps the
+first name and suburb they shared, what it was about and the date. What you said
+to each other is in your chat with your assistant.</p>
 ${pastConnections
   .map(
     (p) => `<div class="card-row past">
 <div class="top">
-  <span class="cat">${esc(p.category)}</span>
+  <span class="led-title">${esc(upperFirst(p.category))}</span>
   <span class="badge state">filed away</span>
 </div>
-<div class="kv">${p.who ? esc(p.who) : 'connected before details were shared'}${p.archivedOn ? ` · ${esc(p.archivedOn)}` : ''}</div>
+<p class="led-facts">${p.who ? esc(p.who) : 'Filed away before names were shared'}${p.archivedOn ? ` · ${esc(p.archivedOn)}` : ''}</p>
 </div>`,
   )
   .join('')}
 </section>`
     : '';
-  return layout('Ledger', `
-<h1>Your ledger.</h1>
+  return layout('Your wants and haves', `
+${LEDGER_STYLE}
+<h1>Your wants and haves.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${rows}
+${cards.length ? `<p class="small muted">${esc(LEDGER_CHANGE_LINE)}</p>` : ''}
 ${past}
-${foldedDetail(
-  'How the ledger works',
-  `<p class="small">Every want and have your agent has posted for you. Private
-price bands are shown to you only and never to a counterparty. Edits go back
-through screening; withdrawal is immediate.</p>
-<p class="small">Every one of them starts on ${esc(MODE_NAMES.relay)}:
-${esc(MODE_EXPLANATIONS.relay)}</p>`,
-)}
 <a class="btn secondary" href="/">Back</a>`);
 }
 
-export interface CardEditView {
-  id: string;
-  type: string;
-  category: string;
-  urgency: string;
-  status: string;
-  ttlDays: number;
-  attributesJson: string;
-  askAmount?: string;
-  askCcy?: string;
-  bandMin?: string;
-  bandMax?: string;
-  bandCcy?: string;
-  /** How many people this want or have takes at once (1-10). */
-  slots?: number;
-  /** Present when screening turned this card away: why, in plain words. */
-  screeningRejection?: { plain: string; code?: string };
-}
+/** The ledger's own few rules, local to it rather than in the shared sheet. */
+const LEDGER_STYLE = `<style>
+.led-title { font-family:var(--sans); font-weight:600; font-size:var(--t-md); overflow-wrap:anywhere; min-width:0; }
+.led-sum { font-family:var(--serif); font-size:var(--t-md); margin:var(--s2) 0 0; overflow-wrap:anywhere; }
+.led-facts { font-family:var(--sans); font-size:var(--t-sm); color:var(--muted); margin:var(--s2) 0 0; line-height:1.45; overflow-wrap:anywhere; }
+</style>`;
 
-export function cardEditPage(c: CardEditView, error?: string): string {
-  // The page calls the thing what it is: the person's want, or their have.
-  const thing = c.type === 'WANT' ? 'want' : 'have';
-  const opt = (v: string, cur: string) =>
-    `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)}</option>`;
-  // Screening's verdict, in words the person can act on. The raw code sits
-  // small underneath so a support conversation has something exact to quote.
-  const rejection = c.screeningRejection
-    ? `<div class="err">
-<strong>This ${thing} didn&#39;t pass screening.</strong>
-<p style="margin:.5rem 0 0">${esc(c.screeningRejection.plain)}</p>
-${c.screeningRejection.code ? `<p class="small muted" style="margin:.5rem 0 0">screening code: ${esc(c.screeningRejection.code)}</p>` : ''}
-</div>`
-    : '';
-  return layout(`Edit ${thing}`, `
-<h1>Edit this ${thing}.</h1>
-<div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
-  <span class="badge ${c.type === 'WANT' ? 'want' : 'have'}">${esc(c.type)}</span>
-  <span class="cat">${esc(c.category)}</span>
-</div>
-${rejection}
-${errBox(error)}
-<form method="POST" action="/ledger/${esc(c.id)}/edit">
-  <label for="attributes">Attributes (JSON)</label>
-  <textarea id="attributes" name="attributes">${esc(c.attributesJson)}</textarea>
-  ${
-    c.type === 'HAVE'
-      ? `<label for="ask_amount">Ask (visible to a matched counterparty)</label>
-  <input id="ask_amount" name="ask_amount" type="number" step="0.01" min="0" value="${esc(c.askAmount ?? '')}" placeholder="amount">
-  <label for="ask_ccy">Ask currency</label>
-  <input id="ask_ccy" name="ask_ccy" type="text" maxlength="3" pattern="[A-Z]{3}" value="${esc(c.askCcy ?? '')}" placeholder="AUD">`
-      : ''
-  }
-  <label for="band_min">Private band — ${c.type === 'WANT' ? 'up to' : 'no less than'} (never disclosed)</label>
-  <input id="band_min" name="band_min" type="number" step="0.01" min="0" value="${esc(c.bandMin ?? '')}" placeholder="min">
-  <label for="band_max">Private band — the other end</label>
-  <input id="band_max" name="band_max" type="number" step="0.01" min="0" value="${esc(c.bandMax ?? '')}" placeholder="max">
-  <label for="band_ccy">Band currency</label>
-  <input id="band_ccy" name="band_ccy" type="text" maxlength="3" pattern="[A-Z]{3}" value="${esc(c.bandCcy ?? '')}" placeholder="AUD">
-  <label for="urgency">Urgency</label>
-  <select id="urgency" name="urgency">${['none', 'days', 'today'].map((u) => opt(u, c.urgency)).join('')}</select>
-  <label for="slots">How many people at once</label>
-  <input id="slots" name="slots" type="number" min="1" max="10" value="${esc(String(c.slots ?? 1))}">
-  <p class="field-help">People are introduced to this ${thing} one at a time unless you
-say otherwise, and the rest wait their turn. Put the number you can actually
-take on: a book club with room for four takes four.</p>
-  <label for="status">Visibility</label>
-  <select id="status" name="status">${opt('active', c.status)}${opt('latent', c.status)}</select>
-  <label for="ttl_days">Days until expiry</label>
-  <input id="ttl_days" name="ttl_days" type="number" min="1" max="365" value="${esc(String(c.ttlDays))}">
-  <button type="submit">Save &amp; re-screen</button>
+/**
+ * "Take it down" asks once before it does anything. "Not now" is a way back
+ * and nothing more; the POST is the existing withdraw.
+ */
+export function takeDownPage(v: { id: string; type: 'WANT' | 'HAVE'; thing: string }): string {
+  const q = `Take down your ${v.thing} ${v.type === 'WANT' ? 'want' : 'have'}?`;
+  return layout(q, `
+<h1>${esc(q)}</h1>
+<p class="lead">It comes off the switchboard straight away.</p>
+<form method="POST" action="/ledger/${esc(v.id)}/withdraw">
+  <button type="submit" class="danger">Take it down</button>
 </form>
-<p class="small muted">Saving sends this ${thing} back through screening before it
-returns to the network.</p>
-<a class="btn secondary" href="/ledger/${esc(c.id)}/numbers">Your numbers on this ${thing}</a>
-<a class="btn secondary" href="/ledger">Cancel</a>`);
+<a class="btn secondary" href="/ledger">Not now</a>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -764,7 +830,7 @@ ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${draft}
 <p class="lead">Every figure this ${thing} carries into a negotiation is one you
-wrote. Your agent presents and advises; it never invents a price of its own.</p>
+wrote. Your assistant presents and advises; it never invents a price of its own.</p>
 ${current}
 <form method="POST" action="/ledger/${esc(v.id)}/numbers" id="numbersForm">
   <h2>How this ${thing} negotiates</h2>
@@ -772,8 +838,8 @@ ${current}
   ${modeRadio('mandate')}
   <h2>Your numbers</h2>
   <p class="small muted">These are needed for Auto-negotiate and are kept
-  private the same way your band is: your agent works inside them, and the
-  other side is never told any of it.</p>
+  private: your assistant works inside them, and the other side is never told
+  any of it.</p>
   <label for="open">Open at (optional)</label>
   <input id="open" name="open" type="number" step="0.01" min="0" value="${esc(f.open ?? '')}" placeholder="amount">
   <label for="limit">${selling ? 'Take no less than' : 'Pay no more than'}</label>
@@ -795,9 +861,9 @@ ${
     : ''
 }
 <p class="small muted">Whichever way this is set, accepting an offer still
-comes to you here, for you to approve. Auto-negotiate lets your agent put figures on
-the table between the two you wrote; it never agrees anything.</p>
-<a class="btn secondary" href="/ledger/${esc(v.id)}/edit">Back to your ${thing}</a>
+comes to you on your main page. Auto-negotiate lets your assistant put figures
+on the table between the two you wrote; it never agrees anything.</p>
+<a class="btn secondary" href="/ledger">Back to your wants and haves</a>
 ${cpages.ceremonyScript(c)}`);
 }
 
@@ -830,9 +896,13 @@ export interface MatchOffersView {
   /** A figure this person's agent was refused for on Pass on, prefilled into
    *  the box below so they can check it and send it. */
   draft?: OfferDraftView;
-  /** This card's sealed numbers, so the control on this page can carry them
-   *  through a mode change rather than dropping them. */
-  mandate?: Mandate;
+  /** The person's own word for the thing, for the page's title. */
+  thing?: string;
+  /** The other side's first name, once names have crossed. */
+  theirName?: string;
+  /** "Theirs: Trek Marlin 5 mountain bike · asking $620 AUD", from the same
+   *  read that serves the details to the assistant. */
+  theirs?: string;
   /** This person's own live figure, rendered "400 AUD". The form collapses to
    *  a line about it, because the number is already sent. */
   myOfferOnTable?: string;
@@ -918,63 +988,16 @@ const OFFER_STATE_WORDS: Record<string, string> = {
   withdrawn: 'withdrawn',
 };
 
-/**
- * Who writes this card's figures, asked on the page where the figures are.
- *
- * It is the same control as the one on "Your numbers on this want or have", posting to
- * the same route with the same field names, so one place in the server writes
- * a mode and one set of rules validates the numbers. `return_to` brings the
- * person back here afterwards.
- */
-function negotiationControl(v: MatchOffersView): string {
-  const c = v.ceremony ?? ASKS_NOTHING;
-  const m = v.mandate;
-  const val = (n?: number) => (n != null ? String(n) : '');
-  const opt = (
-    mode: NegotiationMode,
-    head: string,
-    rest: string,
-  ) => `<label class="modeopt" for="negmode_${mode}">
-  <input id="negmode_${mode}" name="mode" type="radio" value="${mode}"${v.mode === mode ? ' checked' : ''}>
-  <strong>${esc(head)}</strong>
-  <span class="small muted">${esc(rest)}</span>
-</label>`;
-  return `<h2>How your agent negotiates</h2>
-<form method="POST" action="/ledger/${esc(v.cardId)}/numbers" id="negForm">
-  <input type="hidden" name="return_to" value="${esc(v.matchId)}">
-  <div class="modegrid">
-    ${opt('relay', 'Pass on:', 'your agent brings every offer to you and sends back the numbers you give it')}
-    ${opt('mandate', 'Auto-negotiate:', 'your agent can put figures on the table inside your limits')}
-  </div>
-  <div id="negnumbers"${v.mode === 'mandate' ? '' : ' hidden'}>
-    <p class="small muted">Your limits are kept the way your band is: your agent
-    works inside them and the other side is never told any of it.</p>
-    <label for="neg_open">Open at (optional)</label>
-    <input id="neg_open" name="open" type="number" step="0.01" min="0" value="${esc(val(m?.open))}" placeholder="amount">
-    <label for="neg_limit">${v.type === 'HAVE' ? 'Take no less than' : 'Pay no more than'}</label>
-    <input id="neg_limit" name="limit" type="number" step="0.01" min="0" value="${esc(val(m?.limit))}" placeholder="amount">
-    <label for="neg_step">Move in steps of at least (optional)</label>
-    <input id="neg_step" name="step" type="number" step="0.01" min="0" value="${esc(val(m?.step))}" placeholder="amount">
-    <label for="neg_ccy">Currency</label>
-    <input id="neg_ccy" name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="${esc(m?.ccy ?? '')}" placeholder="AUD">
-  </div>
-  ${cpages.ceremonyField(c, 'neg')}
-  ${cpages.ceremonySubmit(c, { formId: 'negForm', label: 'Save how it negotiates', className: 'secondary' })}
-</form>
-${cpages.ceremonyAlt(c, 'negForm')}
-${cpages.ceremonyNote(c)}
-<p class="small muted">Accepting an offer comes to you here whichever way this
-is set, for you to approve. Auto-negotiate lets your agent put figures on the table
-between the two you wrote; it agrees nothing.</p>
-<script>
-(function () {
-  var box = document.getElementById('negnumbers');
-  var radios = document.querySelectorAll('input[name="mode"]');
-  for (var i = 0; i < radios.length; i++) {
-    radios[i].addEventListener('change', function () { box.hidden = this.value !== 'mandate'; });
-  }
-})();
-</script>`;
+/** The one line about figures on the match page, in place of the old control. */
+export function figuresLine(cardId: string, mode: NegotiationMode): string {
+  return `<p class="small muted">How your assistant handles figures on this: ${
+    mode === 'mandate' ? 'between your limits' : esc(MODE_NAMES.relay)
+  } &mdash; <a href="/ledger/${esc(cardId)}/numbers">change</a></p>`;
+}
+
+/** "Hardtail mountain bike · with Tony", or "· with the other side" before names cross. */
+export function matchPageTitle(thing: string | undefined, theirName: string | undefined, category: string): string {
+  return `${upperFirst(thing || category) || 'Your match'} · with ${theirName || 'the other side'}`;
 }
 
 export function matchOffersPage(v: MatchOffersView, error?: string, notice?: string): string {
@@ -987,7 +1010,7 @@ export function matchOffersPage(v: MatchOffersView, error?: string, notice?: str
 <div class="kv">${esc(DEAL_DONE_LINE)}</div>`
             : `<div class="kv"><strong>${esc(o.amount)}</strong> — good until ${o.expires}${
                 o.mine && o.authoredByMe
-                  ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your agent sent this one from your numbers'}`
+                  ? ` · ${o.authoredByMe === 'human' ? 'you typed this one' : 'your assistant sent this one from your numbers'}`
                   : ''
               }</div>`;
           return `<div class="card-row"><div class="top">
@@ -1031,21 +1054,18 @@ ${
         ? `<p class="lead">Your ${esc(moneyPhrase(v.myOfferOnTable))} is on the table.</p>
 ${foldedDetail('Change your number', form)}`
         : form;
-  return layout('Offers on this match', `
-<h1>Offers on this match.</h1>
-<div class="top" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
-  <span class="badge ${v.type === 'HAVE' ? 'have' : 'want'}">${esc(v.type)}</span>
-  <span class="cat">${esc(v.category)}</span>
-</div>
+  const title = matchPageTitle(v.thing, v.theirName, v.category);
+  return layout(title, `
+<h1>${esc(title)}</h1>
+${v.theirs ? `<p class="muted">${esc(v.theirs)}</p>` : ''}
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${reply}
 ${v.story?.length ? `<h2>What has happened</h2>
 ${timelineHtml(v.story, { timezone: v.timezone })}` : ''}
-${negotiationControl(v)}
 <h2>What has been offered</h2>
 ${rows}
-<a class="btn secondary" href="/ledger/${esc(v.cardId)}/numbers">Your limit on this ${v.type === 'HAVE' ? 'have' : 'want'}</a>
+${figuresLine(v.cardId, v.mode)}
 <a class="btn secondary" href="/">Back</a>
 ${verdictLine(v)}
 ${reportLine(v)}
@@ -1053,40 +1073,38 @@ ${v.ceremony ? cpages.ceremonyScript(v.ceremony, cpages.moneyCeremony(v.ceremony
 }
 
 /**
- * How this person hears about things. An always-on agent brings them the news
- * itself; a chat assistant only acts when it is spoken to, so everything has
- * to reach them by email. Nothing else on the switchboard can work this out on
- * its own, so the page asks.
+ * How this person hears about things. An assistant that runs on its own brings
+ * them the news itself; one that only acts when spoken to cannot, so
+ * everything has to reach them by email. Nothing else on the switchboard can
+ * work this out on its own, so the page asks, once at onboarding and again on
+ * the settings page, in the same words both times.
  */
 export type HearsVia = 'email' | 'assistant';
 
-const HEARS_VIA_OPTIONS: { value: HearsVia; head: string; rest: string }[] = [
+const HEARS_VIA_OPTIONS: ModeOption[] = [
   {
     value: 'assistant',
-    head: 'An always-on agent.',
-    rest: `My assistant checks on its own and provides updates back to me. For always-on agents ${ALWAYS_ON_EXAMPLES}.`,
+    head: 'Through my assistant.',
+    rest: 'It checks on its own and tells me when something needs me.',
   },
   {
     value: 'email',
-    head: 'A chat assistant.',
-    rest: `My assistant can only act when I talk to it. Each match and reply needs to reach me by email. For chat assistants ${CHAT_EXAMPLES}.`,
+    head: 'By email.',
+    rest: 'My assistant only acts when I talk to it, so email me when something needs me.',
   },
 ];
 
 /**
  * The one page a new person passes through, right after they set their PIN and
- * before their agent is authorised.
+ * before their assistant is authorised.
  *
- * It asks the single thing the software cannot work out for itself — whether
- * an always-on agent is going to bring them the news, or whether every step has
- * to reach them by email — and, while it has their attention, the first name
- * and suburb they would share. Both name boxes may be left blank: the names
- * step asks for them again when it matters, and a blank answer there costs
- * nothing but a moment later on.
+ * It asks the single thing the software cannot work out for itself (whether
+ * email goes out at all) and, while it has their attention, offers the first
+ * name and suburb they would share. Both of those may be left blank: the
+ * names step asks for them again when it matters.
  *
- * Skipping the whole page leaves hears_via on 'email', which is the safe
- * answer: a person nobody has told us about gets told rather than left in
- * silence.
+ * "Skip for now" leaves hears_via on 'email', which is the safe answer: a
+ * person nobody has told us about gets told rather than left in silence.
  */
 export interface HelloView {
   hearsVia: HearsVia;
@@ -1109,20 +1127,20 @@ document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
 </script>
 <noscript><style>#cadence{display:block !important}</style></noscript>`;
 
-/** Fills a hidden box with the browser's zone, so nobody is asked a question the browser can answer. */
+/** Fills the hidden zone boxes with the browser's zone, so nobody is asked a question the browser can answer. */
 const ZONE_SCRIPT = `<script>
-(function(){try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;var el=document.getElementById('tz');if(el&&z&&!el.value)el.value=z;}catch(e){}})();
+(function(){try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;if(!z)return;document.querySelectorAll('input.tz').forEach(function(el){if(!el.value)el.value=z;});}catch(e){}})();
 </script>`;
 
 /**
- * How often an always-on agent should look, asked in words.
+ * How often an assistant that runs on its own should look, asked in words.
  *
- * The arrangement page keeps the minutes box, because an agent that writes an
- * arrangement mid-conversation deals in minutes and a person editing one later
- * has a reason to be exact. A person meeting the switchboard for the first
- * time does not: they are picking a rhythm, not a number, and three rhythms
- * cover it. The blank is a real answer — it leaves the question to the
- * conversation they are about to have with their agent.
+ * The arrangement page keeps the minutes box, because an assistant that
+ * writes an arrangement mid-conversation deals in minutes and a person editing
+ * one later has a reason to be exact. A person meeting the switchboard for the
+ * first time does not: they are picking a rhythm, not a number, and three
+ * rhythms cover it. The blank is a real answer — it leaves the question to the
+ * conversation they are about to have with their assistant.
  */
 export const HELLO_CADENCES: { value: string; label: string }[] = [
   { value: '180', label: 'Every few hours' },
@@ -1134,13 +1152,16 @@ export const HELLO_CADENCES: { value: string; label: string }[] = [
 /** The rhythm a new always-on account starts on when nobody says otherwise. */
 export const HELLO_CADENCE_DEFAULT = '720';
 
+/** The onboarding question's heading, and the settings section's. */
+export const HEARS_VIA_HEADING = 'How do you hear about things?';
+
 export function helloPage(v: HelloView, error?: string): string {
   const options = modeOptions('hears_via', 'hello', HEARS_VIA_OPTIONS, v.hearsVia);
   const cadence = HELLO_CADENCES.map(
     (c) => `<option value="${esc(c.value)}"${c.value === (v.checkEvery ?? HELLO_CADENCE_DEFAULT) ? ' selected' : ''}>${esc(c.label)}</option>`,
   ).join('');
-  return layout('Which kind of assistant do you use?', `
-<h1>Which kind of assistant do you use?</h1>
+  return layout(HEARS_VIA_HEADING, `
+<h1>${esc(HEARS_VIA_HEADING)}</h1>
 <p class="lead">Pick one so the switchboard knows whether to email you.</p>
 ${errBox(error)}
 <form method="POST" action="/hello">
@@ -1149,49 +1170,42 @@ ${errBox(error)}
     <label for="check_every_minutes">How often should it check?</label>
     <select id="check_every_minutes" name="check_every_minutes">${cadence}</select>
   </div>
-  <h2>What your assistant may share</h2>
+  <h2>What you share on a match</h2>
   <p class="small muted">A first name and a suburb, shared only after both
-  people say yes. You can change them any time.</p>
-  ${sharedFieldsFieldset({ firstName: v.firstName, locality: v.locality })}
-  <input type="hidden" id="tz" name="timezone" value="${esc(v.timezone ?? '')}">
+  people say yes. You can leave these for now.</p>
+  ${plainSharedFields({ firstName: v.firstName, locality: v.locality }, { optional: true })}
+  <input type="hidden" class="tz" name="timezone" value="${esc(v.timezone ?? '')}">
   <button type="submit">Save and carry on</button>
+</form>
+<form method="POST" action="/hello">
+  <input type="hidden" name="skip" value="yes">
+  <input type="hidden" class="tz" name="timezone" value="${esc(v.timezone ?? '')}">
+  <button type="submit" class="secondary">Skip for now</button>
 </form>
 ${CADENCE_SCRIPT}
 ${ZONE_SCRIPT}`);
 }
-
-/**
- * The same account setting as the onboarding question, asked on the settings
- * page as what it is: who brings the news. The kind of assistant is asked once
- * at onboarding and again on the arrangement page (runs_on_its_own), so here
- * it is never asked a third time. This stays because it is the only place a
- * person can go back to email after an agent's cadence has switched them to
- * their assistant, and because an always-on agent with email as well is a
- * fair thing to want.
- */
-const HEARS_VIA_SETTINGS_OPTIONS: ModeOption[] = [
-  {
-    value: 'assistant',
-    head: 'Through my assistant.',
-    rest: 'My assistant checks on its own and provides updates back to me. Best suited to always-on agents.',
-  },
-  {
-    value: 'email',
-    head: 'By email.',
-    rest: 'Each match and reply reaches me by email. Best suited to chat assistants.',
-  },
-];
 
 export interface EmailSettingsView {
   /** Which of the two ways this account hears about things right now. */
   hearsVia: HearsVia;
   /** IANA zone on the account, or null when never captured. */
   timezone: string | null;
-  blindMode: boolean;
   freqMatches: string;
   freqDigests: string;
   complaintSuppressed: boolean;
   emailUnreachable: boolean;
+  /** "Ana, Braddon", or absent when nothing is filled in. */
+  sharedProfile?: string;
+  /** Which credentials approve things. Absent reads as nothing set. */
+  approveWith?: { pin: boolean; passkey: boolean };
+  /** One line of the standing arrangement. Absent = nothing set yet. */
+  arrangementSummary?: string;
+  /** How many keys are live. */
+  keyCount?: number;
+  /** Kept on the view for older callers; the page no longer shows it. Every
+   *  notice email is the same bare notice now, so blind mode changes nothing. */
+  blindMode?: boolean;
 }
 
 const FREQ_OPTIONS: { value: string; label: string }[] = [
@@ -1207,80 +1221,119 @@ function freqSelect(id: string, name: string, current: string): string {
   ).join('')}</select>`;
 }
 
+/** "Australia/Sydney, 9:02 am now". */
+export function zoneFact(timezone: string, now: Date = new Date()): string {
+  let clock = '';
+  try {
+    clock = new Intl.DateTimeFormat('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: timezone })
+      .format(now)
+      .replace(/\s/g, ' ');
+  } catch {
+    return timezone.replace(/_/g, ' ');
+  }
+  return `${timezone.replace(/_/g, ' ')}, ${clock} now`;
+}
+
+function approveFact(a?: { pin: boolean; passkey: boolean }): string {
+  if (!a || (!a.pin && !a.passkey)) return 'Nothing set up yet.';
+  if (a.pin && a.passkey) return 'Your passkey or your PIN.';
+  return a.pin ? 'Your PIN.' : 'Your passkey.';
+}
+
+/** One settings section that is a fact and a link. */
+function linkSection(head: string, fact: string, href: string, linkText: string): string {
+  return `<section class="set"><h2>${esc(head)}</h2>
+<p class="set-fact">${esc(fact)}</p>
+<a href="${esc(href)}">${esc(linkText)}</a></section>`;
+}
+
+const SETTINGS_STYLE = `<style>
+section.set { border-bottom:1px solid var(--line); padding:0 0 var(--s4); }
+section.set h2 { margin-top:var(--s5); margin-bottom:var(--s1); }
+.set-fact { margin:0 0 var(--s1); }
+section.set a { font-family:var(--sans); font-weight:600; font-size:var(--t-sm); }
+section.set details > summary { font-family:var(--sans); font-weight:600; font-size:var(--t-sm);
+  color:var(--accent); cursor:pointer; }
+</style>`;
+
+/**
+ * The settings hub (28 September 2026). Everything that used to be its own row
+ * on the main page is a short section here: one fact and a way to change it.
+ */
 export function settingsPage(v: EmailSettingsView, notice?: string): string {
   const complaint = v.complaintSuppressed
     ? `<div class="err">You marked one of our emails as spam, so everything
-except sign-in codes, approvals and security notices is on hold. Changing the
-dials below does nothing while the hold is on.
+except sign-in codes, approvals and security notices is on hold.
 <form method="POST" action="/settings/email-resume">
   <button type="submit" class="secondary">Start emailing me again</button>
 </form></div>`
     : '';
   const unreachable = v.emailUnreachable
-    ? `<div class="err">Email to your address is bouncing — all email is on
-hold. Re-verify from the <a href="/">front page</a>.</div>`
+    ? `<div class="err">Email to your address is bouncing, so all email is on
+hold. Re-verify from your <a href="/">main page</a>.</div>`
     : '';
-  const hearsVia = modeOptions('hears_via', 'hears', HEARS_VIA_SETTINGS_OPTIONS, v.hearsVia);
+  const hearsVia = modeOptions('hears_via', 'hears', HEARS_VIA_OPTIONS, v.hearsVia);
   const zones = Intl.supportedValuesOf('timeZone');
   const zoneOptions = [
     `<option value=""${v.timezone ? '' : ' selected'}>Not set</option>`,
     ...zones.map((z) => `<option value="${esc(z)}"${z === v.timezone ? ' selected' : ''}>${esc(z.replace(/_/g, ' '))}</option>`),
   ].join('');
-  const zoneNow = v.timezone
-    ? `Your assistant says times in ${v.timezone.replace(/_/g, ' ')}.`
-    : 'Not set.';
+  const zoneForm = `<form method="POST" action="/settings/timezone">
+  <label for="timezone">Time zone</label>
+  <select id="timezone" name="timezone">${zoneOptions}</select>
+  <button type="submit" class="secondary">Save</button>
+</form>`;
+  const zone = v.timezone
+    ? `<p class="set-fact">${esc(zoneFact(v.timezone))}</p>
+<details><summary>Change</summary>${zoneForm}</details>`
+    : `<p class="set-fact">Not set</p>
+${zoneForm}`;
+  const keys = v.keyCount
+    ? v.keyCount === 1
+      ? 'You have one key.'
+      : `You have ${v.keyCount} keys.`
+    : 'None.';
   return layout('Settings', `
+${SETTINGS_STYLE}
 <h1>Settings.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${unreachable}${complaint}
-<h2>How are you notified by OpenSwitchboard?</h2>
+${linkSection('What you share', v.sharedProfile ?? 'Nothing filled in yet.', '/profile', 'Change')}
+${linkSection('How you approve things', approveFact(v.approveWith), '/security', 'Change')}
+<section class="set"><h2>How you hear about things</h2>
 <form method="POST" action="/settings/hears-via">
   ${hearsVia}
-  <button type="submit" class="secondary" id="hears-save" hidden>Save how I hear about things</button>
-</form>
-<h2>Your time zone</h2>
-<p class="small muted">${esc(zoneNow)}</p>
-<form method="POST" action="/settings/timezone">
-  <label for="timezone">Time zone</label>
-  <select id="timezone" name="timezone">${zoneOptions}</select>
-  <button type="submit" class="secondary">Save my time zone</button>
-</form>
+  <button type="submit" class="secondary" id="hears-save" hidden>Save</button>
+</form></section>
+${linkSection('Your assistant', v.arrangementSummary ?? 'Nothing set yet.', '/arrangement', 'Change')}
+${linkSection("Keys for assistants that can't sign in", keys, '/agent-keys', 'Change')}
+<section class="set"><h2>Time zone</h2>
+${zone}</section>
+<section class="set"><h2>Email</h2>
 <div id="email-dials"${v.hearsVia === 'assistant' ? ' hidden' : ''}>
-<h2>Email frequency</h2>
 <form method="POST" action="/settings/frequency">
-  <label for="freq_matches">Match summons</label>
+  <label for="freq_matches">When someone comes forward</label>
   ${freqSelect('freq_matches', 'freq_matches', v.freqMatches)}
-  <label for="freq_digests">Activity digest &amp; renewals</label>
+  <label for="freq_digests">Round-ups and reminders</label>
   ${freqSelect('freq_digests', 'freq_digests', v.freqDigests)}
-  <button type="submit" class="secondary">Save frequency</button>
+  <button type="submit" class="secondary">Save</button>
 </form>
-<p class="small muted">Sign-in codes and security notices always send.</p>
 </div>
-<p id="email-backup" class="small muted"${v.hearsVia === 'assistant' ? '' : ' hidden'}>With your assistant bringing the news, the only emails
-you get are sign-in codes and security notices.</p>
+<p class="small muted">Sign-in codes and security notices always send.</p>
+</section>
 <script>
 // Choosing "through my assistant" takes the email dials off the page; they
 // only mean something when email is how the person hears about things.
 document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
   r.addEventListener('change', function () {
     var chosen = document.querySelector('input[name="hears_via"]:checked').value;
-    var viaAssistant = chosen === 'assistant';
-    document.getElementById('email-dials').hidden = viaAssistant;
-    document.getElementById('email-backup').hidden = !viaAssistant;
+    document.getElementById('email-dials').hidden = chosen === 'assistant';
     // The save button only appears once the choice differs from what is saved.
     document.getElementById('hears-save').hidden = chosen === ${JSON.stringify(v.hearsVia)};
   });
 });
 </script>
 <noscript><style>#hears-save{display:inline-block !important}</style></noscript>
-<h2>Blind mode</h2>
-<p class="small muted">Blind mode is ${v.blindMode ? '<strong>on</strong>' : 'off'}. When on,
-every email becomes a content-free pointer — "something needs your decision".</p>
-<form method="POST" action="/settings/blind-mode">
-  <input type="hidden" name="blind_mode" value="${v.blindMode ? 'off' : 'on'}">
-  <button type="submit" class="secondary">${v.blindMode ? 'Turn blind mode off' : 'Turn blind mode on'}</button>
-</form>
-<p class="small muted"><a href="/security">How you approve things</a></p>
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -1380,6 +1433,38 @@ document.getElementById('copybtn').addEventListener('click', async () => {
 }
 
 // ---------------------------------------------------------------------------
+// Consent. The two statements that open an account. It is drawn here rather
+// than in pages.ts since 28 September 2026, when its wording moved to the
+// plain vocabulary: the handler that records CONSENT_STATEMENT is the one that
+// renders it, so the words a person ticks and the words the log keeps come
+// from one constant.
+// ---------------------------------------------------------------------------
+
+/** The consent statement, exactly as it is shown and as the consent log records it. */
+export const CONSENT_STATEMENT =
+  'My assistant may post wants and haves for me. I can see or take down anything on my main page.';
+
+export const CONSENT_HEADING = 'Two things to confirm.';
+
+export function consentPage(error?: string): string {
+  return layout('Two things to confirm', `
+<h1>${esc(CONSENT_HEADING)}</h1>
+${errBox(error)}
+<form method="POST" action="/consent">
+  <div class="consent-box">
+    <label><input type="checkbox" name="adult" value="yes" required>
+      I am 18 or older.</label>
+    <label><input type="checkbox" name="consent" value="yes" required>
+      ${esc(CONSENT_STATEMENT)}</label>
+  </div>
+  <button type="submit">Open my account</button>
+</form>
+<p class="small muted">Both are recorded in a tamper-evident consent log.</p>
+<p class="small muted">A first name and a suburb are the only things that ever cross,
+and only after both people say yes.</p>`);
+}
+
+// ---------------------------------------------------------------------------
 // "Still true?" renewal review (reached from the renewal email's signed link).
 // ---------------------------------------------------------------------------
 export interface RenewCardView {
@@ -1409,7 +1494,7 @@ ${c.attributes ? `<div class="kv">${esc(c.attributes)}</div>` : ''}
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Still true — keep them all</button>
 </form>
-<a class="btn secondary" href="/ledger">Review one by one instead</a>
+<a class="btn secondary" href="/ledger">See them one by one</a>
 <h2>What you have open</h2>
 ${rows}
 <p class="small muted">Wants and haves lapse on their own.</p>`);

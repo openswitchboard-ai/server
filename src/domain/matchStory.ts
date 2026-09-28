@@ -231,6 +231,10 @@ export interface StoryHead {
   thing: string;
   theirName?: string;
   theirArea?: string;
+  /** "Theirs: Trek Marlin 5 mountain bike · asking $620 AUD": the other side's
+   *  own words for their thing and their stated asking figure. Filled in by
+   *  readTheirThing where a page wants it. */
+  theirs?: string;
 }
 
 /**
@@ -244,7 +248,7 @@ export async function readStoryFacts(
   const pool = getPool();
   const mr = await pool.query(
     `SELECT m.id, m.state, m.stage, m.created_at, m.account_want, m.account_have, m.category,
-            c.category AS own_category, c.kind AS own_kind
+            m.live, c.category AS own_category, c.kind AS own_kind
        FROM matches m
        LEFT JOIN cards c ON c.id = CASE WHEN m.account_want = $1 THEN m.card_want ELSE m.card_have END
       WHERE m.id = $2 AND (m.account_want = $1 OR m.account_have = $1)`,
@@ -252,6 +256,10 @@ export async function readStoryFacts(
   );
   const m = mr.rows[0];
   if (!m) return undefined;
+  // An introduction still in line has no story to tell anybody on a page: the
+  // holder is never shown it, and the person waiting has one sentence from
+  // their assistant (domain/sequencer.ts).
+  if (m.state === 'open' && m.live === false) return undefined;
   const them = m.account_want === viewer ? m.account_have : m.account_want;
   const { categoryLeafLabel } = await import('./matchRules.js');
   const { bestOfferSealedFrom } = await import('./offers.js');
@@ -324,4 +332,48 @@ export async function readStoryFacts(
       ...(names?.locality ? { theirArea: names.locality } : {}),
     },
   };
+}
+
+/** The asking figure as the muted line says it. */
+const askingWords = (ask: any): string | undefined => {
+  const amount = Number(ask?.amount);
+  const ccy = typeof ask?.ccy === 'string' ? ask.ccy : '';
+  return Number.isFinite(amount) && amount > 0 && ccy ? offerAmountInWords(amount, ccy) : undefined;
+};
+
+/**
+ * The line that tells two boxes about the same kind of thing apart:
+ * "Theirs: Trek Marlin 5 mountain bike · asking $620 AUD".
+ *
+ * It is read through buildAttributes, the same function that serves the
+ * details step to the reader's assistant, so the page never shows more than
+ * the assistant already sees: the other side's own word for their thing (the
+ * first of their notes, which is their `kind`) and the asking figure a have
+ * chose to show. Never a private limit, never a distance, never anything the
+ * details step would refuse. Undefined wherever that step would refuse, or
+ * where there is nothing to say.
+ */
+export async function readTheirThing(viewer: string, matchId: string): Promise<string | undefined> {
+  try {
+    const { getMatch, buildAttributes } = await import('./matches.js');
+    const m = await getMatch(matchId);
+    if (!m) return undefined;
+    if (m.state === 'open' && m.live === false) return undefined;
+    const p: any = await buildAttributes(m, viewer);
+    return theirThingLine(p);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The line itself, from a details payload. Pure, for the tests. */
+export function theirThingLine(p: any): string | undefined {
+  const words = Array.isArray(p?.notes)
+    ? p.notes.find((n: any) => n?.provenance === 'counterparty-untrusted' && typeof n.text === 'string' && n.text.trim())
+        ?.text?.trim()
+    : undefined;
+  const asking = askingWords(p?.ask);
+  if (!words && !asking) return undefined;
+  const parts = [words, asking ? `asking ${asking}` : undefined].filter(Boolean);
+  return `Theirs: ${parts.join(' · ')}`;
 }

@@ -6,7 +6,8 @@
 import { getPool } from '../db.js';
 import { decryptFields, encryptField, generateAccountDataKey, writeConsentEvent } from '../crypto.js';
 import { emailHashes, getAccount } from './accounts.js';
-import { describeStoredGeo, describeStoredReach } from '../geo/normalise.js';
+import { describeStoredGeo, describeStoredReach, reachOfGeo } from '../geo/normalise.js';
+import { countryNameOf } from '../geo/gazetteer.js';
 import type { Config } from '../config.js';
 
 /** Create a 'pending' account at email-verification time (counter registration). */
@@ -234,16 +235,30 @@ export async function clearEmailUnreachable(accountId: string): Promise<void> {
  * "Still true?" renew-all: every open PUBLISHED card restarts its own TTL
  * clock from now. WORM consent event first (nothing-is-forever means renewal
  * is an explicit human act). Returns the renewed cards.
+ *
+ * `only` narrows it. 'lapsing' is the main page's "Keep them all": exactly the
+ * ones whose clock runs out inside the week, the same set the lapsing tile
+ * counts. A card id is the ledger row's "Keep it". Either way it is the one
+ * statement, the one consent event, and the account's own cards only.
  */
 export async function renewAllCards(
   accountId: string,
   recordedVia: string,
+  only?: 'lapsing' | { cardId: string },
 ): Promise<{ id: string; type: string; category: string; expires_at: Date }[]> {
   const pool = getPool();
+  const params: unknown[] = [accountId];
+  let narrow = '';
+  if (only === 'lapsing') {
+    narrow = ` AND expires_at <= now() + interval '${LAPSING_DAYS} days'`;
+  } else if (only && typeof only === 'object') {
+    params.push(only.cardId);
+    narrow = ' AND id = $2';
+  }
   const open = await pool.query(
     `SELECT id FROM cards
-     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
-    [accountId],
+     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()${narrow}`,
+    params,
   );
   if (!open.rowCount) return [];
   await writeConsentEvent({
@@ -255,12 +270,15 @@ export async function renewAllCards(
   const r = await pool.query(
     `UPDATE cards SET expires_at = now() + make_interval(days => ttl_days),
             renewal_notified_at = NULL, updated_at = now()
-     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
+     WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()${narrow}
      RETURNING id, type, category, expires_at`,
-    [accountId],
+    params,
   );
   return r.rows;
 }
+
+/** How close to its end a want or have counts as lapsing, on the main page and the ledger. */
+export const LAPSING_DAYS = 7;
 
 // ---------------------------------------------------------------------------
 // Ledger.
@@ -277,6 +295,13 @@ export interface LedgerCard {
   /** How far this card's owner will meet someone, in plain words: "matching
    *  within 25 km", "reaching all of Australia", "reaching anywhere". */
   reach_line: string;
+  /** The same reach said from the person's own place, for their own ledger:
+   *  "within 25 km of Braddon, Australian Capital Territory, Australia",
+   *  "anywhere in Australia", "anywhere". A place the switchboard only holds
+   *  as a map bucket is left out rather than shown as a code. */
+  reach_words: string;
+  /** The poster's own word for the thing (cards.kind), where there is one. */
+  kind?: string | null;
   lifecycle_state: string;
   protocol_status: string;
   attributes: any;
@@ -285,6 +310,8 @@ export interface LedgerCard {
   ttl_days: number;
   expires_at: Date;
   price?: any; // decrypted for the OWNER only, server-side, audit-logged
+  /** Introductions that reached this person: live now, or live once. One
+   *  still waiting in line was never shown to anybody and is not counted. */
   matchCount: number;
   latestMatchState?: string;
   /** How many people this want or have takes at once (domain/sequencer.ts). */
@@ -301,12 +328,56 @@ export interface LedgerCard {
 // (migration 030); how many people a want or have takes at once is `slots`
 // now, and it rides the ordinary amend rather than a setter of its own.
 
+/**
+ * THE PAGE NEVER SHOWS AN INTRODUCTION STILL IN LINE (domain/sequencer.ts).
+ *
+ * Only a live introduction surfaces; the rest are rows waiting their turn and
+ * "the holder is never shown them at all". The person on the other side is
+ * told one sentence by their assistant and nothing on this page either: there
+ * is nothing on an in-line row a person can press. So every read that feeds
+ * the main page, the match page or the ledger's counts carries one of these.
+ *
+ *  - NOT_IN_LINE_SQL: anything but an open row out of a slot. Closed,
+ *    declined and archived rows keep whatever they showed before.
+ *  - SURFACED_SQL: live now, or live once (live_at is kept when a row is
+ *    filed away), for a count of who has actually been introduced.
+ *
+ * Both are written against the alias `m`.
+ */
+export const NOT_IN_LINE_SQL = `(m.state <> 'open' OR m.live)`;
+export const SURFACED_SQL = `(m.live OR m.live_at IS NOT NULL)`;
+
+/** Ids of this account's introductions still in line, for the page to drop. */
+export async function inLineMatchIds(accountId: string): Promise<Set<string>> {
+  const r = await getPool().query(
+    `SELECT m.id::text AS id FROM matches m
+      WHERE (m.account_want = $1 OR m.account_have = $1) AND NOT ${NOT_IN_LINE_SQL}`,
+    [accountId],
+  );
+  return new Set((r.rows as { id: string }[]).map((x) => String(x.id)));
+}
+
+/** The reach line for the person's own ledger row, from their own place. */
+export function reachFromOwnPlace(geo: any, country: string | null | undefined, radiusKm: number): string {
+  const reach = reachOfGeo(geo);
+  if (reach === 'anywhere') return 'anywhere';
+  if (reach === 'country') {
+    const name = countryNameOf(country);
+    return name ? `anywhere in ${name}` : 'anywhere in its country';
+  }
+  const hasPlace = typeof geo?.place === 'string' && geo.place.trim() !== '';
+  const km = `within ${Math.round(radiusKm)} km`;
+  return hasPlace ? `${km} of ${describeStoredGeo(geo)}` : km;
+}
+
 export async function ledgerCards(cfg: Config, accountId: string): Promise<LedgerCard[]> {
   const pool = getPool();
   const account = await getAccount(accountId);
   if (!account) return [];
   const r = await pool.query(
-    `SELECT c.*, (SELECT count(*)::int FROM matches m WHERE m.card_want = c.id OR m.card_have = c.id) AS match_count
+    `SELECT c.*, (SELECT count(*)::int FROM matches m
+                   WHERE (m.card_want = c.id OR m.card_have = c.id)
+                     AND ${SURFACED_SQL}) AS match_count
      FROM cards c WHERE c.account_id = $1 ORDER BY c.created_at DESC LIMIT 100`,
     [accountId],
   );
@@ -331,6 +402,8 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
       row.geo_country,
       Number(row.geo_radius_km ?? row.geo?.radius_km ?? 0),
     ),
+    reach_words: reachFromOwnPlace(row.geo, row.geo_country, Number(row.geo_radius_km ?? row.geo?.radius_km ?? 0)),
+    kind: typeof row.kind === 'string' ? row.kind : null,
     lifecycle_state: row.lifecycle_state,
     protocol_status: row.protocol_status,
     attributes: row.attributes,
@@ -355,6 +428,7 @@ export async function ledgerCards(cfg: Config, accountId: string): Promise<Ledge
 export interface RejectedCard {
   id: string;
   category: string;
+  kind?: string | null;
   screening: any;
 }
 
@@ -369,7 +443,7 @@ export async function cardsLapsingSoon(
   const r = await getPool().query(
     `SELECT count(*)::int AS n, min(expires_at) AS soonest FROM cards
      WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED'
-       AND expires_at > now() AND expires_at <= now() + interval '7 days'`,
+       AND expires_at > now() AND expires_at <= now() + interval '${LAPSING_DAYS} days'`,
     [accountId],
   );
   const row = r.rows[0];
@@ -381,7 +455,7 @@ export async function cardsLapsingSoon(
 
 export async function screeningRejectedCards(accountId: string): Promise<RejectedCard[]> {
   const r = await getPool().query(
-    `SELECT id, category, screening FROM cards
+    `SELECT id, category, kind, screening FROM cards
      WHERE account_id = $1 AND lifecycle_state = 'SCREENING_REJECTED'
      ORDER BY updated_at DESC LIMIT 20`,
     [accountId],
@@ -408,7 +482,7 @@ export async function pendingOffers(accountId: string): Promise<PendingOffer[]> 
     `SELECT o.id AS offer_id, o.match_id, o.amount, o.ccy, m.category, o.proposer_account
      FROM offers o JOIN matches m ON m.id = o.match_id
      WHERE o.state IN ('proposed', 'awaiting-human') AND o.proposer_account <> $1
-       AND (m.account_want = $1 OR m.account_have = $1) AND m.state = 'open'
+       AND (m.account_want = $1 OR m.account_have = $1) AND m.state = 'open' AND m.live
        AND o.expiry > now()
      ORDER BY o.created_at DESC LIMIT 20`,
     [accountId],
@@ -428,7 +502,7 @@ export async function pendingDisclosures(accountId: string): Promise<PendingDisc
             CASE WHEN m.account_want = $1 THEN m.account_have ELSE m.account_want END AS counterparty_account
      FROM matches m
      WHERE (m.account_want = $1 OR m.account_have = $1)
-       AND m.state = 'open' AND m.stage >= 2
+       AND m.state = 'open' AND m.live AND m.stage >= 2
        AND NOT EXISTS (SELECT 1 FROM consent_tokens t
                        WHERE t.match_id = m.id AND t.account_id = $1 AND t.kind = 'stage3-optin')
      ORDER BY m.updated_at DESC LIMIT 20`,
@@ -502,7 +576,8 @@ export async function matchForHuman(
             c.id AS card_id, c.type AS card_type, c.negotiation_mode
      FROM matches m
      JOIN cards c ON c.id = CASE WHEN m.account_want = $1 THEN m.card_want ELSE m.card_have END
-     WHERE m.id = $2 AND (m.account_want = $1 OR m.account_have = $1)`,
+     WHERE m.id = $2 AND (m.account_want = $1 OR m.account_have = $1)
+       AND ${NOT_IN_LINE_SQL}`,
     [accountId, matchId],
   );
   const row = r.rows[0];
@@ -542,6 +617,7 @@ export async function messagesWaitingFor(accountId: string): Promise<MessagesWai
      FROM channel_messages cm
      JOIN matches m ON m.id = cm.match_id
      WHERE cm.recipient_account = $1 AND cm.expires_at > now()
+       AND ${NOT_IN_LINE_SQL}
      GROUP BY cm.match_id, m.category
      ORDER BY max(cm.created_at) DESC
      LIMIT 10`,
@@ -569,7 +645,7 @@ export async function agreedOnMatches(accountId: string): Promise<AgreedMatch[]>
      JOIN matches m ON m.id = o.match_id
      WHERE o.state = 'accepted-by-human'
        AND (m.account_want = $1 OR m.account_have = $1)
-       AND m.state <> 'archived'
+       AND m.state <> 'archived' AND ${NOT_IN_LINE_SQL}
      ORDER BY o.updated_at DESC
      LIMIT 10`,
     [accountId],
