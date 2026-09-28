@@ -315,7 +315,7 @@ export async function shareNameLink(
   sideOf(m, accountId);
   if (m.state !== 'open') {
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'This introduction is no longer open.',
+      human_action: 'This match is no longer open.',
     });
   }
   const counterparty = m.account_want === accountId ? m.account_have : m.account_want;

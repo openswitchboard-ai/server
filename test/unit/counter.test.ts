@@ -482,7 +482,6 @@ describe('counter pages: copy-cull render suite', () => {
       name: 'confirm-its-you-pin',
       html: cpages.confirmItsYouPage({ hasPin: true, hasPasskey: true, elevated: false }, '/passkey'),
     },
-    { name: 'consent', html: cpages.consentPage() },
     { name: 'login', html: cpages.loginEmailPage() },
     { name: 'message-default-back', html: cpages.messagePage('Renewed', '<p>Done.</p>') },
     { name: 'link-dead-used', html: cpages.linkDeadPage('used') },

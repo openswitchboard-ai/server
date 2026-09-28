@@ -92,7 +92,7 @@ const REASON_SENTENCES: Record<string, string> = {
 // True wherever it renders: the main page shows the raw code beneath it,
 // an email does not, so this sentence never promises one.
 const REASON_FALLBACK =
-  'Screening held this back, under a check the switchboard has no plainer words for yet. If it looks wrong, edit what you posted and save it to send it through again.';
+  'Screening held this back, under a check the switchboard has no plainer words for yet. Tell your assistant what to change and it will send it back to be checked.';
 
 /** Shelf-rule codes written on rows before the rules moved into the data. */
 const LEGACY_SHELF_CODES: Record<string, string> = { 'no-money-on-lost-pets': NO_MONEY_REASON };

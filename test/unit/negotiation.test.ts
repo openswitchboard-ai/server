@@ -906,10 +906,10 @@ describe('the pages say it in plain words', () => {
       expect(html, name).toMatch(/Pass on|Auto-negotiate/);
     }
     expect(rendered[0].html).toContain(
-      'Your agent brings every offer to you and sends back the numbers you give it.',
+      'Your assistant brings every offer to you and sends back the numbers you give it.',
     );
     expect(rendered[0].html).toContain(
-      'You set an opening figure and a walk-away limit; your agent can move between them without asking each time.',
+      'You set an opening figure and a walk-away limit; your assistant can move between them without asking each time.',
     );
   });
 

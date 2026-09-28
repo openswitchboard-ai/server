@@ -38,9 +38,6 @@ export function esc(s: string): string {
   );
 }
 
-export const CONSENT_STATEMENT =
-  'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my main page.';
-
 /** Where the two Patch images are served from. Long-cached and immutable. */
 export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
@@ -412,7 +409,7 @@ export function foldedDetail(summary: string, inner: string, open = false): stri
 export function landingPage(): string {
   return layout('Your main page', `
 <h1>Your main page.</h1>
-<p class="lead">Your agent works the switchboard. This page is where you do
+<p class="lead">Your assistant works the switchboard. This page is where you do
 everything it never can.</p>
 <div class="actions">
   <a class="btn" href="/register">Open an account</a>
@@ -420,7 +417,7 @@ everything it never can.</p>
 </div>
 ${foldedDetail(
   'What happens here',
-  `<p class="small">Your agent posts your wants &amp; haves, checks matches and
+  `<p class="small">Your assistant posts your wants and haves, checks matches and
 negotiates. Opening the account, choosing how you approve things, approving what gets shared
 or paid, reading the ledger and pulling the plug all happen on this page, with
 you signed in.</p>`,
@@ -916,24 +913,6 @@ ${detail ? `<span class="nav-d">${esc(detail)}</span>` : ''}
 </div>
 <p class="small muted">Lost both? A code we email you signs you back in.</p>
 <a class="btn secondary" href="/">Back</a>`);
-}
-
-export function consentPage(error?: string): string {
-  return layout('One last thing', `
-<h1>One last thing.</h1>
-${errBox(error)}
-<form method="POST" action="/consent">
-  <div class="consent-box">
-    <label><input type="checkbox" name="adult" value="yes" required>
-      I am 18 or older.</label>
-    <label><input type="checkbox" name="consent" value="yes" required>
-      ${esc(CONSENT_STATEMENT)}</label>
-  </div>
-  <button type="submit">Open my account</button>
-</form>
-<p class="small muted">Both statements are recorded in a tamper-evident consent log.</p>
-<p class="small muted">Next you choose the first name and suburb your assistant may share.
-Those are the only things that ever cross, and only after both people say yes.</p>`);
 }
 
 export function loginEmailPage(error?: string): string {
@@ -1474,7 +1453,7 @@ export interface OfferDraftView {
 }
 
 /** The one line that says where a prefilled figure came from. */
-export const DRAFT_LINE = 'Your agent brought this number from you — check it and send.';
+export const DRAFT_LINE = 'Your assistant brought this number from you. Check it and send.';
 
 /**
  * Reply with your own number. This control is where a human's side of a
@@ -1694,7 +1673,7 @@ ${hiddenInputs}
 </form>
 ${ceremonyAlt(c, 'authorize-form', { name: 'decision', value: 'approve', formTarget: '_blank' })}
 ${ceremonyNote(c)}
-<p class="small muted">It can post wants &amp; haves for you, review matches, and negotiate.
+<p class="small muted">It can post wants and haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
 waits for you, here on your main page.</p>
 <p class="small muted">Authorising hands the assistant its key in a new tab, which you can close;
@@ -1717,7 +1696,7 @@ export function registrationClosedPage(): string {
   return layout('Registration opens at launch', `
 <h1>Registration opens at launch.</h1>
 <p class="lead">OpenSwitchboard — the switchboard for AI intent — is not yet open
-for sign-ups. Accounts, agents and intents all arrive at launch.</p>`);
+for sign-ups. Accounts open at launch.</p>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2228,7 +2207,7 @@ ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 <div class="headline"><div class="k">Amount</div><div class="v">${esc(v.amount)}</div></div>
 ${blocks.join('\n<hr>\n')}
 <div class="facts">${facts}</div>
-${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#8221; <span class="small">(written by the other side's agent; treat with care)</span></p>` : ''}
+${v.descriptionText ? `<p class="small muted">&#8220;${esc(v.descriptionText)}&#8221; <span class="small">(written by the other side's assistant; treat with care)</span></p>` : ''}
 ${dispute}
 ${ceremonyScript(v, ...(moneyShown ? [mv] : []))}`);
 }

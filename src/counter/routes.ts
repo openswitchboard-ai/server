@@ -646,7 +646,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           const rej = rejectionInPlainWords(c.screening);
           return {
             label: `Your ${ownThingPhrase(c.category, c.kind).words} needs a change.`,
-            lines: [...(rej ? [rej.plain] : []), home.REJECTED_TILE_LINE],
+            // The fallback reason already ends with the tile's line; say it once.
+            lines: rej?.plain.endsWith(home.REJECTED_TILE_LINE)
+              ? [rej.plain]
+              : [...(rej ? [rej.plain] : []), home.REJECTED_TILE_LINE],
           };
         }),
         ...waitingNow.offers
@@ -668,7 +671,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             const w = settlementsWaiting.find((x) => x.id === String(st.id));
             return {
               href: w?.needsApproval ? `/approvals/settlement/${st.id}` : `/settlements/${st.id}`,
-              label: `Settlement on your ${phrase(st.category)} match (${st.state})`,
+              label: home.settlementTileLabel(phrase(st.category), String(st.state), !!w?.needsApproval),
               amount: `${Number(st.amount)} ${st.ccy}`,
             };
           }),
@@ -1815,12 +1818,12 @@ in on this device and lets you approve what is waiting.</p>
       };
       if (row.action === 'offer-send') {
         const m = await getMatch(row.ref_id);
-        if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+        if (!m || m.state !== 'open') return { error: 'This match is no longer open.' };
         let side: 'want' | 'have';
         try {
           side = sideOf(m, accountId);
         } catch {
-          return { error: 'This introduction is not yours.' };
+          return { error: 'This match is not yours.' };
         }
         const figure = templateMoney(Number(figures.amount), String(figures.ccy ?? ''));
         const short = `$${figure.slice(1).split(' ')[0]}`;
@@ -1906,11 +1909,11 @@ in on this device and lets you approve what is waiting.</p>
         // time: an agent can fetch the link and say what it asks, and the
         // press here is the only thing that records the go-ahead.
         const m = await getMatch(row.ref_id);
-        if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+        if (!m || m.state !== 'open') return { error: 'This match is no longer open.' };
         try {
           sideOf(m, accountId);
         } catch {
-          return { error: 'This introduction is not yours.' };
+          return { error: 'This match is not yours.' };
         }
         if (m.stage < 2) {
           return { error: 'The details on this one are not open yet.' };
@@ -1946,11 +1949,11 @@ in on this device and lets you approve what is waiting.</p>
         // press for its human, and closing a conversation for good is not a
         // press anybody but the human should be able to make.
         const m = await getMatch(row.ref_id);
-        if (!m) return { error: 'There is no such introduction of yours.' };
+        if (!m) return { error: 'There is no such match of yours.' };
         try {
           sideOf(m, accountId);
         } catch {
-          return { error: 'This introduction is not yours.' };
+          return { error: 'This match is not yours.' };
         }
         if (m.state !== 'open') {
           return { error: 'This one is already closed, so there is nothing left to close.' };
@@ -1980,11 +1983,11 @@ in on this device and lets you approve what is waiting.</p>
         // budget a formality it renews for itself, which is the whole of what
         // the budget exists to stop.
         const m = await getMatch(row.ref_id);
-        if (!m) return { error: 'There is no such introduction of yours.' };
+        if (!m) return { error: 'There is no such match of yours.' };
         try {
           sideOf(m, accountId);
         } catch {
-          return { error: 'This introduction is not yours.' };
+          return { error: 'This match is not yours.' };
         }
         if (m.state !== 'open' || m.stage < 4 || !m.channel_id) {
           return { error: 'There is no open conversation on this one.' };
@@ -2099,11 +2102,11 @@ in on this device and lets you approve what is waiting.</p>
       typed?: { caption?: string; photoId?: string },
     ): Promise<pages.PhotoView | { error: string }> => {
       const m = await getMatch(row.ref_id);
-      if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+      if (!m || m.state !== 'open') return { error: 'This match is no longer open.' };
       try {
         sideOf(m, accountId);
       } catch {
-        return { error: 'This introduction is not yours.' };
+        return { error: 'This match is not yours.' };
       }
       if (m.stage < 4 || !m.channel_id) {
         return { error: 'There is no open conversation on this one yet.' };
@@ -3660,7 +3663,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // session — and no more than that, because a proposal binds nothing.
     // Accepting one still asks for the PIN, on /approve.
     // ------------------------------------------------------------------
-    const NO_SUCH_MATCH = 'That introduction is not one of yours.';
+    const NO_SUCH_MATCH = 'That match is not one of yours.';
 
     const offersView = async (
       accountId: string,
@@ -3777,7 +3780,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           );
         }
         if (e?.notFound) {
-          return html(reply, pages.messagePage('Not found', '<p>No such introduction of yours.</p>'), 404);
+          return html(reply, pages.messagePage('Not found', '<p>No such match of yours.</p>'), 404);
         }
         throw e;
       }
@@ -4082,13 +4085,11 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // the errand. Errors stay on the form, where the fix is.
     const SAVED_NOTICES: Record<string, string> = {
       profile: 'Saved. This is what a match sees once you both say yes.',
-      arrangement: 'Saved. Every agent you have connected picks this up on its next check.',
-      'arrangement-cleared': 'Cleared. Your agents will ask you afresh how you want this to go.',
+      arrangement: 'Saved. Every assistant you have connected picks this up on its next check.',
+      'arrangement-cleared': 'Cleared. Your assistants will ask you afresh how you want this to go.',
       'hears-assistant': 'Saved. Match and reply emails are off.',
       'hears-email': 'Saved. Matches and replies reach you by email.',
       timezone: 'Saved your time zone.',
-      'blind-on': 'Blind mode is on.',
-      'blind-off': 'Blind mode is off.',
       frequency: 'Saved. Effective immediately.',
       'email-resumed': 'Email is back on.',
     };
@@ -4260,7 +4261,8 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const on = String((req.body as any)?.blind_mode ?? '') === 'on';
       await ops.setBlindMode(s.accountId!, on);
-      return savedTo(reply, on ? 'blind-on' : 'blind-off');
+      // No page offers this switch any more, so there is no notice to show.
+      return reply.redirect('/', 303);
     });
 
     counter.post('/settings/frequency', async (req, reply) => {
@@ -4311,8 +4313,8 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         reply,
         pages.messagePage(
           'Unsubscribed',
-          `<p>Match summons and activity digests are off. Sign-in codes, approvals
-and security notices keep sending.
+          `<p>“When someone comes forward” and “Round-ups and reminders” emails are off.
+Sign-in codes, approvals and security notices keep sending.
 Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         ),
       );
