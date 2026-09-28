@@ -79,27 +79,81 @@ function settlementIdOf(obj: { metadata?: Record<string, string> | null }): stri
 }
 
 /**
+ * The stable tag an alarm keys on: a payment the switchboard took and did not
+ * put where it belongs, and will not move on its own. Every line carrying it
+ * is written at error level with the settlement id, and needs a person.
+ */
+export const MONEY_NEEDS_OPERATOR = 'money-needs-operator';
+
+export type WebhookLog = (m: string, x?: any) => void;
+
+/**
  * Money taken for a settlement that is not waiting to be funded: it goes
  * straight back. With immediate capture the buyer really has been charged, so
  * this is a refund and not a cancellation, and the idempotency key is the
  * payment itself so a repeated event refunds it once.
+ *
+ * NEVER THE SETTLEMENT'S OWN PAYMENT (2026-09-28 review). Two "paid" events for
+ * one PaymentIntent can race: one claims the row, and the loser lands here
+ * believing the payment is stray when it is in fact the one now being held.
+ * So the row is read again at this moment, and a payment the row holds is left
+ * exactly where it is.
+ *
+ * AMOUNT-EXPLICIT. The refund names the figure: what the payment actually took,
+ * less anything already refunded — never Stripe's "all of it" by omission.
+ *
+ * A refund that fails is not swallowed: it is said at error level under
+ * MONEY_NEEDS_OPERATOR, and nothing else is tried automatically.
  */
-async function refundStrayPayment(
+export async function refundStrayPayment(
   sid: string,
   paymentIntent: string,
-  log: (m: string, x?: any) => void,
-): Promise<void> {
+  log: WebhookLog,
+  alarm: WebhookLog,
+): Promise<'refunded' | 'held-by-settlement' | 'failed'> {
+  const now = await getSettlement(sid);
+  if (now?.stripe_payment_intent === paymentIntent) {
+    log('stripe webhook: payment is the one this settlement holds; not stray, nothing refunded', {
+      settlement_id: sid,
+      payment_intent: paymentIntent,
+    });
+    return 'held-by-settlement';
+  }
   const stripe = await getStripe();
-  await stripe.refunds
-    .create(
-      { payment_intent: paymentIntent, metadata: { osb_settlement_id: sid } },
+  try {
+    const pi = await stripe.paymentIntents.retrieve(paymentIntent, {
+      expand: ['latest_charge'],
+    });
+    const charge = typeof pi.latest_charge === 'object' ? pi.latest_charge : null;
+    const alreadyBack = charge?.amount_refunded ?? 0;
+    const amount = (pi.amount_received ?? 0) - alreadyBack;
+    if (!Number.isInteger(amount) || amount <= 0) {
+      log('stray settlement payment: nothing left to refund', {
+        settlement_id: sid,
+        payment_intent: paymentIntent,
+      });
+      return 'refunded';
+    }
+    await stripe.refunds.create(
+      { payment_intent: paymentIntent, amount, metadata: { osb_settlement_id: sid } },
       { idempotencyKey: `osb-settlement-stray-${paymentIntent}` },
-    )
-    .catch(() => {});
-  log('stray settlement payment refunded (settlement already funded)', {
-    settlement_id: sid,
-    payment_intent: paymentIntent,
-  });
+    );
+    log('stray settlement payment refunded (settlement not waiting to be funded)', {
+      settlement_id: sid,
+      payment_intent: paymentIntent,
+      amount_minor: amount,
+    });
+    return 'refunded';
+  } catch (e: any) {
+    alarm('stray settlement payment could NOT be refunded; the buyer is out of pocket', {
+      tag: MONEY_NEEDS_OPERATOR,
+      settlement_id: sid,
+      payment_intent: paymentIntent,
+      error_type: e?.type ?? e?.constructor?.name,
+      error_code: e?.code,
+    });
+    return 'failed';
+  }
 }
 
 /**
@@ -112,28 +166,40 @@ async function refundStrayPayment(
  * through is refunded, because with immediate capture the buyer really has
  * been charged twice.
  */
-async function handleFunding(
+export async function handleFunding(
   cfg: Config,
   ctx: WebhookCtx,
   sid: string,
   paymentIntent: string,
   checkoutSession: string | undefined,
-  log: (m: string, x?: any) => void,
+  log: WebhookLog,
+  alarm: WebhookLog,
 ): Promise<void> {
   const current = await getSettlement(sid);
   if (!current) {
-    log('stripe webhook: payment references an unknown settlement', { settlement_id: sid });
+    // Money taken against a settlement id we cannot find. Nothing moves on
+    // its own; a person looks.
+    alarm('stripe webhook: payment references an unknown settlement', {
+      tag: MONEY_NEEDS_OPERATOR,
+      settlement_id: sid,
+      payment_intent: paymentIntent,
+    });
     return;
   }
   if (current.state !== 'approved') {
     if (current.stripe_payment_intent !== paymentIntent) {
-      await refundStrayPayment(sid, paymentIntent, log);
+      await refundStrayPayment(sid, paymentIntent, log, alarm);
     }
     return;
   }
   const check = await verifyPaymentMatchesSettlement(current, paymentIntent);
   if (!check.ok) {
-    log('stripe webhook: payment does not match its settlement; refusing to fund', {
+    // The buyer has been charged and the settlement is not funded: the
+    // payment is sitting in the platform balance with nowhere to go. No
+    // automatic money move (a mismatch is exactly when a person should look),
+    // but loudly, so an alarm fires on it.
+    alarm('stripe webhook: payment does not match its settlement; refusing to fund', {
+      tag: MONEY_NEEDS_OPERATOR,
       settlement_id: sid,
       payment_intent: paymentIntent,
       problem: check.problem,
@@ -147,14 +213,17 @@ async function handleFunding(
   // waiting to be funded, so it goes straight back.
   const outcome = await markFunded(ctx, sid, { checkoutSession, paymentIntent });
   if ('stray' in outcome) {
-    await refundStrayPayment(sid, paymentIntent, log);
+    // refundStrayPayment re-reads the row: the event that beat this one to
+    // the claim may have been for this very payment, and then it is held,
+    // not stray.
+    await refundStrayPayment(sid, paymentIntent, log, alarm);
     return;
   }
   log('settlement funded', { settlement_id: sid, payment_intent: paymentIntent });
   await notifyBothParties(cfg, outcome.funded, 'payment-held');
 }
 
-async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?: any) => void) {
+async function handleEvent(cfg: Config, event: Stripe.Event, log: WebhookLog, alarm: WebhookLog) {
   const ctx: WebhookCtx = webhookAction(event.id, event.type);
   switch (event.type) {
     case 'checkout.session.completed':
@@ -177,7 +246,7 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
         ? session.payment_intent
         : session.payment_intent?.id;
       if (!pi) throw new Error(`checkout session ${session.id} has no payment intent`);
-      await handleFunding(cfg, ctx, sid, pi, session.id, log);
+      await handleFunding(cfg, ctx, sid, pi, session.id, log, alarm);
       return;
     }
     case 'checkout.session.async_payment_failed': {
@@ -237,6 +306,14 @@ async function handleEvent(cfg: Config, event: Stripe.Event, log: (m: string, x?
       // dispute being RAISED would be deciding it for them — twice over, if
       // the dispute then fails. What the settlement page and the operator's
       // view gain is that this settlement now says a chargeback exists.
+      //
+      // AND IT HOLDS (2026-09-28 review). Recording it used to be all: the
+      // buyer's window kept running, the sweep kept releasing, and a confirm
+      // still paid the seller — so the bank could hand the money back to the
+      // buyer while the seller was paid it too. With chargeback_at set, every
+      // sweep skips the settlement and both money calls refuse, in the plain
+      // sentence settlements.CHARGEBACK_HOLD.
+
       const dispute = event.data.object;
       const charge = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
       const pi =
@@ -330,7 +407,13 @@ export function registerStripeWebhook(app: FastifyInstance, cfg: Config): void {
       );
       if (!claim.rowCount) return reply.send({ received: true, duplicate: true });
       try {
-        await handleEvent(cfg, event, (m, x) => req.log.info(x ?? {}, m));
+        await handleEvent(
+          cfg,
+          event,
+          (m, x) => req.log.info(x ?? {}, m),
+          (m, x) => req.log.error({ tag: MONEY_NEEDS_OPERATOR, ...(x ?? {}) }, m),
+        );
+
       } catch (e: any) {
         if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
           // The event does not apply to the settlement's current state (e.g.

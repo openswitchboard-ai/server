@@ -40,7 +40,7 @@ import { getAccount } from './accounts.js';
 import { accountEmail } from './counterOps.js';
 import { getStripe, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import type { Config } from '../config.js';
-import type { SettlementRow } from './settlements.js';
+import { assertNoChargeback, type SettlementRow } from './settlements.js';
 
 /** Country we open a seller's connected account in when we cannot tell. */
 const DEFAULT_COUNTRY = 'AU';
@@ -285,6 +285,10 @@ export async function transferToSellerForSettlement(
    *  amount — every road but a split sends all of it. */
   partMinor?: number,
 ): Promise<Stripe.Transfer> {
+  // A chargeback open on the buyer's payment holds it where it is: the bank
+  // may be handing the same money back to the buyer. Asked of the database,
+  // not of the row the caller holds, so one that landed a moment ago counts.
+  await assertNoChargeback(s.id);
   const sellerId = await sellerStripeAccountId(s.seller_account, s.id);
   if (!sellerId) throw new Error('settlement has no seller connected account');
   if (!(await sellerAccountReady(sellerId))) {
@@ -298,6 +302,22 @@ export async function transferToSellerForSettlement(
   // before the money moves, whatever the caller believed.
   if (!Number.isInteger(amountMinor) || amountMinor <= 0 || amountMinor > agreedMinor) {
     throw new Error(`release of ${amountMinor} is not inside the agreed ${agreedMinor}`);
+  }
+  // PAST THE IDEMPOTENCY WINDOW (2026-09-28 review). Stripe keeps an
+  // idempotency key for about a day, and the sweep's backoff retries a failed
+  // release for longer than that. A first attempt whose response was lost
+  // (the transfer went out, the row never heard) would then be sent again
+  // under a key Stripe has forgotten. So before creating, ask Stripe for any
+  // transfer already in this settlement's group and adopt it: the seller is
+  // paid once, however late the retry.
+  const already = await existingReleaseTransfer(stripe, s.id, sellerId);
+  if (already) {
+    await getPool().query(
+      `UPDATE settlements SET stripe_transfer_id = COALESCE(stripe_transfer_id, $2), updated_at = now()
+       WHERE id = $1`,
+      [s.id, already.id],
+    );
+    return already;
   }
   const transfer = await stripe.transfers.create(
     {
@@ -314,6 +334,25 @@ export async function transferToSellerForSettlement(
     [s.id, transfer.id],
   );
   return transfer;
+}
+
+/**
+ * A release transfer this settlement already made, found by its transfer
+ * group: ours carry the settlement id both as transfer_group and in metadata,
+ * and go to the seller's own account. A transfer that matches on the group
+ * alone is not ours to adopt.
+ */
+export async function existingReleaseTransfer(
+  stripe: Stripe,
+  settlementId: string,
+  destination: string,
+): Promise<Stripe.Transfer | undefined> {
+  const listed = await stripe.transfers.list({ transfer_group: settlementId, limit: 10 });
+  return listed.data.find(
+    (t) =>
+      t.metadata?.osb_settlement_id === settlementId &&
+      (typeof t.destination === 'string' ? t.destination : t.destination?.id) === destination,
+  );
 }
 
 /**
@@ -352,7 +391,11 @@ export async function refundAgreedAmountForSettlement(
   amountMinor: number,
 ): Promise<void> {
   if (!s.stripe_payment_intent) throw new Error('settlement has no payment to refund');
+  // Held while the buyer's bank has a dispute open, the same as a release:
+  // the bank may already be returning this money to them.
+  await assertNoChargeback(s.id);
   const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
+
   if (!Number.isInteger(amountMinor) || amountMinor <= 0 || amountMinor > agreedMinor) {
     throw new Error(`refund of ${amountMinor} is not inside the agreed ${agreedMinor}`);
   }
