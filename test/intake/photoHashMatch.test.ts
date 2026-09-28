@@ -91,7 +91,7 @@ const item = (over: Partial<IntakeItem> = {}): IntakeItem => ({
   door: 'photo',
   sender_account: SENDER,
   match_id: MATCH,
-  fields: { metadata_removed: 'true' },
+  fields: { metadata_removed: 'true', metadata_stripped_by_server: 'true' },
   object: { bucket: BUCKET, key: KEY, content_type: 'image/jpeg' },
   ...over,
 });

@@ -215,6 +215,29 @@ describe('the moved checks decide what they always decided', () => {
     expect(ok.outcome).toBe('pass');
   });
 
+  it('at the send step, passes only on the server\'s own strip, never on the browser\'s word', async () => {
+    const { photoMetadata, METADATA_NOT_STRIPPED_BY_SERVER } = await import(
+      '../../src/intake/checks/photoMetadata.js'
+    );
+    const object = { bucket: 'b', key: 'k', content_type: 'image/jpeg' };
+    const claimOnly = await photoMetadata.run(
+      item({ door: 'photo', object, fields: { metadata_removed: 'true' } }),
+      undefined as any,
+    );
+    expect(claimOnly.outcome).toBe('refuse');
+    expect(claimOnly.plain_words).toBe(METADATA_NOT_STRIPPED_BY_SERVER);
+    const stripped = await photoMetadata.run(
+      item({
+        door: 'photo',
+        object,
+        fields: { metadata_removed: 'false', metadata_stripped_by_server: 'true' },
+      }),
+      undefined as any,
+    );
+    expect(stripped.outcome).toBe('pass');
+  });
+
+
   it('refuses a posting on a denied category without a model call', async () => {
     const v = await runIntake(undefined, item({ door: 'posting', fields: { category: 'goods.weapons.knives' } }));
     expect(v.outcome).toBe('refuse');
