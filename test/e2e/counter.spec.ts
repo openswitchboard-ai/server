@@ -225,12 +225,12 @@ test('assistant OAuth: the authorize hand-off happens on the main page host, in-
   // The ceremony rides along where the session is not inside its window.
   const pin = page.getByLabel(/PIN/);
   if (await pin.count()) await pin.fill(ALICE_PIN);
-  // Authorize hands the key over in a new tab, so the callback is caught as a
+  // Authorising hands the key over in a new tab, so the callback is caught as a
   // request on the whole context rather than as this tab's URL.
   const callback = ctx.waitForEvent('request', {
     predicate: (r) => r.url().startsWith(redirectUri),
   });
-  await page.getByRole('button', { name: 'Authorize' }).click();
+  await page.getByRole('button', { name: /^Authori[sz]e$/ }).click();
   const code = new URL((await callback).url()).searchParams.get('code')!;
   expect(code).toBeTruthy();
   for (const p of ctx.pages()) if (p !== page) await p.close();
@@ -361,7 +361,7 @@ test('accept link runs out (expires_at manipulated in test DB)', async () => {
   await shot(page, '12-link-expired');
 });
 
-test('warnings are LOUD; accepting takes the PIN; the press spends the link', async () => {
+test('the warning is one sentence; accepting takes the PIN; the press spends the link', async () => {
   // A big third offer: > 3x alice's median (100, 110) and from a < 7-day-old
   // account -> both warnings.
   const offer = await mcpCall(bob.accessToken, 'respond', {
@@ -384,8 +384,11 @@ test('warnings are LOUD; accepting takes the PIN; the press spends the link', as
   await tile.click();
   const question = page.getByRole('heading', { name: /^Accept \$1,?000 AUD for / });
   await expect(question).toBeVisible();
-  await expect(page.getByText(/× your usual amount/)).toBeVisible();
-  await expect(page.getByText('this offer comes from a brand-new account')).toBeVisible();
+  // Both warnings are one sentence (src/counter/anomalies.ts): bob's account
+  // is under a week old, and 1000 is over three times alice's usual.
+  await expect(
+    page.getByText(/^This is their first week on OpenSwitchboard, and this figure is [\d.]+ times your usual\.$/),
+  ).toBeVisible();
   await shot(page, '14-accept-warnings');
 
   // The press, on the link the assistant was handed.
