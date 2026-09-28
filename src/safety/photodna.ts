@@ -130,11 +130,21 @@ interface Loaded {
 }
 
 /**
- * The module, loaded once. `null` means we looked and it is not there, which
- * is a settled answer rather than something to retry per photo.
+ * The module, loaded once. `null` means the last look failed.
+ *
+ * A FAILED LOAD IS NOT SETTLED FOR THE LIFE OF THE PROCESS (2026-09-28
+ * review). It used to be: one read error at boot — a slow volume, a file
+ * mid-copy — and `null` stood until the task was replaced, and every photo in
+ * between passed this check as "switched off". Now a failure is looked at
+ * again after LOAD_RETRY_MS, and while a secret is configured the check HOLDS
+ * photos rather than passing them (photoDnaState, and photoHashMatch.ts).
  */
 let loaded: Loaded | null | undefined;
 let loadedFrom: string | undefined;
+let loadFailedAt: number | undefined;
+
+/** How long a failed load stands before the next photo tries again. */
+export const PHOTODNA_LOAD_RETRY_MS = 60_000;
 
 /** Where the two files are. Relative paths hang off the process's directory,
  *  which in the image is /app, next to dist and migrations. */
@@ -178,7 +188,15 @@ async function readVerified(dir: string, name: string): Promise<Buffer> {
  */
 async function load(cfg: Config | undefined): Promise<Loaded | null> {
   const dir = sdkDir(cfg);
-  if (loaded !== undefined && loadedFrom === dir) return loaded;
+  if (loaded && loadedFrom === dir) return loaded;
+  if (
+    loaded === null &&
+    loadedFrom === dir &&
+    loadFailedAt !== undefined &&
+    Date.now() - loadFailedAt < PHOTODNA_LOAD_RETRY_MS
+  ) {
+    return null;
+  }
   loadedFrom = dir;
   try {
     const [glue, wasm] = await Promise.all([
@@ -212,12 +230,19 @@ async function load(cfg: Config | undefined): Promise<Loaded | null> {
       ctx,
     ) as RawHasher;
     loaded = { hash };
+    loadFailedAt = undefined;
     photoDnaLog('photodna-ready', { version: PHOTODNA_SDK_VERSION });
-  } catch {
-    // No reason in the line. The interesting cases are "not there" (the
-    // ordinary state of a deployment without the licence in place) and "not
-    // the published file", and warnIfPhotoDnaDisabled has already said which.
+  } catch (e: any) {
+    // The error's class and code, and never its message: a message on this
+    // path can carry a path, and one day something that reads a key. Said
+    // once per retry window, not once per photo.
     loaded = null;
+    loadFailedAt = Date.now();
+    photoDnaLog('photodna-load-failed', {
+      error_class: String(e?.name ?? e?.constructor?.name ?? 'Error').slice(0, 60),
+      error_code: String(e?.code ?? 'none').slice(0, 40),
+      retry_in_s: PHOTODNA_LOAD_RETRY_MS / 1000,
+    });
   }
   return loaded;
 }
@@ -300,6 +325,7 @@ export function initPhotoDna(cfg: Config): void {
 export function resetPhotoDnaForTests(): void {
   loaded = undefined;
   loadedFrom = undefined;
+  loadFailedAt = undefined;
   state = undefined;
   current = undefined;
 }
@@ -420,10 +446,28 @@ export function readMatchResponse(payload: unknown): MatchOutcome {
  * settled after the first call.
  */
 export async function photoDnaAvailable(cfg?: Config): Promise<boolean> {
-  const conf = cfg ?? current;
-  if (!conf?.photoDnaSecretArn) return false;
-  return (await load(conf)) !== null;
+  return (await photoDnaState(cfg)) === 'ready';
 }
+
+/**
+ * The three states, which photoHashMatch.ts acts on differently:
+ *
+ *   off          no secret configured: this deployment has no hash matching
+ *                at all (a dev checkout without the licensed files). Photos
+ *                pass this check, as they always have there.
+ *   ready        the files loaded and a secret is configured.
+ *   unavailable  a secret IS configured — this deployment is meant to match —
+ *                and the files did not load. Photos HOLD until they do; the
+ *                load is tried again after PHOTODNA_LOAD_RETRY_MS.
+ */
+export type PhotoDnaReadiness = 'off' | 'ready' | 'unavailable';
+
+export async function photoDnaState(cfg?: Config): Promise<PhotoDnaReadiness> {
+  const conf = cfg ?? current;
+  if (!conf?.photoDnaSecretArn) return 'off';
+  return (await load(conf)) !== null ? 'ready' : 'unavailable';
+}
+
 
 /**
  * The one line at boot where this is off, in the shape warnIfLedgerDisabled
@@ -443,7 +487,10 @@ export async function warnIfPhotoDnaDisabled(
   ].join(' and ');
   log(
     `known-image hash matching is off for this deployment: ${missing} missing. ` +
-      'Photos still go through every other check before they are delivered.',
+      (secret
+        ? 'A secret is configured, so photos are HELD, not delivered, until the files load; the load is retried every minute.'
+        : 'Photos still go through every other check before they are delivered.'),
   );
   return true;
+
 }

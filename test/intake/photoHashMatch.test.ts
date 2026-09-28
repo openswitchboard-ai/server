@@ -27,6 +27,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => ({
   available: true,
+  /** Set to say the secret is configured and the files did not load. */
+  unloaded: false,
   hashes: ['hash-one', 'hash-two'],
   outcome: { match: false, sources: [] as string[], trackingId: undefined as string | undefined },
   hashThrows: undefined as Error | undefined,
@@ -37,6 +39,7 @@ const fake = vi.hoisted(() => ({
 
 vi.mock('../../src/safety/photodna.js', () => ({
   photoDnaAvailable: async () => fake.available,
+  photoDnaState: async () => (fake.unloaded ? 'unavailable' : fake.available ? 'ready' : 'off'),
   edgeHashes: async (bytes: Uint8Array) => {
     fake.hashedBytes.push(bytes.length);
     if (fake.hashThrows) throw fake.hashThrows;
@@ -98,6 +101,7 @@ const item = (over: Partial<IntakeItem> = {}): IntakeItem => ({
 
 beforeEach(() => {
   fake.available = true;
+  fake.unloaded = false;
   fake.hashes = ['hash-one', 'hash-two'];
   fake.outcome = { match: false, sources: [], trackingId: undefined };
   fake.hashThrows = undefined;
@@ -286,4 +290,18 @@ describe('the doors and deployments it does not stand at', () => {
     // And no sender is stopped for a deployment's missing licence.
     expect(suspended.calls).toEqual([]);
   });
+
+  it('HOLDS, never passes, where a secret is configured and the SDK did not load', async () => {
+    const { PHOTOS_PAUSED } = await import('../../src/intake/checks/photoHashMatch.js');
+    fake.available = false;
+    fake.unloaded = true;
+    const r = await photoHashMatch.run(item(), cfg);
+    expect(r.outcome).toBe('hold');
+    expect(r.reason_code).toBe('photodna-not-loaded');
+    expect(r.plain_words).toBe(PHOTOS_PAUSED);
+    expect(PHOTOS_PAUSED).toBe('photos are paused for a moment; try again shortly.');
+    expect(fake.hashedBytes).toEqual([]);
+    expect(suspended.calls).toEqual([]);
+  });
 });
+

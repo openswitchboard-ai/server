@@ -102,7 +102,13 @@ describe('the files have to be the ones Microsoft published', () => {
   it('is off, and says which half is missing, with no files and no secret', async () => {
     const said: string[] = [];
     const off = await warnIfPhotoDnaDisabled(
-      cfgWith({ photoDnaSdkDir: join(tmpdir(), 'osb-photodna-nothing-here') }) as Config,
+      cfgWith({
+        photoDnaSdkDir: join(tmpdir(), 'osb-photodna-nothing-here'),
+        // No secret, as the title says: with one configured the photos are
+        // held rather than passed (the test below).
+        photoDnaSecretArn: undefined,
+      }) as Config,
+
       (m) => void said.push(m),
     );
     expect(off).toBe(true);
@@ -112,7 +118,45 @@ describe('the files have to be the ones Microsoft published', () => {
     expect(said[0]).toContain('every other check');
   });
 
+  it('with a secret configured and the files missing, says photos are held, and the state is unavailable', async () => {
+    const { photoDnaState } = await import('../../../src/safety/photodna.js');
+    const cfg = cfgWith({ photoDnaSdkDir: join(tmpdir(), 'osb-photodna-nothing-here') });
+    expect(await photoDnaState(cfg)).toBe('unavailable');
+    const said: string[] = [];
+    await warnIfPhotoDnaDisabled(cfg, (m) => void said.push(m));
+    expect(said[0]).toContain('HELD');
+    // No secret is the only "off".
+    expect(await photoDnaState(cfgWith({ photoDnaSecretArn: undefined }))).toBe('off');
+  });
+
+  it('does not settle a failed load for the process: it tries again after a minute, and logs class and code only', async () => {
+    const { photoDnaState, PHOTODNA_LOAD_RETRY_MS } = await import(
+      '../../../src/safety/photodna.js'
+    );
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((m: string) => void logs.push(String(m)));
+    const dir = mkdtempSync(join(tmpdir(), 'osb-photodna-later-'));
+    const cfg = cfgWith({ photoDnaSdkDir: dir });
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    expect(await photoDnaState(cfg)).toBe('unavailable');
+    const failed = logs.map((l) => JSON.parse(l)).filter((l) => l.event === 'photodna-load-failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error_code).toBe('ENOENT');
+    expect(Object.keys(failed[0]).sort()).toEqual(['error_class', 'error_code', 'event', 'retry_in_s']);
+    expect(JSON.stringify(failed[0])).not.toContain(dir);
+    // Inside the window: no second attempt, no second line.
+    now.mockReturnValue(t0 + PHOTODNA_LOAD_RETRY_MS - 1);
+    expect(await photoDnaState(cfg)).toBe('unavailable');
+    expect(logs.filter((l) => l.includes('photodna-load-failed'))).toHaveLength(1);
+    // Past it: tried again.
+    now.mockReturnValue(t0 + PHOTODNA_LOAD_RETRY_MS + 1);
+    expect(await photoDnaState(cfg)).toBe('unavailable');
+    expect(logs.filter((l) => l.includes('photodna-load-failed'))).toHaveLength(2);
+  });
+
   it('is off when the secret is missing even where the files are there', async () => {
+
     const said: string[] = [];
     await warnIfPhotoDnaDisabled(cfgWith({ photoDnaSecretArn: undefined }), (m) =>
       void said.push(m),
