@@ -10,7 +10,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bedrock } from '../../src/aws.js';
 import {
-  HELD_BACK_FALLBACK,
   categoryDenied,
   heldBackFamilies,
   heldBackReason,
@@ -38,7 +37,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('the held-back families come from the data', () => {
   it('lists every vertical-policy-pending entry in the seed, and nothing else', () => {
     const codes = heldBackFamilies().map((f) => f.reason_code);
-    expect(codes.length).toBeGreaterThan(0);
+    expect([...codes].sort()).toEqual(['alcohol', 'event-tickets']);
     for (const code of codes) {
       // Each one is a closed path in the seed with the pending status.
       expect(heldBackReason(code)).toBeTruthy();
@@ -64,21 +63,34 @@ describe('the held-back families come from the data', () => {
     expect(heldBackFamilies(entries).map((f) => f.reason_code)).toEqual(['example-family']);
   });
 
-  it('falls back to the one general sentence, keyed on the status alone', () => {
+  it('writes no sentence of its own for an entry that carries none', () => {
     const entries: DenyEntry[] = [
       { jurisdiction: '*', denied: ['goods.example'], reason_code: 'x', status: 'vertical-policy-pending' },
     ];
-    expect(heldBackReason('x', entries)).toBe(HELD_BACK_FALLBACK);
+    expect(heldBackFamilies(entries).map((f) => f.reason_code)).toEqual(['x']);
+    expect(heldBackReason('x', entries)).toBeUndefined();
+  });
+
+  it('wildlife products are never allowed, not held back', () => {
+    const e = categoryDenied('goods.wildlife');
+    expect(e?.reason_code).toBe('wildlife-products');
+    expect(e?.status).toBe('denied');
+    expect(heldBackReason('wildlife-products')).toBeUndefined();
+    expect(HELD_BACK_REASONS).not.toContain('wildlife-products');
+    expect(heldBackInstruction()).not.toContain('wildlife-products');
+    expect(screeningReasonInPlainWords('wildlife-products')).toMatch(
+      /stay off the switchboard everywhere it runs/,
+    );
   });
 
   it('the sentence is plain, general and clean', () => {
     for (const f of heldBackFamilies()) {
-      expect(lintHumanCopy(f.reason), f.reason_code).toEqual([]);
+      expect(typeof f.reason, f.reason_code).toBe('string');
+      expect(lintHumanCopy(f.reason!), f.reason_code).toEqual([]);
       expect(f.reason, f.reason_code).not.toMatch(/\w\.\w/);
       // General: it never names the family it closes.
-      expect(f.reason.toLowerCase(), f.reason_code).not.toContain(f.reason_code.split('-')[0]);
+      expect(f.reason!.toLowerCase(), f.reason_code).not.toContain(f.reason_code.split('-')[0]);
     }
-    expect(lintHumanCopy(HELD_BACK_FALLBACK)).toEqual([]);
   });
 });
 

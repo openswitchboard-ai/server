@@ -10,6 +10,8 @@ export interface DenyEntry {
   denied: string[];
   reason_code: string;
   status: 'denied' | 'vertical-policy-pending';
+  /** How the entry is enforced (schema 0.16.1+): 'deny' (the default) or 'screening'. */
+  mode?: 'deny' | 'screening';
   /** One plain general sentence saying why it is closed (schema 0.16.2+). */
   closed_reason?: string;
 }
@@ -39,15 +41,16 @@ export function globMatches(glob: string, category: string): boolean {
 
 /**
  * Category-level deny decision, made synchronously at publish time.
- * `screening-only` reason codes (jurisdiction-wide goods.** entries for
- * stolen-goods markers and recalled goods) are NOT category denials — they are
- * enforced by the screening pipeline on card content.
+ * An entry with `mode: 'screening'` (the jurisdiction-wide goods.** entries for
+ * stolen-goods markers and recalled goods) is NOT a category denial — it is
+ * enforced by the screening pipeline on card content. The data says which
+ * (SPEC §10); no list of codes is kept here.
  */
-const SCREENING_ONLY_REASONS = new Set(['stolen-goods-markers', 'recalled-goods']);
+const isScreening = (e: DenyEntry) => e.mode === 'screening';
 
 export function categoryDenied(category: string): DenyEntry | undefined {
   for (const e of seed.entries) {
-    if (SCREENING_ONLY_REASONS.has(e.reason_code)) continue;
+    if (isScreening(e)) continue;
     if (e.denied.some((g) => globMatches(g, category))) return e;
   }
   return undefined;
@@ -67,28 +70,20 @@ export function categoryDenied(category: string): DenyEntry | undefined {
  */
 export const HELD_BACK_STATUS = 'vertical-policy-pending';
 
-/**
- * The sentence for a held-back entry that carries none of its own. Keyed on
- * the status alone, never on a subject, and word for word what the seed
- * writes: it covers a pinned schema from before `closed_reason` existed.
- */
-export const HELD_BACK_FALLBACK =
-  'Selling this is licensed or restricted by law in many places, so the switchboard does not take it yet.';
-
 export interface HeldBackFamily {
   reason_code: string;
-  /** The sentence to say, from the data. */
-  reason: string;
+  /** The sentence to say, from the data; absent where the entry carries none. */
+  reason?: string;
 }
 
 /** Every held-back family the deny list names, in seed order, each code once. */
 export function heldBackFamilies(entries: DenyEntry[] = seed.entries): HeldBackFamily[] {
   const out: HeldBackFamily[] = [];
   for (const e of entries) {
-    if (e.status !== HELD_BACK_STATUS || SCREENING_ONLY_REASONS.has(e.reason_code)) continue;
+    if (e.status !== HELD_BACK_STATUS || isScreening(e)) continue;
     if (out.some((f) => f.reason_code === e.reason_code)) continue;
     const own = typeof e.closed_reason === 'string' ? e.closed_reason.trim() : '';
-    out.push({ reason_code: e.reason_code, reason: own || HELD_BACK_FALLBACK });
+    out.push({ reason_code: e.reason_code, ...(own ? { reason: own } : {}) });
   }
   return out;
 }
@@ -105,7 +100,7 @@ export function heldBackReason(
 /** Screening-time reason codes that apply to this category (content checks). */
 export function screeningReasonCodes(category: string): string[] {
   return seed.entries
-    .filter((e) => SCREENING_ONLY_REASONS.has(e.reason_code))
+    .filter(isScreening)
     .filter((e) => e.denied.some((g) => globMatches(g, category)))
     .map((e) => e.reason_code);
 }

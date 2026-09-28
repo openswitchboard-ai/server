@@ -26,6 +26,10 @@ describe('category deny decisions', () => {
     );
     expect(categoryDenied('goods.animals')?.reason_code).toBe('live-animals');
   });
+  it('denies wildlife products outright, not as held back', () => {
+    expect(categoryDenied('goods.wildlife.ivory')?.reason_code).toBe('wildlife-products');
+    expect(categoryDenied('goods.wildlife')?.status).toBe('denied');
+  });
   it('treats vertical-policy-pending as prohibited', () => {
     expect(categoryDenied('goods.alcohol')?.status).toBe('vertical-policy-pending');
   });
