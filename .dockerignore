@@ -3,3 +3,6 @@ dist
 .git
 cdk.out
 *.log
+realism-reports
+test
+.claude
