@@ -584,20 +584,16 @@ describe('saveSharedProfile', () => {
 
 // ---------------------------------------------------------------------------
 describe('the pages that collect it', () => {
-  const approvalWithCollection = cpages.mainPage({
-    action: 'stage3-disclosure',
-    refId: MATCH,
-    facts: [
-      { k: 'What gets shared', v: 'first name + locality' },
-      { k: 'For', v: 'Language exchange' },
-      { k: 'Shared with', v: 'your matched counterparty' },
-    ],
-    anomalies: [],
+  const approvalWithCollection = cpages.oneQuestionPage({
+    session: { action: 'stage3-disclosure', refId: MATCH },
+    question: 'Share your first name and suburb with the other side?',
+    yesLabel: 'Share',
+    noLabel: 'Not now',
+    needsPin: true,
     collectProfile: { firstName: '', locality: '' },
     hasPin: true,
     hasPasskey: false,
     elevated: false,
-    postPath: '/approve',
   });
 
   it('asks for both fields on the main page, in the same form as the decision', () => {
@@ -607,7 +603,8 @@ describe('the pages that collect it', () => {
     expect(approvalWithCollection).toContain('Your suburb');
     // One form: the boxes travel with the approve decision.
     expect(approvalWithCollection.split('<form').length - 1).toBe(1);
-    expect(approvalWithCollection).toContain('name="decision" value="approve"');
+    expect(approvalWithCollection).toContain('name="decision" value="yes"');
+    expect(approvalWithCollection).toContain('action="/approve"');
   });
 
   it('holds the same length caps the server enforces', () => {
@@ -622,15 +619,15 @@ describe('the pages that collect it', () => {
   });
 
   it('asks for nothing extra once the profile is on file', () => {
-    const plain = cpages.mainPage({
-      action: 'stage3-disclosure',
-      refId: MATCH,
-      facts: [{ k: 'What gets shared', v: 'first name + locality' }],
-      anomalies: [],
+    const plain = cpages.oneQuestionPage({
+      session: { action: 'stage3-disclosure', refId: MATCH },
+      question: 'Share your first name and suburb with the other side?',
+      yesLabel: 'Share',
+      noLabel: 'Not now',
+      needsPin: true,
       hasPin: true,
       hasPasskey: false,
       elevated: false,
-      postPath: '/approve',
     });
     expect(plain).not.toContain('name="first_name"');
     expect(plain).not.toContain('What should we share?');
@@ -709,23 +706,23 @@ describe('the area box asks for a suburb without insisting on one', () => {
     ],
     [
       'approval',
-      cpages.mainPage({
-        action: 'stage3-disclosure',
-        refId: MATCH,
-        facts: [{ k: 'What gets shared', v: 'first name + locality' }],
-        anomalies: [],
-        collectProfile: { firstName: '', locality: '' },
+      cpages.oneQuestionPage({
+        session: { action: 'stage3-disclosure', refId: MATCH },
+        question: 'Share your first name and suburb with the other side?',
+        yesLabel: 'Share',
+        noLabel: 'Not now',
+        needsPin: true,
         hasPin: true,
         hasPasskey: false,
         elevated: false,
-        postPath: '/approve',
+        collectProfile: { firstName: '', locality: '' },
       }),
     ],
     [
       'names-press',
       cpages.oneQuestionPage({
         token: 't',
-        question: 'Share your first name and area with the other side?',
+        question: 'Share your first name and suburb with the other side?',
         yesLabel: 'Share',
         noLabel: 'Not now',
         needsPin: true,

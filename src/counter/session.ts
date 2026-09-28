@@ -22,10 +22,9 @@ import { getPool } from '../db.js';
  * Path=/, and carries no Domain — so no other host on openswitchboard.ai can
  * write one, which is the whole of what the attribute is for here.
  *
- * The old name is still READ, for one release, so that a person signed in on
- * their phone last week is not signed out by a rename. Nothing ever writes it
- * again: the first response after this ships sets the new one, and the old one
- * is cleared on sign-out.
+ * The old name is no longer read (28 September 2026). Any other host on the
+ * domain could write a cookie under it, so reading it undid what the prefix is
+ * for. It is still cleared on sign-out, because a browser may still hold one.
  */
 export const COUNTER_COOKIE = '__Host-osb_counter';
 export const LEGACY_COUNTER_COOKIE = 'osb_counter';
@@ -33,10 +32,20 @@ const SESSION_TTL_HOURS = 24 * 7;
 
 const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex');
 
+/**
+ * What opened the current window. A passkey and a PIN are the account's own
+ * credentials. An emailed code is its recovery: anyone who can read the inbox
+ * can produce one, so a window it opened carries the everyday presses and
+ * never a credential change, an agent key or an authorisation.
+ */
+export type ElevationSource = 'passkey' | 'pin' | 'code';
+
 export interface CounterSession {
   id: string;
   accountId: string | null;
   pinOkUntil: Date | null;
+  /** What opened the window in pinOkUntil. Null reads as the weaker kind. */
+  elevatedVia?: ElevationSource | null;
   oauthCtx: any;
 }
 
@@ -56,26 +65,28 @@ export async function createSession(
     'set-cookie',
     `${COUNTER_COOKIE}=${sid}; Path=/; Max-Age=${SESSION_TTL_HOURS * 3600}; HttpOnly; Secure; SameSite=Lax`,
   );
-  return { id: r.rows[0].id, accountId, pinOkUntil: null, oauthCtx: oauthCtx ?? null };
+  return { id: r.rows[0].id, accountId, pinOkUntil: null, elevatedVia: null, oauthCtx: oauthCtx ?? null };
+}
+
+function readCookie(req: FastifyRequest, name: string): string | undefined {
+  const raw = req.headers.cookie;
+  if (!raw) return undefined;
+  for (const part of raw.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === name) return rest.join('=');
+  }
+  return undefined;
 }
 
 function cookieValue(req: FastifyRequest): string | undefined {
-  const raw = req.headers.cookie;
-  if (!raw) return undefined;
-  let legacy: string | undefined;
-  for (const part of raw.split(';')) {
-    const [k, ...rest] = part.trim().split('=');
-    if (k === COUNTER_COOKIE) return rest.join('=');
-    if (k === LEGACY_COUNTER_COOKIE) legacy = rest.join('=');
-  }
-  return legacy;
+  return readCookie(req, COUNTER_COOKIE);
 }
 
 export async function loadSession(req: FastifyRequest): Promise<CounterSession | undefined> {
   const sid = cookieValue(req);
   if (!sid?.startsWith('osb_cs_')) return undefined;
   const r = await getPool().query(
-    `SELECT id, account_id, pin_ok_until, oauth_ctx FROM counter_sessions
+    `SELECT id, account_id, pin_ok_until, elevated_via, oauth_ctx FROM counter_sessions
      WHERE sid_hash = $1 AND expires_at > now()`,
     [sha256hex(sid)],
   );
@@ -84,6 +95,7 @@ export async function loadSession(req: FastifyRequest): Promise<CounterSession |
     id: r.rows[0].id,
     accountId: r.rows[0].account_id,
     pinOkUntil: r.rows[0].pin_ok_until ? new Date(r.rows[0].pin_ok_until) : null,
+    elevatedVia: r.rows[0].elevated_via ?? null,
     oauthCtx: r.rows[0].oauth_ctx,
   };
 }
@@ -134,16 +146,84 @@ export async function setOauthCtx(sessionId: string, ctx: any): Promise<void> {
   ]);
 }
 
-/** Grant the session a PIN-elevated window (after PIN or passkey ceremony). */
-export async function elevateSession(sessionId: string, minutes: number): Promise<void> {
+/**
+ * Grant the session a window after a ceremony, and say which ceremony it was.
+ * A later ceremony replaces both, so a passkey pressed inside a window an
+ * emailed code opened makes it the stronger kind.
+ */
+export async function elevateSession(
+  sessionId: string,
+  minutes: number,
+  via: ElevationSource,
+): Promise<void> {
   await getPool().query(
-    'UPDATE counter_sessions SET pin_ok_until = now() + make_interval(mins => $2::int) WHERE id = $1',
-    [sessionId, minutes],
+    `UPDATE counter_sessions SET pin_ok_until = now() + make_interval(mins => $2::int),
+       elevated_via = $3 WHERE id = $1`,
+    [sessionId, minutes, via],
   );
 }
 
+/** Inside a window, whatever opened it. The everyday presses lean on this. */
 export function isElevated(s: CounterSession): boolean {
   return !!s.pinOkUntil && s.pinOkUntil > new Date();
+}
+
+/**
+ * Inside a window the account's own credential opened: a passkey, or a PIN
+ * that is not waiting out a recovery. Changing a credential, making an agent
+ * key and authorising an assistant lean on this and nothing weaker.
+ */
+export function isStronglyElevated(s: CounterSession): boolean {
+  return isElevated(s) && (s.elevatedVia === 'passkey' || s.elevatedVia === 'pin');
+}
+
+/** Inside a window an emailed code opened, and nothing stronger since. */
+export function isCodeElevated(s: CounterSession): boolean {
+  return isElevated(s) && !isStronglyElevated(s);
+}
+
+// ---------------------------------------------------------------------------
+// Where to come back to after signing in.
+//
+// A person opens the link their assistant gave them, is not signed in, signs
+// in, and used to land on their main page with the link lost in the chat. The
+// path they were on is now kept in a short cookie and they are sent back to it.
+//
+// ONLY TWO SHAPES OF PATH are ever kept or followed: a one-use link (/a/…) and
+// an open request on the main page (/open/<uuid>). Both are this host's own
+// pages, so the cookie cannot be used to send anybody anywhere else, and both
+// are checked again on the way back out, so a cookie somebody else wrote is
+// held to the same two shapes.
+// ---------------------------------------------------------------------------
+export const RETURN_COOKIE = '__Host-osb_return';
+const RETURN_TTL_SECONDS = 15 * 60;
+const RETURN_PATH_RES = [
+  /^\/a\/[A-Za-z0-9._-]+$/,
+  /^\/open\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+];
+
+/** True for the only paths a sign-in may return to. */
+export function returnPathOk(path: unknown): path is string {
+  return (
+    typeof path === 'string' && path.length <= 300 && RETURN_PATH_RES.some((re) => re.test(path))
+  );
+}
+
+/** Keep the path a signed-out person was on, for fifteen minutes. */
+export function rememberReturnPath(reply: FastifyReply, path: string): void {
+  if (!returnPathOk(path)) return;
+  reply.header(
+    'set-cookie',
+    `${RETURN_COOKIE}=${path}; Path=/; Max-Age=${RETURN_TTL_SECONDS}; HttpOnly; Secure; SameSite=Lax`,
+  );
+}
+
+/** The kept path, if there is one and it is one of the two shapes; cleared either way. */
+export function takeReturnPath(req: FastifyRequest, reply: FastifyReply): string | undefined {
+  const raw = readCookie(req, RETURN_COOKIE);
+  if (raw === undefined) return undefined;
+  reply.header('set-cookie', `${RETURN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+  return returnPathOk(raw) ? raw : undefined;
 }
 
 /** WebAuthn ceremony state. The SQL is exported so the tests exercise the

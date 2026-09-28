@@ -132,6 +132,8 @@ export const EXEMPT_TEMPLATES = new Set<string>([
   'kill-switch-off',
   'security-agent-authorized',
   'security-pin-changed',
+  'security-pin-set',
+  'security-pin-set-by-code',
   'security-passkey-added',
   'security-agent-key-created',
 ]);
@@ -755,44 +757,47 @@ export function renderKillSwitch(
   f: FooterLinks,
 ): EmailContent {
   if (v.on) {
-    const subject = 'OpenSwitchboard: kill switch is ON';
+    const subject = 'OpenSwitchboard: everything is stopped';
     const html = shell(
-      h1('Everything is paused.') +
+      h1('Everything is stopped.') +
         para(
-          'The kill switch on your account was just activated. All of your wants and haves are paused and your agents&#39; tokens are suspended. Nothing will match, be disclosed, or be accepted while it is on.',
+          'All of your wants and haves are stopped, and your assistants cannot act for you. Nothing will match, be shared or be accepted until you turn it back on.',
         ) +
-        center(button(v.counterUrl, 'Open your account')) +
+        center(button(v.counterUrl, 'Open your main page')) +
         small(
-          'Turning things back on takes your sign-in and your PIN. If you did not do this, your account is already safe — everything is paused. Sign in when you can and look over your main page.',
+          'Turning it back on takes your passkey or PIN. If you did not do this, your account is safe as it is. Sign in when you can and look over your main page.',
         ),
       f,
       '#a3271f',
     );
     const text =
-      `The kill switch on your OpenSwitchboard account was just activated.\n\n` +
-      `All of your wants and haves are paused and your agents' tokens are suspended. ` +
-      `Nothing will match, be disclosed, or be accepted while it is on.\n\n` +
-      `To turn things back on, sign in at ${v.counterUrl} and confirm with your PIN.\n\n` +
-      `If you did not do this, your account is already safe — everything is paused. ` +
+      `Everything is stopped.\n\n` +
+      `All of your wants and haves are stopped, and your assistants cannot act for you. ` +
+      `Nothing will match, be shared or be accepted until you turn it back on.\n\n` +
+      `Turning it back on takes your passkey or PIN, at ${v.counterUrl}\n\n` +
+      `If you did not do this, your account is safe as it is. ` +
       `Sign in when you can and look over your main page.\n\n` +
       footerText(f);
     return { subject, html, text };
   }
-  const subject = 'OpenSwitchboard: kill switch is off';
+  const subject = 'OpenSwitchboard: everything is back on';
   const html = shell(
     h1('Everything is back on.') +
       para(
-        'The kill switch on your account was just turned off with your PIN. Your wants and haves are back in matching and your agents&#39; tokens work again.',
+        'Your wants and haves are back in matching, and your assistants can act for you again.',
       ) +
-      center(button(v.counterUrl, 'Open your account')) +
-      small('If you did not do this, hit the kill switch again from your account and change your PIN.'),
+      center(button(v.counterUrl, 'Open your main page')) +
+      small(
+        'If you did not do this, press Stop all wants and haves on your main page, then change your PIN or passkey.',
+      ),
     f,
     HAVE,
   );
   const text =
-    `The kill switch on your OpenSwitchboard account was just turned off with your PIN.\n\n` +
-    `Your wants and haves are back in matching and your agents' tokens work again.\n\n` +
-    `If you did not do this, hit the kill switch again at ${v.counterUrl} and change your PIN.\n\n` +
+    `Everything is back on.\n\n` +
+    `Your wants and haves are back in matching, and your assistants can act for you again.\n\n` +
+    `If you did not do this, press Stop all wants and haves on your main page at ${v.counterUrl}, ` +
+    `then change your PIN or passkey.\n\n` +
     footerText(f);
   return { subject, html, text };
 }
@@ -847,6 +852,10 @@ export function renderScreeningRejected(
 export type SecurityNoticeEvent =
   | 'agent-authorized'
   | 'pin-changed'
+  /** A first PIN, on an account that already held a passkey. */
+  | 'pin-set'
+  /** A PIN set through the lost-passkey road, behind an emailed code alone. */
+  | 'pin-set-by-code'
   | 'passkey-added'
   | 'agent-key-created';
 
@@ -855,8 +864,10 @@ export function renderSecurityNotice(
   f: FooterLinks,
 ): EmailContent {
   const subject = {
-    'agent-authorized': 'OpenSwitchboard: a new agent was authorised',
+    'agent-authorized': 'OpenSwitchboard: a new assistant was authorised',
     'pin-changed': 'OpenSwitchboard: your PIN was changed',
+    'pin-set': 'OpenSwitchboard: a PIN was set',
+    'pin-set-by-code': 'OpenSwitchboard: a PIN was set with an emailed code',
     'passkey-added': 'OpenSwitchboard: a passkey was added',
     'agent-key-created': 'OpenSwitchboard: a new agent key was created',
   }[v.event];
@@ -865,14 +876,20 @@ export function renderSecurityNotice(
   const namedHtml = v.agentName ? ` (&#8220;${esc(v.agentName)}&#8221;)` : '';
   const namedText = v.agentName ? ` ("${v.agentName}")` : '';
   const line = {
-    'agent-authorized': `A new agent${namedHtml} was just authorised to use your account.`,
+    'agent-authorized': `A new assistant${namedHtml} was just authorised to use your account.`,
     'pin-changed': 'The PIN on your account was just changed.',
+    'pin-set': 'A PIN was just set on your account. It approves things alongside your passkey.',
+    'pin-set-by-code':
+      'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new agent key${namedHtml} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
   }[v.event];
   const textLine = {
-    'agent-authorized': `A new agent${namedText} was just authorised to use your account.`,
+    'agent-authorized': `A new assistant${namedText} was just authorised to use your account.`,
     'pin-changed': 'The PIN on your account was just changed.',
+    'pin-set': 'A PIN was just set on your account. It approves things alongside your passkey.',
+    'pin-set-by-code':
+      'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new agent key${namedText} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
   }[v.event];
@@ -886,7 +903,7 @@ export function renderSecurityNotice(
       para(line) +
       (isRevokeGate ? center(button(v.counterUrl, 'Review and revoke')) : '') +
       small(
-        'If this was you, all good. If it was someone else, hit the kill switch — one tap pauses everything.' +
+        'If this was you, all good. If it was someone else, press Stop all wants and haves on your main page.' +
           (isRevokeGate ? '' : ` Sign in at <a href="${esc(v.counterUrl)}" style="color:${MUTED}">${esc(v.counterUrl)}</a> to look.`),
       ),
     f,
@@ -895,8 +912,8 @@ export function renderSecurityNotice(
   const text =
     `${textLine}\n\n` +
     (isRevokeGate ? `Review and revoke:\n${v.counterUrl}\n\n` : '') +
-    `If this was you, all good. If it was someone else, hit the kill switch — ` +
-    `one tap pauses everything.` +
+    `If this was you, all good. If it was someone else, press Stop all wants ` +
+    `and haves on your main page.` +
     (isRevokeGate ? '' : ` Sign in at ${v.counterUrl} to look.`) +
     `\n\n` +
     footerText(f);

@@ -114,7 +114,7 @@ function fakePool(rows: Record<string, any[]>) {
   return {
     query: async (sql: string) => {
       const s = sql.replace(/\s+/g, ' ').trim();
-      if (s.startsWith('SELECT id, account_id, pin_ok_until, oauth_ctx FROM counter_sessions')) {
+      if (s.startsWith('SELECT id, account_id, pin_ok_until, elevated_via, oauth_ctx FROM counter_sessions')) {
         return {
           rows: [{ id: 'sess-1', account_id: ACCOUNT, pin_ok_until: null, oauth_ctx: null }],
           rowCount: 1,
@@ -171,7 +171,7 @@ const get = (url: string) =>
   app.inject({
     method: 'GET',
     url,
-    headers: { host: 'my.test', cookie: 'osb_counter=osb_cs_test-session' },
+    headers: { host: 'my.test', cookie: '__Host-osb_counter=osb_cs_test-session' },
   });
 
 // ---------------------------------------------------------------------------

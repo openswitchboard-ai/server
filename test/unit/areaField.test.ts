@@ -59,7 +59,7 @@ const cfg = {
 } as unknown as Config;
 
 const ACCOUNT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-const SIGNED_IN = 'osb_counter=osb_cs_a-signed-in-session';
+const SIGNED_IN = '__Host-osb_counter=osb_cs_a-signed-in-session';
 
 let app: FastifyInstance;
 

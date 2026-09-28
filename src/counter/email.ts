@@ -16,6 +16,7 @@ import {
   renderSettlementProposed,
   renderSettlementUpdate,
   renderVerification,
+  type SecurityNoticeEvent,
   type SettlementUpdateEvent,
 } from '../email/templates.js';
 import { baseFooterLinks, emailAccountContext, sendEmail } from '../email/send.js';
@@ -106,7 +107,7 @@ export async function sendSecurityNoticeEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  event: 'agent-authorized' | 'pin-changed' | 'passkey-added' | 'agent-key-created',
+  event: SecurityNoticeEvent,
   agentName?: string,
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);

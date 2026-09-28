@@ -46,6 +46,7 @@ import * as humanLinks from '../../src/domain/humanLinks.js';
 import { dispatchTool, TOOLS } from '../../src/mcp/tools.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import { hashPin } from '../../src/counter/pin.js';
+import { pinAttemptLimiter } from '../../src/abuseLimit.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import { OsbError } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
@@ -137,6 +138,12 @@ interface World {
   channelId: string | null;
   /** The conversation budget, one row per side of this introduction. */
   windows: Map<string, { started_at: Date; messages_sent: number; granted_via: string }>;
+  /** Ana holds the have on this introduction: she is the one selling. */
+  anaSells?: boolean;
+  /** Which ceremony opened the window, as the last elevation wrote it. */
+  elevatedVia?: string | null;
+  /** A PIN set by emailed-code recovery counts in full from here. */
+  pinMoneyFrom?: Date | null;
 }
 let world: World;
 
@@ -144,8 +151,8 @@ const theMatch = () => ({
   id: MATCH,
   card_want: CARD_W,
   card_have: CARD_H,
-  account_want: ANA,
-  account_have: BEPPE,
+  account_want: world.anaSells ? BEPPE : ANA,
+  account_have: world.anaSells ? ANA : BEPPE,
   score: 0.8,
   category: 'goods.bicycle.mountain',
   stage: world.stage,
@@ -229,6 +236,7 @@ function fakePool() {
                 id: 'sess-1',
                 account_id: ANA,
                 pin_ok_until: world.elevatedUntil,
+                elevated_via: world.elevatedVia ?? null,
                 oauth_ctx: null,
               },
             ])
@@ -236,12 +244,23 @@ function fakePool() {
       }
       if (/UPDATE counter_sessions SET pin_ok_until/.test(sql)) {
         world.elevatedUntil = new Date(Date.now() + 5 * 60_000);
+        world.elevatedVia = params[2] ?? null;
         return rows([]);
+      }
+      if (/SELECT pin_money_from FROM accounts/.test(sql)) {
+        return rows([{ pin_money_from: world.pinMoneyFrom ?? null }]);
       }
 
       // ---- accounts ----
-      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
-        return rows([{ pin_hash: pinHash, pin_failed_attempts: 0, pin_locked_until: null }]);
+      if (/SET pin_failed_attempts = pin_failed_attempts \+ 1/.test(sql)) {
+        return rows([
+          {
+            pin_hash: pinHash,
+            pin_failed_attempts: 0,
+            pin_locked_until: null,
+            pin_money_from: world.pinMoneyFrom ?? null,
+          },
+        ]);
       }
       if (/SELECT hears_via FROM accounts/.test(sql)) return rows([{ hears_via: world.hearsVia }]);
       if (/SELECT arrangement FROM accounts/.test(sql)) {
@@ -466,6 +485,9 @@ beforeEach(async () => {
     windows: new Map(),
   };
   linkSeq = 0;
+  // The per-account pacing on PIN tries is per process, and this file presses
+  // one account all day long.
+  pinAttemptLimiter.reset();
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
   process.env.COUNTER_LINK_HMAC_KEY = 'a'.repeat(64);
   process.env.COUNTER_COOKIE_KEY = 'b'.repeat(64);
@@ -482,7 +504,7 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     url,
     headers: {
       host: 'my.test',
-      cookie: `osb_counter=${SID}`,
+      cookie: `__Host-osb_counter=${SID}`,
       ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
     },
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
@@ -542,7 +564,7 @@ describe('(a) share your name', () => {
   it('asks one question, and the press is what records the go-ahead', async () => {
     const t = linkFrom(await respond({ intro_id: MATCH, action: 'opt_in' }));
     const page = await inject('GET', `/a/${t}`);
-    expect(page.body).toContain('Share your first name and area with the other side?');
+    expect(page.body).toContain('Share your first name and suburb with the other side?');
     expect(page.body).toContain('Confirm with your PIN');
     // Reading the question does not answer it.
     expect(world.optins.size).toBe(0);
@@ -658,10 +680,12 @@ describe('(b) send a number', () => {
 
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
     expect(page.statusCode).toBe(200);
-    // Stage 3, so the other person has a name to use.
-    // Ana is the buyer, so it is the bike she is after, never 'your' bike.
-    expect(page.body).toContain('Send $440 AUD to Sam for the mountain bike you are after?');
-    expect(page.body).toContain('>Send<');
+    // Ana is the buyer, so she OFFERS a figure for the bike she is after,
+    // never 'your' bike, and never as if she were the one asking a price.
+    expect(page.body).toContain('Offer $440 AUD for the Mountain bike?');
+    expect(page.body).toContain('>Offer $440<');
+    expect(page.body).toContain('Nothing is agreed until one of you accepts, and that takes a press too.');
+    expect(page.body).toContain('This link works once. Money takes your PIN every time.');
     expect(page.body).toContain('>Not now<');
     expect(page.body).toContain('Confirm with your PIN');
     expect(page.body).toContain('Can collect Saturday.');
@@ -683,11 +707,22 @@ describe('(b) send a number', () => {
     expect(world.links[0].decision).toBe('approved');
   });
 
-  it('before the names step it says "the other side" rather than inventing one', async () => {
+  it('asks the same question before the names step, and names nobody', async () => {
     world.stage = 2;
     const { link } = await mint();
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(page.body).toContain('Send $440 AUD to the other side for the mountain bike you are after?');
+    expect(page.body).toContain('Offer $440 AUD for the Mountain bike?');
+    expect(page.body).not.toContain('Sam');
+  });
+
+  it('a seller asks a price for their own thing, and never reads as paying', async () => {
+    world.anaSells = true;
+    const { link, say } = await mint();
+    expect(say).toContain('whether to ask $440 AUD for your');
+    const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
+    expect(page.body).toMatch(/<h1>Ask \$440 AUD for your [A-Z][^<]*\?<\/h1>/);
+    expect(page.body).toContain('>Offer it at $440<');
+    expect(page.body).not.toMatch(/Send \$440/);
   });
 
   it('"Not now" sends nothing and carries no reason', async () => {
@@ -766,7 +801,7 @@ describe('(c) accept a number', () => {
     const t = encodeURIComponent(tokenOf(link));
     const page = await inject('GET', `/a/${t}`);
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('Sam wants $430 AUD for the mountain bike you are after.');
+    expect(page.body).toContain('Accept $430 AUD for the Mountain bike?');
     expect(page.body).toContain('>Accept<');
     expect(page.body).toContain('>Not now<');
     expect(page.body).toContain('Confirm with your PIN');
@@ -785,11 +820,12 @@ describe('(c) accept a number', () => {
     expect(world.links[0].decision).toBe('approved');
   });
 
-  it('before the names step it says "the other side" rather than inventing one', async () => {
+  it('asks the same question before the names step, and names nobody', async () => {
     world.stage = 2;
     const { link } = await mint();
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(page.body).toContain('The other side wants $430 AUD for the mountain bike you are after.');
+    expect(page.body).toContain('Accept $430 AUD for the Mountain bike?');
+    expect(page.body).not.toContain('Sam');
   });
 
   it('"Not now" agrees nothing and carries no reason', async () => {
@@ -836,14 +872,15 @@ describe('(c) accept a number', () => {
     const r = await mint();
     expect(r.link).toContain('/a/');
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(r.link))}`);
-    expect(page.body).toContain('Sam wants $430 AUD for the mountain bike you are after.');
+    expect(page.body).toContain('Accept $430 AUD for the Mountain bike?');
   });
 
-  it('says nothing is left to accept once the figure has moved on', async () => {
+  it('says nothing is left to accept once the figure has moved on, without naming a state', async () => {
     const { link } = await mint();
     world.offerState = 'declined';
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(page.body).toContain('there is nothing left to accept');
+    expect(page.body).toContain('That figure is no longer on the table.');
+    expect(page.body).not.toContain('declined');
   });
 
   it('refuses a figure that is no longer live, in plain words', async () => {
@@ -1470,22 +1507,44 @@ describe('money asks at the press, whatever the window', () => {
     world.offerState = 'proposed';
     const page = await inject('GET', `/approvals/offer/${OFFER}`);
     expect(page.statusCode).toBe(200);
+    // The same one-question page the assistant's link opens (28 September
+    // 2026): one sentence, the same buttons, none of the old labelled boxes.
+    expect(page.body).toContain('<h1>Accept $430 AUD for the Mountain bike?</h1>');
     expect(page.body).toContain('Confirm with your PIN');
     expect(page.body).not.toContain('<input type="hidden" name="pin" value="">');
-    // The second-opinion nudge is gone from this page.
-    expect(page.body).not.toContain('second opinion');
     expect(page.body).not.toContain('Worth a second look');
-    // The expiry reads as a time, never a raw UTC string.
-    expect(page.body).not.toContain('GMT');
-    expect(page.body).toMatch(/<div class="k">Offer expires<\/div><div class="v"><time datetime="[^"]+"[^>]*>/);
+    expect(page.body).not.toContain('You are agreeing to');
+    expect(page.body).not.toContain('class="headline"');
+    // No link on this road, so nothing about one working once.
+    expect(page.body).toContain('action="/approve" id="oneQuestion"');
+    expect(page.body).toContain('name="action" value="offer-accept"');
+    expect(page.body).not.toContain('This link works once.');
+    expect(page.body).toContain('Money takes your PIN every time.');
     const bare = await inject('POST', '/approve', {
       action: 'offer-accept',
       ref_id: OFFER,
-      decision: 'approve',
+      decision: 'yes',
       pin: '',
     });
     expect(bare.statusCode).toBe(401);
     expect(world.offerState).toBe('proposed');
+    const pressed = await inject('POST', '/approve', {
+      action: 'offer-accept',
+      ref_id: OFFER,
+      decision: 'yes',
+      pin: PIN,
+    });
+    expect(pressed.statusCode).toBe(200);
+    expect(world.offerState).toBe('accepted-by-human');
+    // The link road's own words, and a way back to the main page instead of
+    // back to the assistant.
+    expect(pressed.body).toContain('<h1>Accepted</h1>');
+    expect(pressed.body).toContain('The number is agreed. Your assistant takes it from here.');
+    expect(pressed.body).toContain('>Back to your main page<');
+    expect(pressed.body).not.toContain('<p class="lead" data-done>');
+    expect(pressed.body).not.toContain('Approved');
+    // Nothing the assistant is holding was minted or spent on this road.
+    expect(world.links).toHaveLength(0);
   });
 
   it('names the thing in the reader\'s own words, never the shelf', async () => {
@@ -1498,10 +1557,10 @@ describe('money asks at the press, whatever the window', () => {
           : base.query(sql, params),
     } as any);
     const page = await inject('GET', `/approvals/offer/${OFFER}`);
-    expect(page.body).toMatch(/<div class="k">For<\/div><div class="v">Trek hardtail<\/div>/);
+    expect(page.body).toContain('Accept $430 AUD for the Trek hardtail?');
     const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
     const q = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-    expect(q.body).toContain('for the trek hardtail you are after');
+    expect(q.body).toContain('Accept $430 AUD for the Trek hardtail?');
   });
 
   it('sharing names keeps the window: an elevated session is asked for nothing', async () => {
@@ -1513,5 +1572,97 @@ describe('money asks at the press, whatever the window', () => {
     const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '' });
     expect(pressed.statusCode).toBe(200);
     expect([...world.optins]).toEqual([[ANA, 'counter']]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// A PIN SET BY AN EMAILED CODE WAITS FOR MONEY (28 September 2026). The
+// lost-passkey road (routes.ts, /pin/recover) sets a PIN behind an emailed
+// code alone, so for 24 hours money presses refuse it and say when it will
+// work, and the passkey keeps working. The everyday presses take it at once,
+// and the window it opens is the emailed code's kind, not the PIN's.
+// ---------------------------------------------------------------------------
+describe('a PIN that emailed-code recovery set', () => {
+  beforeEach(() => {
+    world.pinMoneyFrom = new Date(Date.now() + 24 * 3_600_000);
+    world.collectUntil = null;
+  });
+
+  it('moves no money for its first 24 hours, and says from when', async () => {
+    const { link } = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 440, ccy: 'AUD' });
+    const t = encodeURIComponent(tokenOf(link));
+    const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+    expect(pressed.statusCode).toBe(403);
+    expect(pressed.json().error).toBe('pin_held');
+    expect(pressed.json().error_description).toMatch(/^A new PIN can move money from .+\. Your passkey works now\.$/);
+    expect(world.offers).toHaveLength(0);
+    // The link is still good for the passkey, or for the PIN tomorrow.
+    expect(world.links[0].used_at).toBeNull();
+  });
+
+  it('accepting a figure waits too', async () => {
+    world.offerState = 'proposed';
+    const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+    const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
+      decision: 'yes',
+      pin: PIN,
+    });
+    expect(pressed.statusCode).toBe(403);
+    expect(world.offerState).toBe('proposed');
+  });
+
+  it('shares names at once, and the window it opens is the emailed code\'s kind', async () => {
+    world.stage = 2;
+    const { link } = await humanLinks.shareNameLink(cfg, ANA, MATCH);
+    const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
+      decision: 'yes',
+      pin: PIN,
+    });
+    expect(pressed.statusCode).toBe(200);
+    expect([...world.optins]).toEqual([[ANA, 'counter']]);
+    expect(world.elevatedVia).toBe('code');
+  });
+
+  it('once its day has come, it is a PIN like any other', async () => {
+    world.pinMoneyFrom = new Date(Date.now() - 60_000);
+    const { link } = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 440, ccy: 'AUD' });
+    const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
+      decision: 'yes',
+      pin: PIN,
+    });
+    expect(pressed.statusCode).toBe(200);
+    expect(world.offers).toHaveLength(1);
+    expect(world.elevatedVia).toBe('pin');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SIGNING IN COMES BACK TO THE LINK (28 September 2026).
+// ---------------------------------------------------------------------------
+describe('a link opened while signed out', () => {
+  const signedOut = (method: 'GET' | 'POST', url: string, body?: Record<string, string>) =>
+    app.inject({
+      method,
+      url,
+      headers: {
+        host: 'my.test',
+        ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
+      },
+      ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
+    });
+
+  it('asks for a sign-in, keeps the link, and spends nothing', async () => {
+    const { link } = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 440, ccy: 'AUD' });
+    const token = tokenOf(link);
+    const page = await signedOut('GET', `/a/${encodeURIComponent(token)}`);
+    expect(page.statusCode).toBe(401);
+    expect(page.body).toContain('<h1>Sign in to see this</h1>');
+    expect(page.body).toContain("You'll come straight back here.");
+    expect(page.body).toContain('<a class="btn" href="/login">Sign in</a>');
+    expect(page.body).not.toContain('open the link your assistant gave you again');
+    const cookies = ([] as string[]).concat(page.headers['set-cookie'] as any);
+    expect(cookies.some((c) => c.startsWith(`__Host-osb_return=/a/${token};`))).toBe(true);
+    expect(world.links[0].used_at).toBeNull();
   });
 });

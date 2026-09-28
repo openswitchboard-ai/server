@@ -17,8 +17,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   ACCOUNTLESS_VERIFICATIONS_PER_HOUR,
   accountlessVerificationCeiling,
+  anonymousSessionLimiter,
   areaSuggestLimiter,
   killSwitchLimiter,
+  pinAttemptLimiter,
   rateLimitBypassed,
   verificationEmailLimiter,
 } from '../abuseLimit.js';
@@ -105,7 +107,15 @@ import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
 import * as sess from './session.js';
-import { hashPin, pinFormatOk, verifyPinAttempt, PIN_ELEVATION_MINUTES } from './pin.js';
+import {
+  clearPinHold,
+  hashPin,
+  holdRecoveredPin,
+  pinFormatOk,
+  pinHeldUntil,
+  verifyPinAttempt,
+  PIN_ELEVATION_MINUTES,
+} from './pin.js';
 import {
   createVerification,
   verificationRateLimited,
@@ -133,7 +143,12 @@ import {
 } from './matchStory.js';
 import { buildSteps, readStoryFacts } from '../domain/matchStory.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
-import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
+import {
+  acceptAnomalyLine,
+  counterpartyIsNew,
+  offerAmountAnomaly,
+  settlementAnomalyLine,
+} from './anomalies.js';
 import * as wa from './webauthn.js';
 import * as creds from './credentials.js';
 import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
@@ -170,6 +185,20 @@ async function readersOwnPhrase(
   const cardId = accountId === m.account_want ? m.card_want : m.card_have;
   const r = await getPool().query('SELECT category, kind FROM cards WHERE id = $1', [cardId]);
   return ownThingPhrase(r.rows[0]?.category ?? m.category, r.rows[0]?.kind ?? null).words;
+}
+
+/**
+ * The thing's name at the start of it, as a person would write it: "Trek" for
+ * "trek". Nothing else in it changes. Canonicalised words arrive lower-cased,
+ * and a heading that reads "your trek" looks like a typo.
+ */
+function firstUp(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+/** Minor units back to the figure a person reads, for the money words. */
+function fromMinor(minor: number, ccy: string): number {
+  return isZeroDecimal(ccy) ? minor : minor / 100;
 }
 
 /** Every registered human-page route (method + url), recorded at registration
@@ -253,13 +282,30 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     /** The three lines a settlement charges the buyer, written out for a
      *  human. The seller receives the agreed amount in full; the introductory
      *  fee and the card processing are the buyer's, itemised. */
-    const settlementMoneyLines = (row: {
+    type SettlementMoneyRow = {
       amount: string;
       ccy: string;
       fee_amount_minor?: number | null;
       processing_fee_minor?: number | null;
       buyer_total_minor?: number | null;
-    }) => {
+    };
+    /** The same three lines in minor units, for pages that write them as sentences. */
+    const settlementMinorLines = (row: SettlementMoneyRow) => {
+      const amountMinor = toMinorUnits(Number(row.amount), row.ccy);
+      const stored =
+        row.buyer_total_minor != null &&
+        row.processing_fee_minor != null &&
+        row.fee_amount_minor != null;
+      return stored
+        ? {
+            amountMinor,
+            feeMinor: row.fee_amount_minor!,
+            processingMinor: row.processing_fee_minor!,
+            buyerTotalMinor: row.buyer_total_minor!,
+          }
+        : settlementBreakdown(amountMinor, cfg);
+    };
+    const settlementMoneyLines = (row: SettlementMoneyRow) => {
       const amountMinor = toMinorUnits(Number(row.amount), row.ccy);
       // Once a Checkout Session exists the row holds the exact figures the
       // buyer was shown, and those are what both humans keep seeing. Before
@@ -302,7 +348,13 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           req.log.warn({ purpose }, 'verification email refused: the send queue is full');
           return 'Our email sending is backed up right now, so no code went out. Try again in a minute.';
         }
-        req.log.warn({ err }, 'verification email send failed; showing code page with delay note');
+        // The name and the HTTP status only: an SES error message quotes the
+        // recipient address back, and that would sit in the log for good
+        // (the same rule as src/email/send.ts).
+        req.log.warn(
+          { err_name: (err as any)?.name, http_status: (err as any)?.$metadata?.httpStatusCode },
+          'verification email send failed; showing code page with delay note',
+        );
         return 'Our email sending is congested right now, so the code may take a while to arrive. This page keeps working — enter the code once it lands.';
       }
     };
@@ -312,7 +364,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       try {
         await fn();
       } catch (err) {
-        req.log.warn({ err, what }, 'notification email failed; action completed anyway');
+        req.log.warn(
+          { what, err_name: (err as any)?.name, http_status: (err as any)?.$metadata?.httpStatusCode },
+          'notification email failed; action completed anyway',
+        );
       }
     };
 
@@ -374,6 +429,24 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return creds.nextStepFor(a, await credentialsOf(accountId, a), {
         hasOauthCtx: !!s.oauthCtx,
       });
+    };
+
+    /**
+     * Where a person goes the moment they have signed in. Onboarding and a
+     * pending authorisation come first, as they always did; once there is
+     * nothing of that left, a person who was sent to sign in from a link goes
+     * back to that link (session.ts, takeReturnPath) rather than to the main
+     * page with the link lost in the chat. The cookie is spent either way.
+     */
+    const afterSignIn = async (
+      req: FastifyRequest,
+      reply: FastifyReply,
+      accountId: string,
+      s: Session,
+    ): Promise<string> => {
+      const next = await nextStep(accountId, s);
+      if (next !== '/') return next;
+      return sess.takeReturnPath(req, reply) ?? next;
     };
 
     // ------------------------------------------------------------------
@@ -588,7 +661,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // A save on settings, the arrangement or the shared profile lands back
       // here with one line saying so. The line is chosen from a fixed list by
       // a short code, so nothing typed into the address bar reaches the page.
-      let notice: string | undefined = SAVED_NOTICES[String((req.query as any)?.saved ?? '')];
+      let notice: string | undefined = Object.hasOwn(SAVED_NOTICES, String((req.query as any)?.saved ?? '')) ? SAVED_NOTICES[String((req.query as any)?.saved ?? '')] : undefined;
       let awaitingConnect = false;
       const authorized = String((req.query as any)?.authorized ?? '');
       if (/^[0-9a-f-]{36}$/i.test(authorized)) {
@@ -693,7 +766,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-register: per-IP verification-email limit hit');
         return html(
           reply,
@@ -796,18 +869,28 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const existing = await sess.loadSession(req);
       let s: Session = (await sess.rotateSession(reply, existing, account.id)) as Session;
       // An account with NO PIN holds a passkey, and a person can be standing
-      // at a device that has never seen it. The emailed code is that account's
-      // whole recovery already, so here it is also the sensitive-action
-      // ceremony: without this the person signs in and then dead-ends at a
-      // page asking for a passkey the device cannot produce. An account WITH a
-      // PIN keeps the old rule — a code signs you in and the PIN approves —
-      // because that account has a second credential to be asked for.
+      // at a device that has never seen it. So here the emailed code opens a
+      // window for the everyday presses — sharing names, keeping a
+      // conversation going — and without it the person signs in and dead-ends
+      // at a page asking for a passkey the device cannot produce.
+      //
+      // It is marked as a CODE window (28 September 2026), because anyone who
+      // can read the inbox can produce one. Setting a first PIN, adding a
+      // passkey, making an agent key and authorising an assistant all look for
+      // the passkey itself, and money never leans on a window at all. The way
+      // through for a lost passkey is /pin/recover, which says out loud what
+      // it does. An account WITH a PIN keeps the old rule — a code signs you
+      // in and the PIN approves.
       const acct: any = await getAccount(account.id);
       if (!acct?.pin_hash) {
-        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
-        s = { ...s, pinOkUntil: new Date(Date.now() + PIN_ELEVATION_MINUTES * 60_000) } as Session;
+        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'code');
+        s = {
+          ...s,
+          pinOkUntil: new Date(Date.now() + PIN_ELEVATION_MINUTES * 60_000),
+          elevatedVia: 'code',
+        } as Session;
       }
-      return reply.redirect(await nextStep(account.id, s), 303);
+      return reply.redirect(await afterSignIn(req, reply, account.id, s), 303);
     };
 
     counter.post('/verify', async (req, reply) => {
@@ -842,13 +925,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       return html(reply, pages.credentialChoicePage());
     });
 
-    /** The gate in front of changing how you approve things. */
+    /** The gate in front of changing how you approve things. Only a window
+     *  the account's own credential opened counts here, never an emailed code. */
     const freshCeremonyOr = async (
       reply: FastifyReply,
       s: Session,
       next: string,
     ): Promise<boolean> => {
-      const c = await ceremonyFor(s.accountId!, sess.isElevated(s));
+      const c = await ceremonyFor(s.accountId!, sess.isStronglyElevated(s));
       if (!creds.needsFreshCeremony(c, c.elevated)) return true;
       void html(reply, pages.confirmItsYouPage(c, next));
       return false;
@@ -915,16 +999,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!s) return;
       const b: any = req.body ?? {};
       const next = CONFIRM_TARGETS.has(String(b.next ?? '')) ? String(b.next) : '/security';
-      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
+      const okNow = await credentialCeremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       return reply.redirect(next, 303);
     });
 
     /**
      * The way through on a device that holds neither the passkey nor a PIN:
-     * the same emailed code that signs a person in. It is the account's own
-     * recovery either way, so on an account with no PIN it also stands as the
-     * sensitive-action ceremony — see finishVerification.
+     * the same emailed code that signs a person in. On an account with no PIN
+     * it opens a window for the everyday presses, and nothing that changes a
+     * credential, makes a key or moves money — see finishVerification.
      */
     counter.post('/confirm/code', async (req, reply) => {
       const s = await requireSession(req, reply);
@@ -947,7 +1031,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // The same per-IP rail sign-in has. This door sends an email too, and
       // being behind a session is no protection from one session pressing it
       // in a loop and draining the sending quota.
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'confirm-code: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1000,24 +1084,150 @@ in on this device and lets you approve what is waiting.</p>
           setUp ? pages.pinSetPage(msg, { hasPin: !!a?.pin_hash }) : pages.credentialChoicePage(msg),
           400,
         );
-      if (!pinFormatOk(pin)) return refuse('The PIN must be 6 to 12 digits.');
+      if (!pinFormatOk(pin)) return refuse('The PIN must be six to twelve digits.');
       if (pin !== String(b.pin2 ?? '')) return refuse('The two entries did not match.');
-      if (creds.needsFreshCeremony({ hasPin: !!a?.pin_hash, hasPasskey: await wa.accountHasPasskey(s.accountId!) }, sess.isElevated(s))) {
+      const hadPasskey = await wa.accountHasPasskey(s.accountId!);
+      if (creds.needsFreshCeremony({ hasPin: !!a?.pin_hash, hasPasskey: hadPasskey }, sess.isStronglyElevated(s))) {
         // Adding or changing a PIN on an account that already holds something
-        // needs a fresh ceremony of whatever it holds now.
-        return html(reply, pages.confirmItsYouPage(await ceremonyFor(s.accountId!, sess.isElevated(s), a), '/pin'), 403);
+        // needs a fresh ceremony of whatever it holds now. An emailed code is
+        // not one: that road is /pin/recover, which holds the new PIN back.
+        return html(reply, pages.confirmItsYouPage(await ceremonyFor(s.accountId!, sess.isStronglyElevated(s), a), '/pin'), 403);
       }
       await ops.setAccountPin(s.accountId!, await hashPin(pin));
+      // Set behind the account's own credential (or inside registration, where
+      // there is none yet), so nothing about this PIN waits.
+      await clearPinHold(s.accountId!);
       // Setting a PIN is itself a ceremony: the person just proved it twice.
       // That is what lets them go straight on to add a passkey.
-      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
-      if (a?.pin_hash) {
-        // 0.E security notice: an EXISTING PIN was just changed.
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'pin');
+      // 0.E security notice: an EXISTING PIN was just changed, or a first PIN
+      // went onto an account that already held a passkey. Both are a new way
+      // into the account, and the person hears about either.
+      const noticeEvent = a?.pin_hash ? 'pin-changed' : hadPasskey ? 'pin-set' : undefined;
+      if (noticeEvent) {
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
-        if (email) await notifyBestEffort(req, 'pin-changed', () => sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-changed'));
+        if (email) await notifyBestEffort(req, noticeEvent, () => sendSecurityNoticeEmail(cfg, email, s.accountId!, noticeEvent));
       }
       if (a?.status === 'pending') return reply.redirect('/passkey', 303);
       return reply.redirect('/security', 303);
+    });
+
+    // ------------------------------------------------------------------
+    // LOST YOUR PASSKEY (28 September 2026).
+    //
+    // An account holding a passkey and no PIN, on a device that cannot produce
+    // the passkey. The emailed code is the only thing that can stand behind a
+    // PIN here, and anyone who can read the inbox can produce one, so this
+    // road says what it does and does three things about it:
+    //   - the security notice goes out the moment the PIN is set;
+    //   - the new PIN moves no money for 24 hours (pin.ts, pin_money_from);
+    //   - for those 24 hours it counts as the emailed code would, so it cannot
+    //     add a passkey, make an agent key or authorise an assistant either,
+    //     which would otherwise be a way round the wait.
+    // The passkey keeps working throughout.
+    // ------------------------------------------------------------------
+    /** Only an account holding a passkey and no PIN comes this way. */
+    const recoverable = async (accountId: string): Promise<boolean> => {
+      const c = await credentialsOf(accountId);
+      return c.hasPasskey && !c.hasPin;
+    };
+
+    counter.get('/pin/recover', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (!(await recoverable(s.accountId!))) return reply.redirect('/security', 303);
+      // Just confirmed with the passkey: the ordinary road, with no wait.
+      if (sess.isStronglyElevated(s)) return reply.redirect('/pin', 303);
+      if (sess.isCodeElevated(s)) return html(reply, pages.pinRecoverPage());
+      return html(reply, pages.pinRecoverStartPage());
+    });
+
+    counter.post('/pin/recover/code', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (!(await recoverable(s.accountId!))) return reply.redirect('/security', 303);
+      const email = await ops.accountEmail(s.accountId!, 'sign-in-code');
+      if (!email) {
+        return html(
+          reply,
+          pages.messagePage('No address on file', '<p>There is no email address on this account.</p>'),
+          409,
+        );
+      }
+      if (await verificationRateLimited(email)) {
+        return html(
+          reply,
+          pages.messagePage('Too many codes', '<p>Too many codes have gone out for this account. Wait a few minutes.</p>'),
+          429,
+        );
+      }
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'pin-recover-code: per-IP verification-email limit hit');
+        return html(
+          reply,
+          pages.messagePage('Too many codes', '<p>Too many codes have gone out from this connection. Wait an hour.</p>'),
+          429,
+        );
+      }
+      const v = await createVerification(cfg, email, 'login');
+      const note = await sendCodeOrNote(req, email, v, 'login');
+      return html(
+        reply,
+        pages.codeEntryPage({
+          verificationId: v.id,
+          action: '/pin/recover/verify',
+          heading: 'Check your email.',
+          error: note,
+        }),
+      );
+    });
+
+    counter.post('/pin/recover/verify', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (!(await recoverable(s.accountId!))) return reply.redirect('/security', 303);
+      const b: any = req.body ?? {};
+      const vid = String(b.verification_id ?? '');
+      const result = await verifyByCode(cfg, vid, String(b.code ?? ''));
+      const a: any = await getAccount(s.accountId!);
+      const hashes = result.ok ? emailHashes(result.email!) : undefined;
+      if (!result.ok || !a || (hashes!.v2 !== a.email_hash_v2 && hashes!.v1 !== a.email_hash)) {
+        return html(
+          reply,
+          pages.codeEntryPage({
+            verificationId: vid,
+            action: '/pin/recover/verify',
+            heading: 'Check your email.',
+            error: 'That code did not work. Check the most recent email, or go back and have a fresh one sent.',
+          }),
+          401,
+        );
+      }
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'code');
+      return html(reply, pages.pinRecoverPage());
+    });
+
+    counter.post('/pin/recover', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (!(await recoverable(s.accountId!))) return reply.redirect('/security', 303);
+      if (!sess.isElevated(s)) return html(reply, pages.pinRecoverStartPage(), 403);
+      const b: any = req.body ?? {};
+      const pin = String(b.pin ?? '');
+      if (!pinFormatOk(pin)) return html(reply, pages.pinRecoverPage('The PIN must be six to twelve digits.'), 400);
+      if (pin !== String(b.pin2 ?? '')) return html(reply, pages.pinRecoverPage('The two entries did not match.'), 400);
+      // The hold first, then the PIN, so the new PIN never stands unheld.
+      const from = await holdRecoveredPin(s.accountId!);
+      await ops.setAccountPin(s.accountId!, await hashPin(pin));
+      // At once, and before the page answers: this is the one line that tells
+      // the owner if it was not them.
+      const email = await ops.accountEmail(s.accountId!, 'security-notice');
+      if (email) {
+        await notifyBestEffort(req, 'pin-set-by-code', () =>
+          sendSecurityNoticeEmail(cfg, email, s.accountId!, 'pin-set-by-code'),
+        );
+      }
+      return html(reply, pages.pinRecoveredPage(await plainWhen(s.accountId!, from)));
     });
 
     // ------------------------------------------------------------------
@@ -1032,6 +1242,7 @@ in on this device and lets you approve what is waiting.</p>
         reply,
         pages.passkeyOfferPage({
           hasPasskey: await wa.accountHasPasskey(s.accountId!),
+          hasPin: !!a?.pin_hash,
           skipLabel: a?.status === 'pending' ? 'Skip for now' : 'Back',
         }),
       );
@@ -1041,8 +1252,9 @@ in on this device and lets you approve what is waiting.</p>
       const s = await requireSession(req, reply);
       if (!s) return;
       // Fitting a second key to an account that already holds one is a
-      // sensitive action, so it takes the ceremony the account can do now.
-      if (creds.needsFreshCeremony(await credentialsOf(s.accountId!), sess.isElevated(s))) {
+      // sensitive action, so it takes the ceremony the account can do now —
+      // its own credential, never a window an emailed code opened.
+      if (creds.needsFreshCeremony(await credentialsOf(s.accountId!), sess.isStronglyElevated(s))) {
         return reply.code(403).send({ error: 'ceremony_required' });
       }
       const options = await wa.registrationOptions(cfg, s.accountId!, 'OpenSwitchboard account');
@@ -1059,7 +1271,7 @@ in on this device and lets you approve what is waiting.</p>
       await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
       // A successful passkey ceremony is a sensitive-action ceremony, and
       // enrolling one is a ceremony too: the device just checked the person.
-      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'passkey');
       if (had) {
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
         if (email) {
@@ -1224,7 +1436,7 @@ in on this device and lets you approve what is waiting.</p>
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-login: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1257,7 +1469,14 @@ in on this device and lets you approve what is waiting.</p>
 
     counter.post('/login/passkey/options', async (req, reply) => {
       let s = await sess.loadSession(req);
-      if (!s) s = await sess.createSession(reply, null);
+      if (!s) {
+        // A row for somebody not signed in yet, so it is paced per connection.
+        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && anonymousSessionLimiter.limited(req.ip)) {
+          req.log.warn({ ip: req.ip }, 'login-passkey-options: per-IP anonymous session limit hit');
+          return reply.code(429).send({ error: 'rate_limited', error_description: 'Too many tries from this connection. Wait a minute.' });
+        }
+        s = await sess.createSession(reply, null);
+      }
       const options = await wa.authenticationOptions(cfg);
       await sess.setWebauthnChallenge(s.id, options.challenge);
       return reply.send(options);
@@ -1279,8 +1498,13 @@ in on this device and lets you approve what is waiting.</p>
         live = await sess.rotateSession(reply, s, accountId);
       }
       // A successful passkey ceremony is a sensitive-action ceremony.
-      await sess.elevateSession(live.id, PIN_ELEVATION_MINUTES);
-      const next = await nextStep(accountId, { ...live, accountId } as Session);
+      await sess.elevateSession(live.id, PIN_ELEVATION_MINUTES, 'passkey');
+      const signedIn = { ...live, accountId } as Session;
+      // Signing in goes back to the link that sent the person here; a ceremony
+      // on a page they are already on goes nowhere new.
+      const next = b.elevate_only
+        ? await nextStep(accountId, signedIn)
+        : await afterSignIn(req, reply, accountId, signedIn);
       return reply.send({ ok: true, next });
     });
 
@@ -1288,7 +1512,9 @@ in on this device and lets you approve what is waiting.</p>
     // The sensitive-action ceremony (elevation).
     //
     // An elevated session passes whatever elevated it — a PIN, a passkey, or
-    // an emailed code on an account that has no PIN. Otherwise the PIN is
+    // an emailed code on an account that has no PIN — for the everyday
+    // presses. Changing a credential, an agent key and authorising an
+    // assistant take credentialCeremony below instead. Otherwise the PIN is
     // checked. An account with no PIN has nothing to check here: its page put
     // the passkey ceremony on the button itself, so reaching this without
     // elevation means the ceremony has yet to happen, and the answer says so
@@ -1313,11 +1539,22 @@ in on this device and lets you approve what is waiting.</p>
     };
 
     /** The PIN itself: checked, counted against the lockout, and on success
-     *  the window opens for the presses that may lean on it. */
+     *  the window opens for the presses that may lean on it. A PIN that
+     *  emailed-code recovery set, and that is still waiting, opens only the
+     *  kind of window the emailed code would have. */
     const pinCheck = async (s: Session, reply: FastifyReply, pin: string): Promise<boolean> => {
+      // Ten tries a minute per account before argon2 or the database is
+      // asked anything; the lockout in pin.ts is the rule, this is the pacing.
+      if (pinAttemptLimiter.limited(s.accountId!)) {
+        void reply.code(429).send({
+          error: 'too_many_attempts',
+          error_description: 'Too many tries. Wait a minute and try again.',
+        });
+        return false;
+      }
       const check = await verifyPinAttempt(s.accountId!, pin);
       if (check.ok) {
-        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, check.heldUntil ? 'code' : 'pin');
         return true;
       }
       if (check.locked) {
@@ -1330,6 +1567,68 @@ in on this device and lets you approve what is waiting.</p>
         void reply.code(401).send({ error: 'pin_incorrect' });
       }
       return false;
+    };
+
+    /** A moment in the account's own clock, the way a person reads it. */
+    const plainWhen = async (accountId: string, d: Date): Promise<string> => {
+      const tz = (await getTimezone(accountId)) ?? 'UTC';
+      const said = new Intl.DateTimeFormat('en-AU', {
+        timeZone: tz,
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+        .format(d)
+        .replace('Sept', 'Sep')
+        .replace(' am', 'am')
+        .replace(' pm', 'pm');
+      return tz === 'UTC' ? `${said} UTC` : said;
+    };
+
+    /** The sentence a PIN that is still waiting out a recovery is refused with. */
+    const heldPinRefusal = async (reply: FastifyReply, accountId: string, held: Date, what: string) => {
+      void reply.code(403).send({
+        error: 'pin_held',
+        error_description: `A new PIN can ${what} from ${await plainWhen(accountId, held)}. Your passkey works now.`,
+      });
+    };
+
+    // ------------------------------------------------------------------
+    // THE CREDENTIAL CEREMONY (28 September 2026).
+    //
+    // Changing how you approve things, making an agent key and authorising an
+    // assistant hand out something that lasts. An emailed code is the
+    // account's recovery and anyone who can read the inbox can produce one,
+    // so none of these lean on a window it opened: they take the passkey, or
+    // a PIN that is not still waiting out a recovery.
+    // ------------------------------------------------------------------
+    const credentialCeremony = async (
+      s: Session,
+      reply: FastifyReply,
+      pin: string,
+    ): Promise<boolean> => {
+      if (sess.isStronglyElevated(s)) return true;
+      const a: any = await getAccount(s.accountId!);
+      if (!a?.pin_hash) {
+        // A passkey, pressed on the page; or, on an account that holds
+        // nothing yet, nothing that could stand behind this at all.
+        const hasPasskey = await wa.accountHasPasskey(s.accountId!);
+        void reply.code(401).send({
+          error: 'ceremony_required',
+          error_description: hasPasskey
+            ? 'This takes your passkey. Go back and press again with it.'
+            : 'Set up a passkey or a PIN first.',
+        });
+        return false;
+      }
+      const held = await pinHeldUntil(s.accountId!);
+      if (held) {
+        await heldPinRefusal(reply, s.accountId!, held, 'do this');
+        return false;
+      }
+      return pinCheck(s, reply, pin);
     };
 
     // ------------------------------------------------------------------
@@ -1363,7 +1662,7 @@ in on this device and lets you approve what is waiting.</p>
           });
           return false;
         }
-        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES);
+        await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'passkey');
         return true;
       }
       const a: any = await getAccount(s.accountId!);
@@ -1372,6 +1671,13 @@ in on this device and lets you approve what is waiting.</p>
           error: 'ceremony_required',
           error_description: 'Money takes your passkey every time. Go back and press again with it.',
         });
+        return false;
+      }
+      // A PIN that emailed-code recovery set moves no money until its day
+      // comes round. The passkey still does.
+      const held = await pinHeldUntil(s.accountId!);
+      if (held) {
+        await heldPinRefusal(reply, s.accountId!, held, 'move money');
         return false;
       }
       return pinCheck(s, reply, String(b?.pin ?? ''));
@@ -1394,136 +1700,103 @@ in on this device and lets you approve what is waiting.</p>
     });
 
     // ------------------------------------------------------------------
-    // Approvals. Link entry (/a/:token) is single-use + 15-min TTL;
-    // the dashboard reaches the same page via a session-authorized route.
+    // The payment approval. Link entry (/a/:token) is single-use + 15-min
+    // TTL; the main page reaches the same page through the signed-in session.
+    // The figures and the heading follow the one-question pages below, and the
+    // money is written out in sentences rather than labelled boxes.
     // ------------------------------------------------------------------
-    const approvalView = async (
+    const settlementApprovalView = async (
       accountId: string,
-      action: 'offer-accept' | 'stage3-disclosure' | 'settlement-approve',
       refId: string,
-    ): Promise<pages.ApprovalView | { error: string }> => {
-      const anomalies: string[] = [];
-      const facts: pages.ApprovalView['facts'] = [];
-      let collectProfile: pages.ApprovalView['collectProfile'];
-      if (action === 'settlement-approve') {
-        const s = await settlements.getSettlement(refId);
-        if (!s) return { error: 'This settlement no longer exists.' };
-        let party: 'buyer' | 'seller';
-        try {
-          party = settlements.partyOf(s, accountId);
-        } catch {
-          return { error: 'This settlement is not yours to decide.' };
-        }
-        const myApproval = party === 'buyer' ? s.buyer_approved_at : s.seller_approved_at;
-        if (myApproval) return { error: 'You have already approved this settlement.' };
-        if (!['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(s.state)) {
-          return { error: `This settlement is ${s.state} — nothing to decide.` };
-        }
-        const m = await getMatch(s.match_id);
-        const money = settlementMoneyLines(s);
-        // Both humans see the same three lines, in the same words, on the page
-        // where they act: the buyer pays the fees, itemised, and the seller
-        // receives the agreed amount in full.
-        facts.push(
-          {
-            k: party === 'buyer' ? 'You would pay' : 'You would be paid',
-            v: party === 'buyer' ? money.buyerTotal : money.amount,
-          },
-          { k: 'For', v: m ? await readersOwnThingLabel(m, accountId) : 'your match' },
-          { k: 'What you agreed', v: money.amount },
-          { k: 'Introductory fee', v: `${money.fee}, paid by the buyer` },
-          { k: 'Card processing', v: `${money.processing}, at Stripe's standard rate` },
-          { k: 'The seller receives', v: `${money.amount} in full` },
-          {
-            k: 'How it works',
-            v: party === 'buyer' ? 'held until you confirm receipt' : 'held until the buyer confirms receipt',
-          },
-        );
-        const counterparty = party === 'buyer' ? s.seller_account : s.buyer_account;
-        const cp = await newCounterpartyAnomaly(counterparty, 'settlement-approve');
-        if (cp) anomalies.push(cp.text);
-      } else if (action === 'offer-accept') {
-        const r = await getPool().query(
-          `SELECT o.*, m.category, m.account_want, m.account_have FROM offers o
-           JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
-          [refId],
-        );
-        const o = r.rows[0];
-        if (!o) return { error: 'This offer no longer exists.' };
-        if (o.account_want !== accountId && o.account_have !== accountId) {
-          return { error: 'This offer is not yours to decide.' };
-        }
-        if (o.proposer_account === accountId) return { error: 'You proposed this offer; the other side decides.' };
-        if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
-          return { error: `This offer is ${o.state} — nothing to decide.` };
-        }
-        // The second-opinion nudge that stood here went on 27 September 2026:
-        // the page accepts, and anything else about the number is said to the
-        // assistant (OFFER_ELSEWHERE_LINE, under the button). Real warnings —
-        // an unusual amount, a brand-new account — still show below.
-        const om = await getMatch(o.match_id);
-        facts.push(
-          { k: 'You are agreeing to', v: `${Number(o.amount)} ${o.ccy}` },
-          // The thing in the reader's own words, never the shelf's.
-          { k: 'For', v: om ? await readersOwnThingLabel(om, accountId) : categoryLeafLabel(o.category) },
-          // In the account's own clock where one is set; otherwise UTC,
-          // labelled, and rewritten by the page's clock script.
-          { k: 'Offer expires', v: stepTime(new Date(o.expiry), await getTimezone(accountId)), raw: true },
-        );
-        const amountAnomaly = await offerAmountAnomaly(accountId, o.id, Number(o.amount));
-        if (amountAnomaly) anomalies.push(amountAnomaly.text);
-        const cp = await newCounterpartyAnomaly(o.proposer_account, 'offer-accept');
-        if (cp) anomalies.push(cp.text);
-      } else {
-        const m = await getMatch(refId);
-        if (!m || m.state !== 'open') return { error: 'This match is no longer open.' };
-        try {
-          sideOf(m, accountId);
-        } catch {
-          return { error: 'This match is not yours to decide.' };
-        }
-        const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
-        facts.push(
-          { k: 'What gets shared', v: 'first name + locality' },
-          { k: 'For', v: await readersOwnThingLabel(m, accountId) },
-          { k: 'Shared with', v: 'your matched counterparty' },
-        );
-        const cp = await newCounterpartyAnomaly(counterparty, 'stage3-disclosure');
-        if (cp) anomalies.push(cp.text);
-        // Nothing was ever asked for at sign-up, so the first time someone
-        // gets here the page asks for the two things it is about to share.
-        const own = await readSharedProfile(accountId, {
-          purpose: 'stage3-approval-page',
-          actor: accountId,
-          refs: { match_id: refId },
-        });
-        if (!profileIsFilled(own)) collectProfile = { firstName: own.firstName, locality: own.locality };
+    ): Promise<pages.SettlementApprovalView | { error: string }> => {
+      const s = await settlements.getSettlement(refId);
+      if (!s) return { error: 'This payment no longer exists.' };
+      let party: 'buyer' | 'seller';
+      try {
+        party = settlements.partyOf(s, accountId);
+      } catch {
+        return { error: 'This payment is not yours to decide.' };
       }
+      const myApproval = party === 'buyer' ? s.buyer_approved_at : s.seller_approved_at;
+      if (myApproval) return { error: 'You have already approved this payment.' };
+      if (!['proposed', 'approved-by-buyer', 'approved-by-seller'].includes(s.state)) {
+        return { error: 'This payment has moved on, so there is nothing to decide here.' };
+      }
+      const m = await getMatch(s.match_id);
+      const thing = m ? firstUp(await readersOwnPhrase(m, accountId)) : '';
+      const b = settlementMinorLines(s);
+      const said = (minor: number) => templateMoney(fromMinor(minor, s.ccy), s.ccy);
+      // Both humans see the same figures in the same words: the buyer pays the
+      // fees, itemised, and the seller receives the agreed amount in full.
+      const question =
+        party === 'buyer'
+          ? `Agree to pay ${said(b.buyerTotalMinor)}${thing ? ` for the ${thing}` : ''}?`
+          : `Agree to be paid ${said(b.amountMinor)}${thing ? ` for your ${thing}` : ''}?`;
+      const detail =
+        party === 'buyer'
+          ? [
+              `That is the ${said(b.amountMinor)} you agreed, a ${said(b.feeMinor)} introductory fee, and ${said(b.processingMinor)} for card processing at Stripe's standard rate.`,
+              `The money is held until you say it arrived as agreed. The seller then receives the ${said(b.amountMinor)} in full.`,
+            ]
+          : [
+              `The buyer pays ${said(b.buyerTotalMinor)}: the ${said(b.amountMinor)} you agreed, a ${said(b.feeMinor)} introductory fee, and ${said(b.processingMinor)} for card processing.`,
+              `The money is held until the buyer says it arrived as agreed. You then receive the ${said(b.amountMinor)} in full.`,
+            ];
+      const counterparty = party === 'buyer' ? s.seller_account : s.buyer_account;
+      const anomaly = settlementAnomalyLine(await counterpartyIsNew(counterparty));
+      if (anomaly) detail.push(anomaly);
       return {
-        action,
         refId,
-        facts,
-        anomalies,
-        collectProfile,
+        question,
+        detail,
         ...(await ceremonyFor(accountId, false)),
-        postPath: '/approve',
       };
     };
+
+    /** The done pages both roads share, word for word. */
+    const ACCEPTED_DONE: [string, string] = [
+      'Accepted',
+      '<p>The number is agreed. Your assistant takes it from here.</p>',
+    ];
+    const sharedDone = (both: boolean): [string, string] => [
+      'Shared',
+      both
+        ? '<p>Both of you have said yes. Your first name and suburb are with them now, and theirs with you.</p>'
+        : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
+    ];
+
+    /** Where a done page sends the person: back to the assistant on the link
+     *  road, back to the main page on the other. */
+    const doneFor = (road: 'link' | 'session', title: string, body: string) =>
+      road === 'link'
+        ? pages.donePage(title, body)
+        : pages.donePage(title, body, '/', 'Back to your main page');
 
     // ------------------------------------------------------------------
     // The one-question pages. One sentence, two buttons, the PIN ceremony
     // where identity or money moves. The link is bound to the exact figures
     // and ids the question names, and the PRESS is what consumes it — so the
     // page can be re-read, and a second press fails plainly.
+    //
+    // TWO ROADS, ONE PAGE (28 September 2026). The assistant's link opens this
+    // page; so does the button on the main page (/approvals/offer/:id and
+    // /approvals/match/:id), through the signed-in session. The session road
+    // mints nothing and spends nothing: it builds the same question from the
+    // same rows, posts to /approve, and leaves any link the assistant is
+    // holding exactly as it was.
     // ------------------------------------------------------------------
+    type QuestionRow = Pick<ApprovalLinkRow, 'action' | 'ref_id' | 'amount' | 'ccy' | 'payload'>;
+
     const oneQuestionView = async (
       accountId: string,
-      row: ApprovalLinkRow,
-      token: string,
+      row: QuestionRow,
+      road: { token: string } | 'session',
     ): Promise<pages.OneQuestionView | { error: string }> => {
       const figures = links.readPayload(row) ?? {};
       const base = {
-        token,
+        ...(road === 'session'
+          ? { session: { action: row.action, refId: row.ref_id } }
+          : { token: road.token }),
         noLabel: 'Not now',
         // Elevation is stamped on by the caller, which has the session.
         ...(await ceremonyFor(accountId, false)),
@@ -1533,40 +1806,44 @@ in on this device and lets you approve what is waiting.</p>
       if (row.action === 'offer-send') {
         const m = await getMatch(row.ref_id);
         if (!m || m.state !== 'open') return { error: 'This introduction is no longer open.' };
+        let side: 'want' | 'have';
         try {
-          sideOf(m, accountId);
+          side = sideOf(m, accountId);
         } catch {
           return { error: 'This introduction is not yours.' };
         }
-        const other = m.account_want === accountId ? m.account_have : m.account_want;
-        // The other person's first name, once they have both shared it. Before
-        // that there is nobody to name, so the sentence says "the other side".
-        const name =
-          m.stage >= 3
-            ? await ops.disclosedFirstName(
-                accountId,
-                other,
-                { match_id: row.ref_id },
-                'one-question-page',
-              )
-            : undefined;
         const figure = templateMoney(Number(figures.amount), String(figures.ccy ?? ''));
+        const short = `$${figure.slice(1).split(' ')[0]}`;
+        const thing = firstUp(await readersOwnPhrase(m, accountId));
         const detail: string[] = [];
         if (figures.note) detail.push(`With your line: “${String(figures.note)}”.`);
-        detail.push(
-          'It binds nothing — either of you can still say no — and accepting anything comes back to a page like this one.',
-        );
+        detail.push('Nothing is agreed until one of you accepts, and that takes a press too.');
+        // Which way the money goes decides the words. A seller asks a price for
+        // their own thing; a buyer offers one for the thing they are after. A
+        // swap has no buyer and no seller, and says neither.
+        if (m.swap) {
+          return {
+            ...base,
+            question: `Put ${figure} to the other side?`,
+            detail,
+            yesLabel: 'Send this figure',
+            needsPin: true,
+          };
+        }
         return {
           ...base,
-          question: `Send ${figure} to ${name ?? 'the other side'}${aboutThing(await readersOwnPhrase(m, accountId), m.account_have === accountId ? 'have' : 'want')}?`,
+          question:
+            side === 'have'
+              ? `Ask ${figure}${thing ? ` for your ${thing}` : ''}?`
+              : `Offer ${figure}${thing ? ` for the ${thing}` : ''}?`,
           detail,
-          yesLabel: 'Send',
+          yesLabel: side === 'have' ? `Offer it at ${short}` : `Offer ${short}`,
           needsPin: true,
         };
       }
       if (row.action === 'offer-accept') {
         const r = await getPool().query(
-          `SELECT o.*, m.category, m.stage, m.account_want, m.account_have, m.card_want, m.card_have FROM offers o
+          `SELECT o.*, m.category, m.stage, m.swap, m.account_want, m.account_have, m.card_want, m.card_have FROM offers o
            JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
           [row.ref_id],
         );
@@ -1579,26 +1856,36 @@ in on this device and lets you approve what is waiting.</p>
           return { error: "That figure is your own side's. Only the other person can accept it." };
         }
         if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
-          return { error: `That figure is ${o.state} — there is nothing left to accept.` };
+          return {
+            error:
+              o.state === 'accepted-by-human'
+                ? 'That figure has already been accepted.'
+                : 'That figure is no longer on the table.',
+          };
         }
-        // The amount and currency come off the signed row, so the figure on the
-        // page is the figure the link was minted for.
-        const figure = templateMoney(Number(row.amount), String(row.ccy ?? ''));
-        const name =
-          o.stage >= 3
-            ? await ops.disclosedFirstName(
-                accountId,
-                o.proposer_account,
-                { match_id: o.match_id },
-                'one-question-page',
-              )
-            : undefined;
+        // On the link road the amount and currency come off the signed row, so
+        // the figure on the page is the figure the link was minted for. The
+        // main page's road has no link, and reads the offer itself.
+        const figure =
+          row.amount !== null && row.amount !== undefined
+            ? templateMoney(Number(row.amount), String(row.ccy ?? ''))
+            : templateMoney(Number(o.amount), String(o.ccy ?? ''));
+        const thing = firstUp(await readersOwnPhrase(o, accountId));
+        const detail: string[] = [];
+        // One line about anything out of the ordinary, and only when the
+        // figure itself is (anomalies.ts).
+        const anomaly = acceptAnomalyLine(
+          await offerAmountAnomaly(accountId, o.id, Number(o.amount)),
+          await counterpartyIsNew(o.proposer_account),
+        );
+        if (anomaly) detail.push(anomaly);
         // One line (27 September 2026): the page accepts, and everything else
         // about the number is said to the assistant.
-        const detail: string[] = [pages.OFFER_ELSEWHERE_LINE];
+        detail.push(pages.OFFER_ELSEWHERE_LINE);
+        const own = o.swap ? '' : o.account_have === accountId ? 'your' : 'the';
         return {
           ...base,
-          question: `${name ?? 'The other side'} ${o.account_have === accountId ? 'offers' : 'wants'} ${figure}${aboutThing(await readersOwnPhrase(o, accountId), o.account_have === accountId ? 'have' : 'want')}.`,
+          question: `Accept ${figure}${thing && own ? ` for ${own} ${thing}` : ''}?`,
           detail,
           yesLabel: 'Accept',
           needsPin: true,
@@ -1627,7 +1914,7 @@ in on this device and lets you approve what is waiting.</p>
         });
         return {
           ...base,
-          question: 'Share your first name and area with the other side?',
+          question: 'Share your first name and suburb with the other side?',
           detail: [
             'A first name and a suburb are the only things that ever cross. Nothing goes over until the other side says yes too.',
             'Once you press it, your assistant picks the result up on its next look.',
@@ -1896,6 +2183,12 @@ in on this device and lets you approve what is waiting.</p>
      * token only ever travels in the redirect, never in the page's HTML.
      */
     counter.get('/open/:id', async (req, reply) => {
+      const signedIn = await sess.loadSession(req);
+      if (!signedIn?.accountId) {
+        // Signed out: sign in, then come straight back to this request.
+        sess.rememberReturnPath(reply, `/open/${String((req.params as any).id)}`);
+        return reply.redirect('/login', 303);
+      }
       const s = await requireSession(req, reply);
       if (!s) return;
       const found = await links.openLinkFor(s.accountId!, String((req.params as any).id));
@@ -1927,17 +2220,10 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.wrongAccountPage(), 401);
       }
       if (!s?.accountId) {
-        // Not signed in: the link is NOT consumed; sign in and come back to it.
-        return html(
-          reply,
-          pages.donePage(
-            'Sign in to review this',
-            '<p>Sign in, then open the link your assistant gave you again.</p>',
-            '/login',
-            'Sign in',
-          ),
-          401,
-        );
+        // Not signed in: the link is NOT consumed. The path is kept, and
+        // signing in comes straight back to it (session.ts, takeReturnPath).
+        sess.rememberReturnPath(reply, `/a/${token}`);
+        return html(reply, pages.signInToSeePage(), 401);
       }
       if (await stopped(s.accountId, reply)) return;
       if (row.action === 'report' && !(await holdsCredential(s.accountId))) {
@@ -1964,25 +2250,22 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.photoPage(v));
       }
       if (links.isOneQuestionAction(row.action)) {
-        const q = await oneQuestionView(s.accountId, row, token);
+        const q = await oneQuestionView(s.accountId, row, { token });
         if ('error' in q) {
           return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
         }
         q.elevated = creds.elevationFor(row.action, sess.isElevated(s));
         return html(reply, pages.oneQuestionPage(q));
       }
-      // A settlement approval burns on the PRESS, the way the one-question
-      // pages do: this page is about money, and somebody who opens the link,
-      // looks at the figures and comes back to it in the evening must not find
-      // their own link dead because they read it once. The other two still
-      // burn on the view, where opening the page IS the disclosure.
-      const burnsOnPress = row.action === 'settlement-approve';
-      if (!burnsOnPress) await consumeLink(row.id);
-      const v = await approvalView(s.accountId, row.action, row.ref_id);
+      // The one left is a payment approval. It burns on the PRESS, the way the
+      // one-question pages do: this page is about money, and somebody who
+      // opens the link, looks at the figures and comes back to it in the
+      // evening must not find their own link dead because they read it once.
+      if (row.action !== 'settlement-approve') return html(reply, pages.linkDeadPage('invalid'), 404);
+      const v = await settlementApprovalView(s.accountId, row.ref_id);
       if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
-      if (burnsOnPress) v.linkToken = token;
-      return html(reply, pages.mainPage(v));
+      v.linkToken = token;
+      return html(reply, pages.settlementApprovalPage(v));
     });
 
     /** The press. Verify, check the PIN, burn the link, then act. */
@@ -2007,16 +2290,8 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.wrongAccountPage(), 401);
       }
       if (!s?.accountId) {
-        return html(
-          reply,
-          pages.donePage(
-            'Sign in to review this',
-            '<p>Sign in, then open the link your assistant gave you again.</p>',
-            '/login',
-            'Sign in',
-          ),
-          401,
-        );
+        sess.rememberReturnPath(reply, `/a/${token}`);
+        return html(reply, pages.signInToSeePage(), 401);
       }
       if (await stopped(s.accountId, reply)) return;
       // The shelf press. No ceremony, and the shelf is checked BEFORE the link
@@ -2134,7 +2409,7 @@ in on this device and lets you approve what is waiting.</p>
       }
       const b: any = req.body ?? {};
       const decision = String(b.decision ?? '');
-      const q = await oneQuestionView(s.accountId, row, token);
+      const q = await oneQuestionView(s.accountId, row, { token });
       if ('error' in q) {
         await consumeLink(row.id);
         return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
@@ -2222,10 +2497,7 @@ in on this device and lets you approve what is waiting.</p>
         if (row.action === 'offer-accept') {
           await acceptOfferByHuman(row.ref_id, s.accountId!, 'counter', cfg);
           await links.recordLinkDecision(row.id, 'approved');
-          return html(
-            reply,
-            pages.donePage('Accepted', '<p>The number is agreed. Your assistant takes it from here.</p>'),
-          );
+          return html(reply, doneFor('link', ...ACCEPTED_DONE));
         }
         if (row.action === 'offer-send') {
           const placed = await proposeOffer(
@@ -2261,15 +2533,7 @@ in on this device and lets you approve what is waiting.</p>
           if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter', cfg);
           const r = await recordStage3OptIn(cfg, row.ref_id, s.accountId!, 'counter');
           await links.recordLinkDecision(row.id, 'approved');
-          return html(
-            reply,
-            pages.donePage(
-              'Shared',
-              r.both
-                ? '<p>Both of you have said yes. Your first name and area are with them now, and theirs with you.</p>'
-                : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
-            ),
-          );
+          return html(reply, doneFor('link', ...sharedDone(r.both)));
         }
         if (row.action === 'conversation-renew') {
           // The press that starts a fresh window for this side, and the whole
@@ -2349,31 +2613,46 @@ in on this device and lets you approve what is waiting.</p>
       }
     });
 
+    // ------------------------------------------------------------------
+    // The main page's road to the same questions. Accepting a figure and
+    // sharing names open the SAME one-question page the assistant's link does
+    // (oneQuestionView, road 'session'), and the press lands on the same done
+    // page with a way back to the main page instead of back to the assistant.
+    // ------------------------------------------------------------------
+    const sessionQuestion = async (
+      reply: FastifyReply,
+      s: Session,
+      action: 'offer-accept' | 'stage3-disclosure',
+      refId: string,
+    ) => {
+      const q = await oneQuestionView(
+        s.accountId!,
+        { action, ref_id: refId, amount: null, ccy: null, payload: null },
+        'session',
+      );
+      if ('error' in q) return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+      q.elevated = creds.elevationFor(action, sess.isElevated(s));
+      return html(reply, pages.oneQuestionPage(q));
+    };
+
     counter.get('/approvals/offer/:id', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const v = await approvalView(s.accountId!, 'offer-accept', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
-      return html(reply, pages.mainPage(v));
+      return sessionQuestion(reply, s, 'offer-accept', String((req.params as any).id));
     });
 
     counter.get('/approvals/match/:id', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const v = await approvalView(s.accountId!, 'stage3-disclosure', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
-      return html(reply, pages.mainPage(v));
+      return sessionQuestion(reply, s, 'stage3-disclosure', String((req.params as any).id));
     });
 
     counter.get('/approvals/settlement/:id', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const v = await approvalView(s.accountId!, 'settlement-approve', String((req.params as any).id));
-      if ('error' in v) return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
-      v.elevated = creds.elevationFor(v.action, sess.isElevated(s));
-      return html(reply, pages.mainPage(v));
+      const v = await settlementApprovalView(s.accountId!, String((req.params as any).id));
+      if ('error' in v) return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(v.error)}</p>`));
+      return html(reply, pages.settlementApprovalPage(v));
     });
 
     counter.post('/approve', async (req, reply) => {
@@ -2382,8 +2661,10 @@ in on this device and lets you approve what is waiting.</p>
       const b: any = req.body ?? {};
       const action = String(b.action ?? '');
       const refId = String(b.ref_id ?? '');
-      const decision = String(b.decision ?? '');
-      if (!['offer-accept', 'stage3-disclosure', 'settlement-approve'].includes(action) || !refId) {
+      // 'yes' is what the one-question page sends; 'approve' what the payment
+      // page sends. They mean the same press.
+      const decision = String(b.decision ?? '') === 'yes' ? 'approve' : String(b.decision ?? '');
+      if (!['offer-accept', 'stage3-disclosure', 'settlement-approve'].includes(action) || !UUID_RE.test(refId)) {
         return reply.code(400).send({ error: 'bad_request' });
       }
       if (decision === 'decline') {
@@ -2394,115 +2675,127 @@ in on this device and lets you approve what is waiting.</p>
             await settlements.declineSettlement(settlements.counterAction(s.accountId!), refId);
           } catch (e: any) {
             if (!e?.notFound && !(e instanceof OsbError)) throw e;
-            return html(reply, pages.donePage('Nothing to decide', '<p>This settlement has moved on.</p>'));
+            return html(reply, doneFor('session', 'Nothing to decide', '<p>This payment has moved on.</p>'));
           }
           return html(
             reply,
-            pages.donePage('Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
+            doneFor('session', 'Declined', '<p>Nothing was paid or promised. No reason was sent.</p>'),
           );
         }
         else await declineMatch(refId, s.accountId!, cfg);
         return html(
           reply,
-          pages.donePage('Declined', '<p>Nothing was shared or accepted. No reason was sent.</p>'),
+          doneFor('session', 'Declined', '<p>Nothing was shared or accepted. No reason was sent.</p>'),
         );
       }
       if (decision !== 'approve') return reply.code(400).send({ error: 'bad_request' });
-      // Approving a disclosure with an empty profile means saying, right here,
-      // what gets shared. The boxes are checked BEFORE the PIN ceremony so a
-      // typo in a suburb never costs a PIN attempt.
-      let profileToSave: { firstName: string; locality: string } | undefined;
-      if (action === 'stage3-disclosure') {
-        const view = await approvalView(s.accountId!, 'stage3-disclosure', refId);
+
+      if (action === 'settlement-approve') {
+        const view = await settlementApprovalView(s.accountId!, refId);
         if ('error' in view) {
-          return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(view.error)}</p>`));
+          return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(view.error)}</p>`));
         }
-        if (view.collectProfile) {
-          const checked = validateSharedProfile({
-            firstName: b.first_name,
-            locality: b.locality,
-          });
-          if (!checked.ok) {
-            view.elevated = sess.isElevated(s);
-            view.collectProfile = {
-              firstName: String(b.first_name ?? ''),
-              locality: String(b.locality ?? ''),
-            };
-            return html(reply, pages.mainPage(view, checked.error), 400);
+        // Money: the PIN or the passkey at this press, whatever the window.
+        const okNow = await pressCeremony(s, reply, b, action);
+        if (!okNow) return;
+        // The link this page came from, spent here rather than when the page
+        // was opened. After the ceremony, so a mistyped PIN costs a retype and
+        // not the link. Absent when the person came from their own main page,
+        // which is not a one-use road. Bound to the account, the payment AND
+        // the action, so a link minted for anything else spends nothing here.
+        const linkToken = String(b.link_token ?? '');
+        if (linkToken) {
+          const check = await verifyLinkToken(linkToken);
+          if (!check.ok) {
+            const why = check.reason === 'used' || check.reason === 'expired' ? check.reason : 'invalid';
+            return html(reply, pages.linkDeadPage(why), why === 'invalid' ? 404 : 200);
           }
-          profileToSave = checked.value;
+          const linkRow = check.row as ApprovalLinkRow;
+          if (
+            linkRow.account_id !== s.accountId ||
+            linkRow.ref_id !== refId ||
+            linkRow.action !== action
+          ) {
+            return reply.code(400).send({ error: 'bad_request' });
+          }
+          if (!(await consumeLink(linkRow.id))) return html(reply, pages.linkDeadPage('used'));
         }
-      }
-      // Sensitive action. Money (an offer, a settlement) takes the PIN or the
-      // passkey at this press; the names step may lean on the window.
-      const okNow = await pressCeremony(s, reply, b, action);
-      if (!okNow) return;
-      // The link this page came from, spent here rather than when the page was
-      // opened. After the ceremony, so a mistyped PIN costs a retype and not
-      // the link. Absent when the person came from their own main page,
-      // which is not a one-use road.
-      const linkToken = String(b.link_token ?? '');
-      if (linkToken) {
-        const check = await verifyLinkToken(linkToken);
-        if (!check.ok) {
-          const why = check.reason === 'used' || check.reason === 'expired' ? check.reason : 'invalid';
-          return html(reply, pages.linkDeadPage(why), why === 'invalid' ? 404 : 200);
-        }
-        const linkRow = check.row as ApprovalLinkRow;
-        if (linkRow.account_id !== s.accountId || linkRow.ref_id !== refId) {
-          return reply.code(400).send({ error: 'bad_request' });
-        }
-        if (!(await consumeLink(linkRow.id))) return html(reply, pages.linkDeadPage('used'));
-      }
-      try {
-        if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter', cfg);
-        if (action === 'settlement-approve') {
-          const r = await settlements.approveSettlement(
-            settlements.counterAction(s.accountId!),
-            refId,
-          );
+        try {
+          const r = await settlements.approveSettlement(settlements.counterAction(s.accountId!), refId);
           // Seller onboarding starts at first settlement approval: make sure
           // the connected account exists the moment the seller says yes.
           if (r.row.seller_account === s.accountId && settlementsConfigured(cfg)) {
             await ensureSellerStripeAccount(cfg, s.accountId!, r.row);
           }
-          return reply.redirect(`/settlements/${refId}`, 303);
+        } catch (e: any) {
+          if (e instanceof OsbError) {
+            return html(
+              reply,
+              doneFor('session', 'Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
+              409,
+            );
+          }
+          if (e?.notFound) {
+            return html(reply, doneFor('session', 'Nothing to decide', '<p>This payment has moved on.</p>'));
+          }
+          throw e;
         }
+        return reply.redirect(`/settlements/${refId}`, 303);
+      }
+
+      // Accepting a figure or sharing names: the one-question page's own
+      // checks, boxes and done pages, reached through the session.
+      const q = await oneQuestionView(
+        s.accountId!,
+        { action: action as 'offer-accept' | 'stage3-disclosure', ref_id: refId, amount: null, ccy: null, payload: null },
+        'session',
+      );
+      if ('error' in q) {
+        return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
+      }
+      // Saying yes to the names question with nothing on file means saying,
+      // right here, what gets shared. The boxes are checked BEFORE the PIN
+      // ceremony, so a typo in a suburb never costs a PIN attempt.
+      let profileToSave: { firstName: string; locality: string } | undefined;
+      if (q.collectProfile) {
+        const checked = validateSharedProfile({ firstName: b.first_name, locality: b.locality });
+        if (!checked.ok) {
+          q.elevated = creds.elevationFor(action, sess.isElevated(s));
+          q.collectProfile = {
+            firstName: String(b.first_name ?? ''),
+            locality: String(b.locality ?? ''),
+          };
+          return html(reply, pages.oneQuestionPage(q, checked.error), 400);
+        }
+        profileToSave = checked.value;
+      }
+      // Money (a figure) takes the PIN or the passkey at this press; the names
+      // step may lean on the window.
+      const okNow = await pressCeremony(s, reply, b, action);
+      if (!okNow) return;
+      try {
         if (action === 'offer-accept') {
           await acceptOfferByHuman(refId, s.accountId!, 'counter', cfg);
-          return html(
-            reply,
-            pages.donePage('Approved', '<p>The settlement is agreed. Your agent can take it from here.</p>'),
-          );
+          return html(reply, doneFor('session', ...ACCEPTED_DONE));
         }
+        if (profileToSave) await saveSharedProfile(s.accountId!, profileToSave, 'counter', cfg);
         const r = await recordStage3OptIn(cfg, refId, s.accountId!, 'counter');
-        return html(
-          reply,
-          pages.donePage(
-            'Approved',
-            r.both
-              ? '<p>Both of you have opted in — your first name and locality are now mutually shared on this match.</p>'
-              : '<p>Your opt-in is recorded. Nothing is shared until the other side opts in too.</p>',
-          ),
-        );
-      } catch (e) {
+        return html(reply, doneFor('session', ...sharedDone(r.both)));
+      } catch (e: any) {
         // An empty profile at this point means the collection boxes were
         // skipped: send the person back to the page that asks for them.
         if (e instanceof OsbError && e.payload.code === 'CONSENT_REQUIRED') {
           return reply.redirect(`/approvals/match/${encodeURIComponent(refId)}`, 303);
         }
-        // Collection window still open on the holder's card: explain, don't 500.
-        if (e instanceof OsbError && e.payload.code === 'NOT_UNLOCKED_YET') {
+        if (e instanceof OsbError) {
           return html(
             reply,
-            pages.donePage(
-              'Not yet',
-              `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`,
-              '/',
-              'Back',
-            ),
+            doneFor('session', 'Not yet', `<p>${pages.esc(e.payload.human_action ?? 'This step is locked right now.')}</p>`),
             409,
           );
+        }
+        if (e?.notFound) {
+          return html(reply, doneFor('session', 'Nothing to decide', '<p>This is no longer yours to decide.</p>'));
         }
         throw e;
       }
@@ -3676,7 +3969,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           lastUsed: when(k.lastUsedAt),
           expires: when(k.expiresAt)!,
         })),
-        ...(await ceremonyFor(accountId, sess.isElevated(s))),
+        ...(await ceremonyFor(accountId, sess.isStronglyElevated(s))),
         atLimit: keys.length >= agentKeys.AGENT_KEY_MAX_LIVE,
       };
     };
@@ -3699,8 +3992,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           400,
         );
       }
-      // Sensitive action: PIN (or a passkey ceremony that elevated the session).
-      const okNow = await ceremony(s, reply, String(b.pin ?? ''));
+      // Sensitive action: the passkey or a PIN, never a window an emailed code
+      // opened, because a key lasts ninety days.
+      const okNow = await credentialCeremony(s, reply, String(b.pin ?? ''));
       if (!okNow) return;
       let made: Awaited<ReturnType<typeof agentKeys.createAgentKey>>;
       try {
@@ -3789,7 +4083,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.get('/areas', async (req, reply) => {
       const s = await sess.loadSession(req);
       if (!s?.accountId) return reply.code(401).send({ error: 'not_signed_in' });
-      if (!rateLimitBypassed(req.headers as any) && areaSuggestLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as any, cfg) && areaSuggestLimiter.limited(req.ip)) {
         return reply.code(429).send({ error: 'slow_down' });
       }
       const q = String((req.query as any)?.q ?? '');
@@ -4098,7 +4392,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-reverify: per-IP verification-email limit hit');
         return html(
           reply,
@@ -4153,13 +4447,24 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
             }
           : s?.oauthCtx;
       if (!ctx?.client_id) {
-        return html(reply, pages.messagePage('Nothing to authorize', '<p>No authorization request is pending.</p>'));
+        return html(reply, pages.messagePage('Nothing to authorise', '<p>There is no assistant waiting to be connected. Ask your assistant to connect again.</p>'));
       }
       const v = await validateAuthorizeRequest(ctx);
       if (v.error) {
         return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
       }
-      if (!s) s = await sess.createSession(reply, null);
+      if (!s) {
+        // A row for somebody not signed in yet, so it is paced per connection.
+        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && anonymousSessionLimiter.limited(req.ip)) {
+          req.log.warn({ ip: req.ip }, 'authorize: per-IP anonymous session limit hit');
+          return html(
+            reply,
+            pages.messagePage('Too many tries', '<p>Too many tries from this connection. Wait a minute, then ask your assistant to connect again.</p>'),
+            429,
+          );
+        }
+        s = await sess.createSession(reply, null);
+      }
       await sess.setOauthCtx(s.id, ctx);
       if (!s.accountId) return reply.redirect('/login', 303);
       const a: any = await getAccount(s.accountId);
@@ -4173,7 +4478,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
           '/authorize',
           {},
           v.client!.client_id,
-          await ceremonyFor(s.accountId, sess.isElevated(s as Session), a),
+          await ceremonyFor(s.accountId, sess.isStronglyElevated(s as Session), a),
           ctx.redirect_uri,
         ),
       );
@@ -4184,7 +4489,7 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
       if (!s) return;
       const ctx = s.oauthCtx;
       if (!ctx?.client_id) {
-        return html(reply, pages.messagePage('Nothing to authorize', '<p>No authorization request is pending.</p>'), 400);
+        return html(reply, pages.messagePage('Nothing to authorise', '<p>There is no assistant waiting to be connected. Ask your assistant to connect again.</p>'), 400);
       }
       const v = await validateAuthorizeRequest(ctx);
       if (v.error) {
@@ -4201,10 +4506,12 @@ restarted for its own TTL. The renewal is in your consent log.</p>`,
         if (ctx.state) target.searchParams.set('state', ctx.state);
         return reply.redirect(target.toString(), 303);
       }
-      // Handing an agent a key is a sensitive action. The pending request is
-      // cleared only once the ceremony is through, so a wrong PIN leaves the
-      // person on a page that still knows what they were being asked.
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      // Handing an agent a key is a sensitive action, and it takes the
+      // passkey or a PIN rather than a window an emailed code opened. The
+      // pending request is cleared only once the ceremony is through, so a
+      // wrong PIN leaves the person on a page that still knows what they were
+      // being asked.
+      const okNow = await credentialCeremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       await sess.setOauthCtx(s.id, null);
       const code = await createAuthCode({
