@@ -1255,7 +1255,8 @@ describe('how do you want to hear about things?', () => {
     expect(html).toContain('Each match and reply reaches me by email. Best suited to chat assistants.');
     expect(html).toContain('Through my assistant.');
     expect(html).toContain('My assistant checks on its own and provides updates back to me. Best suited to always-on agents.');
-    expect(html).not.toMatch(/[\s>]agents?\b/i);
+    // The approved option text (22 September) says "always-on agents"; nothing else may.
+    expect(html.replace('Best suited to always-on agents.', '')).not.toMatch(/[\s>]agents?\b/i);
     expect(html).toContain('action="/settings/hears-via"');
   });
 

@@ -122,7 +122,7 @@ describe('6. an SES event row holds no address', () => {
     const tick = src.slice(src.indexOf("case 'ttl-expiry'"), src.indexOf("case 'sequencer-tick'"));
     expect(tick).toContain('purgeOldEmailEvents()');
     expect(tick).toContain('purgeExpiredCounterSessions()');
-    expect(tick).toContain('// rf-content: call screening.rejectStuckScreening() here');
+    expect(tick).toContain('rejectStuckScreening()');
   });
 });
 
