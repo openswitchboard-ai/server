@@ -393,7 +393,7 @@ export const DETAIL_HUMAN_ACTION =
  * names is still one the count reads, which the suite asserts.
  */
 export const DETAIL_AND_RADIUS_HUMAN_ACTION =
-  'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. The last one goes in `reach`: "country", or the same radius if pick-up only. No part number is wanted. If they do not know, send it again with detail_unknown.';
+  'Ask your human these, then post again with the answers in `attributes`: brand, model, type, size, fits, material, condition. The last one goes in `reach`: "country", or "radius" with a distance if pick-up only. No part number is wanted. If they do not know, send it again with detail_unknown.';
 
 /**
  * THE SAME LINE FOR A SERVICE OR A SOCIAL POSTING.
