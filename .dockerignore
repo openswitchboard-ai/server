@@ -6,3 +6,12 @@ cdk.out
 realism-reports
 test
 .claude
+# Local run output and credentials: never in the build context. Patterns
+# with **/ match at any depth; a bare pattern matches the context root only.
+**/*-fresh.json
+**/*-fixed.json
+e2e-screenshots
+test-results
+docs
+**/*.pem
+**/.env*
