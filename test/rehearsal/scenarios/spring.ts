@@ -57,6 +57,10 @@ export const ALEX: FactSheet = {
     'You want to sell it by best offer — everybody who is interested puts in one figure — rather than naming an asking price.',
     'You would not take less than $10 for it. Only say that number if you are asked what your lowest is, or what you want for it.',
     'You are happy to post it anywhere in Australia. The buyer pays the postage.',
+    // By the wrap-up it is done (29 September 2026): the simulated seller said
+    // "we're all sorted" and then, asked, "still sorting the postage", and his
+    // assistant rightly left the posting up.
+    'Once you have told your assistant you are all sorted, the spring has been paid for and posted, and the whole thing is finished.',
     'You do not know what these usually sell for.',
     'You have no other sim racing gear to sell.',
     // WHAT A KEEN SELLER DOES WHEN SOMEBODY COMES FORWARD. Without this line
@@ -84,6 +88,7 @@ export const TONY: FactSheet = {
   facts: [
     'You are Tony. You live in Franklin, a suburb of Canberra, Australian Capital Territory, Australia.',
     'You own a set of Fanatec ClubSport V3 pedals.',
+    'Once you have told your assistant you are all sorted, you have paid and the spring has arrived, and the whole thing is finished.',
     'You want a used upgraded brake spring for them. Used is fine — you would prefer used.',
     // The founder's own position in the hand runs: "we are trying to match the
     // spring, even if the brake performance kit is probably the better part."
