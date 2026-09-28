@@ -103,7 +103,7 @@ describe('route isolation: agent credentials x counter routes', () => {
       url: '/mcp',
       headers: {
         host: 'mcp.test',
-        cookie: 'osb_counter=osb_cs_some-session-value',
+        cookie: '__Host-osb_counter=osb_cs_some-session-value',
         'content-type': 'application/json',
       },
       payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
@@ -489,20 +489,23 @@ describe('counter pages: copy-cull render suite', () => {
     { name: 'link-dead-expired', html: cpages.linkDeadPage('expired') },
     { name: 'link-dead-invalid', html: cpages.linkDeadPage('invalid') },
     {
+      // Accepting a figure from the main page: the one-question page, on the
+      // session road (28 September 2026).
       name: 'approval-offer',
-      html: cpages.mainPage({
-        action: 'offer-accept',
-        refId: 'ref-1',
-        facts: [
-          { k: 'You are agreeing to', v: '620 AUD' },
-          { k: 'For', v: LABEL },
-          { k: 'Offer expires', v: 'Tue, 01 Sep 2026 00:00:00 GMT' },
+      html: cpages.oneQuestionPage({
+        session: { action: 'offer-accept', refId: 'ref-1' },
+        question: `Accept $620 AUD for the ${LABEL}?`,
+        detail: [
+          'This is their first week on OpenSwitchboard, and this figure is 3 times your usual.',
+          cpages.OFFER_ELSEWHERE_LINE,
         ],
-        anomalies: ['3× your usual amount'],
+        yesLabel: 'Accept',
+        noLabel: 'Not now',
+        needsPin: true,
+        money: true,
         hasPin: true,
         hasPasskey: false,
         elevated: false,
-        postPath: '/approve',
       }),
     },
     {
@@ -537,41 +540,31 @@ describe('counter pages: copy-cull render suite', () => {
     },
     {
       name: 'approval-stage3-collect',
-      html: cpages.mainPage({
-        action: 'stage3-disclosure',
-        refId: 'm-1',
-        facts: [
-          { k: 'What gets shared', v: 'first name + locality' },
-          { k: 'For', v: LABEL },
-          { k: 'Shared with', v: 'your matched counterparty' },
-        ],
-        anomalies: [],
+      html: cpages.oneQuestionPage({
+        session: { action: 'stage3-disclosure', refId: 'm-1' },
+        question: 'Share your first name and suburb with the other side?',
+        yesLabel: 'Share',
+        noLabel: 'Not now',
+        needsPin: true,
         collectProfile: { firstName: '', locality: '' },
         hasPin: true,
         hasPasskey: false,
         elevated: false,
-        postPath: '/approve',
       }),
     },
     {
       name: 'approval-settlement',
-      html: cpages.mainPage({
-        action: 'settlement-approve',
+      html: cpages.settlementApprovalPage({
         refId: 's-1',
-        facts: [
-          { k: 'You would pay', v: '90.49 AUD' },
-          { k: 'For', v: LABEL },
-          { k: 'What you agreed', v: '87.65 AUD' },
-          { k: 'Introductory fee', v: '1.00 AUD, paid by the buyer' },
-          { k: 'Card processing', v: "1.84 AUD, at Stripe's standard rate" },
-          { k: 'The seller receives', v: '87.65 AUD in full' },
-          { k: 'How it works', v: 'held until you confirm receipt' },
+        question: `Agree to pay $90.49 AUD for the ${LABEL}?`,
+        detail: [
+          "That is the $87.65 AUD you agreed, a $1 AUD introductory fee, and $1.84 AUD for card processing at Stripe's standard rate.",
+          'The money is held until you say it arrived as agreed. The seller then receives the $87.65 AUD in full.',
+          'The other side of this payment joined this week.',
         ],
-        anomalies: [],
         hasPin: true,
         hasPasskey: false,
         elevated: false,
-        postPath: '/approve',
       }),
     },
     { name: 'settlement-buyer-pay', html: cpages.settlementPage(settlementView({ canPay: true })) },

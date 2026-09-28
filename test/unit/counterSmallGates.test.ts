@@ -169,9 +169,9 @@ describe('the rate-limit exemption compares bytes', () => {
     try {
       // 40 characters, 80 bytes: string length matched and buffer length did
       // not, which is what used to make timingSafeEqual throw.
-      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'é'.repeat(40) })).toBe(false);
-      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'y'.repeat(40) })).toBe(false);
-      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': token })).toBe(true);
+      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'é'.repeat(40) }, cfg)).toBe(false);
+      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'y'.repeat(40) }, cfg)).toBe(false);
+      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': token }, cfg)).toBe(true);
     } finally {
       delete process.env.RATELIMIT_BYPASS_TOKEN;
     }
@@ -243,36 +243,27 @@ describe('the renew-all link may be pressed once', () => {
 
 // ---------------------------------------------------------------------------
 describe('a settlement approval burns on the press', () => {
+  const view = {
+    refId: '00000000-0000-4000-8000-000000000000',
+    question: 'Agree to pay $406 AUD for the Mountain bike?',
+    detail: [],
+    hasPin: true,
+    hasPasskey: false,
+    elevated: false,
+  };
   it('the page carries its link back, so the press is what spends it', async () => {
     const cpages = await import('../../src/counter/pages.js');
-    const html = cpages.mainPage({
-      action: 'settlement-approve',
-      refId: '00000000-0000-4000-8000-000000000000',
-      facts: [{ k: 'Amount', v: '400 AUD' }],
-      anomalies: [],
-      hasPin: true,
-      hasPasskey: false,
-      elevated: false,
-      postPath: '/approve',
-      linkToken: 'a-one-use-token',
-    });
+    const html = cpages.settlementApprovalPage({ ...view, linkToken: 'a-one-use-token' });
     expect(html).toContain('name="link_token"');
     expect(html).toContain('value="a-one-use-token"');
+    expect(html).toContain('This link works once.');
   });
 
   it('a page reached from the main page carries none, because that road is not one-use', async () => {
     const cpages = await import('../../src/counter/pages.js');
-    const html = cpages.mainPage({
-      action: 'settlement-approve',
-      refId: '00000000-0000-4000-8000-000000000000',
-      facts: [],
-      anomalies: [],
-      hasPin: true,
-      hasPasskey: false,
-      elevated: false,
-      postPath: '/approve',
-    });
+    const html = cpages.settlementApprovalPage(view);
     expect(html).not.toContain('name="link_token"');
+    expect(html).not.toContain('This link works once.');
   });
 });
 

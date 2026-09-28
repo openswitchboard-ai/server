@@ -111,12 +111,12 @@ describe('the cookie', () => {
     expect(line).not.toMatch(/Domain=/i);
   });
 
-  it('is still read under the old name, so last week sign-in survives', async () => {
+  it('is never read under the old name, which any host on the domain could write', async () => {
     const reply = fakeReply();
     await createSession(reply, ACCOUNT);
     const sid = setValue(reply.headers['set-cookie'], COUNTER_COOKIE)!;
     const asOld = await loadSession(withCookie(`${LEGACY_COUNTER_COOKIE}=${sid}`));
-    expect(asOld?.accountId).toBe(ACCOUNT);
+    expect(asOld).toBeUndefined();
     const asNew = await loadSession(withCookie(`${COUNTER_COOKIE}=${sid}`));
     expect(asNew?.accountId).toBe(ACCOUNT);
   });

@@ -447,7 +447,7 @@ d('integration gates against live deployment', () => {
     // of the press, so the figure leaves on a human's say-so and nothing else.
     const ask = await counterFetch(dana.jar, sendLink!);
     expect(ask.status).toBe(200);
-    expect(await ask.text()).toContain('Send $500 AUD');
+    expect(await ask.text()).toMatch(/(Offer|Ask) \$500 AUD/);
     const pressed = await counterFetch(dana.jar, sendLink!, form({ decision: 'yes', pin: dana.pin }));
     expect(pressed.status).toBe(200);
     expect(await pressed.text()).toContain('Your number is on the table');

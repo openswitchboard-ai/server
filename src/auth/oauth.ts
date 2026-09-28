@@ -163,6 +163,10 @@ export function unauthorized(cfg: Config, reply: FastifyReply): FastifyReply {
     .send({ error: 'invalid_token', error_description: 'A valid access token is required.' });
 }
 
+/** Dynamic client registration: how many redirect URIs, and how long each. */
+export const MAX_REDIRECT_URIS = 5;
+export const MAX_REDIRECT_URI_CHARS = 512;
+
 export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
   const issuer = cfg.publicOrigin;
 
@@ -196,7 +200,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
   // ---- RFC 7591 dynamic client registration ----------------------------------
   app.post('/oauth/register', async (req, reply) => {
-    if (!rateLimitBypassed(req.headers as Record<string, unknown>) && clientRegistrationLimiter.limited(req.ip)) {
+    if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && clientRegistrationLimiter.limited(req.ip)) {
       req.log.warn({ ip: req.ip }, 'oauth-register: per-IP rate limit hit');
       return reply.code(429).send({ error: 'rate_limited', error_description: 'too many registrations from this address; try again later' });
     }
@@ -206,6 +210,14 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       return reply.code(400).send({
         error: 'invalid_client_metadata',
         error_description: 'redirect_uris (non-empty array of strings) is required',
+      });
+    }
+    // A client needs one or two of these. The caps keep one registration from
+    // storing an arbitrary amount of text in oauth_clients.
+    if (uris.length > MAX_REDIRECT_URIS || (uris as string[]).some((u) => u.length > MAX_REDIRECT_URI_CHARS)) {
+      return reply.code(400).send({
+        error: 'invalid_client_metadata',
+        error_description: `at most ${MAX_REDIRECT_URIS} redirect_uris, each at most ${MAX_REDIRECT_URI_CHARS} characters`,
       });
     }
     for (const u of uris as string[]) {

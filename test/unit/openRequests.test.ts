@@ -173,7 +173,7 @@ const get = (url: string, signedIn = true) =>
   app.inject({
     method: 'GET',
     url,
-    headers: { host: 'my.test', ...(signedIn ? { cookie: `osb_counter=${SID}` } : {}) },
+    headers: { host: 'my.test', ...(signedIn ? { cookie: `__Host-osb_counter=${SID}` } : {}) },
   });
 
 // ---------------------------------------------------------------------------

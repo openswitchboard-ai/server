@@ -40,8 +40,25 @@ describe('the rule', () => {
   });
 });
 
-const main = (action: cpages.ApprovalView['action'], c: cpages.CeremonyView) =>
-  cpages.mainPage({ action, refId: 'r-1', facts: [{ k: 'You would pay', v: '90 AUD' }], anomalies: [], postPath: '/approve', ...c });
+/** The two pages the main page's buttons open: the payment approval, and the
+ *  one-question page on its session road (accepting a figure, sharing names). */
+const main = (action: 'offer-accept' | 'settlement-approve' | 'stage3-disclosure', c: cpages.CeremonyView) =>
+  action === 'settlement-approve'
+    ? cpages.settlementApprovalPage({
+        refId: 'r-1',
+        question: 'Agree to pay $90 AUD for the Mountain bike?',
+        detail: ['The money is held until you say it arrived as agreed.'],
+        ...c,
+      })
+    : cpages.oneQuestionPage({
+        session: { action, refId: 'r-1' },
+        question: action === 'offer-accept' ? 'Accept $90 AUD for the Mountain bike?' : 'Share your first name and suburb with the other side?',
+        yesLabel: action === 'offer-accept' ? 'Accept' : 'Share',
+        noLabel: 'Not now',
+        needsPin: true,
+        money: action === 'offer-accept',
+        ...c,
+      });
 
 describe('the main page', () => {
   for (const action of ['offer-accept', 'settlement-approve'] as const) {
@@ -67,6 +84,11 @@ describe('the main page', () => {
       expect(html).toContain('Use your passkey instead');
       expect(html).toContain('data-pk-inline="1"');
     });
+
+    it(`${action}: the passkey beside the PIN box says yes, the same as the button it stands in for`, () => {
+      const html = main(action, { ...BOTH, elevated: false });
+      expect(html).toMatch(/data-pk-fallback="pin" data-pk-name="decision" data-pk-value="(yes|approve)"/);
+    });
   }
 
   it('the names step still leans on the window', () => {
@@ -76,22 +98,18 @@ describe('the main page', () => {
     expect(html).not.toContain('data-pk-inline');
   });
 
-  it('prints a raw fact as markup and escapes the rest', () => {
-    const html = cpages.mainPage({
-      action: 'offer-accept',
+  it('says the money in sentences, and escapes them', () => {
+    const html = cpages.settlementApprovalPage({
       refId: 'r-1',
-      facts: [
-        { k: 'You are agreeing to', v: '430 AUD' },
-        { k: 'For', v: '<b>Trek</b>' },
-        { k: 'Offer expires', v: '<time datetime="2026-10-04T04:53:01.000Z">Sun 4 Oct, 2:53 pm</time>', raw: true },
-      ],
-      anomalies: [],
-      postPath: '/approve',
+      question: 'Agree to pay $90 AUD for the <b>Trek</b>?',
+      detail: ['That is the $87 AUD you agreed.'],
       ...PIN_ONLY,
       elevated: false,
     });
     expect(html).toContain('&lt;b&gt;Trek&lt;/b&gt;');
-    expect(html).toContain('<time datetime="2026-10-04T04:53:01.000Z">Sun 4 Oct, 2:53 pm</time>');
+    expect(html).toContain('<p class="small muted">That is the $87 AUD you agreed.</p>');
+    expect(html).not.toContain('class="headline"');
+    expect(html).not.toContain('class="fact"');
   });
 });
 
