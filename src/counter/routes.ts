@@ -28,6 +28,7 @@ import { isValidTimeZone } from '../domain/localTime.js';
 import { suggestAreas } from '../geo/suggest.js';
 import { countryOfTimeZone } from '../geo/homeCountry.js';
 import {
+  CADENCE_NEEDS_RUNS_ON_ITS_OWN,
   arrangementInPlainWords,
   isEmpty as arrangementIsEmpty,
   readArrangement,
@@ -35,7 +36,7 @@ import {
   saveArrangement,
   validateArrangement,
 } from '../domain/arrangement.js';
-import { amendIntent, withdrawIntent } from '../domain/cards.js';
+import { withdrawIntent } from '../domain/cards.js';
 import { acceptOfferByHuman, proposeOffer } from '../domain/offers.js';
 import {
   MODE_NAMES,
@@ -125,13 +126,14 @@ import { emailHashes } from '../domain/accounts.js';
 import * as links from './links.js';
 import {
   boxTitle,
+  dropInLine,
   groupWaitingByMatch,
   matchOfLink,
   mergeSteps,
   stepTime,
   type MatchBoxView,
 } from './matchStory.js';
-import { buildSteps, readStoryFacts } from '../domain/matchStory.js';
+import { buildSteps, readStoryFacts, readTheirThing } from '../domain/matchStory.js';
 import { consumeLink, verifyLinkToken, type ApprovalLinkRow } from './links.js';
 import { offerAmountAnomaly, newCounterpartyAnomaly } from './anomalies.js';
 import * as wa from './webauthn.js';
@@ -413,9 +415,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // What this page asks for is what it is going to show: the gates. The
       // one-tap verdict moved to the introduction's own page, so the front
       // page no longer reads a list of introductions to browse.
-      const [profile, arrangement, offers, disclosures, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
+      const [profile, inLine, offers, disclosures, counts, liveSettlements, rejected, lapsingSoon, messagesWaiting, agreed] = await Promise.all([
         readSharedProfile(s.accountId, { purpose: 'dashboard-view', actor: s.accountId }),
-        readArrangement(s.accountId),
+        // Introductions still in line: nothing about them is shown or
+        // pressable on this page (domain/sequencer.ts). The reads below carry
+        // the live filter themselves; this set is the second wall.
+        ops.inLineMatchIds(s.accountId),
         ops.pendingOffers(s.accountId),
         ops.pendingDisclosures(s.accountId),
         getPool().query(
@@ -429,6 +434,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           `SELECT st.*, m.category FROM settlements st JOIN matches m ON m.id = st.match_id
            WHERE (st.buyer_account = $1 OR st.seller_account = $1)
              AND st.state <> ALL('{released,refunded,declined}'::text[])
+             AND ${ops.NOT_IN_LINE_SQL}
            ORDER BY st.created_at DESC LIMIT 20`,
           [s.accountId],
         ),
@@ -439,8 +445,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       ]);
       // Every open link this person has been handed, so a request never
       // depends on them still having the chat it came in.
-      const openLinks = await links.openLinksFor(s.accountId);
-      const settlementsWaiting = liveSettlements.rows.map((st: any) => {
+      const keep = (id: unknown) => !inLine.has(String(id));
+      const allOpenLinks = await links.openLinksFor(s.accountId);
+      const settlementRows = liveSettlements.rows.filter((st: any) => keep(st.match_id));
+      const settlementsWaiting = settlementRows.map((st: any) => {
         const mine = st.buyer_account === s.accountId ? st.buyer_approved_at : st.seller_approved_at;
         return {
           id: String(st.id),
@@ -461,14 +469,19 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           WHERE proposer_account = $1 AND state IN ('proposed', 'awaiting-human') AND expiry > now()`,
         [s.accountId],
       );
-      const grouped = groupWaitingByMatch({
-        openLinks,
-        offers,
-        disclosures,
-        settlements: settlementsWaiting,
-        messages: messagesWaiting,
-        ownOpenOffers: ownOpen.rows,
-      });
+      const waitingNow = dropInLine(
+        {
+          openLinks: allOpenLinks,
+          offers,
+          disclosures,
+          settlements: settlementsWaiting,
+          messages: messagesWaiting,
+          ownOpenOffers: ownOpen.rows,
+        },
+        inLine,
+      );
+      const openLinks = waitingNow.openLinks;
+      const grouped = groupWaitingByMatch(waitingNow);
       const timezone: string | null = typeof a.timezone === 'string' && a.timezone ? a.timezone : null;
       const matchBoxes: MatchBoxView[] = [];
       const unboxed = new Set<string>();
@@ -483,8 +496,11 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           unboxed.add(matchId);
           continue;
         }
+        // The other side's own words for their thing, read through the same
+        // function that serves the details to the assistant.
+        const theirs = await readTheirThing(s.accountId, matchId);
         matchBoxes.push({
-          head: story.head,
+          head: theirs ? { ...story.head, theirs } : story.head,
           steps: mergeSteps(buildSteps(story.facts), waiting.steps),
           actions: waiting.actions,
         });
@@ -499,7 +515,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // tell, and it links to the match's own page for the rest.
       const openMatches = await getPool().query(
         `SELECT id::text FROM matches
-          WHERE (account_want = $1 OR account_have = $1) AND state = 'open'
+          WHERE (account_want = $1 OR account_have = $1) AND state = 'open' AND live
           ORDER BY created_at DESC LIMIT 20`,
         [s.accountId],
       );
@@ -529,8 +545,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         const m = matchOfLink(l);
         return !m || unboxed.has(m);
       });
-      const offerIds = new Set(offers.map((o) => String(o.offer_id)));
-      const disclosureIds = new Set(disclosures.map((d) => String(d.match_id)));
+      const offerIds = new Set(waitingNow.offers.map((o) => String(o.offer_id)));
+      const disclosureIds = new Set(waitingNow.disclosures.map((d) => String(d.match_id)));
       const pendingApprovals = [
         // The open requests first: each one is a page an assistant handed
         // over, and each runs out in minutes. The button goes through the
@@ -549,29 +565,31 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             ...(l.amount !== null && l.ccy ? { amount: `${Number(l.amount)} ${l.ccy}` } : {}),
             cta: home.OPEN_REQUEST_CTA,
           })),
-        // A want or have screening turned away is off the board until this
-        // person changes it, so it sits at the top of what is waiting for them.
-        ...rejected.map((c) => ({
-          href: `/ledger/${c.id}/edit`,
-          // The row says what happened; the button below it says what to do,
-          // so the label no longer says both.
-          label: `Your ${phrase(c.category)} didn't pass screening`,
-          cta: 'See why and fix it',
-        })),
-        ...offers
+        // A want or have screening turned away is off the board until it is
+        // changed, and the change is the assistant's to make (amend_intent):
+        // there is no edit page. So the tile says why and what to do, and
+        // opens nothing.
+        ...rejected.map((c) => {
+          const rej = rejectionInPlainWords(c.screening);
+          return {
+            label: `Your ${ownThingPhrase(c.category, c.kind).words} needs a change.`,
+            lines: [...(rej ? [rej.plain] : []), home.REJECTED_TILE_LINE],
+          };
+        }),
+        ...waitingNow.offers
           .filter((o) => unboxed.has(String(o.match_id)))
           .map((o) => ({
             href: `/approvals/offer/${o.offer_id}`,
             label: `Offer on your ${phrase(o.category)} match`,
             amount: `${Number(o.amount)} ${o.ccy}`,
           })),
-        ...disclosures
+        ...waitingNow.disclosures
           .filter((d) => unboxed.has(String(d.match_id)))
           .map((d) => ({
             href: `/approvals/match/${d.match_id}`,
             label: `Share your details on your ${phrase(d.category)} match?`,
           })),
-        ...liveSettlements.rows
+        ...settlementRows
           .filter((st: any) => unboxed.has(String(st.match_id)))
           .map((st: any) => {
             const w = settlementsWaiting.find((x) => x.id === String(st.id));
@@ -589,6 +607,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // here with one line saying so. The line is chosen from a fixed list by
       // a short code, so nothing typed into the address bar reaches the page.
       let notice: string | undefined = SAVED_NOTICES[String((req.query as any)?.saved ?? '')];
+      // "Keep them all" on the lapsing tile lands back here (POST /renew/lapsing).
+      if (String((req.query as any)?.renewed ?? '') === '1') notice = home.RENEWED_NOTICE;
       let awaitingConnect = false;
       const authorized = String((req.query as any)?.authorized ?? '');
       if (/^[0-9a-f-]{36}$/i.test(authorized)) {
@@ -614,18 +634,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           notice,
           awaitingConnect,
           firstName: profile.firstName || undefined,
-          sharedProfile: profileIsFilled(profile)
-            ? `${profile.firstName}, ${profile.locality}`
-            : undefined,
           emailUnreachable: !!a.email_unreachable_at,
-          // One line on the dashboard; the whole of it is a tap away.
-          arrangementSummary: (() => {
-            const lines = arrangementInPlainWords(arrangement);
-            if (!lines.length) return undefined;
-            const head = lines[0];
-            const rest = lines.length - 1;
-            return `${head.k.toLowerCase()} — ${head.v}${rest ? ` (and ${rest} more)` : ''}`;
-          })(),
           killSwitchOn: !!a.kill_switch_at,
           // Turning the kill switch back off is the one sensitive press on
           // this page, so it asks for whichever credential this account holds.
@@ -643,12 +652,12 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           matchBoxes,
           inProgress: inProgress.map(({ href, title, last }) => ({ href, title, last })),
           timezone,
-          messagesWaiting: messagesWaiting.filter((m) => unboxed.has(String(m.match_id))).map((m) => ({
+          messagesWaiting: waitingNow.messages.filter((m) => unboxed.has(String(m.match_id))).map((m) => ({
             matchId: m.match_id,
             category: categoryLeafLabel(m.category),
             count: m.count,
           })),
-          agreed: agreed.map((a) => ({
+          agreed: agreed.filter((a) => keep(a.match_id)).map((a) => ({
             matchId: a.match_id,
             category: categoryLeafLabel(a.category),
             amount: `${Number(a.amount)} ${a.ccy}`,
@@ -1087,7 +1096,7 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const a: any = await getAccount(s.accountId!);
       if (a?.status !== 'pending') return reply.redirect('/', 303);
-      return html(reply, pages.consentPage());
+      return html(reply, home.consentPage());
     });
 
     counter.post('/consent', async (req, reply) => {
@@ -1095,12 +1104,12 @@ in on this device and lets you approve what is waiting.</p>
       if (!s) return;
       const b: any = req.body ?? {};
       if (b.adult !== 'yes' || b.consent !== 'yes') {
-        return html(reply, pages.consentPage('Both statements are required to open the account.'), 400);
+        return html(reply, home.consentPage('Tick both to open your account.'), 400);
       }
       const a: any = await getAccount(s.accountId!);
       if (!(await holdsCredential(s.accountId!, a))) return reply.redirect('/secure', 303);
       if (a.status === 'pending') {
-        await ops.activateAccountWithConsent(s.accountId!, pages.CONSENT_STATEMENT);
+        await ops.activateAccountWithConsent(s.accountId!, home.CONSENT_STATEMENT);
       }
       // nextStep rather than a hard-coded target: the onboarding question sits
       // between here and authorising an agent, and a first-time person passes
@@ -3130,16 +3139,6 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // ------------------------------------------------------------------
     // Ledger.
     // ------------------------------------------------------------------
-    // The human-readable detail line for a card row: its own typed attributes.
-    // With slugs culled from every page, this is what tells two same-category
-    // cards apart ("Mountain bikes — condition: good · frame: large").
-    const attrsSummary = (attrs: any): string | undefined =>
-      attrs && Object.keys(attrs).length
-        ? Object.entries(attrs)
-            .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
-            .join(' · ')
-        : undefined;
-
     // Screening's verdict for the card's OWN human, in plain words. Only a
     // card actually sitting in SCREENING_REJECTED says anything.
     const screeningRejectionView = (
@@ -3150,22 +3149,53 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       return rej ? { plain: rej.plain, code: rej.reasonCode } : undefined;
     };
 
-    const cardToView = (c: ops.LedgerCard): home.LedgerCardView => ({
-      id: c.id,
-      type: c.type,
-      category: categoryLeafLabel(c.category),
-      // Where the card is, then how far it reaches — the two things only the
-      // person who lives there can tell are wrong.
-      location: c.location ? `${c.location} — ${c.reach_line}` : undefined,
-      state: c.lifecycle_state,
-      status: c.protocol_status,
-      expiresAt: new Date(c.expires_at).toISOString().slice(0, 10),
-      priceBand: c.price?.band ? `${c.price.band.min}–${c.price.band.max} ${c.price.ccy ?? ''}`.trim() : undefined,
-      ask: c.ask ? `${c.ask.amount} ${c.ask.ccy ?? ''}`.trim() : undefined,
-      matchSummary: c.matchCount === 0 ? 'no matches yet' : `${c.matchCount} match${c.matchCount === 1 ? '' : 'es'}`,
-      attributes: attrsSummary(c.attributes),
-      mode: c.negotiation_mode,
-    });
+    const NOT_ON_LIST = 'That want or have is not on your list.';
+
+    // Where a want or have stands, in the ledger's own words.
+    const ledgerState = (c: ops.LedgerCard): home.LedgerState => {
+      switch (c.lifecycle_state) {
+        case 'PENDING_SCREENING':
+          return 'being checked';
+        case 'SCREENING_REJECTED':
+          return 'needs a change';
+        case 'WITHDRAWN':
+          return 'taken down';
+        case 'EXPIRED':
+          return 'lapsed';
+        default:
+          if (new Date(c.expires_at).getTime() <= Date.now()) return 'lapsed';
+          return c.protocol_status === 'latent' ? 'paused' : 'live';
+      }
+    };
+
+    const cardToView = (c: ops.LedgerCard): home.LedgerCardView => {
+      const state = ledgerState(c);
+      const expires = new Date(c.expires_at);
+      return {
+        id: c.id,
+        type: c.type,
+        title: categoryLeafLabel(c.category, c.kind),
+        sentence: home.attributesSentence(c.attributes),
+        state,
+        ...(state === 'needs a change' ? { reason: screeningRejectionView(c)?.plain } : {}),
+        until: pages.localTime(expires, 'day'),
+        reach: c.reach_words,
+        hasLimit: !!c.price?.band,
+        introduced: Number(c.matchCount ?? 0),
+        mode: c.negotiation_mode,
+        lapsingSoon:
+          c.lifecycle_state === 'PUBLISHED' &&
+          expires.getTime() > Date.now() &&
+          expires.getTime() <= Date.now() + ops.LAPSING_DAYS * 86_400_000,
+      };
+    };
+
+    // The ledger's few notices, chosen by a short code so nothing typed into
+    // the address bar reaches the page.
+    const LEDGER_NOTICES: Record<string, string> = {
+      renewed: home.RENEWED_NOTICE,
+      'taken-down': 'Taken down.',
+    };
 
     counter.get('/ledger', async (req, reply) => {
       const s = await requireSession(req, reply);
@@ -3181,101 +3211,25 @@ this time, and nothing has moved. Try sending it again from the settlement page.
           ? new Date(a.archived_at).toISOString().slice(0, 10)
           : undefined,
       }));
-      return html(reply, home.ledgerPage(cards.map(cardToView), undefined, past));
+      const notice = LEDGER_NOTICES[String((req.query as any)?.done ?? '')];
+      return html(reply, home.ledgerPage(cards.map(cardToView), notice, past));
     });
 
-    counter.get('/ledger/:id/edit', async (req, reply) => {
-      const s = await requireSession(req, reply);
-      if (!s) return;
-      const cards = await ops.ledgerCards(cfg, s.accountId!);
-      const c = cards.find((x) => x.id === String((req.params as any).id));
-      if (!c) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
-      return html(
-        reply,
-        home.cardEditPage({
-          id: c.id,
-          type: c.type,
-          category: categoryLeafLabel(c.category),
-          urgency: c.urgency,
-          status: c.protocol_status,
-          ttlDays: c.ttl_days,
-          attributesJson: JSON.stringify(c.attributes ?? {}, null, 2),
-          askAmount: c.ask?.amount != null ? String(c.ask.amount) : undefined,
-          askCcy: c.ask?.ccy,
-          bandMin: c.price?.band?.min != null ? String(c.price.band.min) : undefined,
-          bandMax: c.price?.band?.max != null ? String(c.price.band.max) : undefined,
-          bandCcy: c.price?.ccy,
-          slots: c.slots ?? 1,
-          screeningRejection: screeningRejectionView(c),
-        }),
-      );
-    });
+    // There is no edit page any more (28 September 2026). What a want or have
+    // says is the assistant's to change, through amend_intent, and it goes
+    // back to be checked from there. An old link lands on the list.
+    counter.get('/ledger/:id/edit', async (_req, reply) => reply.redirect('/ledger', 303));
 
-    counter.post('/ledger/:id/edit', async (req, reply) => {
+    // "Keep it" on one lapsing row: restarts that one's clock, and nothing
+    // else's. A signed-in session is enough: it is the person's own posting
+    // and it asks nothing new of anybody.
+    counter.post('/ledger/:id/renew', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
       const id = String((req.params as any).id);
-      const b: any = req.body ?? {};
-      let attributes: any;
-      try {
-        attributes = b.attributes ? JSON.parse(b.attributes) : {};
-      } catch {
-        const cards = await ops.ledgerCards(cfg, s.accountId!);
-        const c = cards.find((x) => x.id === id);
-        if (!c) return html(reply, pages.messagePage('Not found', '<p>No such card.</p>'), 404);
-        return html(
-          reply,
-          home.cardEditPage(
-            {
-              id,
-              type: c.type,
-              category: categoryLeafLabel(c.category),
-              urgency: c.urgency,
-              status: c.protocol_status,
-              ttlDays: c.ttl_days,
-              attributesJson: String(b.attributes ?? ''),
-              slots: c.slots ?? 1,
-              screeningRejection: screeningRejectionView(c),
-            },
-            'Attributes must be valid JSON.',
-          ),
-          400,
-        );
-      }
-      const patch: any = {
-        attributes,
-        urgency: b.urgency || 'none',
-        status: b.status === 'latent' ? 'latent' : 'active',
-        ttl_days: Math.max(1, Math.min(365, Number(b.ttl_days) || 60)),
-      };
-      if (b.ask_amount) {
-        patch.ask = { amount: Number(b.ask_amount), ccy: String(b.ask_ccy || 'AUD').toUpperCase() };
-      }
-      if (b.band_min && b.band_max) {
-        patch.price = {
-          band: { min: Number(b.band_min), max: Number(b.band_max) },
-          ccy: String(b.band_ccy || 'AUD').toUpperCase(),
-        };
-      }
-      try {
-        await amendIntent(cfg, s.accountId!, id, patch);
-      } catch (e: any) {
-        // A refusal that is the switchboard working carries a sentence; an
-        // OsbError's own `message` is the bare code, and a person editing
-        // their own card should never be shown one. (The way in: setting an
-        // asking price on a sale by best offer, where the floor is private —
-        // domain/cards.ts.)
-        const said = e?.payload?.human_action ?? e?.message ?? 'invalid card';
-        return html(
-          reply,
-          pages.messagePage('Could not save', `<p>${pages.esc(said)}</p>`, `/ledger/${id}/edit`, 'Back to editing'),
-          400,
-        );
-      }
-      return html(
-        reply,
-        home.ledgerPage((await ops.ledgerCards(cfg, s.accountId!)).map(cardToView), 'Saved. The card is back in screening before it returns to the network.'),
-      );
+      if (!UUID_RE.test(id)) return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
+      const renewed = await ops.renewAllCards(s.accountId!, 'counter', { cardId: id });
+      return reply.redirect(renewed.length ? '/ledger?done=renewed' : '/ledger', 303);
     });
 
     // ------------------------------------------------------------------
@@ -3314,7 +3268,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await numbersView(s.accountId!, String((req.params as any).id), s);
-      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      if (!v) return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
       return html(reply, home.cardNumbersPage(v));
     });
 
@@ -3323,7 +3277,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const id = String((req.params as any).id);
       const v = await numbersView(s.accountId!, id, s);
-      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      if (!v) return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
       const b: any = req.body ?? {};
       const mode: NegotiationMode = b.mode === 'mandate' ? 'mandate' : 'relay';
       const form = {
@@ -3379,7 +3333,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         { mode, ...(mandate?.ok ? { mandate: mandate.value } : {}) },
         'counter',
       );
-      const notice = `Saved. This card negotiates on ${MODE_NAMES[mode]}.`;
+      const notice = `Saved. On this ${v.type === 'HAVE' ? 'have' : 'want'}, ${home.figuresPhrase(mode)}.`;
       if (returnTo) {
         const back = await backToMatch(undefined, notice);
         if (back) return back;
@@ -3393,7 +3347,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const id = String((req.params as any).id);
       const v = await numbersView(s.accountId!, id, s);
-      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+      if (!v) return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
       await saveNegotiation(s.accountId!, id, { mode: 'relay', mandate: null }, 'counter');
       const saved = await numbersView(s.accountId!, id, s);
       return html(
@@ -3401,7 +3355,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         home.cardNumbersPage(
           saved!,
           undefined,
-          `Cleared. This card is back on ${MODE_NAMES.relay} — every figure comes from you.`,
+          `Cleared. On this ${v.type === 'HAVE' ? 'have' : 'want'}, ${home.figuresPhrase('relay')}.`,
         ),
       );
     });
@@ -3412,11 +3366,15 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // session — and no more than that, because a proposal binds nothing.
     // Accepting one still asks for the PIN, on /approve.
     // ------------------------------------------------------------------
+    const NO_SUCH_MATCH = 'That introduction is not one of yours.';
+
     const offersView = async (
       accountId: string,
       matchId: string,
       sess0: Session,
     ): Promise<home.MatchOffersView | undefined> => {
+      // Not a uuid, not theirs, or still in line: all the same "not found".
+      if (!UUID_RE.test(matchId)) return undefined;
       const m = await ops.matchForHuman(accountId, matchId);
       if (!m) return undefined;
       const offers = await ops.offersOnMatch(matchId);
@@ -3450,7 +3408,6 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         // There is something to close while it is open, and nothing to close
         // once it is not.
         canReport: m.state === 'open',
-        ...(neg.mandate ? { mandate: neg.mandate } : {}),
         ...(live ? { myOfferOnTable: `${Number(live.amount)} ${live.ccy}` } : {}),
         ...(agreed ? { agreedAmount: `${Number(agreed.amount)} ${agreed.ccy}` } : {}),
         ...(draft ? { draft: draftToFields(draft) } : {}),
@@ -3462,7 +3419,11 @@ this time, and nothing has moved. Try sending it again from the settlement page.
             const story = await readStoryFacts(accountId, matchId);
             if (!story) return {};
             const acct: any = await getAccount(accountId);
+            const theirs = await readTheirThing(accountId, matchId);
             return {
+              thing: story.head.thing,
+              ...(story.head.theirName ? { theirName: story.head.theirName } : {}),
+              ...(theirs ? { theirs } : {}),
               story: buildSteps(story.facts),
               timezone: typeof acct?.timezone === 'string' && acct.timezone ? acct.timezone : null,
             };
@@ -3485,7 +3446,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await offersView(s.accountId!, String((req.params as any).id), s);
-      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
+      if (!v) return html(reply, pages.messagePage('Not found', `<p>${NO_SUCH_MATCH}</p>`), 404);
       return html(reply, home.matchOffersPage(v));
     });
 
@@ -3502,6 +3463,12 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.get('/matches/:id/report', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
+      // The same door as the match page: an introduction still in line is not
+      // one this person can open anything on (matchForHuman leaves it out).
+      const matchId = String((req.params as any).id);
+      if (!UUID_RE.test(matchId) || !(await ops.matchForHuman(s.accountId!, matchId))) {
+        return html(reply, pages.messagePage('Not found', `<p>${NO_SUCH_MATCH}</p>`), 404);
+      }
       try {
         const minted = await reportLink(cfg, s.accountId!, String((req.params as any).id));
         return reply.redirect(new URL(minted.link).pathname + new URL(minted.link).search, 303);
@@ -3527,7 +3494,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       const matchId = String((req.params as any).id);
       const v = await offersView(s.accountId!, matchId, s);
-      if (!v) return html(reply, pages.messagePage('Not found', '<p>No such match on your ledger.</p>'), 404);
+      if (!v) return html(reply, pages.messagePage('Not found', `<p>${NO_SUCH_MATCH}</p>`), 404);
       const b: any = req.body ?? {};
       const form = {
         amount: String(b.amount ?? '').trim(),
@@ -3593,18 +3560,30 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       );
     });
 
+    // "Take it down" asks once, on a page of its own, before it does anything.
+    counter.get('/ledger/:id/withdraw', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const cards = await ops.ledgerCards(cfg, s.accountId!);
+      const c = cards.find((x) => x.id === String((req.params as any).id));
+      if (!c) return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
+      const st = ledgerState(c);
+      if (st === 'taken down' || st === 'lapsed') return reply.redirect('/ledger', 303);
+      return html(
+        reply,
+        home.takeDownPage({ id: c.id, type: c.type, thing: ownThingPhrase(c.category, c.kind).words }),
+      );
+    });
+
     counter.post('/ledger/:id/withdraw', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
       try {
         await withdrawIntent(s.accountId!, String((req.params as any).id), cfg);
       } catch {
-        return html(reply, pages.messagePage('Not found', '<p>No such card on your ledger.</p>'), 404);
+        return html(reply, pages.messagePage('Not found', `<p>${NOT_ON_LIST}</p>`), 404);
       }
-      return html(
-        reply,
-        home.ledgerPage((await ops.ledgerCards(cfg, s.accountId!)).map(cardToView), 'Withdrawn — effective immediately.'),
-      );
+      return reply.redirect('/ledger?done=taken-down', 303);
     });
 
     // ------------------------------------------------------------------
@@ -3857,7 +3836,10 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       const s = await requireSession(req, reply);
       if (!s) return;
       const v = await arrangementView(s.accountId!);
-      return html(reply, home.arrangementPage(v.arrangement, { updated: v.updated }));
+      return html(
+        reply,
+        home.arrangementPage(v.arrangement, { updated: v.updated, hearsVia: await getHearsVia(s.accountId!) }),
+      );
     });
 
     counter.post('/arrangement', async (req, reply) => {
@@ -3882,9 +3864,16 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       };
       const checked = validateArrangement(submitted);
       if (!checked.ok) {
+        // The cadence rule is written for an assistant; a person gets it in
+        // the page's own words.
+        const error =
+          checked.error === CADENCE_NEEDS_RUNS_ON_ITS_OWN ? home.CADENCE_NEEDS_RUNS_ON_ITS_OWN_PAGE : checked.error;
         return html(
           reply,
-          home.arrangementPage(submitted as any, { error: checked.error }),
+          home.arrangementPage(
+            { ...(submitted as any), runs_on_its_own: submitted.runs_on_its_own === 'on' },
+            { error, hearsVia: await getHearsVia(s.accountId!) },
+          ),
           400,
         );
       }
@@ -3905,15 +3894,24 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // send time) and writes to the WORM consent log first.
     // ------------------------------------------------------------------
     const settingsView = async (accountId: string): Promise<home.EmailSettingsView> => {
-      const [es, hearsVia, timezone] = await Promise.all([
+      const [es, hearsVia, timezone, profile, creds0, arrangement, keys] = await Promise.all([
         ops.emailSettings(accountId),
         getHearsVia(accountId),
         getTimezone(accountId),
+        readSharedProfile(accountId, { purpose: 'settings-view', actor: accountId }),
+        credentialsOf(accountId),
+        readArrangement(accountId),
+        agentKeys.listAgentKeys(accountId),
       ]);
+      // Which parts of the standing arrangement are set; the whole of it is a tap away.
+      const summary = home.arrangementSummaryLine(arrangementInPlainWords(arrangement));
       return {
         hearsVia,
         timezone,
-        blindMode: es.blindMode,
+        ...(profileIsFilled(profile) ? { sharedProfile: `${profile.firstName}, ${profile.locality}` } : {}),
+        approveWith: { pin: !!creds0.hasPin, passkey: !!creds0.hasPasskey },
+        ...(summary ? { arrangementSummary: summary } : {}),
+        keyCount: keys.length,
         freqMatches: es.freqMatches,
         freqDigests: es.freqDigests,
         complaintSuppressed: es.complaintSuppressed,
@@ -4043,7 +4041,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!cards.rowCount) {
         return html(
           reply,
-          pages.messagePage('Nothing to renew', '<p>No open cards on your ledger right now.</p>', '/', 'Back'),
+          pages.messagePage('Nothing to renew', '<p>Nothing is open to renew right now.</p>', '/', 'Back'),
         );
       }
       return html(
@@ -4052,7 +4050,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
           cards.rows.map((c: any) => ({
             type: c.type,
             category: categoryLeafLabel(c.category),
-            attributes: attrsSummary(c.attributes),
+            attributes: home.attributesSentence(c.attributes),
             expires: new Date(c.expires_at).toISOString().slice(0, 10),
             expiringSoon: !!c.expiring_soon,
           })),
@@ -4075,12 +4073,23 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         reply,
         pages.messagePage(
           'Renewed',
-          `<p>${renewed.length} card${renewed.length === 1 ? '' : 's'} renewed — each clock
-restarted for its own TTL. The renewal is in your consent log.</p>`,
+          `<p>Renewed ${renewed.length === 1 ? 'one want or have' : `${renewed.length} wants and haves`}.</p>`,
           '/ledger',
-          'Open the ledger',
+          'See your wants and haves',
         ),
       );
+    });
+
+    // "Keep them all" on the main page's lapsing tile (28 September 2026). The
+    // tile used to point at the ledger, which had no way to renew, and the
+    // token route above is reachable only from an email. This is the same
+    // renewal, from the signed-in session, for exactly the ones that are
+    // lapsing: the set the tile counted, and nothing else.
+    counter.post('/renew/lapsing', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const renewed = await ops.renewAllCards(s.accountId!, 'counter', 'lapsing');
+      return reply.redirect(renewed.length ? '/?renewed=1' : '/', 303);
     });
 
     // ------------------------------------------------------------------

@@ -146,12 +146,13 @@ test('register: email -> code -> PIN -> consent -> account live', async () => {
   await page.getByRole('button', { name: 'Skip for now' }).click();
 
   await expect(page.getByText('I am 18 or older.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Two things to confirm.' })).toBeVisible();
   await expect(
-    page.getByText('My agent may store wants & haves as cards on my behalf.'),
+    page.getByText('My assistant may post wants and haves for me.'),
   ).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
   await page
-    .getByLabel('My agent may store wants & haves as cards on my behalf. I can see, edit, or withdraw everything on my main page.')
+    .getByLabel('My assistant may post wants and haves for me. I can see or take down anything on my main page.')
     .check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
@@ -246,9 +247,9 @@ test('agent posts a card; matches are empty; ledger shows it', async () => {
   await expect(page.getByText('Mountain bikes')).toBeVisible();
   expect(await page.content()).not.toContain('goods.bicycle.mountain');
   expect((await page.content()).toLowerCase()).not.toContain('the counter');
-  await expect(page.getByText('PUBLISHED')).toBeVisible();
-  await expect(page.getByText('private band 0–800 AUD')).toBeVisible(); // owner-only
-  await expect(page.getByText('no matches yet')).toBeVisible();
+  await expect(page.getByText(/Live until/)).toBeVisible();
+  await expect(page.getByText(/your limit is private/)).toBeVisible(); // owner-only, no figure
+  await expect(page.getByText(/nobody introduced yet/)).toBeVisible();
   await shot(page, '09-ledger-card');
 });
 
@@ -346,7 +347,7 @@ test('anomalies are LOUD; approve ceremony needs the PIN; offer settles', async 
   });
 
   await page.goto('/');
-  await expect(page.getByText('WAITING FOR YOU').first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
   await shot(page, '13-dashboard-pending');
   await page.getByRole('link', { name: 'Review & decide' }).first().click();
 
@@ -373,10 +374,12 @@ test('ledger: withdraw is immediate', async () => {
   await page.goto('/ledger');
   await page
     .locator(`[data-card-id="${aliceCardId}"]`)
-    .getByRole('button', { name: 'Withdraw' })
+    .getByRole('link', { name: 'Take it down' })
     .click();
-  await expect(page.getByText('Withdrawn — effective immediately.')).toBeVisible();
-  await expect(page.getByText('WITHDRAWN', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Take down your .* want\?$/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Take it down' }).click();
+  await expect(page.getByText('Taken down.', { exact: true })).toBeVisible();
+  await expect(page.locator(`[data-card-id="${aliceCardId}"]`).getByText(/^Taken down/)).toBeVisible();
   await shot(page, '16-withdrawn');
   const li = await mcpCall(aliceToken, 'list_intents', {});
   const card = li.result.intents.find((i: any) => i.intent_id === aliceCardId);

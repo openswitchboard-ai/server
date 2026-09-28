@@ -639,11 +639,12 @@ describe('the pages that collect it', () => {
   it('the profile page shows what is on file and says when nothing is', () => {
     const empty = chome.sharedProfilePage({ firstName: '', locality: '' });
     expect(empty).toContain('What you share on a match');
-    expect(empty).toContain('Nothing is filled in yet');
+    expect(empty).toContain("Nothing filled in yet. You&#39;ll be asked the first time you share them.");
+    expect(empty).not.toContain('stall there');
     const filled = chome.sharedProfilePage({ firstName: 'Ana', locality: 'Fremantle' });
     expect(filled).toContain('value="Ana"');
     expect(filled).toContain('value="Fremantle"');
-    expect(filled).not.toContain('Nothing is filled in yet');
+    expect(filled).not.toContain('Nothing filled in yet');
   });
 
   it('escapes what the human typed back into the boxes', () => {
@@ -652,23 +653,26 @@ describe('the pages that collect it', () => {
     expect(nasty).toContain('&lt;script&gt;');
   });
 
-  it('the dashboard links to it and says when it is empty', () => {
+  it('the settings hub links to it and says when it is empty', () => {
     const base = {
-      killSwitchOn: false,
-      cardCounts: { total: 0, published: 0, pending: 0 },
-      pendingApprovals: [],
+      hearsVia: 'email' as const,
+      timezone: null,
+      freqMatches: 'immediate',
+      freqDigests: 'daily',
+      complaintSuppressed: false,
+      emailUnreachable: false,
     };
-    const empty = chome.dashboardPage(base);
-    expect(empty).toContain('/profile');
-    expect(empty).toContain('Yours are empty');
-    const filled = chome.dashboardPage({ ...base, sharedProfile: 'Ana, Fremantle' });
+    const empty = chome.settingsPage(base);
+    expect(empty).toContain('href="/profile"');
+    expect(empty).toContain('Nothing filled in yet.');
+    const filled = chome.settingsPage({ ...base, sharedProfile: 'Ana, Fremantle' });
     expect(filled).toContain('Ana, Fremantle');
-    expect(filled).not.toContain('Yours are empty');
+    expect(filled).not.toContain('Nothing filled in yet.');
   });
 
   it('the consent page says, in one line, when details ever cross', () => {
-    const consent = cpages.consentPage();
-    expect(consent).toMatch(/first name and suburb/);
+    const consent = chome.consentPage();
+    expect(consent).toMatch(/first name and a suburb/);
     expect(consent).toMatch(/only things that ever cross/);
   });
 
@@ -678,7 +682,7 @@ describe('the pages that collect it', () => {
       ['profile-empty', chome.sharedProfilePage({ firstName: '', locality: '' })],
       ['profile-filled', chome.sharedProfilePage({ firstName: 'Ana', locality: 'Fremantle' }, { notice: 'Saved.' })],
       ['profile-error', chome.sharedProfilePage({ firstName: '', locality: '' }, { error: 'Add the suburb or area you are in.' })],
-      ['consent', cpages.consentPage()],
+      ['consent', chome.consentPage()],
     ] as const) {
       expect(lintEmailCopy(htmlBody), name).toEqual([]);
       expect(htmlBody.toLowerCase(), name).not.toContain('the counter');
@@ -737,12 +741,21 @@ describe('the area box asks for a suburb without insisting on one', () => {
     ],
   ];
 
+  // The person's own pages (profile, onboarding) keep one line under the box
+  // (28 September 2026); the approval pages draw pages.ts's own help.
+  const ownPages = new Set(['profile', 'hello']);
+
   for (const [name, page] of withBox) {
-    it(`${name}: the label, the example and the one line saying why`, () => {
+    it(`${name}: the label, the example and the one line under the box`, () => {
       expect(page, name).toContain('Your suburb');
       expect(page, name).toContain('placeholder="e.g. Braddon"');
-      expect(page, name).toContain('ten minutes away or two hours');
-      expect(page, name).toContain('Wider is fine if you would rather');
+      if (ownPages.has(name)) {
+        expect(page, name).toContain(chome.AREA_LINE);
+        expect(page, name).not.toContain('ten minutes away or two hours');
+      } else {
+        expect(page, name).toContain('ten minutes away or two hours');
+        expect(page, name).toContain('Wider is fine if you would rather');
+      }
     });
 
     it(`${name}: passes the copy lint every counter page is held to`, () => {
@@ -750,11 +763,22 @@ describe('the area box asks for a suburb without insisting on one', () => {
     });
   }
 
-  it('every page with the box says it the same way', () => {
+  it('every page with the box labels it the same way', () => {
     for (const [name, page] of withBox) {
       expect(page, name).toContain(cpages.AREA_LABEL);
-      expect(page, name).toContain(cpages.AREA_HELP);
+      expect(page, name).toContain(ownPages.has(name) ? chome.AREA_LINE : cpages.AREA_HELP);
     }
+  });
+
+  it('onboarding asks for neither box, and offers a way past the whole page', () => {
+    const hello = chome.helloPage({ hearsVia: 'email', firstName: '', locality: '', timezone: null });
+    expect(hello).not.toMatch(/name="first_name"[^>]*required/);
+    expect(hello).not.toMatch(/name="locality"[^>]*required/);
+    expect(hello).toContain('<input type="hidden" name="skip" value="yes">');
+    expect(hello).toContain('>Skip for now</button>');
+    // The profile page still wants both.
+    const profilePage = chome.sharedProfilePage({ firstName: '', locality: '' });
+    expect(profilePage).toMatch(/name="first_name"[\s\S]*?required>/);
   });
 
   it('nothing new became required, and the caps are where they were', () => {
@@ -820,9 +844,10 @@ describe('the quiet nudge for an area already on file', () => {
     expect(lintHumanCopy(line!)).toEqual([]);
   });
 
-  it('shows on the page when the area is wide and nowhere else', () => {
+  it('the profile page keeps to its one line, wide area or not', () => {
     const wide = chome.sharedProfilePage({ firstName: 'Ana', locality: 'Australian Capital Territory' });
-    expect(wide).toContain('covers a lot of ground');
+    expect(wide).not.toContain('covers a lot of ground');
+    expect(wide).toContain(chome.AREA_LINE);
     expect(lintHumanCopy(wide)).toEqual([]);
     const suburb = chome.sharedProfilePage({ firstName: 'Ana', locality: 'Braddon' });
     expect(suburb).not.toContain('covers a lot of ground');
