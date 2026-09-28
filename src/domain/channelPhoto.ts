@@ -40,6 +40,20 @@
  * the browser makes and this service cannot check — checking would mean holding
  * the image. What it buys is that a page that cannot strip gets no URL.
  *
+ * AND THE SERVER STRIPS IT AGAIN, AND THAT IS THE ONE THAT COUNTS (28 September
+ * 2026 review). The browser's claim is a boolean anybody can send, so it is now
+ * a hint and nothing more. At the send press — after the upload, before any
+ * check looks at the picture — the server reads the object once, re-encodes it
+ * with sharp (upright, same format, and sharp writes no metadata unless asked
+ * to), writes it back over the same key with the same type, and records on the
+ * row that it did. The metadata gate at the send step passes only on that
+ * record (intake/checks/photoMetadata.ts). A file sharp cannot decode, or one
+ * whose bytes are not the type it was declared as, is refused in plain words.
+ * The bytes are held in memory for the length of the re-encode and never
+ * written anywhere else, which is the same footing the known-image hash check
+ * already stands on.
+ *
+
  * THE IMAGE IS SCREENED, BY MACHINE, BEFORE IT IS DELIVERED (17 September
  * 2026, docs/trust-and-safety.md step four). Until this date the honest
  * statement here was that nothing looked at an image at all. What looks at it
@@ -217,6 +231,97 @@ export function checkFilename(raw: unknown): void {
   }
 }
 
+/** The file could not be read as the picture it said it was. */
+export const PHOTO_UNREADABLE =
+  'that picture could not be opened as a JPEG, a PNG or a WebP, so it has not gone. Take it again, or save it as a JPEG and try once more.';
+
+/** What landed is not what the upload link was signed for. */
+export const PHOTO_NOT_AS_DECLARED =
+  'what arrived is not the picture the upload link was made for, so it has not gone. Upload it again from the page.';
+
+/** sharp's name for each allowed type. */
+const SHARP_FORMAT: Record<string, 'jpeg' | 'png' | 'webp'> = {
+  'image/jpeg': 'jpeg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/**
+ * THE SERVER'S OWN STRIP. Reads the object, re-encodes it with sharp — upright
+ * first, because the orientation tag is one of the things that goes — in the
+ * same format it was declared as, and writes it back over the same key with
+ * the same content type. sharp copies no EXIF, XMP, ICC or IPTC into its
+ * output unless withMetadata()/keepMetadata() is called, and neither is.
+ *
+ * Refuses, in plain words, bytes sharp cannot decode, bytes whose real format
+ * is not the declared one, and anything over the cap on either side of the
+ * re-encode. Returns the new size.
+ *
+ * Exported so the suite can drive it against real images.
+ */
+export async function stripPhotoInPlace(
+  bucket: string,
+  key: string,
+  contentType: string,
+): Promise<{ size_bytes: number }> {
+  const format = SHARP_FORMAT[contentType];
+  if (!format) throw validation(PHOTO_NOT_AS_DECLARED);
+  const got = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const body: any = got.Body;
+  if (!body?.transformToByteArray) throw validation(PHOTO_UNREADABLE);
+  const input = Buffer.from(await body.transformToByteArray());
+  if (!input.length || input.length > MAX_PHOTO_BYTES) throw validation(PHOTO_NOT_AS_DECLARED);
+  const out = await reencodeWithoutMetadata(input, format);
+  if (out.length > MAX_PHOTO_BYTES) {
+    throw validation(
+      `a photo has to be ${Math.round(MAX_PHOTO_BYTES / (1024 * 1024))} MB or smaller`,
+    );
+  }
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: out,
+      ContentType: contentType,
+      ContentLength: out.length,
+    }),
+  );
+  return { size_bytes: out.length };
+}
+
+/**
+ * The re-encode alone, on bytes in memory: decode, turn upright, encode in the
+ * declared format with nothing but the pixels. Refuses bytes that are not the
+ * format they claim.
+ */
+export async function reencodeWithoutMetadata(
+  input: Buffer,
+  format: 'jpeg' | 'png' | 'webp',
+): Promise<Buffer> {
+  // Imported here for the reason photodna.ts gives: a native module that a
+  // process which never sees a photo should not pay to open.
+  const { default: sharp } = await import('sharp');
+  let actual: string | undefined;
+  try {
+    actual = (await sharp(input).metadata()).format;
+  } catch {
+    throw validation(PHOTO_UNREADABLE);
+  }
+  if (actual !== format) throw validation(PHOTO_NOT_AS_DECLARED);
+  try {
+    const upright = sharp(input).rotate();
+    const encoded =
+      format === 'jpeg'
+        ? upright.jpeg({ quality: 90, mozjpeg: true })
+        : format === 'png'
+          ? upright.png({ compressionLevel: 9 })
+          : upright.webp({ quality: 90 });
+    return await encoded.toBuffer();
+  } catch {
+    throw validation(PHOTO_UNREADABLE);
+  }
+}
+
 export interface PresignedPhoto {
   photo_id: string;
   url: string;
@@ -371,7 +476,7 @@ export async function markPhotoSent(
     `UPDATE conversation_photos SET send_attempts = send_attempts + 1
       WHERE id = $1 AND sender_account = $2 AND match_id = $3 AND sent_at IS NULL
         AND send_attempts < $4
-      RETURNING id, s3_key, channel_id, content_type, send_attempts`,
+      RETURNING id, s3_key, channel_id, content_type, size_bytes, send_attempts`,
     [photoId, accountId, matchId, MAX_SEND_ATTEMPTS],
   );
   const row = r.rows[0];
@@ -388,11 +493,38 @@ export async function markPhotoSent(
     }
     throw validation('that photo is not waiting to be sent.');
   }
+  let head;
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.s3_key }));
+    head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.s3_key }));
   } catch {
     throw validation('that photo never finished uploading.');
   }
+  // WHAT LANDED IS WHAT WAS SIGNED FOR (2026-09-28 review). The upload link
+  // signs the size and the bytes' hash, but the type the browser sends rides
+  // beside them, and an object stored as text/html would be served as text/html.
+  // So the type on the object must be the allow-listed one on the row, and the
+  // size inside the cap, or it does not go.
+  if (
+    String(head.ContentType ?? '').toLowerCase() !== String(row.content_type).toLowerCase() ||
+    !Number.isFinite(Number(head.ContentLength)) ||
+    Number(head.ContentLength) <= 0 ||
+    Number(head.ContentLength) > MAX_PHOTO_BYTES
+  ) {
+    photoLog('conversation-photo-not-relayed', {
+      channel_id: row.channel_id,
+      outcome: 'refuse',
+      reason_code: 'object-not-as-declared',
+    });
+    throw validation(PHOTO_NOT_AS_DECLARED);
+  }
+  // THE SERVER STRIPS IT, before anything looks at it, and records that it did.
+  // Every attempt strips again: the bytes under the key are whatever is there
+  // now, and the record is only true of bytes this code wrote.
+  const stripped = await stripPhotoInPlace(bucket, row.s3_key as string, row.content_type as string);
+  await getPool().query(
+    'UPDATE conversation_photos SET metadata_stripped_at = now(), size_bytes = $2 WHERE id = $1',
+    [row.id, stripped.size_bytes],
+  );
   // THE PICTURE IS LOOKED AT HERE, and this is the only moment it can be: the
   // bytes exist now and the other side has not been told about them yet. The
   // object goes to the same pipe every other thing a person hands over goes to
@@ -403,10 +535,10 @@ export async function markPhotoSent(
     door: 'photo',
     sender_account: accountId,
     match_id: matchId,
-    // The claim the browser made was checked at presign, where refusing it was
-    // the whole point of asking. It is restated so the metadata gate is a pass
-    // rather than a second refusal of something already settled.
-    fields: { metadata_removed: 'true' },
+    // The browser's claim was checked at presign, as a hint. What the gate
+    // passes on here is the server's own record, written a moment ago by the
+    // strip above.
+    fields: { metadata_removed: 'true', metadata_stripped_by_server: 'true' },
     object: {
       bucket,
       key: row.s3_key as string,
@@ -568,8 +700,9 @@ export async function openPhotoLink(cfg: Config, token: string): Promise<{ url: 
   if (!photosConfigured(cfg) || !PHOTO_TOKEN_RE.test(token)) return null;
   const bucket = mustBucket(cfg);
   const r = await getPool().query(
-    `SELECT s3_key,
+    `SELECT s3_key, content_type,
             ceil(extract(epoch FROM (collected_at + ($2 || ' seconds')::interval - now())))::int AS left_s
+
        FROM conversation_photos
       WHERE view_token_hash = $1 AND collected_at IS NOT NULL
         AND collected_at > now() - ($2 || ' seconds')::interval`,
@@ -578,9 +711,20 @@ export async function openPhotoLink(cfg: Config, token: string): Promise<{ url: 
   const row = r.rows[0];
   if (!row) return null;
   const left = Math.min(VIEW_URL_TTL_S, Math.max(1, Number(row.left_s)));
+  // SERVED AS THE TYPE ON THE ROW, NOT THE TYPE ON THE OBJECT (2026-09-28
+  // review). The row's type came off the allowlist; the object's came from
+  // whoever PUT it. The GET overrides both headers, so whatever is stored the
+  // browser is told it is an image, shown inline, under a name nobody chose.
+  const type = ALLOWED_PHOTO_TYPES[String(row.content_type)] ? String(row.content_type) : undefined;
+  if (!type) return null;
   const url = await getSignedUrl(
     s3,
-    new GetObjectCommand({ Bucket: bucket, Key: row.s3_key }),
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: row.s3_key,
+      ResponseContentType: type,
+      ResponseContentDisposition: `inline; filename="photo.${ALLOWED_PHOTO_TYPES[type]}"`,
+    }),
     { expiresIn: left },
   );
   return { url };

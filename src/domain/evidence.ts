@@ -122,6 +122,15 @@ export async function writeEvidenceManifest(
   for (const r of rows.rows) {
     try {
       const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: r.s3_key }));
+      // WHAT LANDED IS WHAT WAS SIGNED FOR (2026-09-28 review). The upload
+      // link signs the size and the hash; the type rides beside them. An
+      // object stored under a type other than the allow-listed one on its
+      // row, or over the cap, is left out of the manifest exactly as a
+      // missing one is. The bucket is WORM, so the object itself stays; it is
+      // simply never named as evidence and never linked to.
+      if (!objectAsDeclared(head, r.content_type)) {
+        throw new Error('object not as declared');
+      }
       objects.push({
         key: r.s3_key,
         content_type: r.content_type,
@@ -221,6 +230,21 @@ export async function freezeTrackingRecord(
   return key;
 }
 
+/** The object HEAD says what the row says, and fits under the cap. */
+export function objectAsDeclared(
+  head: { ContentType?: string; ContentLength?: number },
+  rowType: string,
+): boolean {
+  const len = Number(head.ContentLength);
+  return (
+    !!ALLOWED_TYPES[rowType] &&
+    String(head.ContentType ?? '').toLowerCase() === rowType.toLowerCase() &&
+    Number.isFinite(len) &&
+    len > 0 &&
+    len <= MAX_EVIDENCE_BYTES
+  );
+}
+
 /** Presigned, short-lived view links for the frozen evidence. */
 export async function evidenceViewLinks(
   cfg: Config,
@@ -234,12 +258,22 @@ export async function evidenceViewLinks(
   const out: { label: string; url: string }[] = [];
   let i = 1;
   for (const r of rows.rows) {
+    // Served as the row's allow-listed type, inline, under a name nobody
+    // chose — never as whatever type the uploader's PUT set on the object.
+    const ext = ALLOWED_TYPES[r.content_type];
+    if (!ext) continue;
     const url = await getSignedUrl(
       s3,
-      new GetObjectCommand({ Bucket: bucket, Key: r.s3_key }),
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: r.s3_key,
+        ResponseContentType: r.content_type,
+        ResponseContentDisposition: `inline; filename="photo.${ext}"`,
+      }),
       { expiresIn: VIEW_URL_TTL_S },
     );
     out.push({ label: `Photo ${i++}`, url });
   }
+
   return out;
 }
