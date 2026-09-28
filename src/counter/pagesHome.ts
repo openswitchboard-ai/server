@@ -1085,12 +1085,12 @@ const HEARS_VIA_OPTIONS: ModeOption[] = [
   {
     value: 'assistant',
     head: 'Through my assistant.',
-    rest: 'It checks on its own and tells me when something needs me.',
+    rest: 'My assistant checks on its own and provides updates back to me. Best suited to always-on agents.',
   },
   {
     value: 'email',
     head: 'By email.',
-    rest: 'My assistant only acts when I talk to it, so email me when something needs me.',
+    rest: 'Each match and reply reaches me by email. Best suited to chat assistants.',
   },
 ];
 
