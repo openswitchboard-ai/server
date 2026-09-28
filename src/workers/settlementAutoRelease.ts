@@ -65,6 +65,7 @@ import {
   deadlockOutcome,
   deadlockReleaseSettlement,
   recordRuleRefund,
+  returnRefundsAwaitingPayment,
   scheduledAction,
   settlementsDueForAutoRelease,
   settlementsDueForDeadlock,
@@ -100,6 +101,9 @@ export interface AutoReleaseSweepResult {
   recovered: number;
   /** Agreed splits whose money did not go out, and went out on this pass. */
   splitsRecovered: number;
+  /** Returns the seller said they had back whose refund failed at the time,
+   *  and went out on this pass. */
+  returnRefundsRecovered: number;
   /** Frozen payments the return-silence rule sent back on this pass. */
   returnRefunded: number;
   /** Frozen payments the never-arrived rule sent back on this pass. */
@@ -121,6 +125,7 @@ export async function runAutoReleaseSweep(
     transferStuck: 0,
     recovered: 0,
     splitsRecovered: 0,
+    returnRefundsRecovered: 0,
     returnRefunded: 0,
     neverArrivedRefunded: 0,
     deadlockReleased: 0,
@@ -225,7 +230,27 @@ export async function runAutoReleaseSweep(
     }
   }
 
+  // Then the returns the seller said they had back, whose refund did not go
+  // out when they pressed. The seller already chose the refund; the default
+  // rule no longer looks at these, so the sweep is the retry.
+  for (const stuck of await returnRefundsAwaitingPayment()) {
+    try {
+      await refundAgreedAmountForSettlement(stuck, stuck.refund_minor!);
+      result.returnRefundsRecovered += 1;
+      log('return received: the agreed amount went back on a later pass', {
+        settlement_id: stuck.id,
+      });
+    } catch (e: any) {
+      result.failed += 1;
+      log('return received: the refund is still not going through; nothing moved', {
+        settlement_id: stuck.id,
+        error: e?.message,
+      });
+    }
+  }
+
   // --- 1. the buyer's window ------------------------------------------------
+
   const due = await settlementsDueForAutoRelease();
   result.due = due.length;
   for (const s of due) {

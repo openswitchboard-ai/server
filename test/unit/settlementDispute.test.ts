@@ -318,9 +318,15 @@ describe('the sweep: three rules, and a refund that is never a fee', () => {
   let transitions: { to: string; from: string[] }[];
 
   function fakePool() {
-    return {
-      query: async (sql: string, params: any[] = []) => {
+    const query = async (sql: string, params: any[] = []) => {
         const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
+        // The state writer first: its WHERE can carry the same conditions a
+        // due-query is recognised by.
+        if (/UPDATE settlements SET state/.test(sql)) {
+          transitions.push({ to: params[1], from: params[2] });
+          const found = world.find((s) => s.id === params[0]);
+          return rows(found ? [{ ...found, state: params[1] }] : []);
+        }
         // Each due-query is recognised by the condition that makes it itself.
         if (/state = 'confirmed' AND auto_released = true/.test(sql)) return rows([]);
         if (/state = 'resolved'/.test(sql)) return rows([]);
@@ -337,13 +343,6 @@ describe('the sweep: three rules, and a refund that is never a fee', () => {
         if (/^SELECT \* FROM settlements WHERE id/.test(sql.trim())) {
           return rows(world.filter((s) => s.id === params[0]));
         }
-        // The state writer. Recorded rather than executed, so the test can say
-        // what the sweep tried to move and out of what.
-        if (/UPDATE settlements SET state/.test(sql)) {
-          transitions.push({ to: params[1], from: params[2] });
-          const found = world.find((s) => s.id === params[0]);
-          return rows(found ? [{ ...found, state: params[1] }] : []);
-        }
         // Any other write (the figures a rule notes before it moves money)
         // hands the row back so the caller can carry on with it.
         const found = world.find((s) => s.id === params[0]);
@@ -357,9 +356,12 @@ describe('the sweep: three rules, and a refund that is never a fee', () => {
           found.release_minor = params[1];
         }
         return rows(found ? [found] : []);
-      },
-    } as any;
+    };
+    // The locked roads take a connection of their own; in this fake it is the
+    // same world, and BEGIN / COMMIT fall through to "nothing".
+    return { query, connect: async () => ({ query, release: () => {} }) } as any;
   }
+
 
   beforeEach(() => {
     world = [];
