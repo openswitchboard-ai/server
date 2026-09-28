@@ -10,12 +10,12 @@
  * real account collects over a couple of weeks.
  */
 import { it, vi } from 'vitest';
-import { cryptoMock, fakeSweepPool, fixtureCfg, representativeWorld, ANA } from '../test/unit/sweepFixture.js';
+import { cryptoMock, fakeSweepPool, fixtureCfg, representativeWorld, ANA } from '../unit/sweepFixture.js';
 
-vi.mock('../src/crypto.js', (orig) => cryptoMock(orig as any));
+vi.mock('../../src/crypto.js', (orig) => cryptoMock(orig as any));
 
-import * as db from '../src/db.js';
-import { dispatchTool } from '../src/mcp/tools.js';
+import * as db from '../../src/db.js';
+import { dispatchTool } from '../../src/mcp/tools.js';
 
 it('prints the size of a representative sweep, lean off and on', async () => {
   const out: Record<string, unknown> = {};
