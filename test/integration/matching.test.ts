@@ -65,7 +65,7 @@ const card = (
   schema_version: SCHEMA_VERSION,
   type,
   category,
-  geo: { bucket, radius_km: 25 },
+  geo: { bucket, radius_km: 25, ...(category.startsWith('goods') ? { reach: 'radius' } : {}) },
   ttl_days: FIXTURE_TTL_DAYS,
   ...extra,
 });
@@ -326,9 +326,14 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       expect(entry.stage_unlocked).toBeUndefined();
       expect(entry.next).toBe('details_unlocked');
       // The signal is THIN: no score, no attributes, no identity, no prices.
-      expect(Object.keys(entry.signal).sort()).toEqual([
-        'category', 'counterparty_type', 'intro_id', 'kind', 'schema_version',
-      ]);
+      // The lean sweep (on in dev) drops the envelope the entry already
+      // carries (intro_id, kind, schema_version); off it they are still there.
+      const ENVELOPE = ['intro_id', 'kind', 'schema_version'];
+      expect(
+        Object.keys(entry.signal)
+          .filter((k) => !ENVELOPE.includes(k))
+          .sort(),
+      ).toEqual(['category', 'counterparty_type']);
     }
   });
 
@@ -719,10 +724,12 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     expect(Number(matrixCell[0][0])).toBe(0);
   });
 
-  it('NEAR-MISS mechanism: rows only ever live in [0.55, threshold) and are never disclosed', async () => {
-    const bad = await dbExec(
-      `SELECT count(*)::int FROM near_misses WHERE score < 0.55 OR score >= 0.9`,
-    );
+  it('NEAR-MISS mechanism: rows never sit under the floor and are never disclosed', async () => {
+    // Since the tiers (20 September 2026) a near miss is a TIER, not a score
+    // band: a maybe held back by the per-posting daily cap is written here
+    // with the score it was judged at, which can be anything up to 1. So only
+    // the floor is a property of every row now.
+    const bad = await dbExec(`SELECT count(*)::int FROM near_misses WHERE score < 0.55`);
     expect(Number(bad[0][0])).toBe(0);
     // Nothing in any agent-visible surface mentions near-misses.
     const view = await mcpCall(alice.accessToken, 'check_in', {});

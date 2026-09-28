@@ -161,8 +161,12 @@ d('0.E email daemon (live dev)', () => {
   it('(b) frequency controls save through the counter and log consent', async () => {
     const res = await counterFetch(jarA, '/settings/frequency',
       form({ freq_matches: 'off', freq_digests: 'weekly' }));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain('Saved. Effective immediately.');
+    // A save goes back to the main page, which says "Saved. Effective
+    // immediately." there (since 22 September 2026). This jar has no PIN and
+    // has not been through onboarding, so the main page itself would only
+    // redirect; the saved row below is the proof.
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/?saved=frequency');
     const row = await dbExec(
       `SELECT email_freq_matches, email_freq_digests FROM accounts WHERE id = :a::uuid`,
       [{ name: 'a', value: accountA }],
@@ -208,7 +212,7 @@ d('0.E email daemon (live dev)', () => {
   it("(b) 'off' delivers nothing; transactional still sends", async () => {
     const res = await counterFetch(jarA, '/settings/frequency',
       form({ freq_matches: 'off', freq_digests: 'off' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(303);
     // Fresh real activity for A, plus a FRESH daily sentinel account (E's
     // daily period key is already spent — one digest per day is by design).
     await insertNearMiss(wantA2, haveB);
