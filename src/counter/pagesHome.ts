@@ -415,7 +415,7 @@ export function dashboardPage(v: DashboardView): string {
 <p class="small">Your wants and haves are stopped and your assistants cannot act. Turning it back on needs ${esc(backOnWord)}.</p>
 <form method="POST" action="/kill/off" id="killOffForm">
   ${cpages.ceremonyField(c, 'kill')}
-  ${cpages.ceremonySubmit(c, { formId: 'killOffForm', label: 'Turn everything back on' })}
+  ${cpages.ceremonySubmit(c, { formId: 'killOffForm', label: 'Turn everything back on', strong: true })}
 </form>
 ${cpages.ceremonyAlt(c, 'killOffForm')}</div>`
     : // THE BRAKE IS ONE TAP. It briefly took a PIN; it does not any more

@@ -48,6 +48,7 @@ import { lintHumanCopy } from '../../src/email/lint.js';
 import { hashPin } from '../../src/counter/pin.js';
 import { pinAttemptLimiter } from '../../src/abuseLimit.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
+import * as cpages from '../../src/counter/pages.js';
 import { OsbError } from '../../src/protocol.js';
 import type { Config } from '../../src/config.js';
 import type { FastifyInstance } from 'fastify';
@@ -144,6 +145,8 @@ interface World {
   elevatedVia?: string | null;
   /** A PIN set by emailed-code recovery counts in full from here. */
   pinMoneyFrom?: Date | null;
+  /** The next wrong PIN is the one that locks the account. */
+  pinLocks?: boolean;
 }
 let world: World;
 
@@ -256,8 +259,8 @@ function fakePool() {
         return rows([
           {
             pin_hash: pinHash,
-            pin_failed_attempts: 0,
-            pin_locked_until: null,
+            pin_failed_attempts: world.pinLocks ? 5 : 0,
+            pin_locked_until: world.pinLocks ? new Date(Date.now() + 15 * 60_000) : null,
             pin_money_from: world.pinMoneyFrom ?? null,
           },
         ]);
@@ -509,6 +512,9 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     },
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
   });
+
+/** A page with its scripts taken out: what a person can see. */
+const noScripts = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, '');
 
 /** The token out of a minted link URL. */
 const tokenOf = (link: string) => decodeURIComponent(link.split('/a/')[1]);
@@ -767,6 +773,51 @@ describe('(b) send a number', () => {
     const right = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
     expect(right.statusCode).toBe(200);
     expect(world.offers).toHaveLength(1);
+  });
+
+  /**
+   * A wrong PIN on a pressed page ended on {"error":"pin_incorrect"} (review,
+   * 28 September 2026): the in-place script could not find a page in the
+   * answer and fell back to an ordinary submit, which showed the JSON.
+   */
+  it('a wrong PIN redraws the same question with one plain line', async () => {
+    const { link } = await mint();
+    const t = encodeURIComponent(tokenOf(link));
+    const wrong = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '000000' });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.headers['content-type']).toMatch(/text\/html/);
+    expect(wrong.body).toContain('<div class="err" role="alert">That PIN is not right. Try again.</div>');
+    expect(wrong.body).toContain('id="oneQuestion"');
+    expect(wrong.body).toContain(`action="/a/${t}"`);
+    expect(wrong.body).toContain('Confirm with your PIN');
+    expect(noScripts(wrong.body)).not.toContain('pin_incorrect');
+  });
+
+  it('the wrong PIN that locks the account says how long, in words', async () => {
+    world.pinLocks = true;
+    const { link } = await mint();
+    const t = encodeURIComponent(tokenOf(link));
+    const wrong = await inject('POST', `/a/${t}`, { decision: 'yes', pin: '000000' });
+    expect(wrong.statusCode).toBe(423);
+    expect(wrong.body).toContain('<div class="err" role="alert">Too many wrong PINs. Try again in 15 minutes.</div>');
+    expect(noScripts(wrong.body)).not.toContain('pin_locked');
+    expect(world.links[0].used_at).toBeNull();
+  });
+
+  it('the in-place script shows a JSON refusal in the page instead of submitting again', () => {
+    const page = cpages.oneQuestionPage({
+      token: 'tok',
+      question: 'Send $440 AUD?',
+      yesLabel: 'Send',
+      noLabel: 'Not now',
+      needsPin: true,
+      hasPin: true,
+      hasPasskey: false,
+      elevated: false,
+      money: true,
+    });
+    expect(page).toContain("if(/json/i.test(ct))return r.json().then(function(j){showErr(j);return null;});");
+    expect(page).toContain(JSON.stringify(cpages.PIN_WRONG_SENTENCE));
   });
 
   it('the figures are bound: the page reads them from the row, never the form', async () => {
@@ -1529,6 +1580,9 @@ describe('money asks at the press, whatever the window', () => {
       pin: '',
     });
     expect(bare.statusCode).toBe(401);
+    // The main page's road redraws the same question too.
+    expect(bare.body).toContain('<div class="err" role="alert">That PIN is not right. Try again.</div>');
+    expect(bare.body).toContain('action="/approve" id="oneQuestion"');
     expect(world.offerState).toBe('proposed');
     const pressed = await inject('POST', '/approve', {
       action: 'offer-accept',
@@ -1596,8 +1650,29 @@ describe('a PIN that emailed-code recovery set', () => {
     const t = encodeURIComponent(tokenOf(link));
     const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
     expect(pressed.statusCode).toBe(403);
-    expect(pressed.json().error).toBe('pin_held');
-    expect(pressed.json().error_description).toMatch(/^A new PIN can move money from .+\. Your passkey works now\.$/);
+    // A person pressing the button gets the question back with the sentence
+    // on it, never the JSON underneath.
+    expect(pressed.headers['content-type']).toMatch(/text\/html/);
+    expect(pressed.body).toMatch(
+      /<div class="err" role="alert">A new PIN can move money from [^<]+\. Your passkey works now\.<\/div>/,
+    );
+    expect(pressed.body).toContain('id="oneQuestion"');
+    expect(noScripts(pressed.body)).not.toContain('pin_held');
+    // A caller that asks for JSON still gets it.
+    const asJson = await app.inject({
+      method: 'POST',
+      url: `/a/${t}`,
+      headers: {
+        host: 'my.test',
+        cookie: `__Host-osb_counter=${SID}`,
+        accept: 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({ decision: 'yes', pin: PIN }).toString(),
+    });
+    expect(asJson.statusCode).toBe(403);
+    expect(asJson.json().error).toBe('pin_held');
+    expect(asJson.json().error_description).toMatch(/^A new PIN can move money from .+\. Your passkey works now\.$/);
     expect(world.offers).toHaveLength(0);
     // The link is still good for the passkey, or for the PIN tomorrow.
     expect(world.links[0].used_at).toBeNull();

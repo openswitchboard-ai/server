@@ -715,7 +715,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           killSwitchOn: !!a.kill_switch_at,
           // Turning the kill switch back off is the one sensitive press on
           // this page, so it asks for whichever credential this account holds.
-          ceremony: await ceremonyFor(s.accountId, sess.isElevated(s), a),
+          // A window an emailed code opened does not count (see /kill/off).
+          ceremony: await ceremonyFor(s.accountId, sess.isStronglyElevated(s), a),
           cardCounts: counts.rows[0],
           ...(lapsingSoon
             ? {
@@ -1522,6 +1523,18 @@ in on this device and lets you approve what is waiting.</p>
     });
 
     // ------------------------------------------------------------------
+    // How a ceremony says no. Every refusal below carries the JSON body it has
+    // always answered with and the one sentence a person should read. The
+    // default sends the JSON; a page a person pressed passes its own `refuse`
+    // and draws the sentence on the page instead (the one-question pages).
+    // ------------------------------------------------------------------
+    type CeremonyRefusal = { status: number; body: Record<string, unknown>; sentence: string };
+    type Refuse = (r: CeremonyRefusal) => void;
+    const refuseJson = (reply: FastifyReply): Refuse => (r) => {
+      void reply.code(r.status).send(r.body);
+    };
+
+    // ------------------------------------------------------------------
     // The sensitive-action ceremony (elevation).
     //
     // An elevated session passes whatever elevated it — a PIN, a passkey, or
@@ -1537,31 +1550,45 @@ in on this device and lets you approve what is waiting.</p>
       s: Session,
       reply: FastifyReply,
       pin: string,
+      refuse: Refuse = refuseJson(reply),
     ): Promise<boolean> => {
       if (sess.isElevated(s)) return true;
       const a: any = await getAccount(s.accountId!);
       if (!a?.pin_hash) {
-        void reply.code(401).send({
-          error: 'ceremony_required',
-          error_description:
-            'Confirm with your passkey. On a device that does not have it, have a code emailed to you at /confirm/code.',
+        refuse({
+          status: 401,
+          body: {
+            error: 'ceremony_required',
+            error_description:
+              'Confirm with your passkey. On a device that does not have it, have a code emailed to you at /confirm/code.',
+          },
+          sentence: 'Confirm with your passkey. On a device that does not have it, have a code emailed to you.',
         });
         return false;
       }
-      return pinCheck(s, reply, pin);
+      return pinCheck(s, reply, pin, refuse);
     };
 
     /** The PIN itself: checked, counted against the lockout, and on success
      *  the window opens for the presses that may lean on it. A PIN that
      *  emailed-code recovery set, and that is still waiting, opens only the
      *  kind of window the emailed code would have. */
-    const pinCheck = async (s: Session, reply: FastifyReply, pin: string): Promise<boolean> => {
+    const pinCheck = async (
+      s: Session,
+      reply: FastifyReply,
+      pin: string,
+      refuse: Refuse = refuseJson(reply),
+    ): Promise<boolean> => {
       // Ten tries a minute per account before argon2 or the database is
       // asked anything; the lockout in pin.ts is the rule, this is the pacing.
       if (pinAttemptLimiter.limited(s.accountId!)) {
-        void reply.code(429).send({
-          error: 'too_many_attempts',
-          error_description: 'Too many tries. Wait a minute and try again.',
+        refuse({
+          status: 429,
+          body: {
+            error: 'too_many_attempts',
+            error_description: 'Too many tries. Wait a minute and try again.',
+          },
+          sentence: 'Too many tries. Wait a minute and try again.',
         });
         return false;
       }
@@ -1571,13 +1598,18 @@ in on this device and lets you approve what is waiting.</p>
         return true;
       }
       if (check.locked) {
-        void reply.code(423).send({
-          error: 'pin_locked',
-          error_description: `Too many wrong PINs. Locked — try again in ${Math.ceil((check.retryAfterS ?? 60) / 60)} minute(s).`,
-          retry_after_s: check.retryAfterS,
+        const minutes = Math.ceil((check.retryAfterS ?? 60) / 60);
+        refuse({
+          status: 423,
+          body: {
+            error: 'pin_locked',
+            error_description: `Too many wrong PINs. Locked — try again in ${minutes} minute(s).`,
+            retry_after_s: check.retryAfterS,
+          },
+          sentence: `Too many wrong PINs. Try again in ${minutes === 1 ? 'a minute' : `${minutes} minutes`}.`,
         });
       } else {
-        void reply.code(401).send({ error: 'pin_incorrect' });
+        refuse({ status: 401, body: { error: 'pin_incorrect' }, sentence: pages.PIN_WRONG_SENTENCE });
       }
       return false;
     };
@@ -1601,11 +1633,15 @@ in on this device and lets you approve what is waiting.</p>
     };
 
     /** The sentence a PIN that is still waiting out a recovery is refused with. */
-    const heldPinRefusal = async (reply: FastifyReply, accountId: string, held: Date, what: string) => {
-      void reply.code(403).send({
-        error: 'pin_held',
-        error_description: `A new PIN can ${what} from ${await plainWhen(accountId, held)}. Your passkey works now.`,
-      });
+    const heldPinRefusal = async (
+      reply: FastifyReply,
+      accountId: string,
+      held: Date,
+      what: string,
+      refuse: Refuse = refuseJson(reply),
+    ) => {
+      const sentence = `A new PIN can ${what} from ${await plainWhen(accountId, held)}. Your passkey works now.`;
+      refuse({ status: 403, body: { error: 'pin_held', error_description: sentence }, sentence });
     };
 
     // ------------------------------------------------------------------
@@ -1656,7 +1692,12 @@ in on this device and lets you approve what is waiting.</p>
     // checked. An account holding only a passkey is never asked for a PIN it
     // does not have.
     // ------------------------------------------------------------------
-    const moneyCeremony = async (s: Session, reply: FastifyReply, b: any): Promise<boolean> => {
+    const moneyCeremony = async (
+      s: Session,
+      reply: FastifyReply,
+      b: any,
+      refuse: Refuse = refuseJson(reply),
+    ): Promise<boolean> => {
       const passkey = typeof b?.passkey === 'string' ? b.passkey : '';
       if (passkey) {
         const challenge = await sess.takeWebauthnChallenge(s.id);
@@ -1669,9 +1710,13 @@ in on this device and lets you approve what is waiting.</p>
           }
         }
         if (!who || who !== s.accountId) {
-          void reply.code(401).send({
-            error: 'passkey_failed',
-            error_description: 'That passkey did not confirm it. Go back and press again.',
+          refuse({
+            status: 401,
+            body: {
+              error: 'passkey_failed',
+              error_description: 'That passkey did not confirm it. Go back and press again.',
+            },
+            sentence: 'That passkey did not confirm it. Press again.',
           });
           return false;
         }
@@ -1680,9 +1725,13 @@ in on this device and lets you approve what is waiting.</p>
       }
       const a: any = await getAccount(s.accountId!);
       if (!a?.pin_hash) {
-        void reply.code(401).send({
-          error: 'ceremony_required',
-          error_description: 'Money takes your passkey every time. Go back and press again with it.',
+        refuse({
+          status: 401,
+          body: {
+            error: 'ceremony_required',
+            error_description: 'Money takes your passkey every time. Go back and press again with it.',
+          },
+          sentence: 'Money takes your passkey every time. Press again with it.',
         });
         return false;
       }
@@ -1690,10 +1739,10 @@ in on this device and lets you approve what is waiting.</p>
       // comes round. The passkey still does.
       const held = await pinHeldUntil(s.accountId!);
       if (held) {
-        await heldPinRefusal(reply, s.accountId!, held, 'move money');
+        await heldPinRefusal(reply, s.accountId!, held, 'move money', refuse);
         return false;
       }
-      return pinCheck(s, reply, String(b?.pin ?? ''));
+      return pinCheck(s, reply, String(b?.pin ?? ''), refuse);
     };
 
     /** The ceremony for one press: fresh for money, the window for the rest. */
@@ -1702,8 +1751,35 @@ in on this device and lets you approve what is waiting.</p>
       reply: FastifyReply,
       b: any,
       action: string,
+      refuse: Refuse = refuseJson(reply),
     ): Promise<boolean> =>
-      creds.isMoneyAction(action) ? moneyCeremony(s, reply, b) : ceremony(s, reply, String(b?.pin ?? ''));
+      creds.isMoneyAction(action)
+        ? moneyCeremony(s, reply, b, refuse)
+        : ceremony(s, reply, String(b?.pin ?? ''), refuse);
+
+    /**
+     * A one-question page's press that the ceremony refused. A person who
+     * pressed the button gets the same question back with one plain line on
+     * it; only a caller that asked for JSON gets the JSON. The in-place script
+     * asks for HTML, so it swaps the redrawn page in.
+     */
+    const wantsJson = (req: FastifyRequest): boolean => {
+      const accept = String(req.headers.accept ?? '');
+      return /application\/json/i.test(accept) && !/text\/html/i.test(accept);
+    };
+    const refuseOnPage = (
+      req: FastifyRequest,
+      reply: FastifyReply,
+      q: pages.OneQuestionView,
+      s: Session,
+      action: string,
+    ): Refuse =>
+      wantsJson(req)
+        ? refuseJson(reply)
+        : (r) => {
+            q.elevated = creds.elevationFor(action, sess.isElevated(s));
+            void html(reply, pages.oneQuestionPage(q, r.sentence), r.status);
+          };
 
     counter.post('/pin/verify', async (req, reply) => {
       const s = await requireSession(req, reply);
@@ -2477,9 +2553,20 @@ in on this device and lets you approve what is waiting.</p>
         return reply.redirect(await nextStep(s.accountId!, s as Session), 303);
       }
       // The PIN comes before the link is burnt: a mistyped PIN must not cost
-      // someone the link their assistant gave them.
+      // someone the link their assistant gave them. A refusal redraws the
+      // question with what they typed still in the boxes.
       if (q.needsPin) {
-        const okNow = await pressCeremony(s as Session, reply, b, row.action);
+        if (q.collectProfile) {
+          q.collectProfile = { firstName: String(b.first_name ?? ''), locality: String(b.locality ?? '') };
+        }
+        if (q.collectReason) q.collectReason = { ...q.collectReason, value: String(b.reason ?? '') };
+        const okNow = await pressCeremony(
+          s as Session,
+          reply,
+          b,
+          row.action,
+          refuseOnPage(req, reply, q, s as Session, row.action),
+        );
         if (!okNow) return;
       }
       // Single-use, enforced here: whoever wins the UPDATE acts, and a second
@@ -2783,8 +2870,11 @@ in on this device and lets you approve what is waiting.</p>
         profileToSave = checked.value;
       }
       // Money (a figure) takes the PIN or the passkey at this press; the names
-      // step may lean on the window.
-      const okNow = await pressCeremony(s, reply, b, action);
+      // step may lean on the window. A refusal redraws the question.
+      if (q.collectProfile) {
+        q.collectProfile = { firstName: String(b.first_name ?? ''), locality: String(b.locality ?? '') };
+      }
+      const okNow = await pressCeremony(s, reply, b, action, refuseOnPage(req, reply, q, s, action));
       if (!okNow) return;
       try {
         if (action === 'offer-accept') {
@@ -3926,7 +4016,11 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.post('/kill/off', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      const okNow = await ceremony(s, reply, String((req.body as any)?.pin ?? ''));
+      // Turning everything back on takes the passkey or the PIN, as the
+      // kill-switch email says. Anyone who can read the inbox can produce an
+      // emailed code, and the switch is what a person reaches for when they
+      // think someone else is in their account.
+      const okNow = await credentialCeremony(s, reply, String((req.body as any)?.pin ?? ''));
       if (!okNow) return;
       await ops.killSwitchOff(s.accountId!);
       const email = await ops.accountEmail(s.accountId!, 'kill-switch-confirmation');
