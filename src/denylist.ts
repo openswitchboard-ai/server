@@ -10,6 +10,8 @@ export interface DenyEntry {
   denied: string[];
   reason_code: string;
   status: 'denied' | 'vertical-policy-pending';
+  /** One plain general sentence saying why it is closed (schema 0.16.2+). */
+  closed_reason?: string;
 }
 
 const seed: { entries: DenyEntry[] } = loadDenyListSeed();
@@ -49,6 +51,55 @@ export function categoryDenied(category: string): DenyEntry | undefined {
     if (e.denied.some((g) => globMatches(g, category))) return e;
   }
   return undefined;
+}
+
+/**
+ * FAMILIES HELD BACK BECAUSE OF THE LAW AROUND THEM (28 September 2026).
+ *
+ * A seed entry marked 'vertical-policy-pending' is closed, and stays closed,
+ * but the refusal says why in one plain general sentence. The sentence is the
+ * entry's own `closed_reason`: it lives in the data, it names no particular
+ * goods or service, and nothing in this repository writes one per subject.
+ *
+ * The same sentence is served wherever the family is caught: by its category
+ * path (cards.ts, intake/checks/denyListPath.ts) or by what the thing is on
+ * another shelf (intake/checks/modelScreen.ts, which is told the list below).
+ */
+export const HELD_BACK_STATUS = 'vertical-policy-pending';
+
+/**
+ * The sentence for a held-back entry that carries none of its own. Keyed on
+ * the status alone, never on a subject, and word for word what the seed
+ * writes: it covers a pinned schema from before `closed_reason` existed.
+ */
+export const HELD_BACK_FALLBACK =
+  'Selling this is licensed or restricted by law in many places, so the switchboard does not take it yet.';
+
+export interface HeldBackFamily {
+  reason_code: string;
+  /** The sentence to say, from the data. */
+  reason: string;
+}
+
+/** Every held-back family the deny list names, in seed order, each code once. */
+export function heldBackFamilies(entries: DenyEntry[] = seed.entries): HeldBackFamily[] {
+  const out: HeldBackFamily[] = [];
+  for (const e of entries) {
+    if (e.status !== HELD_BACK_STATUS || SCREENING_ONLY_REASONS.has(e.reason_code)) continue;
+    if (out.some((f) => f.reason_code === e.reason_code)) continue;
+    const own = typeof e.closed_reason === 'string' ? e.closed_reason.trim() : '';
+    out.push({ reason_code: e.reason_code, reason: own || HELD_BACK_FALLBACK });
+  }
+  return out;
+}
+
+/** The plain reason for a held-back family's code, or undefined for any other code. */
+export function heldBackReason(
+  reasonCode: string | undefined,
+  entries: DenyEntry[] = seed.entries,
+): string | undefined {
+  if (!reasonCode) return undefined;
+  return heldBackFamilies(entries).find((f) => f.reason_code === reasonCode)?.reason;
 }
 
 /** Screening-time reason codes that apply to this category (content checks). */

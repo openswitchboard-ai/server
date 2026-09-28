@@ -21,6 +21,7 @@ import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
 import { snapshotOf, type ScreenableWords } from './screenedContent.js';
+import { heldBackReason } from '../denylist.js';
 import { NO_MONEY_REASON, shelfReasonSentence, shelfRuleRefusal } from './shelfRules.js';
 import type { Config } from '../config.js';
 
@@ -63,12 +64,9 @@ const REASON_SENTENCES: Record<string, string> = {
   // refused elsewhere hears where it can go.
   'live-animals':
     'Live animals stay off the switchboard everywhere it runs, apart from lost and found pets going home. This one cannot go back on the board as it stands.',
-  'wildlife-products':
-    'Wildlife products stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
-  alcohol:
-    'Alcohol is held back until the rules around selling it are settled. This one cannot go back on the board for now.',
-  'event-tickets':
-    'Event tickets are held back until the rules around reselling them are settled. This one cannot go back on the board for now.',
+  // The families held back because of the law around them (the deny-list
+  // seed's 'vertical-policy-pending' entries) are not here: their one
+  // sentence is the entry's own closed_reason, read by heldBackReason below.
   // Prohibited by what the thing IS, whatever it was filed under. The
   // catalogue is a deny list now, so a made-up category is no longer a way
   // past this; these four have no path in the seed and never did, because
@@ -104,7 +102,7 @@ export function screeningReasonInPlainWords(reasonCode?: string): string {
   // is the plain name its one sentence says. A code stored before the rules
   // moved into the data (27 September 2026) is read as the code it became.
   const code = LEGACY_SHELF_CODES[reasonCode] ?? reasonCode;
-  return REASON_SENTENCES[code] ?? shelfReasonSentence(code) ?? REASON_FALLBACK;
+  return heldBackReason(code) ?? REASON_SENTENCES[code] ?? shelfReasonSentence(code) ?? REASON_FALLBACK;
 }
 
 /**

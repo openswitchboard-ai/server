@@ -12,7 +12,10 @@
  * child", and under s 474.25 of the Criminal Code (Cth) a host that becomes
  * aware of child abuse material must refer it to the AFP. Deleting on sight
  * destroys what must be referred. So the bytes move to a quarantine prefix and
- * wait ninety days for a person.
+ * wait ninety days for a person. At ninety days a held item is deleted, unless
+ * it is a known-image match, a report or a safety flag names its introduction
+ * or its sender, or a lawful hold is on it (founder decision, 28 September
+ * 2026). Those stay held until a person decides.
  *
  * NO IMAGE IS SHOWN HERE, AND NONE IS FETCHED. This script prints ids, labels
  * and ages. It does not download, display, thumbnail or open an object, and
@@ -105,6 +108,8 @@ for (const r of rows) {
   console.error('');
 }
 console.error('--cleared <id> deletes the object and marks it. --referred <id> marks it');
-console.error('and keeps it forever. A held item past ninety days is never deleted by the');
-console.error('sweep — it is logged as overdue until a person decides.');
+console.error('and keeps it forever. A held item is deleted at ninety days unless it is a');
+console.error('known-image match, a report or safety flag names its introduction or sender,');
+console.error('or a lawful hold is on it; those are logged as overdue until a person decides.');
+console.error('A lawful hold on one item: scripts/safety/hold.mts --preserve photo <id>.');
 process.exit(0);

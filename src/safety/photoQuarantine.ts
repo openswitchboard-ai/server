@@ -161,73 +161,123 @@ export async function quarantinePhoto(args: {
 }
 
 // ---------------------------------------------------------------------------
-// The sweep (src/workers/opsWorker.ts, on the same daily tick as the others).
+// The sweep (src/workers/opsWorker.ts, on the same tick as the others).
 
 /**
- * WHAT THE DAILY SWEEP MAY TAKE, as one predicate, in one place.
+ * WHAT KEEPS A HELD PHOTO PAST ITS NINETY DAYS (founder decision, 28 September
+ * 2026). A held photo nobody has decided about is deleted at its expiry, unless
+ * one of these is true. Each one means there is something a person still has
+ * to act on, so the photo stays held for them:
  *
- * ONLY `cleared`, AND ONLY PAST ITS NINETY DAYS. The other two states are not
- * a slower version of this one:
+ *   hash_match    it matched a known abuse image. The next act is a referral.
+ *   report        a report names its introduction, or names its sender.
+ *   safety flag   a safety review (minor_involved, grooming,
+ *                 sexual_exploitation, known_abuse_image and the rest) names
+ *                 its introduction or its sender.
+ *   lawful hold   a preservation date is on the row itself, or on any ledger
+ *                 entry behind the same introduction.
  *
- *   held      nobody has decided. A sweep that deleted these would be the
- *             original defect on a timer — the thing that must be referred,
- *             destroyed, ninety days later, by a cron. Past expiry it is
- *             logged as overdue and left exactly where it is.
- *   referred  the AFP have it. It is never swept at any age.
+ * A referred row is never swept at any age. A cleared row goes at its expiry,
+ * as before. Nobody views anything to decide any of this: it is ids and dates.
  */
-export const QUARANTINE_SWEEP_PREDICATE = `status = 'cleared' AND expires_at < now()`;
+export const QUARANTINE_KEEP_SQL = `(q.hash_match
+    OR (q.preserved_until IS NOT NULL AND q.preserved_until >= now())
+    OR EXISTS (SELECT 1 FROM reports r
+                WHERE (q.match_id IS NOT NULL AND r.match_id = q.match_id)
+                   OR (q.sender_account IS NOT NULL AND r.reported_account = q.sender_account))
+    OR EXISTS (SELECT 1 FROM safety_reviews s
+                WHERE (q.match_id IS NOT NULL AND s.match_id = q.match_id)
+                   OR (q.sender_account IS NOT NULL AND s.sender_account = q.sender_account))
+    OR EXISTS (SELECT 1 FROM ledger_entries l
+                WHERE q.match_id IS NOT NULL AND l.match_id = q.match_id
+                  AND l.preserved_until IS NOT NULL AND l.preserved_until >= now()))`;
 
-export const QUARANTINE_DUE_SQL = `SELECT id, bucket, key FROM photo_quarantine
+/**
+ * WHAT THE SWEEP MAY TAKE, as one predicate, in one place: a cleared row past
+ * its ninety days, and a held row past its ninety days that nothing keeps.
+ */
+export const QUARANTINE_SWEEP_PREDICATE = `q.expires_at < now() AND (q.status = 'cleared'
+    OR (q.status = 'held' AND NOT ${QUARANTINE_KEEP_SQL}))`;
+
+export const QUARANTINE_DUE_SQL = `SELECT q.id, q.bucket, q.key, q.status FROM photo_quarantine q
    WHERE ${QUARANTINE_SWEEP_PREDICATE} LIMIT 200`;
 
-export const QUARANTINE_OVERDUE_SQL = `SELECT count(*)::int AS n FROM photo_quarantine
-   WHERE status = 'held' AND expires_at < now()`;
+/** Held past expiry and kept for a person: counted and said out loud. */
+export const QUARANTINE_OVERDUE_SQL = `SELECT count(*)::int AS n FROM photo_quarantine q
+   WHERE q.status = 'held' AND q.expires_at < now() AND ${QUARANTINE_KEEP_SQL}`;
 
 export interface QuarantineRow {
   status: string;
   expires_at: Date;
+  hash_match?: boolean;
+  preserved_until?: Date | null;
+  /** A report names its introduction or its sender. */
+  has_report?: boolean;
+  /** A safety review names its introduction or its sender. */
+  has_safety_flag?: boolean;
+  /** A ledger entry behind the same introduction is under a preservation date. */
+  has_ledger_hold?: boolean;
 }
 
-/** The same rule in JavaScript, so the suite can state it against rows. */
+/** Whether something keeps this row for a person. The same rule as QUARANTINE_KEEP_SQL. */
+export function isKeptForAPerson(row: QuarantineRow, now: Date): boolean {
+  if (row.hash_match) return true;
+  if (row.preserved_until && row.preserved_until >= now) return true;
+  return Boolean(row.has_report || row.has_safety_flag || row.has_ledger_hold);
+}
+
+/** The same rule as the SQL, in JavaScript, so the suite can state it against rows. */
 export function isDueForQuarantineSweep(row: QuarantineRow, now: Date): boolean {
-  if (row.status !== 'cleared') return false;
-  return row.expires_at < now;
+  if (row.expires_at >= now) return false;
+  if (row.status === 'cleared') return true;
+  if (row.status === 'held') return !isKeptForAPerson(row, now);
+  return false;
 }
 
 /**
- * The other half of the same rule: a held item whose ninety days are up is a
- * person's decision that nobody has made. It is counted and said out loud, and
- * nothing happens to it.
+ * A held item past its ninety days that something keeps: a person's decision
+ * nobody has made yet. It is counted and said out loud, and nothing happens
+ * to it.
  */
 export function isOverdueInQuarantine(row: QuarantineRow, now: Date): boolean {
-  return row.status === 'held' && row.expires_at < now;
+  return row.status === 'held' && row.expires_at < now && isKeptForAPerson(row, now);
 }
 
 /**
- * Delete what has run out and may go; count what has run out and may not.
- * Counts only — the sweep never looks at what it deletes, and could not.
+ * Delete what has run out and may go; count what has run out and is kept.
+ * Counts only: the sweep never looks at what it deletes, and could not.
+ * `items` is every row deleted; `expired` is the held ones among them.
  */
-export async function sweepPhotoQuarantine(): Promise<{ items: number; overdue: number }> {
+export async function sweepPhotoQuarantine(): Promise<{
+  items: number;
+  expired: number;
+  overdue: number;
+}> {
   const pool = getPool();
   const due = await pool.query(QUARANTINE_DUE_SQL);
   let gone = 0;
-  for (const row of due.rows as Array<{ id: string; bucket: string; key: string }>) {
+  let expired = 0;
+  for (const row of due.rows as Array<{ id: string; bucket: string; key: string; status: string }>) {
     try {
-      // Already gone in the ordinary case — an operator clearing an item
-      // deletes the object there and then — and a second delete costs nothing.
+      // A cleared object is already gone in the ordinary case, and a second
+      // delete costs nothing. A held one is deleted here for the first time.
       await s3.send(new DeleteObjectCommand({ Bucket: row.bucket, Key: row.key }));
     } catch {
-      /* the row still goes; the bytes are a photo-bucket lifecycle matter */
+      // A held object that will not delete keeps its row, so the next tick
+      // tries again and nothing is left in the bucket with no row pointing at
+      // it. A cleared row still goes: its bytes went when it was cleared.
+      if (row.status === 'held') continue;
     }
     await pool.query('DELETE FROM photo_quarantine WHERE id = $1', [row.id]);
     gone += 1;
+    if (row.status === 'held') expired += 1;
   }
-  if (gone) quarantineLog('photo-quarantine-swept', { count: gone });
+  if (gone) quarantineLog('photo-quarantine-swept', { count: gone, expired });
 
   const overdue = (await pool.query(QUARANTINE_OVERDUE_SQL)).rows[0]?.n ?? 0;
   if (overdue) quarantineLog('photo-quarantine-overdue', { count: overdue });
 
-  return { items: gone, overdue };
+  return { items: gone, expired, overdue };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +336,21 @@ export async function clearQuarantineItem(id: string): Promise<boolean> {
     [id],
   );
   return (done.rowCount ?? 0) > 0;
+}
+
+/**
+ * A lawful request asks for a held item to be kept. The freeze half only: a
+ * date moves, nothing is viewed, and the sweep leaves the row until the date
+ * has passed. A cleared item has no object left to keep, so it is not touched.
+ */
+export async function preserveQuarantineItem(id: string, until: Date): Promise<boolean> {
+  const r = await getPool().query(
+    `UPDATE photo_quarantine SET preserved_until = $2
+      WHERE id = $1 AND status IN ('held', 'referred')
+        AND (preserved_until IS NULL OR preserved_until < $2)`,
+    [id, until],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /**

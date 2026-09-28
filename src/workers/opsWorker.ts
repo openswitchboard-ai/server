@@ -24,6 +24,7 @@ import { sweepLedgerEntries } from '../safety/ledger.js';
 import { sweepShelfGaps } from '../domain/shelfGaps.js';
 import { sweepPostingRefs } from '../domain/postingRef.js';
 import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
+import { sweepSafetyRecords } from '../safety/retention.js';
 import { purgeOldEmailEvents } from './emailEventsWorker.js';
 import {
   notifyMatchCreated,
@@ -207,18 +208,29 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   } catch (e: any) {
                     log('ttl-expiry: posting reference sweep failed', { error: e?.message });
                   }
-                  // And photo quarantine, on the same tick — with one rule the
-                  // other sweeps do not have. It may take only what an operator
-                  // has CLEARED, past its ninety days. A held item past expiry is
-                  // a decision nobody has made: it is counted, said out loud and
-                  // left alone, because a cron that deletes something that might
-                  // have had to be referred is the defect this table exists to
-                  // fix. A referred item is never swept at any age.
+                  // And photo quarantine, on the same tick. A cleared item goes
+                  // at its ninety days, and so does a held one, unless it is a
+                  // known-image match, a report or a safety flag names its
+                  // introduction or its sender, or a lawful hold is on it: those
+                  // are counted, said out loud and left for a person. A referred
+                  // item is never swept at any age (safety/photoQuarantine.ts).
                   try {
                     const q = await sweepPhotoQuarantine();
                     if (q.items > 0 || q.overdue > 0) log('ttl-expiry: quarantine sweep', q);
                   } catch (e: any) {
                     log('ttl-expiry: quarantine sweep failed', { error: e?.message });
+                  }
+                  // And reports and safety flags, on the same tick: a row past
+                  // twelve months goes, unless it was referred to police, is
+                  // under a lawful hold, or belongs to an active suspension
+                  // (safety/retention.ts). Counts only.
+                  try {
+                    const kept = await sweepSafetyRecords();
+                    if (kept.reports > 0 || kept.reviews > 0 || kept.kept_reports > 0 || kept.kept_reviews > 0) {
+                      log('ttl-expiry: safety record retention', kept);
+                    }
+                  } catch (e: any) {
+                    log('ttl-expiry: safety record retention failed', { error: e?.message });
                   }
                   // The fit sequencer's two clocks ride the same tick, so they
                   // need no schedule of their own: a live slot that has shown no

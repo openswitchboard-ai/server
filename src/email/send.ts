@@ -301,10 +301,17 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   // Suppression gates (need an account to have state).
   if (input.accountId) {
     const r = await getPool().query(
-      `SELECT email_unreachable_at, email_complaint_suppressed_at FROM accounts WHERE id = $1`,
+      `SELECT email_unreachable_at, email_complaint_suppressed_at, status FROM accounts WHERE id = $1`,
       [input.accountId],
     );
     const a = r.rows[0];
+    // A deleted account is sent nothing at all. Its one email, the
+    // confirmation, goes out before the account is marked deleted; this is the
+    // floor under that, for anything queued in the same moment.
+    if (a?.status === 'deleted') {
+      const won = await recordSend(input, 'suppressed', 'account deleted');
+      return { status: won ? 'suppressed' : 'duplicate' };
+    }
     if (a?.email_unreachable_at && input.template !== 'verification') {
       const won = await recordSend(input, 'suppressed', 'address flagged unreachable (hard bounce)');
       return { status: won ? 'suppressed' : 'duplicate' };

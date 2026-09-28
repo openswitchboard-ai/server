@@ -128,10 +128,13 @@ reporting path below and nowhere else.
   content, moved to a quarantine prefix rather than deleted so that anything
   that must be referred to police still exists to be referred. None of the
   three holds content a server can read, and no path in this repository
-  displays or fetches a quarantined image. The ninety days on a quarantine
-  row is not a deletion date for a held item: a `held` row stays until a
-  person marks it `--cleared` (object deleted then) or `--referred` (kept
-  forever); only a cleared row is swept, at its ninety days.
+  displays or fetches a quarantined image. A `held` row is deleted at its
+  ninety days (founder decision, 28 September 2026, migration 059) unless it
+  is a known-image match, a report or a safety review names its introduction
+  or its sender, or a lawful hold is on it or on the ledger entries behind
+  its introduction; those stay held and are logged as overdue until a person
+  marks them `--cleared` (object deleted then) or `--referred` (kept
+  forever). A cleared row is swept at its ninety days.
 - **Key ceremonies held.** One per environment, each on a laptop rather than
   a server, with `scripts/safety/generate.mts`. The private half was split
   2-of-3 and never written whole. The records below name the fingerprint and
@@ -322,12 +325,19 @@ Act and the Crimes Act can reach us.
 - Conversation photos: the bytes go fifteen minutes after collection
   (`VIEW_URL_TTL_S`) or at fourteen days uncollected; S3 lifecycle backstop at
   fifteen days. The ledger holds only the object key, never the bytes.
-- Photo quarantine: `held` until a person decides; `cleared` deletes the
-  object at once and the row at ninety days; `referred` kept forever. S3
-  lifecycle backstop on the quarantine prefix at 400 days.
+- Photo quarantine: `held` is deleted at ninety days unless it is a
+  known-image match, linked to a report or a safety review, or under a lawful
+  hold (`preserved_until`, or a preserved ledger entry on the introduction);
+  those wait for a person. `cleared` deletes the object at once and the row at
+  ninety days; `referred` kept forever. S3 lifecycle backstop on the
+  quarantine prefix at 400 days.
 - `reports` (reporter, reported, match, the reporter's words up to 300
-  characters) and `safety_reviews` (flag names only): no deletion in the code
-  yet.
+  characters) and `safety_reviews` (flag names only): twelve months, then
+  deleted (`src/safety/retention.ts`, migration 059), unless referred to
+  police (`referred_at`, or the photo behind the introduction was referred),
+  under a lawful hold (`preserved_until`, or a preserved ledger entry on the
+  introduction), or naming an account that is suspended right now. The marks
+  are written with `scripts/safety/hold.mts`.
 - `suspended_emails`: hashes, kept until the suspension is lifted.
 - Email events: ninety days, hashes only. Shelf gaps: 180 days.
 - IP addresses: the application's request log (CloudWatch, one month), the

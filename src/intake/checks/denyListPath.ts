@@ -8,7 +8,7 @@
  * It does NOT catch a prohibited thing posted under an innocent category —
  * that is the prohibited-by-meaning check, step three of the build sequence.
  */
-import { categoryDenied } from '../../denylist.js';
+import { HELD_BACK_FALLBACK, HELD_BACK_STATUS, categoryDenied, heldBackReason } from '../../denylist.js';
 import { passed, type Check } from '../types.js';
 
 export const denyListPath: Check = {
@@ -24,11 +24,12 @@ export const denyListPath: Check = {
       outcome: 'refuse',
       reason_code: denied.reason_code,
       detail: 'deny-list category match',
-      // A family held back while the rules around it are settled says so; a
+      // A family held back because of the law around it says why, in the one
+      // sentence its seed entry carries (denylist.ts, heldBackReason); a
       // family that is simply off the switchboard says nothing here, and the
-      // door's own refusal carries it.
-      ...(denied.status === 'vertical-policy-pending'
-        ? { plain_words: `The '${category}' vertical is not open yet (${denied.reason_code}).` }
+      // door's own refusal carries it. Never the dotted path.
+      ...(denied.status === HELD_BACK_STATUS
+        ? { plain_words: heldBackReason(denied.reason_code) ?? HELD_BACK_FALLBACK }
         : {}),
     };
   },

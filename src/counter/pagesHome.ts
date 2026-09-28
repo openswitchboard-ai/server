@@ -1362,7 +1362,54 @@ document.querySelectorAll('input[name="hears_via"]').forEach(function (r) {
 });
 </script>
 <noscript><style>#hears-save{display:inline-block !important}</style></noscript>
+${linkSection('Your account', 'Delete your account and what it holds.', '/account/delete', 'Delete my account')}
 <a class="btn secondary" href="/">Back</a>`);
+}
+
+// ---------------------------------------------------------------------------
+// Delete my account (founder decision, 28 September 2026). One paragraph of
+// what happens, the PIN or passkey asked for at the press whatever window is
+// open, and one button. src/domain/accountDeletion.ts does the work.
+// ---------------------------------------------------------------------------
+export const ACCOUNT_DELETE_WHAT_HAPPENS =
+  'This takes down every want and have you have up, closes every introduction and conversation, and signs out every assistant and device. We erase your email address, first name, suburb, time zone, what you set up for your assistant, and your PIN and passkeys. We keep what safety or the law needs: anything under a report or a safety hold, the encrypted copy of your messages until it expires after 30 days, the record of what you agreed to, and any payment records. We send one email to say it is done, and you can open a new account with the same address whenever you like.';
+
+export const ACCOUNT_DELETE_PAYMENT_UNDER_WAY =
+  'You have a payment still under way. It has to finish before your account can be deleted. Your main page shows where it is up to.';
+
+export interface AccountDeleteView extends cpages.CeremonyView {
+  paymentUnderWay?: boolean;
+}
+
+export function accountDeletePage(v: AccountDeleteView, error?: string): string {
+  // Always the fresh ceremony, whatever window a sign-in opened.
+  const c = cpages.freshCeremony(v);
+  const form = v.paymentUnderWay
+    ? `<div class="note">${esc(ACCOUNT_DELETE_PAYMENT_UNDER_WAY)}</div>`
+    : `<form method="POST" action="/account/delete" id="deleteForm">
+  ${cpages.ceremonyField(c, 'delete')}
+  ${cpages.ceremonySubmit(c, { formId: 'deleteForm', label: 'Delete my account', className: 'danger', strong: true })}
+</form>
+${cpages.ceremonyAlt(c, 'deleteForm')}
+${cpages.ceremonyNote(c)}`;
+  return layout('Delete your account', `
+<h1>Delete your account.</h1>
+${errBox(error)}
+<p>${esc(ACCOUNT_DELETE_WHAT_HAPPENS)}</p>
+${form}
+<a class="btn secondary" href="/">Not now</a>
+${v.paymentUnderWay ? '' : cpages.ceremonyScript(c)}`);
+}
+
+/** Where a deleted account lands. There is nothing left to sign in to. */
+export const ACCOUNT_DELETED_PAGE_LINE = 'Your account is deleted and you are signed out.';
+export const ACCOUNT_DELETED_EMAIL_LINE = 'We have sent one email to say so.';
+
+export function accountDeletedPage(emailSent: boolean): string {
+  const line = emailSent
+    ? `${ACCOUNT_DELETED_PAGE_LINE} ${ACCOUNT_DELETED_EMAIL_LINE}`
+    : ACCOUNT_DELETED_PAGE_LINE;
+  return cpages.messagePage('Your account is deleted', `<p class="lead">${esc(line)}</p>`, '/', 'Home');
 }
 
 // ---------------------------------------------------------------------------

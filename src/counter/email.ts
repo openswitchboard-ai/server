@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { findAccountByEmail } from '../domain/accounts.js';
 import {
+  renderAccountDeleted,
   renderApproval,
   renderDealAgreed,
   renderKillSwitch,
@@ -290,5 +291,26 @@ export async function sendSettlementEmail(
       },
       ctx.links,
     ),
+  });
+}
+
+/**
+ * The one email a deleted account is sent, to the address it held, before
+ * that address is erased. Transactional and exempt: it goes whatever hears_via
+ * says. Keyed on the account alone, so it is sent once, however many times the
+ * deletion is run.
+ */
+export async function sendAccountDeletedEmail(
+  cfg: Config,
+  to: string,
+  accountId: string,
+): Promise<SendOutcome> {
+  return sendEmail(cfg, {
+    to,
+    accountId,
+    template: 'account-deleted',
+    kind: 'transactional',
+    dedupeKey: `account-deleted:${accountId}`,
+    content: renderAccountDeleted(baseFooterLinks(cfg)),
   });
 }

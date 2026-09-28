@@ -136,6 +136,9 @@ export const EXEMPT_TEMPLATES = new Set<string>([
   'security-pin-set-by-code',
   'security-passkey-added',
   'security-agent-key-created',
+  // The one email a deleted account is sent, to the address it held, just
+  // before that address is erased. Nothing else ever goes to it again.
+  'account-deleted',
 ]);
 
 const esc = (s: string): string =>
@@ -844,6 +847,25 @@ export function renderScreeningRejected(
     f,
   );
   return { subject: 'OpenSwitchboard: something you posted needs a change', html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (f3) Account deleted. The last email the address is sent: it goes out, and
+// then the address is erased. No button and no link beyond the footer, because
+// there is no account left to open.
+// ---------------------------------------------------------------------------
+export const ACCOUNT_DELETED_SUBJECT = 'Your OpenSwitchboard account is deleted';
+export const ACCOUNT_DELETED_LINES = [
+  'Your OpenSwitchboard account is deleted.',
+  'Your wants and haves are down, your introductions and conversations are closed, and your assistants are signed out. Your email address, name and suburb are erased, so this is the last email we send you.',
+  'If you did not do this, write to info@openswitchboard.ai.',
+] as const;
+
+export function renderAccountDeleted(f: FooterLinks): EmailContent {
+  const [heading, line, tail] = ACCOUNT_DELETED_LINES;
+  const html = shell(h1(esc(heading)) + para(esc(line)) + small(esc(tail)), f, LINE);
+  const text = `${heading}\n\n${line}\n\n${tail}\n\n${footerText(f)}`;
+  return { subject: ACCOUNT_DELETED_SUBJECT, html, text };
 }
 
 // ---------------------------------------------------------------------------

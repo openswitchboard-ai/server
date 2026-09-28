@@ -526,6 +526,9 @@ export interface CeremonyView {
    *  on the window, and a passkey rides along inside the form itself, so the
    *  server sees the ceremony at the moment of the press. */
   money?: boolean;
+  /** A press that ignores the window without moving money: deleting the
+   *  account. It behaves as a money press does and says so in its own words. */
+  fresh?: boolean;
 }
 
 /**
@@ -534,6 +537,11 @@ export interface CeremonyView {
  */
 export function moneyCeremony(v: CeremonyView): CeremonyView {
   return { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: false, money: true };
+}
+
+/** The same, for a press that moves no money: deleting the account. */
+export function freshCeremony(v: CeremonyView): CeremonyView {
+  return { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: false, fresh: true };
 }
 
 /** True where the button itself has to run the passkey ceremony first. */
@@ -580,7 +588,7 @@ export function ceremonySubmit(
   const cls = opts.className ? ` class="${esc(opts.className)}"` : '';
   const nv = opts.name ? ` name="${esc(opts.name)}" value="${esc(opts.value ?? '')}"` : '';
   const tgt = opts.formTarget ? ` formtarget="${esc(opts.formTarget)}"` : '';
-  const inline = v.money ? ' data-pk-inline="1"' : '';
+  const inline = v.money || v.fresh ? ' data-pk-inline="1"' : '';
   if (!passkeyOnlyCeremony(v)) {
     return `<button type="submit"${nv}${tgt}${cls}>${esc(opts.label)}</button>`;
   }
@@ -608,7 +616,7 @@ export function ceremonyAlt(
     ? ` data-pk-name="${esc(opts.name)}" data-pk-value="${esc(opts.value ?? '')}"`
     : '';
   const tgt = opts.formTarget ? ` data-pk-target="${esc(opts.formTarget)}"` : '';
-  const inline = v.money ? ' data-pk-inline="1"' : '';
+  const inline = v.money || v.fresh ? ' data-pk-inline="1"' : '';
   return `<button type="button" class="secondary" data-pk-form="${esc(formId)}" data-pk-fallback="pin"${data}${tgt}${inline}>Use your passkey instead</button><div class="err-slot" data-pk-err role="alert" hidden></div>`;
 }
 
@@ -634,6 +642,14 @@ not have it, open this on one that does, or <a href="/pin">set a PIN</a> to use 
     }
     if (v.hasPin && v.hasPasskey) return 'Money takes your PIN or your passkey every time.';
     return 'Money takes your PIN every time.';
+  }
+  if (v.fresh) {
+    if (passkeyOnlyCeremony(v)) {
+      return `This takes your passkey every time. On a device that does
+not have it, open this on one that does, or <a href="/pin">set a PIN</a> to use here.`;
+    }
+    if (v.hasPin && v.hasPasskey) return 'This takes your PIN or your passkey every time.';
+    return 'This takes your PIN every time.';
   }
   if (passkeyOnlyCeremony(v)) {
     return `This takes your passkey. On a device that does not

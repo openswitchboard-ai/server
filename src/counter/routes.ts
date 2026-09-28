@@ -73,6 +73,7 @@ import {
 import { rejectionInPlainWords } from '../domain/screening.js';
 import { REASON_MAX_CHARS, fileReport } from '../safety/reports.js';
 import { emailIsSuspended, isSuspended } from '../safety/suspend.js';
+import * as accountDeletion from '../domain/accountDeletion.js';
 import { reportLink } from '../domain/humanLinks.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
@@ -1698,6 +1699,11 @@ in on this device and lets you approve what is waiting.</p>
       return pinCheck(s, reply, pin);
     };
 
+    /** What a fresh-ceremony refusal says: money, or deleting the account. */
+    type FreshWords = { takes: string; held: string };
+    const MONEY_WORDS: FreshWords = { takes: 'Money takes', held: 'move money' };
+    const DELETE_WORDS: FreshWords = { takes: 'Deleting your account takes', held: 'delete your account' };
+
     // ------------------------------------------------------------------
     // MONEY ALWAYS TAKES A FRESH CEREMONY (Lachlan, 27 September 2026).
     //
@@ -1715,6 +1721,7 @@ in on this device and lets you approve what is waiting.</p>
       reply: FastifyReply,
       b: any,
       refuse: Refuse = refuseJson(reply),
+      words: FreshWords = MONEY_WORDS,
     ): Promise<boolean> => {
       const passkey = typeof b?.passkey === 'string' ? b.passkey : '';
       if (passkey) {
@@ -1748,7 +1755,7 @@ in on this device and lets you approve what is waiting.</p>
         }
         const heldKey = usedId ? await passkeyHeldUntil(s.accountId!, usedId) : undefined;
         if (heldKey) {
-          const sentence = `A new passkey can move money from ${await plainWhen(s.accountId!, heldKey)}.`;
+          const sentence = `A new passkey can ${words.held} from ${await plainWhen(s.accountId!, heldKey)}.`;
           refuse({ status: 403, body: { error: 'passkey_held', error_description: sentence }, sentence });
           return false;
         }
@@ -1761,9 +1768,9 @@ in on this device and lets you approve what is waiting.</p>
           status: 401,
           body: {
             error: 'ceremony_required',
-            error_description: 'Money takes your passkey every time. Go back and press again with it.',
+            error_description: `${words.takes} your passkey every time. Go back and press again with it.`,
           },
-          sentence: 'Money takes your passkey every time. Press again with it.',
+          sentence: `${words.takes} your passkey every time. Press again with it.`,
         });
         return false;
       }
@@ -1771,7 +1778,7 @@ in on this device and lets you approve what is waiting.</p>
       // comes round. The passkey still does.
       const held = await pinHeldUntil(s.accountId!);
       if (held) {
-        await heldPinRefusal(reply, s.accountId!, held, 'move money', refuse);
+        await heldPinRefusal(reply, s.accountId!, held, words.held, refuse);
         return false;
       }
       return pinCheck(s, reply, String(b?.pin ?? ''), refuse);
@@ -1785,8 +1792,14 @@ in on this device and lets you approve what is waiting.</p>
       action: string,
       refuse: Refuse = refuseJson(reply),
     ): Promise<boolean> =>
-      creds.isMoneyAction(action)
-        ? moneyCeremony(s, reply, b, refuse)
+      creds.isFreshCeremonyAction(action)
+        ? moneyCeremony(
+            s,
+            reply,
+            b,
+            refuse,
+            action === creds.ACCOUNT_DELETE_ACTION ? DELETE_WORDS : MONEY_WORDS,
+          )
         : ceremony(s, reply, String(b?.pin ?? ''), refuse);
 
     /**
@@ -4413,6 +4426,53 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       await ops.resumeNonTransactionalEmail(s.accountId!);
       return savedTo(reply, 'email-resumed');
+    });
+
+    // ------------------------------------------------------------------
+    // Delete my account (founder decision, 28 September 2026). The page
+    // says what happens in one paragraph; the press takes the PIN or the
+    // passkey at that moment, whatever window a sign-in opened
+    // (credentials.ts ACCOUNT_DELETE_ACTION). domain/accountDeletion.ts
+    // does the work and holds the table-by-table decision.
+    // ------------------------------------------------------------------
+    const accountDeleteView = async (accountId: string): Promise<home.AccountDeleteView> => ({
+      ...(await credentialsOf(accountId)),
+      elevated: false,
+      paymentUnderWay: await accountDeletion.paymentUnderWay(accountId),
+    });
+
+    counter.get('/account/delete', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      return html(reply, home.accountDeletePage(await accountDeleteView(s.accountId!)));
+    });
+
+    counter.post('/account/delete', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const v = await accountDeleteView(s.accountId!);
+      if (v.paymentUnderWay) return html(reply, home.accountDeletePage(v), 409);
+      // A refused press redraws the page with one plain line on it.
+      const refuse: Refuse = (r) => {
+        void html(reply, home.accountDeletePage(v, r.sentence), r.status);
+      };
+      const okNow = await pressCeremony(s, reply, req.body ?? {}, creds.ACCOUNT_DELETE_ACTION, refuse);
+      if (!okNow) return;
+      let outcome: accountDeletion.DeletionOutcome;
+      try {
+        outcome = await accountDeletion.deleteAccount(s.accountId!, cfg, 'counter');
+      } catch (e: any) {
+        if (e?.paymentUnderWay) {
+          return html(reply, home.accountDeletePage({ ...v, paymentUnderWay: true }), 409);
+        }
+        throw e;
+      }
+      // The session row went with the account; this clears the cookie too.
+      await sess.destroySession(req, reply);
+      return html(
+        reply,
+        home.accountDeletedPage(outcome.email === 'sent' || outcome.email === 'duplicate'),
+      );
     });
 
     // ------------------------------------------------------------------
