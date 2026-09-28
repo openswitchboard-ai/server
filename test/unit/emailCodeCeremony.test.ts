@@ -97,6 +97,8 @@ interface World {
   accountWrites: string[];
   settlementApproved: boolean;
   links: any[];
+  /** Credential ids fitted while a recovery hold stood. */
+  passkeysFittedInHold: string[];
 }
 let world: World;
 let pinHash: string;
@@ -137,6 +139,10 @@ function fakePool() {
         ]);
       }
       if (s.startsWith('SELECT timezone FROM accounts')) return rows([{ timezone: 'Australia/Sydney' }]);
+      if (s.startsWith('SELECT a.pin_money_from FROM accounts a JOIN webauthn_credentials')) {
+        const fitted = world.passkeysFittedInHold.includes(params[1]);
+        return rows(fitted && world.pinMoneyFrom && world.pinMoneyFrom > new Date() ? [{ pin_money_from: world.pinMoneyFrom }] : []);
+      }
       if (s.startsWith('SELECT pin_money_from FROM accounts')) {
         return rows([{ pin_money_from: world.pinMoneyFrom }]);
       }
@@ -233,6 +239,7 @@ beforeEach(() => {
     accountWrites: [],
     settlementApproved: false,
     links: [],
+    passkeysFittedInHold: [],
   };
   pinAttemptLimiter.reset();
   anonymousSessionLimiter.reset();
@@ -370,6 +377,60 @@ describe('lost your passkey', () => {
     expect(r.json().error_description).toMatch(/^A new PIN can do this from .+\. Your passkey works now\.$/);
     const k = await post('/agent-keys', { name: 'laptop', pin: PIN });
     expect(k.statusCode).toBe(403);
+  });
+});
+
+describe('a passkey fitted while a recovered PIN waits', () => {
+  beforeEach(() => {
+    // Lost the passkey, recovered with an emailed code, PIN set and held.
+    world.pinHash = pinHash;
+    world.pinMoneyFrom = new Date(Date.now() + 24 * 3_600_000);
+    world.elevatedVia = 'code';
+  });
+
+  it('can be fitted inside the recovery window', async () => {
+    const page = await get('/passkey');
+    expect(page.statusCode).toBe(200);
+    expect(page.body).not.toContain('Confirm it is you');
+    const r = await post('/passkey/options');
+    expect(r.statusCode).toBe(200);
+    expect(r.json().challenge).toBe('chal-2');
+  });
+
+  it('is still refused to a window an emailed code opened with no recovery behind it', async () => {
+    world.pinMoneyFrom = null;
+    world.pinHash = null;
+    const r = await post('/passkey/options');
+    expect(r.statusCode).toBe(403);
+  });
+
+  it('moves no money until the hold ends, and says when it can', async () => {
+    world.passkeysFittedInHold = ['new-key'];
+    const { passkeyHeldUntil } = await import('../../src/counter/pin.js');
+    const held = await passkeyHeldUntil(ACCOUNT, 'new-key');
+    expect(held?.getTime()).toBe(world.pinMoneyFrom!.getTime());
+    expect(await passkeyHeldUntil(ACCOUNT, 'old-key')).toBeUndefined();
+  });
+
+  it('signing in with it opens only the weaker window, so it cannot make a key or connect an assistant', async () => {
+    world.passkeysFittedInHold = ['new-key'];
+    world.signedIn = false;
+    world.elevatedUntil = null;
+    world.elevatedVia = null;
+    await post('/login/passkey/verify', { id: 'new-key', elevate_only: '' } as any);
+    expect(world.elevatedVia).toBe('code');
+    world.signedIn = true;
+    const k = await post('/agent-keys', { name: 'laptop', pin: '' });
+    expect(k.statusCode).not.toBe(200);
+  });
+
+  it('a passkey held before the recovery is untouched', async () => {
+    world.passkeysFittedInHold = [];
+    world.signedIn = false;
+    world.elevatedUntil = null;
+    world.elevatedVia = null;
+    await post('/login/passkey/verify', { id: 'old-key' });
+    expect(world.elevatedVia).toBe('passkey');
   });
 });
 

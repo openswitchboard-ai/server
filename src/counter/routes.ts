@@ -114,6 +114,7 @@ import {
   holdRecoveredPin,
   pinFormatOk,
   pinHeldUntil,
+  passkeyHeldUntil,
   verifyPinAttempt,
   PIN_ELEVATION_MINUTES,
 } from './pin.js';
@@ -1250,7 +1251,10 @@ in on this device and lets you approve what is waiting.</p>
     counter.get('/passkey', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      if (!(await freshCeremonyOr(reply, s, '/passkey'))) return;
+      // A recovering account may fit its new passkey inside the recovery
+      // window; the new one waits out the same hold (see /passkey/options).
+      const inRecovery = !!(await pinHeldUntil(s.accountId!)) && sess.isElevated(s);
+      if (!inRecovery && !(await freshCeremonyOr(reply, s, '/passkey'))) return;
       const a: any = await getAccount(s.accountId!);
       return html(
         reply,
@@ -1268,7 +1272,15 @@ in on this device and lets you approve what is waiting.</p>
       // Fitting a second key to an account that already holds one is a
       // sensitive action, so it takes the ceremony the account can do now —
       // its own credential, never a window an emailed code opened.
-      if (creds.needsFreshCeremony(await credentialsOf(s.accountId!), sess.isStronglyElevated(s))) {
+      // The one exception: an account in a recovery hold (it lost its passkey
+      // and set a PIN by emailed code) may fit a new passkey inside that
+      // window, because the new one waits out the same hold (pin.ts
+      // passkeyHeldUntil) and so gains nothing the recovery did not.
+      const inRecovery = !!(await pinHeldUntil(s.accountId!)) && sess.isElevated(s);
+      if (
+        !inRecovery &&
+        creds.needsFreshCeremony(await credentialsOf(s.accountId!), sess.isStronglyElevated(s))
+      ) {
         return reply.code(403).send({ error: 'ceremony_required' });
       }
       const options = await wa.registrationOptions(cfg, s.accountId!, 'OpenSwitchboard account');
@@ -1285,7 +1297,10 @@ in on this device and lets you approve what is waiting.</p>
       await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
       // A successful passkey ceremony is a sensitive-action ceremony, and
       // enrolling one is a ceremony too: the device just checked the person.
-      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'passkey');
+      // Fitted inside a recovery hold, it counts only as the recovery does.
+      const enrolledId = typeof (req.body as any)?.id === 'string' ? (req.body as any).id : '';
+      const enrolledHeld = enrolledId ? await passkeyHeldUntil(s.accountId!, enrolledId) : undefined;
+      await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, enrolledHeld ? 'code' : 'passkey');
       if (had) {
         const email = await ops.accountEmail(s.accountId!, 'security-notice');
         if (email) {
@@ -1511,8 +1526,11 @@ in on this device and lets you approve what is waiting.</p>
         // browser arrived holding.
         live = await sess.rotateSession(reply, s, accountId);
       }
-      // A successful passkey ceremony is a sensitive-action ceremony.
-      await sess.elevateSession(live.id, PIN_ELEVATION_MINUTES, 'passkey');
+      // A successful passkey ceremony is a sensitive-action ceremony, unless the
+      // passkey was fitted inside a recovery hold that has not ended.
+      const usedHeld =
+        typeof b.id === 'string' ? await passkeyHeldUntil(accountId, b.id) : undefined;
+      await sess.elevateSession(live.id, PIN_ELEVATION_MINUTES, usedHeld ? 'code' : 'passkey');
       const signedIn = { ...live, accountId } as Session;
       // Signing in goes back to the link that sent the person here; a ceremony
       // on a page they are already on goes nowhere new.
@@ -1718,6 +1736,20 @@ in on this device and lets you approve what is waiting.</p>
             },
             sentence: 'That passkey did not confirm it. Press again.',
           });
+          return false;
+        }
+        // A passkey fitted inside a recovery hold moves no money until the
+        // hold ends, the same as the recovered PIN.
+        let usedId = '';
+        try {
+          usedId = String(JSON.parse(passkey)?.id ?? '');
+        } catch {
+          usedId = '';
+        }
+        const heldKey = usedId ? await passkeyHeldUntil(s.accountId!, usedId) : undefined;
+        if (heldKey) {
+          const sentence = `A new passkey can move money from ${await plainWhen(s.accountId!, heldKey)}.`;
+          refuse({ status: 403, body: { error: 'passkey_held', error_description: sentence }, sentence });
           return false;
         }
         await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, 'passkey');

@@ -135,6 +135,31 @@ export async function holdRecoveredPin(accountId: string): Promise<Date> {
   return new Date(r.rows[0]?.pin_money_from ?? Date.now() + RECOVERED_PIN_HOLD_HOURS * 3_600_000);
 }
 
+/**
+ * A passkey fitted while a recovered PIN waits out its hold waits with it
+ * (28 September 2026). The recovery is what let it on, so until the hold ends
+ * it counts only as the recovery does: it moves no money, and it opens no
+ * window strong enough to change credentials, make keys or connect an
+ * assistant. A passkey the account held before the recovery is untouched.
+ * Undefined when this passkey is not waiting.
+ */
+export async function passkeyHeldUntil(
+  accountId: string,
+  credentialId: string,
+): Promise<Date | undefined> {
+  const r = await getPool().query(
+    `SELECT a.pin_money_from
+       FROM accounts a
+       JOIN webauthn_credentials c ON c.account_id = a.id
+      WHERE a.id = $1 AND c.credential_id = $2
+        AND a.pin_money_from > now()
+        AND c.created_at >= a.pin_money_from - make_interval(hours => $3::int)`,
+    [accountId, credentialId, RECOVERED_PIN_HOLD_HOURS],
+  );
+  const at = r.rows[0]?.pin_money_from;
+  return at ? new Date(at) : undefined;
+}
+
 /** A PIN set behind the account's own credential waits for nothing. */
 export async function clearPinHold(accountId: string): Promise<void> {
   await getPool().query('UPDATE accounts SET pin_money_from = NULL WHERE id = $1', [accountId]);
