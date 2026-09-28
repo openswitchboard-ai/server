@@ -57,6 +57,7 @@ import { OsbError, SCHEMA_VERSION, validatePayload } from '../../src/protocol.js
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
 import { refsFake, type RefsFake } from './postingRefsFake.js';
+import { asScreened } from './screenedFixture.js';
 
 const cfg = {
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20 },
@@ -368,7 +369,7 @@ describe('what the counterparty is handed at the details step', () => {
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string) =>
         /FROM cards WHERE id/.test(sql) || /SELECT \* FROM cards/.test(sql)
-          ? { rows: [theirs], rowCount: 1 }
+          ? { rows: [asScreened(theirs)], rowCount: 1 }
           : { rows: [], rowCount: 0 },
     } as any);
   });

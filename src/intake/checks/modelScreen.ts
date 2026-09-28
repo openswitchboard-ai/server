@@ -15,7 +15,7 @@ import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { bedrock } from '../../aws.js';
 import { screeningReasonCodes } from '../../denylist.js';
 import { shelfPolicy } from '../../domain/shelfRules.js';
-import { promptSafe } from '../promptText.js';
+import { promptSafe, promptSafePair } from '../promptText.js';
 import { passed, type Check, type CheckResult } from '../types.js';
 import type { Config } from '../../config.js';
 
@@ -121,7 +121,9 @@ export async function screenTextWithBedrock(
   /** The category's human labels, so the classifier knows what shelf this is
    *  on as well as what the words say. Left out where there is no category.
    *  SERVER-SIDE: it comes from the catalogue, never from the author, so it
-   *  does not go through promptSafe and it rides in the system prompt. */
+   *  does not go through promptSafe and it rides in the system prompt. Build
+   *  it with categoryLabelsForScreen, which never lets an author's made-up
+   *  leaf into it. */
   categoryLabels?: string,
 ): Promise<ModelFlags> {
   // Every line is already a `key: value` pair the author controls, so each one
@@ -212,11 +214,16 @@ export const modelScreen: Check = {
   async run(item, cfg): Promise<CheckResult> {
     if (!item.text) return passed('modelScreen');
     if (!cfg) throw new Error('modelScreen needs the deployment config');
-    const { categoryLabelPath } = await import('../../domain/matchRules.js');
+    const { categoryLabelsForScreen } = await import('../../domain/matchRules.js');
+    // The shelf in the system prompt is the catalogue's words only. A leaf the
+    // author made up is theirs, so it travels in the untrusted turn with the
+    // rest of what they wrote, through promptSafe like every other line there,
+    // and the system prompt says only that the kind is unlisted.
+    const shelf = item.fields?.category ? categoryLabelsForScreen(item.fields.category) : undefined;
     const flags = await screenTextWithBedrock(
       cfg,
-      [item.text],
-      item.fields?.category ? shelfForScreen(categoryLabelPath(item.fields.category), item.fields.category) : undefined,
+      [item.text, ...(shelf?.unlisted ? [promptSafePair('unlisted_kind_filed_as', shelf.unlisted)] : [])],
+      item.fields?.category && shelf ? shelfForScreen(shelf.labels, item.fields.category) : undefined,
     );
     const refuse = (reason_code: string): CheckResult => ({
       name: 'modelScreen',

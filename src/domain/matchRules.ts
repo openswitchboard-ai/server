@@ -451,6 +451,37 @@ export function categoryLabelPath(category: string): string {
 }
 
 /**
+ * THE SHELF AS THE SCREEN'S SYSTEM PROMPT IS TOLD IT, from the catalogue alone.
+ *
+ * categoryLabelPath above falls back to the raw path segment for a leaf the
+ * catalogue does not know, and since the catalogue became a deny list the
+ * author can write any leaf they like. Those words are the author's, and the
+ * system prompt is the one place in the screen where nothing of the author's
+ * may go. So `labels` names only nodes the catalogue knows, and an unknown tail
+ * is said as "an unlisted kind under" the deepest known label. The raw tail
+ * comes back separately as `unlisted`, for the caller to hand over through
+ * promptSafe in the untrusted user turn with the rest of the author's words.
+ */
+export function categoryLabelsForScreen(category: string): { labels: string; unlisted?: string } {
+  const nodes = taxonomy().nodes ?? {};
+  const parts = category.split('.');
+  const labels: string[] = [];
+  let known = 0;
+  for (let i = 1; i <= parts.length; i++) {
+    const label = nodes[parts.slice(0, i).join('.')]?.label;
+    if (typeof label !== 'string') break;
+    labels.push(label);
+    known = i;
+  }
+  if (known === parts.length) return { labels: labels.join(' > ') };
+  const unlisted = parts.slice(known).join('.');
+  return {
+    labels: labels.length ? `an unlisted kind under ${labels.join(' > ')}` : 'an unlisted kind',
+    ...(unlisted ? { unlisted } : {}),
+  };
+}
+
+/**
  * The human's other words for the thing: short phrases, trimmed, capped, with
  * the empties dropped and the same phrase said twice kept once. Anything that
  * is not an array of strings reads as none, so a malformed column can never
@@ -1230,7 +1261,11 @@ export function articleForPhrase(phrase: string): 'a' | 'an' {
  * For the sentences that introduce the thing rather than possess it — "keen on
  * a mountain bike", "someone nearby has climbing gear going".
  */
-export function categoryPhraseWithArticle(labelOrId?: string, kind?: string | null): string {
+export function categoryPhraseWithArticle(
+  labelOrId?: string,
+  kind?: string | null,
+  opts: { quoteOwn?: boolean } = {},
+): string {
   const node = phraseNode(labelOrId);
   // The poster's own words come first, for the reason categoryLeafLabel
   // gives: a posting filed by the switchboard under the nearest node it knows
@@ -1243,6 +1278,24 @@ export function categoryPhraseWithArticle(labelOrId?: string, kind?: string | nu
   // A heading is said as it stands, with nothing in front of it.
   if (!own && !node && headingOnly(labelOrId)) return phrase;
   // Words the poster typed get the rule rather than a hand-written answer.
-  if (own && !kindTakesArticle(own)) return own;
-  return `${node?.article ?? articleForPhrase(phrase)} ${phrase}`;
+  // Where they are somebody else's, they go inside quotation marks and the
+  // article stays outside them: the article is the switchboard's word.
+  const said = own && opts.quoteOwn ? quotedTheirWords(own) : phrase;
+  if (own && !kindTakesArticle(own)) return said;
+  return `${node?.article ?? articleForPhrase(phrase)} ${said}`;
+}
+
+/**
+ * THE OTHER SIDE'S WORDS, QUOTED, inside a sentence the switchboard signs.
+ *
+ * A sentence labelled switchboard-system that names the thing in somebody
+ * else's words carries those words inside typographic quotation marks, so the
+ * switchboard's words and theirs can be told apart at a glance by the agent
+ * reading it and by the human it is read to. Any quotation mark of their own
+ * is taken out first, so their words cannot close the quote and carry on in
+ * the switchboard's voice.
+ */
+export function quotedTheirWords(words: string): string {
+  const inner = words.replace(/[\u201C\u201D"]/g, '').trim();
+  return inner ? `\u201C${inner}\u201D` : '';
 }

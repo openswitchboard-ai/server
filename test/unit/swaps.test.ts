@@ -585,7 +585,11 @@ describe('downstream: both people are looking, and there is no figure', () => {
       const [entry] = await checkMatches(cfg, who);
       expect(entry.swap).toBe(true);
       expect(entry.signal.counterparty_type).toBe('looking_for');
-      expect(entry.note.text).toContain('looking for a tennis partner too');
+      // The row holds the want column's words: ANA's own, so said plainly to
+      // her, and BEN's to hear as somebody else's, so inside quotation marks.
+      expect(entry.note.text).toContain(
+        who === ANA ? 'looking for a tennis partner too' : 'looking for a \u201Ctennis partner\u201D too',
+      );
       expect(entry.offers).toBeUndefined();
     }
   });

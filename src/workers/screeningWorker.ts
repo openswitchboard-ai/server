@@ -78,13 +78,32 @@ export function startScreeningWorker(cfg: Config, log: (msg: string, extra?: any
                   card_id: card.id,
                   state: card.lifecycle_state,
                 });
+              } else if (
+                typeof body.content_version === 'number' &&
+                card.content_version !== undefined &&
+                body.content_version !== card.content_version
+              ) {
+                // The words this message was sent for have been changed since
+                // (migration 055). Not an error: the change sent a message of
+                // its own, and that one screens the words as they stand now. A
+                // message from before the version existed carries none and
+                // screens whatever the row holds, as it always did.
+                log('screening: a newer version is on its way', {
+                  card_id: card.id,
+                  message_version: body.content_version,
+                  row_version: card.content_version,
+                });
               } else {
+                // The row as read is the row as screened: applyVerdict lands the
+                // verdict only on this version and writes the snapshot from
+                // these same values.
                 const verdict = await screenCard(cfg, card);
-                const { applied, screening } = await applyVerdict(cfg, card.id, verdict);
+                const { applied, screening } = await applyVerdict(cfg, card, verdict);
                 log('screening verdict', {
                   card_id: card.id,
                   pass: verdict.pass,
                   reason_code: verdict.reason_code,
+                  ...(applied ? {} : { applied: false }),
                 });
                 // The state change IS the rejection event: only the call that
                 // actually flipped the row tells the human about it.
@@ -97,7 +116,7 @@ export function startScreeningWorker(cfg: Config, log: (msg: string, extra?: any
                 // src/shadow/jevTrials.ts). Started, not awaited, and wrapped
                 // as well: the verdict is already written and nothing about
                 // this posting's journey may depend on a third party's API.
-                if (verdict.pass) {
+                if (verdict.pass && applied) {
                   try {
                     void shadowCategoryTrial(cfg, card, log);
                   } catch (e: any) {
