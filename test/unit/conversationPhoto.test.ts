@@ -42,7 +42,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 vi.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: vi.fn(async (_client: unknown, command: any, opts: any) => {
     const kind = command.constructor.name;
-    signed.push({ kind, input: command.input, expiresIn: opts?.expiresIn });
+    signed.push({ kind, input: command.input, expiresIn: opts?.expiresIn, opts });
     return `https://bucket.test/${encodeURIComponent(command.input.Key)}?sig=1&kind=${kind}`;
   }),
 }));
@@ -64,7 +64,7 @@ import {
 import type { Config } from '../../src/config.js';
 
 /** Every URL the presigner was asked to sign, in order. */
-let signed: { kind: string; input: any; expiresIn?: number }[] = [];
+let signed: { kind: string; input: any; expiresIn?: number; opts?: any }[] = [];
 
 const cfg = {
   envName: 'dev',
@@ -1145,7 +1145,15 @@ describe('the server takes the hidden details out itself', () => {
     expect(world.puts).toEqual([]);
   });
 
+  it('signs the content type into the upload link, so S3 refuses any other', async () => {
+    await photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg());
+    const put = signed.find((s) => s.kind === 'PutObjectCommand')!;
+    expect(put.input.ContentType).toBe('image/jpeg');
+    expect([...put.opts.signableHeaders]).toEqual(['content-type']);
+  });
+
   it('serves the link as the row\'s own type, inline, under a name nobody chose', async () => {
+
     await sendPhoto(ANA, MATCH, undefined, png());
     const got = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
     await photo.openPhotoLink(cfg, got[0].url.split('/p/')[1]);
