@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
+  STATS_MEDIAN_WINDOW_DAYS,
+  allowedOrigins,
   geoLabel,
   registerPublicRoutes,
   type PublicDataSource,
@@ -9,6 +14,8 @@ import {
 import type { PulseRow } from '../../src/domain/pulse.js';
 
 const cfg: any = { envName: 'dev' };
+const here = dirname(fileURLToPath(import.meta.url));
+
 
 function appWith(deps: PublicDataSource): FastifyInstance {
   const app = Fastify();
@@ -127,5 +134,60 @@ describe('geoLabel', () => {
   it('labels geohash buckets with the coarse cell size, never a place guess', () => {
     expect(geoLabel('qd66')).toMatch(/^area qd66 \(~\d+ km cell\)$/);
     expect(geoLabel('AU-WA')).toBe('region AU-WA');
+  });
+});
+
+describe('the 2026-09-28 review', () => {
+  it('prod does not trust the local dev origin', async () => {
+    const app = Fastify();
+    registerPublicRoutes(app, { envName: 'prod' } as any, {
+      pulseRows: async () => [],
+      stats: async () => ({}),
+    });
+    track(app);
+    const local = await app.inject({
+      method: 'GET',
+      url: '/public/stats',
+      headers: { origin: 'http://localhost:4321' },
+    });
+    expect(local.headers['access-control-allow-origin']).toBeUndefined();
+    const site = await app.inject({
+      method: 'GET',
+      url: '/public/stats',
+      headers: { origin: 'https://openswitchboard.ai' },
+    });
+    expect(site.headers['access-control-allow-origin']).toBe('https://openswitchboard.ai');
+    expect(allowedOrigins({ envName: 'dev' })).toContain('http://localhost:4321');
+  });
+
+  it('a cold cache is filled once however many requests arrive together', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const app = track(
+      appWith({
+        pulseRows: async () => [],
+        stats: async () => {
+          calls += 1;
+          await gate;
+          return { open_want_count: 42 };
+        },
+      }),
+    );
+    const burst = Array.from({ length: 5 }, () =>
+      app.inject({ method: 'GET', url: '/public/stats' }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    release();
+    const res = await Promise.all(burst);
+    expect(calls).toBe(1);
+    for (const r of res) expect(r.json().open_want_count).toBe(42);
+  });
+
+  it('the median looks back a bounded window and is floored on that window', () => {
+    const src = readFileSync(join(here, '..', '..', 'src', 'publicApi.ts'), 'utf8');
+    expect(STATS_MEDIAN_WINDOW_DAYS).toBe(90);
+    expect(src).toMatch(/WHERE m\.created_at > now\(\) - make_interval\(days => \$1::int\)/);
+    expect(src).toContain('m.recent_matches >= K_ANON');
   });
 });

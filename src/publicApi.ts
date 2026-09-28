@@ -10,8 +10,11 @@
  *    present in the response only when the underlying count is >= K_ANON,
  *    otherwise the key is omitted entirely (never zeroed, never rounded up).
  *
- * Both are cached in-process for 60s and rate-limited per client IP.
- * CORS: the public site origin + the local Astro dev server. GET-only.
+ * Both are cached in-process for 60s and rate-limited per client IP. A cold
+ * cache is filled by ONE query however many requests arrive while it runs
+ * (single flight), so a burst after the minute turns over costs one scan.
+ * CORS: the public site origin, plus the local Astro dev server outside prod.
+ * GET-only.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { K_ANON, readPulse, type PulseRow } from './domain/pulse.js';
@@ -19,7 +22,24 @@ import { categoryLabelPath, decodeGeohash, isGeohash } from './domain/matchRules
 import { getPool } from './db.js';
 import type { Config } from './config.js';
 
-const ALLOWED_ORIGINS = ['https://openswitchboard.ai', 'http://localhost:4321'];
+/**
+ * The origins a browser may read these from. The local Astro dev server is a
+ * developer's convenience and has no business being trusted by production
+ * (2026-09-28 review), so it is on the list everywhere but prod.
+ */
+export function allowedOrigins(cfg: Pick<Config, 'envName'> | undefined): string[] {
+  return cfg?.envName === 'prod'
+    ? ['https://openswitchboard.ai']
+    : ['https://openswitchboard.ai', 'http://localhost:4321'];
+}
+
+/**
+ * How far back the median time-to-match looks. The percentile is a sort over
+ * every row it is given, and "every match there has ever been" grows without
+ * end (2026-09-28 review); ninety days is also the more honest figure for a
+ * network that is changing.
+ */
+export const STATS_MEDIAN_WINDOW_DAYS = 90;
 
 const CACHE_MS = 60_000;
 
@@ -70,11 +90,14 @@ function realDataSource(): PublicDataSource {
            AND NOT paused_by_kill_switch`,
       );
       const matches = await pool.query(
-        `SELECT count(*)::int AS matches_created,
+        `SELECT (SELECT count(*)::int FROM matches) AS matches_created,
+                count(*)::int AS recent_matches,
                 percentile_cont(0.5) WITHIN GROUP
                   (ORDER BY EXTRACT(EPOCH FROM (m.created_at - w.created_at)))
                   AS median_seconds_to_match
-         FROM matches m JOIN cards w ON w.id = m.card_want`,
+         FROM matches m JOIN cards w ON w.id = m.card_want
+         WHERE m.created_at > now() - make_interval(days => $1::int)`,
+        [STATS_MEDIAN_WINDOW_DAYS],
       );
       const c = cards.rows[0];
       const m = matches.rows[0];
@@ -82,11 +105,11 @@ function realDataSource(): PublicDataSource {
       // Independent flooring: each total appears only at >= K_ANON.
       if (c.open_want_count >= K_ANON) out.open_want_count = c.open_want_count;
       if (c.back_pocket_count >= K_ANON) out.back_pocket_count = c.back_pocket_count;
-      if (m.matches_created >= K_ANON) {
-        out.matches_created = m.matches_created;
-        if (m.median_seconds_to_match != null) {
-          out.median_seconds_to_match = Math.round(Number(m.median_seconds_to_match));
-        }
+      if (m.matches_created >= K_ANON) out.matches_created = m.matches_created;
+      // The median is floored on the rows it was actually taken over — the
+      // window's — not on the all-time total beside it.
+      if (m.recent_matches >= K_ANON && m.median_seconds_to_match != null) {
+        out.median_seconds_to_match = Math.round(Number(m.median_seconds_to_match));
       }
       return out;
     },
@@ -104,11 +127,16 @@ export function geoLabel(bucket: string): string {
 
 export function registerPublicRoutes(
   app: FastifyInstance,
-  _cfg: Config,
+  cfg: Config,
   deps: PublicDataSource = realDataSource(),
 ): void {
+  const origins = allowedOrigins(cfg);
   let pulseCache: { at: number; body: unknown } | undefined;
   let statsCache: { at: number; body: unknown } | undefined;
+  // The fill in flight, if any: requests that find the cache cold while it is
+  // being filled wait on the same promise rather than each starting a query.
+  let pulseFill: Promise<void> | undefined;
+  let statsFill: Promise<void> | undefined;
   const hits = new Map<string, { windowStart: number; n: number }>();
 
   const rateLimited = (req: FastifyRequest): boolean => {
@@ -129,7 +157,7 @@ export function registerPublicRoutes(
 
   const cors = (req: FastifyRequest, reply: FastifyReply) => {
     const origin = req.headers.origin;
-    if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    if (origin && origins.includes(origin)) {
       reply.header('access-control-allow-origin', origin);
       reply.header('vary', 'origin');
     }
@@ -158,35 +186,46 @@ export function registerPublicRoutes(
   app.get('/public/pulse', async (req, reply) => {
     if (!guard(req, reply)) return;
     if (!pulseCache || Date.now() - pulseCache.at >= CACHE_MS) {
-      const rows = await deps.pulseRows();
-      const publicRows: PublicPulseRow[] = rows.map((r) => ({
-        category: r.category,
-        category_label: categoryLabelPath(r.category),
-        geo_bucket: r.geo_bucket,
-        geo_label: geoLabel(r.geo_bucket),
-        open_want_count: r.open_want_count,
-        open_have_count: r.open_have_count,
-        matches_created: r.matches_created,
-        median_seconds_to_match:
-          r.median_seconds_to_match == null ? null : Math.round(Number(r.median_seconds_to_match)),
-      }));
-      pulseCache = {
-        at: Date.now(),
-        body: { k_floor: K_ANON, as_of: new Date().toISOString(), rows: publicRows },
-      };
+      pulseFill ??= (async () => {
+        const rows = await deps.pulseRows();
+        const publicRows: PublicPulseRow[] = rows.map((r) => ({
+          category: r.category,
+          category_label: categoryLabelPath(r.category),
+          geo_bucket: r.geo_bucket,
+          geo_label: geoLabel(r.geo_bucket),
+          open_want_count: r.open_want_count,
+          open_have_count: r.open_have_count,
+          matches_created: r.matches_created,
+          median_seconds_to_match:
+            r.median_seconds_to_match == null ? null : Math.round(Number(r.median_seconds_to_match)),
+        }));
+        pulseCache = {
+          at: Date.now(),
+          body: { k_floor: K_ANON, as_of: new Date().toISOString(), rows: publicRows },
+        };
+      })().finally(() => {
+        pulseFill = undefined;
+      });
+      await pulseFill;
     }
-    return reply.send(pulseCache.body);
+    return reply.send(pulseCache!.body);
   });
 
   app.get('/public/stats', async (req, reply) => {
     if (!guard(req, reply)) return;
     if (!statsCache || Date.now() - statsCache.at >= CACHE_MS) {
-      const stats = await deps.stats();
-      statsCache = {
-        at: Date.now(),
-        body: { k_floor: K_ANON, as_of: new Date().toISOString(), ...stats },
-      };
+      statsFill ??= (async () => {
+        const stats = await deps.stats();
+        statsCache = {
+          at: Date.now(),
+          body: { k_floor: K_ANON, as_of: new Date().toISOString(), ...stats },
+        };
+      })().finally(() => {
+        statsFill = undefined;
+      });
+      await statsFill;
     }
-    return reply.send(statsCache.body);
+    return reply.send(statsCache!.body);
+
   });
 }

@@ -24,7 +24,7 @@
  *  - THE COLLECTING AGENT IS TOLD. The sentence that rides back with an empty
  *    batch of words still accounts for a photo that is waiting.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 
 vi.mock('../../src/crypto.js', async (orig) => ({
@@ -42,7 +42,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 vi.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: vi.fn(async (_client: unknown, command: any, opts: any) => {
     const kind = command.constructor.name;
-    signed.push({ kind, input: command.input, expiresIn: opts?.expiresIn });
+    signed.push({ kind, input: command.input, expiresIn: opts?.expiresIn, opts });
     return `https://bucket.test/${encodeURIComponent(command.input.Key)}?sig=1&kind=${kind}`;
   }),
 }));
@@ -64,7 +64,7 @@ import {
 import type { Config } from '../../src/config.js';
 
 /** Every URL the presigner was asked to sign, in order. */
-let signed: { kind: string; input: any; expiresIn?: number }[] = [];
+let signed: { kind: string; input: any; expiresIn?: number; opts?: any }[] = [];
 
 const cfg = {
   envName: 'dev',
@@ -108,7 +108,24 @@ interface Pic {
   expires_at: Date;
   send_attempts?: number;
   view_token_hash?: string;
+  metadata_stripped_at?: Date;
 }
+
+/**
+ * Real image bytes for the stand-in S3 to hand back on a GET, one per allowed
+ * type, each CARRYING metadata (EXIF with a GPS-shaped tag) so the server's own
+ * strip has something to take out.
+ */
+const sample: Record<string, Buffer> = {};
+beforeAll(async () => {
+  const { default: sharp } = await import('sharp');
+  const base = () =>
+    sharp({ create: { width: 40, height: 30, channels: 3, background: { r: 200, g: 20, b: 20 } } })
+      .withExif({ IFD0: { Copyright: 'somebody', Artist: 'home at 12 Example St' } });
+  sample['image/jpeg'] = await base().jpeg().toBuffer();
+  sample['image/png'] = await base().png().toBuffer();
+  sample['image/webp'] = await base().webp().toBuffer();
+});
 
 interface World {
   stage: number;
@@ -123,6 +140,12 @@ interface World {
   clockSkewMs: number;
   /** Makes the collection claim itself fail, as a database outage would. */
   failClaim?: boolean;
+  /** What a HEAD says about an object, when a test wants it to lie. */
+  headOverride?: { ContentType?: string; ContentLength?: number };
+  /** What a GET hands back, when a test wants bytes that are not a picture. */
+  getOverride?: Buffer;
+  /** Every PutObject the server itself made (the strip). */
+  puts: { key: string; body: Buffer; contentType: string }[];
 }
 
 let world: World;
@@ -213,9 +236,18 @@ function run(sql: string, params: any[] = []) {
         s3_key: p.s3_key,
         channel_id: p.channel_id,
         content_type: p.content_type,
+        size_bytes: p.size_bytes,
         send_attempts: p.send_attempts,
       },
     ]);
+  }
+  if (/UPDATE conversation_photos SET metadata_stripped_at = now\(\), size_bytes/.test(sql)) {
+    const p = world.photos.find((x) => x.id === params[0]);
+    if (p) {
+      p.metadata_stripped_at = new Date(nowMs());
+      p.size_bytes = params[1];
+    }
+    return rows([]);
   }
   if (/SELECT send_attempts FROM conversation_photos/.test(sql)) {
     return rows(
@@ -279,7 +311,7 @@ function run(sql: string, params: any[] = []) {
     );
     if (!p) return rows([]);
     const left = Math.ceil((p.collected_at!.getTime() + windowMs - nowMs()) / 1000);
-    return rows([{ s3_key: p.s3_key, left_s: left }]);
+    return rows([{ s3_key: p.s3_key, content_type: p.content_type, left_s: left }]);
   }
   if (/SELECT id, s3_key FROM conversation_photos/.test(sql)) {
     const graceMs = Number(params[0]) * 1000;
@@ -334,6 +366,7 @@ beforeEach(async () => {
     deleted: [],
     links: [],
     clockSkewMs: 0,
+    puts: [],
   };
   vi.spyOn(db, 'getPool').mockReturnValue({
     query: async (sql: string, params: any[] = []) => run(sql, params),
@@ -345,8 +378,29 @@ beforeEach(async () => {
     const kind = command.constructor.name;
     if (kind === 'HeadObjectCommand') {
       if (!world.objects.has(command.input.Key)) throw new Error('NotFound');
-      return { ContentLength: 2_000_000 } as any;
+      // The browser's PUT carried the type the page declared.
+      const p = world.photos.find((x) => x.s3_key === command.input.Key);
+      return {
+        ContentLength: 2_000_000,
+        ContentType: p?.content_type,
+        ...(world.headOverride ?? {}),
+      } as any;
     }
+    if (kind === 'GetObjectCommand') {
+      const p = world.photos.find((x) => x.s3_key === command.input.Key);
+      const put = [...world.puts].reverse().find((x) => x.key === command.input.Key);
+      const bytes = put?.body ?? world.getOverride ?? sample[p?.content_type ?? 'image/jpeg'];
+      return { Body: { transformToByteArray: async () => new Uint8Array(bytes) } } as any;
+    }
+    if (kind === 'PutObjectCommand') {
+      world.puts.push({
+        key: command.input.Key,
+        body: Buffer.from(command.input.Body),
+        contentType: command.input.ContentType,
+      });
+      return {} as any;
+    }
+
     if (kind === 'DeleteObjectCommand') {
       world.objects.delete(command.input.Key);
       world.deleted.push(command.input.Key);
@@ -1028,5 +1082,83 @@ describe('the send press puts the photo through the pipe', () => {
     world.objects.add(p.key);
     await photo.markPhotoSent(cfg, ANA, MATCH, p.photo_id);
     expect(askedAbout).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The server's own strip, and what landed being what was signed for
+// (2026-09-28 review).
+// ---------------------------------------------------------------------------
+describe('the server takes the hidden details out itself', () => {
+  const png = () => ({ ...jpeg(), filename: 'bike.png', content_type: 'image/png' });
+  const webp = () => ({ ...jpeg(), filename: 'bike.webp', content_type: 'image/webp' });
+
+  for (const [label, input] of [
+    ['JPEG', jpeg],
+    ['PNG', png],
+    ['WebP', webp],
+  ] as const) {
+    it(`re-encodes a ${label} with no metadata, over the same key, the same type, before sending`, async () => {
+      const { default: sharp } = await import('sharp');
+      const original = sample[input().content_type];
+      expect((await sharp(original).metadata()).exif).toBeTruthy();
+      await sendPhoto(ANA, MATCH, undefined, input());
+      const row = world.photos[0];
+      expect(world.puts).toHaveLength(1);
+      expect(world.puts[0].key).toBe(row.s3_key);
+      expect(world.puts[0].contentType).toBe(input().content_type);
+      const meta = await sharp(world.puts[0].body).metadata();
+      expect(meta.exif).toBeUndefined();
+      expect(meta.xmp).toBeUndefined();
+      expect(meta.format).toBe(input().content_type.split('/')[1]);
+      expect(row.metadata_stripped_at).toBeInstanceOf(Date);
+      expect(row.size_bytes).toBe(world.puts[0].body.length);
+      expect(row.sent_at).toBeInstanceOf(Date);
+    });
+  }
+
+  it('refuses bytes that are not a picture, and nothing is sent or written back', async () => {
+    world.getOverride = Buffer.from('<html><script>alert(1)</script></html>');
+    await expect(sendPhoto()).rejects.toThrow(photo.PHOTO_UNREADABLE);
+    expect(world.puts).toEqual([]);
+    expect(world.photos[0].sent_at).toBeNull();
+    expect(world.photos[0].metadata_stripped_at).toBeUndefined();
+  });
+
+  it('refuses a picture whose bytes are not the type it was declared as', async () => {
+    world.getOverride = sample['image/png'];
+    await expect(sendPhoto()).rejects.toThrow(photo.PHOTO_NOT_AS_DECLARED);
+    expect(world.puts).toEqual([]);
+    expect(world.photos[0].sent_at).toBeNull();
+  });
+
+  it('refuses an object stored under a type other than the row\'s, before reading it', async () => {
+    world.headOverride = { ContentType: 'text/html' };
+    await expect(sendPhoto()).rejects.toThrow(photo.PHOTO_NOT_AS_DECLARED);
+    expect(world.puts).toEqual([]);
+    expect(world.photos[0].sent_at).toBeNull();
+  });
+
+  it('refuses an object over the cap, before reading it', async () => {
+    world.headOverride = { ContentLength: photo.MAX_PHOTO_BYTES + 1 };
+    await expect(sendPhoto()).rejects.toThrow(photo.PHOTO_NOT_AS_DECLARED);
+    expect(world.puts).toEqual([]);
+  });
+
+  it('signs the content type into the upload link, so S3 refuses any other', async () => {
+    await photo.presignPhotoUpload(cfg, ANA, MATCH, jpeg());
+    const put = signed.find((s) => s.kind === 'PutObjectCommand')!;
+    expect(put.input.ContentType).toBe('image/jpeg');
+    expect([...put.opts.signableHeaders]).toEqual(['content-type']);
+  });
+
+  it('serves the link as the row\'s own type, inline, under a name nobody chose', async () => {
+
+    await sendPhoto(ANA, MATCH, undefined, png());
+    const got = await photo.collectPhotos(cfg, BEPPE, MATCH, CHANNEL);
+    await photo.openPhotoLink(cfg, got[0].url.split('/p/')[1]);
+    const get = signed.find((s) => s.kind === 'GetObjectCommand')!;
+    expect(get.input.ResponseContentType).toBe('image/png');
+    expect(get.input.ResponseContentDisposition).toBe('inline; filename="photo.png"');
   });
 });

@@ -382,11 +382,45 @@ export async function clearTransferAttempts(settlementId: string): Promise<void>
 }
 
 /**
- * The buyer went to their card issuer: charge.dispute.created. Recorded and
- * nothing else — the switchboard moves no money on a chargeback, because
- * whether the issuer's dispute succeeds is decided elsewhere, on a clock
- * nobody here controls. No state moves, so this needs no transition context
- * beyond the verified webhook one the caller already holds.
+ * A CHARGEBACK HOLDS THE PAYMENT WHERE IT IS (2026-09-28 review).
+ *
+ * The buyer's bank reversing the charge and the switchboard then paying the
+ * seller as well would pay out the same money twice, so while chargeback_at is
+ * set nothing leaves the platform balance on this settlement: no release, no
+ * refund, no leg of a split, by a person or by a clock. Every sweep skips it,
+ * and the two money calls in settlementStripe.ts read the column fresh at the
+ * moment they would move money. It stays held until an operator has seen how
+ * the bank's dispute ended.
+ *
+ * The sentence is said once, here, so the page, the agent's read and the
+ * refusal all say the same thing.
+ */
+export const CHARGEBACK_HOLD =
+  "The buyer's bank has opened a dispute; the payment is held until it is settled.";
+
+export function chargebackHold(): OsbError {
+  return new OsbError('NOT_UNLOCKED_YET', { human_action: CHARGEBACK_HOLD });
+}
+
+/**
+ * The last question before money moves, asked of the database rather than of
+ * whatever row the caller is holding: a chargeback that landed a second ago
+ * still stops it. Throws the hold sentence.
+ */
+export async function assertNoChargeback(settlementId: string): Promise<void> {
+  const r = await getPool().query('SELECT chargeback_at FROM settlements WHERE id = $1', [
+    settlementId,
+  ]);
+  if (r.rows[0]?.chargeback_at) throw chargebackHold();
+}
+
+/**
+ * The buyer went to their card issuer: charge.dispute.created. Recorded, and
+ * from here the payment is held (CHARGEBACK_HOLD above): the switchboard moves
+ * no money either way on a settlement with a chargeback open, because whether
+ * the issuer's dispute succeeds is decided elsewhere, on a clock nobody here
+ * controls. No state moves, so this needs no transition context beyond the
+ * verified webhook one the caller already holds.
  */
 export async function markChargeback(
   ctx: WebhookCtx,
@@ -877,9 +911,15 @@ export function withNote(cfg: Config, s: SettlementRow, accountId: string) {
   } catch {
     side = undefined;
   }
-  const text =
-    autoReleaseNote(s) ??
-    (side ? disputeNote(s, side, settlementPageLink(cfg, s.id)) : undefined);
+  // A chargeback outranks every clock: nothing below it will happen while the
+  // bank's dispute is open, so no other sentence is true. On a settlement that
+  // already ended the money has already moved, and "held" would not be true.
+  const text = s.chargeback_at && !TERMINAL_STATES.includes(s.state)
+
+    ? CHARGEBACK_HOLD
+    : autoReleaseNote(s) ??
+      (side ? disputeNote(s, side, settlementPageLink(cfg, s.id)) : undefined);
+
   return text ? { ...payload, note: { text, provenance: 'switchboard-system' as const } } : payload;
 }
 
@@ -1037,6 +1077,10 @@ export async function confirmReceipt(ctx: HumanCtx, settlementId: string): Promi
   if (partyOf(s, ctx.accountId) !== 'buyer') {
     throw Object.assign(new Error('only the buyer confirms receipt'), { notFound: true });
   }
+  // A chargeback holds the payment, so confirming (which is the release) is
+  // refused while one is open — in words here, and in the WHERE below for a
+  // chargeback that lands between this read and the write.
+  if (s.chargeback_at) throw chargebackHold();
   if (s.state === 'confirmed') return s; // idempotent: transfer retry path
   await writeConsentEvent({
     event: 'settlement-receipt-confirmed',
@@ -1047,7 +1091,9 @@ export async function confirmReceipt(ctx: HumanCtx, settlementId: string): Promi
     ccy: s.ccy,
     recorded_via: ctx.recordedVia,
   });
-  return applyTransition(ctx, settlementId, ['evidence-locked'], 'confirmed', 'confirmed_at');
+  return applyTransition(ctx, settlementId, ['evidence-locked'], 'confirmed', 'confirmed_at', {
+    also: { sql: 'chargeback_at IS NULL', params: [] },
+  });
 }
 
 /**
@@ -1235,10 +1281,66 @@ export async function markReturned(
 }
 
 /**
+ * One row, locked, for the length of `fn`: a SELECT … FOR UPDATE and whatever
+ * acts on it are one transaction on one connection, so two roads that each
+ * read the row and then write it cannot both have read it before either
+ * wrote. Rolled back on any throw.
+ */
+async function inLockedSettlement<T>(
+  settlementId: string,
+  fn: (client: NonNullable<TransitionWhere['client']>, row: SettlementRow) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query('SELECT * FROM settlements WHERE id = $1 FOR UPDATE', [
+      settlementId,
+    ]);
+    const row: SettlementRow | undefined = locked.rows[0];
+    if (!row) throw Object.assign(new Error('settlement not found'), { notFound: true });
+    const out = await fn(client, row);
+    await client.query('COMMIT');
+    return out;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** The refusal applyTransition gives, for a record write that found the row
+ *  somewhere it does not apply. */
+function stepDoesNotApply(s: SettlementRow): OsbError {
+  return new OsbError('NOT_UNLOCKED_YET', {
+    human_action: `This settlement is '${s.state}'; that step does not apply now.`,
+  });
+}
+
+/**
  * The seller says the returned item is back with them. The agreed amount then
  * goes to the buyer: this function records the figures and the receipt, and
  * the route that called it moves the money. 'refunded' still lands from the
  * verified charge.refunded event, the same as on every other refunding road.
+ *
+ * ONE OF THIS AND THE DEFAULT RULE, NEVER BOTH (2026-09-28 review). This used
+ * to write the refund figures with nothing but a state check, and it did not
+ * look at whether the seller had disputed the return. A seller who had — which
+ * makes the default rule release to them if they can show delivery — could
+ * press this while the deadlock sweep was releasing, and the buyer would be
+ * refunded the agreed amount while the seller was paid it too.
+ *
+ * Now the read and the write are one locked transaction that re-asserts, on
+ * the row as it is: still frozen, a return marked sent, no word against it
+ * from the seller, no chargeback, and no money already out. The write stamps
+ * return_received_at, and a row with that stamp is out of the deadlock sweep's
+ * set by construction; deadlockReleaseSettlement takes the same lock and
+ * re-asserts the same stamp is absent. Whichever gets the lock first wins, and
+ * the other is told the step no longer applies — before any refund is sent.
+ *
+ * Pressed again after a refund that did not go through, it hands back the row
+ * as it stands so the route can try the refund again; the refund's own
+ * idempotency key means the buyer is refunded once.
  */
 export async function confirmReturnReceived(
   ctx: HumanCtx,
@@ -1250,31 +1352,48 @@ export async function confirmReturnReceived(
   if (partyOf(s, ctx.accountId) !== 'seller') {
     throw Object.assign(new Error('the seller is the one receiving it back'), { notFound: true });
   }
-  if (!s.returned_at) {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: 'The buyer has not said they sent it back yet.',
+  return inLockedSettlement(settlementId, async (client, now) => {
+    if (!IN_DISPUTE.includes(now.state) || now.stripe_transfer_id) throw stepDoesNotApply(now);
+    if (now.chargeback_at) throw chargebackHold();
+    if (!now.returned_at) {
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action: 'The buyer has not said they sent it back yet.',
+      });
+    }
+    if (now.return_disputed_at) {
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action:
+          'You have said the return is not what it claims to be, so nothing goes back on its own now. It is a split the two of you agree, or the rule.',
+      });
+    }
+    // Already said, and the refund has not gone out: the retry road.
+    if (now.return_received_at) return now;
+    await writeConsentEvent({
+      event: 'settlement-return-received',
+      settlement_id: settlementId,
+      match_id: now.match_id,
+      account_id: ctx.accountId,
+      party: 'seller',
+      amount: Number(now.amount),
+      ccy: now.ccy,
+      recorded_via: ctx.recordedVia,
     });
-  }
-  await writeConsentEvent({
-    event: 'settlement-return-received',
-    settlement_id: settlementId,
-    match_id: s.match_id,
-    account_id: ctx.accountId,
-    party: 'seller',
-    amount: Number(s.amount),
-    ccy: s.ccy,
-    recorded_via: ctx.recordedVia,
+    const agreedMinor = toMinorUnits(Number(now.amount), now.ccy);
+    const r = await client.query(
+      `UPDATE settlements SET return_received_at = now(),
+         refund_minor = $2, release_minor = 0, updated_at = now()
+       WHERE id = $1 AND state IN ('disputed','resolution-proposed')
+         AND returned_at IS NOT NULL AND return_received_at IS NULL
+         AND return_disputed_at IS NULL AND chargeback_at IS NULL
+         AND stripe_transfer_id IS NULL
+       RETURNING *`,
+      [settlementId, agreedMinor],
+    );
+    if (!r.rows[0]) throw stepDoesNotApply(now);
+    return r.rows[0] as SettlementRow;
   });
-  const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
-  const r = await getPool().query(
-    `UPDATE settlements SET return_received_at = COALESCE(return_received_at, now()),
-       refund_minor = $2, release_minor = 0, updated_at = now()
-     WHERE id = $1 AND state IN ('disputed','resolution-proposed')
-     RETURNING *`,
-    [settlementId, agreedMinor],
-  );
-  return afterSideWrite(r, settlementId);
 }
+
 
 /**
  * The seller's answer to a return: what came back is not what went out, or
@@ -1539,6 +1658,7 @@ export async function settlementsDueForAutoRelease(limit = 50): Promise<Settleme
      WHERE state = 'evidence-locked'
        AND auto_release_at IS NOT NULL
        AND auto_release_at <= now()
+       AND chargeback_at IS NULL
      ORDER BY auto_release_at
      LIMIT $1`,
     [limit],
@@ -1559,6 +1679,7 @@ export async function autoReleasesAwaitingTransfer(limit = 50): Promise<Settleme
   const r = await getPool().query(
     `SELECT * FROM settlements
      WHERE state = 'confirmed' AND auto_released = true AND stripe_transfer_id IS NULL
+       AND chargeback_at IS NULL
        AND transfer_attempts < $2
        AND (next_transfer_attempt_at IS NULL OR next_transfer_attempt_at <= now())
      ORDER BY confirmed_at
@@ -1584,9 +1705,36 @@ export async function splitsAwaitingPayment(limit = 50): Promise<SettlementRow[]
   const r = await getPool().query(
     `SELECT * FROM settlements
      WHERE state = 'resolved'
+       AND chargeback_at IS NULL
        AND ((COALESCE(refund_minor, 0) > 0 AND stripe_refund_id IS NULL)
          OR (COALESCE(release_minor, 0) > 0 AND stripe_transfer_id IS NULL))
      ORDER BY resolved_at
+     LIMIT $1`,
+    [limit],
+  );
+  return r.rows;
+}
+
+/**
+ * Returns the seller said they have back, whose refund did not go out: the
+ * seller pressed, the refund call failed, and nobody pressed again. The
+ * deadlock sweep no longer picks these up (a received return is out of its
+ * set, so the rule cannot release against it), so the sweep is the retry
+ * here. No state changes; the refund carries the settlement id as its
+ * idempotency key, so a refund that did go out is never sent twice.
+ *
+ * Ten minutes' grace so the sweep does not race the seller's own request.
+ */
+export async function returnRefundsAwaitingPayment(limit = 50): Promise<SettlementRow[]> {
+  const r = await getPool().query(
+    `SELECT * FROM settlements
+     WHERE state IN ('disputed','resolution-proposed')
+       AND return_received_at IS NOT NULL
+       AND return_received_at <= now() - interval '10 minutes'
+       AND refund_minor IS NOT NULL AND refund_minor > 0
+       AND stripe_refund_id IS NULL
+       AND chargeback_at IS NULL
+     ORDER BY return_received_at
      LIMIT $1`,
     [limit],
   );
@@ -1628,7 +1776,9 @@ export async function autoReleaseSettlement(
     auto_release_at: s.auto_release_at ? new Date(s.auto_release_at).toISOString() : null,
     recorded_via: ctx.job,
   });
-  return applyTransition(ctx, settlementId, ['evidence-locked'], 'confirmed', 'confirmed_at');
+  return applyTransition(ctx, settlementId, ['evidence-locked'], 'confirmed', 'confirmed_at', {
+    also: { sql: 'chargeback_at IS NULL', params: [] },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1671,6 +1821,7 @@ export async function settlementsDueForReturnRefund(
        AND return_received_at IS NULL
        AND return_disputed_at IS NULL
        AND stripe_refund_id IS NULL
+       AND chargeback_at IS NULL
        AND returned_at + make_interval(days => $1::int) <= now()
      ORDER BY returned_at
      LIMIT $2`,
@@ -1703,6 +1854,7 @@ export async function settlementsDueForNeverArrivedRefund(
        AND delivery_tracking IS NULL
        AND returned_at IS NULL
        AND stripe_refund_id IS NULL
+       AND chargeback_at IS NULL
        AND disputed_at IS NOT NULL
        AND disputed_at + make_interval(days => $1::int) <= now()
      ORDER BY disputed_at
@@ -1720,6 +1872,11 @@ export async function settlementsDueForNeverArrivedRefund(
  *
  * A settlement with a refund already sent is out too — the return road and the
  * never-arrived road both fire before this one and both leave that mark.
+ *
+ * So is one whose seller has said the return is back with them: that is the
+ * seller choosing the refund, and its money goes on the return road (retried
+ * by returnRefundsAwaitingPayment), never on this one. And so is one with a
+ * chargeback open, which holds the payment where it is.
  */
 export async function settlementsDueForDeadlock(limit = 50): Promise<SettlementRow[]> {
   const r = await getPool().query(
@@ -1728,6 +1885,8 @@ export async function settlementsDueForDeadlock(limit = 50): Promise<SettlementR
        AND deadlock_at IS NOT NULL
        AND deadlock_at <= now()
        AND stripe_refund_id IS NULL
+       AND return_received_at IS NULL
+       AND chargeback_at IS NULL
      ORDER BY deadlock_at
      LIMIT $1`,
     [limit],
@@ -1756,39 +1915,64 @@ export async function deadlockReleaseSettlement(
   if (ctx.kind !== 'scheduled') {
     throw new Error('the default rule requires a scheduled context');
   }
-  const s = await getSettlement(settlementId);
-  if (!s) throw Object.assign(new Error('settlement not found'), { notFound: true });
-  if (s.state === 'confirmed') return s; // idempotent: transfer retry path
-  if (deadlockOutcome(s) !== 'release') {
-    throw new Error('the default rule does not release this settlement');
-  }
-  const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
-  await writeConsentEvent({
-    event: 'settlement-deadlock-released',
-    settlement_id: settlementId,
-    match_id: s.match_id,
-    account_id: s.seller_account,
-    party: 'seller',
-    amount: Number(s.amount),
-    ccy: s.ccy,
-    disputed_at: s.disputed_at ? new Date(s.disputed_at).toISOString() : null,
-    deadlock_at: s.deadlock_at ? new Date(s.deadlock_at).toISOString() : null,
-    delivery_tracking: s.delivery_tracking,
-    recorded_via: ctx.job,
+  // UNDER THE SAME LOCK AS THE SELLER'S "I HAVE IT BACK" (2026-09-28 review).
+  // The sweep's query is a snapshot; between it and here the seller may have
+  // said the return is back, which sends the agreed amount to the buyer. So
+  // everything the rule depends on is re-read on the locked row and asserted
+  // again in the transition's WHERE, and of the two roads exactly one moves.
+  return inLockedSettlement(settlementId, async (client, s) => {
+    if (s.state === 'confirmed') return s; // idempotent: transfer retry path
+    if (
+      !IN_DISPUTE.includes(s.state) ||
+      !s.deadlock_at ||
+      s.return_received_at ||
+      s.stripe_refund_id ||
+      s.stripe_transfer_id
+    ) {
+      throw stepDoesNotApply(s);
+    }
+    if (s.chargeback_at) throw chargebackHold();
+    if (deadlockOutcome(s) !== 'release') {
+      throw new Error('the default rule does not release this settlement');
+    }
+    const agreedMinor = toMinorUnits(Number(s.amount), s.ccy);
+    await writeConsentEvent({
+      event: 'settlement-deadlock-released',
+      settlement_id: settlementId,
+      match_id: s.match_id,
+      account_id: s.seller_account,
+      party: 'seller',
+      amount: Number(s.amount),
+      ccy: s.ccy,
+      disputed_at: s.disputed_at ? new Date(s.disputed_at).toISOString() : null,
+      deadlock_at: s.deadlock_at ? new Date(s.deadlock_at).toISOString() : null,
+      delivery_tracking: s.delivery_tracking,
+      recorded_via: ctx.job,
+    });
+    await client.query(
+      `UPDATE settlements SET refund_minor = 0, release_minor = $2, updated_at = now()
+       WHERE id = $1 AND state IN ('disputed','resolution-proposed')`,
+      [settlementId, agreedMinor],
+    );
+    return applyTransition(
+      ctx,
+      settlementId,
+      ['disputed', 'resolution-proposed'],
+      'confirmed',
+      'confirmed_at',
+      {
+        client,
+        also: {
+          sql:
+            'deadlock_at IS NOT NULL AND deadlock_at <= now() AND return_received_at IS NULL' +
+            ' AND stripe_refund_id IS NULL AND stripe_transfer_id IS NULL AND chargeback_at IS NULL',
+          params: [],
+        },
+      },
+    );
   });
-  await getPool().query(
-    `UPDATE settlements SET refund_minor = 0, release_minor = $2, updated_at = now()
-     WHERE id = $1 AND state IN ('disputed','resolution-proposed')`,
-    [settlementId, agreedMinor],
-  );
-  return applyTransition(
-    ctx,
-    settlementId,
-    ['disputed', 'resolution-proposed'],
-    'confirmed',
-    'confirmed_at',
-  );
 }
+
 
 /**
  * The two figures a refunding rule is about to move, written down BEFORE the
