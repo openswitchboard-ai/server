@@ -40,6 +40,7 @@
  * so, and the agent guidance tells an agent to relay a message the moment it
  * collects one.
  */
+import { DEAL_AGREED_WHAT_TO_DO } from './matches.js';
 import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
 import {
@@ -313,6 +314,7 @@ export async function sendMessage(
       message_id: r.rows[0].id as string,
       sent_at: new Date(r.rows[0].created_at).toISOString(),
       note: sbNote(sayFor('message_sent', facts.arrangement, { hearsVia: facts.hearsVia })),
+      ...(await wrapUpFor(matchId)),
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -487,6 +489,7 @@ export async function receiveMessages(
         ...(only.length ? { photos: only, photo_note: PHOTO_NOTE } : {}),
         more_waiting: false,
         note: await collectNote(ch, accountId, 0, only.length),
+        ...(await wrapUpFor(matchId)),
       };
     }
     const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
@@ -537,6 +540,7 @@ export async function receiveMessages(
       ...(photos.length ? { photos, photo_note: PHOTO_NOTE } : {}),
       more_waiting: !!rest.rowCount,
       note: await collectNote(ch, accountId, collected, photos.length),
+      ...(await wrapUpFor(matchId)),
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -621,4 +625,25 @@ export async function sweepExpiredChannelMessages(): Promise<{
     `DELETE FROM channel_send_rate WHERE window_start < now() - interval '2 hours'`,
   );
   return { messages: msgs.rowCount ?? 0, rate_windows: windows.rowCount ?? 0 };
+}
+
+/**
+ * THE WRAP-UP, WHEREVER THE ASSISTANT LOOKS (29 September 2026). Once a figure
+ * is accepted, the sweep entry says what to do when the human says it is done
+ * (DEAL_AGREED_WHAT_TO_DO). But an assistant usually answers "we're all
+ * sorted" from memory, and the last thing it read was a message it sent or
+ * collected, so two rehearsals in three the buyer's assistant said "nice find"
+ * and never asked how it went. The same instruction now rides on those answers
+ * too. Best-effort: an unreadable row adds nothing.
+ */
+async function wrapUpFor(matchId: string): Promise<{ what_to_do?: string }> {
+  try {
+    const r = await getPool().query(
+      `SELECT 1 FROM offers WHERE match_id = $1 AND state = 'accepted-by-human' LIMIT 1`,
+      [matchId],
+    );
+    return r.rowCount ? { what_to_do: DEAL_AGREED_WHAT_TO_DO } : {};
+  } catch {
+    return {};
+  }
 }

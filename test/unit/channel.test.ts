@@ -262,6 +262,10 @@ function run(sql: string, params: any[] = []) {
     }
     return rows([...counts].map(([channel_id, n]) => ({ channel_id, n })));
   }
+  // Whether a deal is agreed here, for the wrap-up line (29 September 2026).
+  if (/FROM offers WHERE match_id = \$1 AND state = 'accepted-by-human'/.test(sql)) {
+    return rows(world.offers.filter((o: any) => o.state === 'accepted-by-human').slice(0, 1));
+  }
   // The one extra read a collection makes: the figures on this introduction,
   // both sides, exactly the reader the sweep uses.
   if (/FROM offers/.test(sql)) {
