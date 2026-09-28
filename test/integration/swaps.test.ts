@@ -187,7 +187,8 @@ d('swaps: two wants on social or services meet, once', { timeout: 300_000 }, () 
           offer: { amount: 20, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
         });
         expect(offer.result.code).toBe('NOT_UNLOCKED_YET');
-        expect(JSON.stringify(offer.result)).toContain('no money changes hands');
+        // Said as a sentence now, so it may open with a capital.
+        expect(JSON.stringify(offer.result)).toMatch(/no money changes hands/i);
       }
     }
   });

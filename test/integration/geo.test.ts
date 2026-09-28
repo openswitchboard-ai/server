@@ -67,7 +67,7 @@ const card = (type: 'WANT' | 'HAVE', place: string) => ({
   type,
   category: 'goods.bicycle.mountain',
   kind: 'mountain bike',
-  geo: { place, radius_km: 25 },
+  geo: { place, radius_km: 25, reach: 'radius' },
   attributes: { condition: 'good', frame_size: 'L' },
   ttl_days: FIXTURE_TTL_DAYS,
 });
@@ -207,15 +207,17 @@ d('one city, two spellings, one match', () => {
     const page = await counterFetch(alice.jar, '/ledger');
     expect(page.status).toBe(200);
     const body = await page.text();
-    expect(body).toContain('Canberra, Australian Capital Territory, Australia');
-    expect(body).toMatch(/matching within \d+ km/);
+    // The plainer ledger (28 September 2026) says the radius and the place
+    // in one phrase: "within 25 km of Canberra, ...".
+    expect(body).toMatch(/within \d+ km of Canberra, Australian Capital Territory, Australia/);
   });
 
   it('says the reach back, in the same words, for all three forms', async () => {
     for (const [geo, expected] of [
       [{ place: CANBERRA, reach: 'country' }, 'reaching all of Australia'],
       [{ place: CANBERRA, reach: 'anywhere' }, 'reaching anywhere'],
-      [{ place: CANBERRA, radius_km: 25 }, 'matching within 25 km'],
+      // A goods posting says its reach every time (26 September 2026).
+      [{ place: CANBERRA, radius_km: 25, reach: 'radius' }, 'matching within 25 km'],
     ] as [any, string][]) {
       const r = await mcpCall(alice.accessToken, 'publish_intent', {
         listing: { ...card('WANT', CANBERRA), geo },
@@ -345,7 +347,9 @@ d('a card that reaches a whole country', () => {
     // The control: nothing about the distance changed, only what the two
     // people said they would do about it.
     const local = await mcpCall(buyer.accessToken, 'publish_intent', {
-      listing: laptop('WANT', { place: PERTH_WA, radius_km: 25 }),
+      // A goods posting says its reach every time (26 September 2026); a
+      // radius is what "without the reach" means now.
+      listing: laptop('WANT', { place: PERTH_WA, radius_km: 25, reach: 'radius' }),
     });
     expect(local.isError, JSON.stringify(local.result)).toBe(false);
     const localWant = local.result.intent_id;
@@ -363,11 +367,12 @@ d('a card that reaches a whole country', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('the ledger says where the card is and how far it goes', async () => {
+  it('the ledger says how far the card goes', async () => {
     const page = await counterFetch(seller.jar, '/ledger');
     expect(page.status).toBe(200);
     const body = await page.text();
-    expect(body).toContain('Canberra, Australian Capital Territory, Australia');
-    expect(body).toContain('reaching all of Australia');
+    // The plainer ledger (28 September 2026) says a country-wide reach as
+    // "anywhere in Australia", and names no town beside it.
+    expect(body).toContain('anywhere in Australia');
   });
 });

@@ -86,6 +86,38 @@ export async function dbExec(
 }
 
 // ---------------------------------------------------------------------------
+// A fetch that rides out a connection that never opened.
+//
+// The dev load balancer now and then leaves a TLS handshake hanging (connect
+// timeout, or a reset before the secure connection is up), most often while a
+// suite has thirty accounts polling at once. Nothing reached the service when
+// that happens, so trying the same request again cannot do anything twice.
+// Only those pre-connection failures are retried, three times at most,
+// and anything that got as far as a response is returned as it is.
+// ---------------------------------------------------------------------------
+const NEVER_CONNECTED = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNRESET', 'ECONNREFUSED']);
+function neverConnected(e: unknown): boolean {
+  const cause = (e as any)?.cause;
+  if (!cause) return false;
+  if (cause.code === 'UND_ERR_CONNECT_TIMEOUT' || cause.code === 'ECONNREFUSED') return true;
+  // A reset counts only while the handshake was still under way.
+  return (
+    NEVER_CONNECTED.has(cause.code) &&
+    /before secure TLS connection was established/.test(String(cause.message))
+  );
+}
+export async function liveFetch(url: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      if (attempt >= 4 || !neverConnected(e)) throw e;
+      await new Promise((r) => setTimeout(r, 1_000 * attempt));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Minimal cookie jar for the counter's session cookie.
 // ---------------------------------------------------------------------------
 export class Jar {
@@ -107,7 +139,7 @@ export async function counterFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const res = await fetch(path.startsWith('http') ? path : `${COUNTER_URL}${path}`, {
+  const res = await liveFetch(path.startsWith('http') ? path : `${COUNTER_URL}${path}`, {
     ...init,
     redirect: 'manual',
     headers: {
@@ -476,7 +508,8 @@ export async function pressNamesLink(
   const ask = await counterFetch(actor.jar, link);
   const askBody = await ask.text();
   if (ask.status !== 200) throw new Error(`the names page answered ${ask.status}`);
-  if (!askBody.includes('Share your first name and area')) {
+  // The page has said "suburb" rather than "area" since 13 September 2026.
+  if (!/Share your first name and (suburb|area)/.test(askBody)) {
     throw new Error(`the link did not open the names question: ${askBody.slice(0, 200)}`);
   }
   const pressed = await counterFetch(
@@ -532,7 +565,7 @@ export async function reachStage3(
 export async function oauthFlow(jar: Jar): Promise<string> {
   const redirectUri = 'http://127.0.0.1:47391/cb';
   // 1. Dynamic client registration.
-  const reg = await fetch(`${BASE_URL}/oauth/register`, {
+  const reg = await liveFetch(`${BASE_URL}/oauth/register`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -560,7 +593,7 @@ export async function oauthFlow(jar: Jar): Promise<string> {
     state: 'st-' + randomBytes(6).toString('hex'),
     resource: `${BASE_URL}/mcp`,
   });
-  const handoff = await fetch(`${BASE_URL}/oauth/authorize?${q}`, { redirect: 'manual' });
+  const handoff = await liveFetch(`${BASE_URL}/oauth/authorize?${q}`, { redirect: 'manual' });
   if (handoff.status !== 302) throw new Error(`authorize handoff failed: ${handoff.status}`);
   const counterUrl = handoff.headers.get('location')!;
   if (!counterUrl.startsWith(COUNTER_URL)) throw new Error(`handoff not to counter: ${counterUrl}`);
@@ -579,7 +612,7 @@ export async function oauthFlow(jar: Jar): Promise<string> {
   if (!authCode) throw new Error(`no code handed back (status ${approve.status})`);
 
   // 5. Token exchange (MCP host).
-  const tok = await fetch(`${BASE_URL}/oauth/token`, {
+  const tok = await liveFetch(`${BASE_URL}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -611,9 +644,9 @@ export async function mcpCall(
   token: string,
   name: string,
   args: Record<string, unknown>,
-  opts: { confirmedFigure?: boolean } = {},
+  opts: { confirmedFigure?: boolean; answeredDetail?: boolean } = {},
 ): Promise<{ raw: string; result: any; isError: boolean }> {
-  const res = await fetch(`${BASE_URL}/mcp`, {
+  const res = await liveFetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -642,7 +675,30 @@ export async function mcpCall(
   const text = result?.content?.[0]?.text;
   const parsed = text ? JSON.parse(text) : result;
   if (parsed?.what_happened === 'confirm_figure' && !opts.confirmedFigure) {
-    return mcpCall(token, name, args, { confirmedFigure: true });
+    return mcpCall(token, name, args, { ...opts, confirmedFigure: true });
+  }
+  // The same holds for the questions a thin posting is handed back with, and
+  // for the one "pick-up only?" question a goods posting with a radius is asked
+  // (domain/cards.ts, the detail and reach gates). A real agent asks its human
+  // and posts again carrying the `reference` it was given; once the questions
+  // have been put on that reference, what comes back under it goes up as it
+  // stands. A fixture has nobody to ask, so it sends the same posting back
+  // once under that reference — the human's answer being "that is all we know"
+  // and "yes, that radius". Only once, and only where the call did not already
+  // carry a reference, so a suite proving the gate itself still sees it.
+  if (
+    name === 'publish_intent' &&
+    parsed?.what_happened === 'more_detail_needed' &&
+    typeof parsed?.reference === 'string' &&
+    args.reference === undefined &&
+    !opts.answeredDetail
+  ) {
+    return mcpCall(
+      token,
+      name,
+      { ...args, reference: parsed.reference },
+      { ...opts, answeredDetail: true },
+    );
   }
   if (name === 'publish_intent' && !isError && parsed?.intent_id) {
     const mine = publishedCards.get(token) ?? new Set<string>();
@@ -782,7 +838,7 @@ for (const register of [
 }
 
 export async function mcpRpc(token: string, method: string, params: any): Promise<any> {
-  const res = await fetch(`${BASE_URL}/mcp`, {
+  const res = await liveFetch(`${BASE_URL}/mcp`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -836,7 +892,7 @@ export function minimalWant(overrides: Record<string, unknown> = {}) {
     schema_version: SCHEMA_VERSION,
     type: 'WANT',
     category: 'goods.bicycle.mountain',
-    geo: { bucket: RUN_BUCKET, radius_km: 25 },
+    geo: { bucket: RUN_BUCKET, radius_km: 25, reach: 'radius' },
     ttl_days: FIXTURE_TTL_DAYS,
     ...overrides,
   };
@@ -847,7 +903,7 @@ export function minimalHave(overrides: Record<string, unknown> = {}) {
     schema_version: SCHEMA_VERSION,
     type: 'HAVE',
     category: 'goods.bicycle.mountain',
-    geo: { bucket: RUN_BUCKET, radius_km: 25 },
+    geo: { bucket: RUN_BUCKET, radius_km: 25, reach: 'radius' },
     ttl_days: FIXTURE_TTL_DAYS,
     ...overrides,
   };

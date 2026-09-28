@@ -117,7 +117,8 @@ d('standing arrangement against live deployment', () => {
     const res = await counterFetch(ada.jar, '/arrangement');
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain('How your agents behave');
+    // Headed in the words the page uses since 28 September 2026.
+    expect(body).toContain('How your assistant works');
     expect(body).toContain('It runs on its own and brings you the news.');
     expect(body).toContain('every 12 hours');
     expect(body).toContain('anything waiting on my main page');
@@ -146,7 +147,10 @@ d('standing arrangement against live deployment', () => {
         notes: '',
       }),
     );
-    expect(res.status).toBe(200);
+    // A save is the end of the errand: it goes back to the main page, which
+    // says it was saved (since 22 September 2026).
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/?saved=arrangement');
     const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({
       runs_on_its_own: true,
@@ -179,7 +183,10 @@ d('standing arrangement against live deployment', () => {
       }),
     );
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain(said);
+    // The page says it in a person's words rather than the agent's.
+    expect(await res.text()).toContain(
+      'How often it checks only applies when your assistant runs on its own.',
+    );
   });
 
   it('a cadence oftener than every 30 minutes is refused, and the floor is named', async () => {
@@ -211,7 +218,8 @@ d('standing arrangement against live deployment', () => {
 
   it('the human can clear it, and the agent is told to ask again', async () => {
     const res = await counterFetch(ada.jar, '/arrangement/clear', form({}));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/?saved=arrangement-cleared');
     const sweep = await mcpCall(ada.accessToken, 'check_in', {});
     expect(sweep.result.arrangement).toEqual({});
     expect(sweep.result.arrangement_note.text).toMatch(/has not saved any standing preferences/i);

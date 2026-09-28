@@ -114,9 +114,12 @@ d('stage-3 disclosure for accounts that came through registration', () => {
       action: 'opt_in',
       first_name: 'NotAna',
     } as any);
-    // The extra word changed nothing: the same answer, and nothing recorded.
-    expect(r.isError).toBe(false);
-    expect(r.result.code).toBe('CONSENT_REQUIRED');
+    // Since 28 September 2026 every call is read against its tool's own
+    // schema, so an argument the tool does not have is turned away as a call
+    // that could not be read — and still nothing is recorded.
+    expect(r.isError).toBe(true);
+    expect(r.result.error).toBe('invalid_input');
+    expect(JSON.stringify(r.result)).not.toContain('NotAna');
     expect(await optinCount(matchId)).toBe(0);
   });
 
@@ -162,7 +165,10 @@ d('stage-3 disclosure for accounts that came through registration', () => {
 
   it('the profile page changes them any time, with a signed-in session alone', async () => {
     const res = await setSharedProfile(ana.jar, 'Ana', 'North Fremantle');
-    expect(res.status).toBe(200);
+    // A save goes back to the main page, which says it was saved (since
+    // 22 September 2026).
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/?saved=profile');
     expect(await readSharedProfilePage(ana.jar)).toEqual({
       firstName: 'Ana',
       locality: 'North Fremantle',

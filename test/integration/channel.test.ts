@@ -91,8 +91,9 @@ d('a conversation carried across an open channel', () => {
     // Each human puts their first name and area on their own page, then each
     // presses the single-use link their agent was handed: the names step is
     // the human's own press every time, and an agent's opt_in records nothing.
-    expect((await setSharedProfile(ana.jar, 'Ana', 'Fremantle')).status).toBe(200);
-    expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(200);
+    // A save goes back to the main page (303) since 22 September 2026.
+    expect((await setSharedProfile(ana.jar, 'Ana', 'Fremantle')).status).toBe(303);
+    expect((await setSharedProfile(beppe.jar, 'Beppe', 'Trastevere')).status).toBe(303);
     await reachStage3(matchId, [{ actor: ana }, { actor: beppe }]);
     const mutual = await mcpCall(beppe.accessToken, 'check_in', {
       intro_id: matchId,
@@ -283,7 +284,7 @@ d('a conversation carried across an open channel', () => {
     const send = tools.find((t) => t.name === 'send_message');
     const receive = tools.find((t) => t.name === 'collect_messages');
     expect(send).toBeTruthy();
-    expect(receive.description).toMatch(/DELETES IT/);
+    expect(receive.description).toMatch(/COLLECTING DELETES/);
     expect(receive.description).toMatch(/counterparty-untrusted/);
   });
 });
