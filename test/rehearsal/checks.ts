@@ -607,7 +607,7 @@ export function plainWordsOverlap(a: string, b: string): boolean {
 // thing, or something close to it" — as plain a hedge as the manual asks for
 // (dev, 20 September 2026). `could be` did not match `could well be` either.
 const HEDGE =
-  /\b(might|may be|may not be|may or may not|maybe|possibly|could (well |just |also )?be|not (a )?(confirmed|certain|sure|definite)\b|not certain|isn'?t certain|worth checking|something close|something else|not sure (it|this|that)'?s)\b/i;
+  /\b(might|may be|may not be|may or may not|maybe|possibly|could (well |just |also )?be|not (a )?(confirmed|certain|sure|definite)\b|not certain|isn'?t certain|worth checking|something close|something else|not sure (it|this|that)'?s|(can(no|'|’)?t|cannot) (be )?(certain|sure|say for (certain|sure))|not (exactly|quite) the same|close match|(a|the) possible match|your call)\b/i;
 /**
  * And the shapes that assert it outright. Each of these was said about a maybe
  * in a run: "I've found the exact spring you wanted" about a posting whose
