@@ -1252,9 +1252,9 @@ describe('how do you want to hear about things?', () => {
   it('puts the two answers in the words a person would use', () => {
     const html = chome.settingsPage(settingsView('email'));
     expect(html).toContain('By email.');
-    expect(html).toContain('My assistant only acts when I talk to it, so email me when something needs me.');
+    expect(html).toContain('Each match and reply reaches me by email. Best suited to chat assistants.');
     expect(html).toContain('Through my assistant.');
-    expect(html).toContain('It checks on its own and tells me when something needs me.');
+    expect(html).toContain('My assistant checks on its own and provides updates back to me. Best suited to always-on agents.');
     expect(html).not.toMatch(/[\s>]agents?\b/i);
     expect(html).toContain('action="/settings/hears-via"');
   });
