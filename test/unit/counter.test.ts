@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeAll, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { COUNTER_ROUTE_TABLE } from '../../src/counter/routes.js';
-import { CONSENT_STATEMENT } from '../../src/counter/pages.js';
+import { CONSENT_STATEMENT } from '../../src/counter/pagesHome.js';
 import { lockoutMinutes, pinFormatOk, PIN_MAX_ATTEMPTS } from '../../src/counter/pin.js';
 import { bindingString, signLink } from '../../src/counter/links.js';
 import * as sess from '../../src/counter/session.js';
@@ -292,7 +292,7 @@ describe('Patch, served from the pages that show him', () => {
 describe('consent statement', () => {
   it('is the exact agreed text', () => {
     expect(CONSENT_STATEMENT).toBe(
-      'My agent may post wants & haves on my behalf. I can see, edit, or withdraw everything on my main page.',
+      'My assistant may post wants and haves for me. I can see or take down anything on my main page.',
     );
   });
 });
@@ -348,6 +348,7 @@ const settlementView = (over: Partial<cpages.SettlementView> = {}): cpages.Settl
 /** Every day on these pages arrives as localTime() markup: the browser prints
  *  the reader's own clock, and the UTC day inside is what anything else sees. */
 const DAY = (iso: string) => cpages.localTime(iso, 'day');
+const pesc = cpages.esc;
 const SEP_5 = DAY('2026-09-05T00:00:00.000Z');
 const SEP_12 = DAY('2026-09-12T00:00:00.000Z');
 const SEP_19 = DAY('2026-09-19T00:00:00.000Z');
@@ -675,9 +676,8 @@ describe('counter pages: copy-cull render suite', () => {
         cardCounts: { total: 2, published: 1, pending: 1 },
         pendingApprovals: [
           {
-            href: '/ledger/c-9/edit',
-            label: `Your ${LABEL} didn't pass screening — see why and fix it`,
-            cta: 'See why and fix it',
+            label: `Your ${LABEL} needs a change.`,
+            lines: [screeningReasonInPlainWords('pii-in-card'), chome.REJECTED_TILE_LINE],
           },
           { href: '/approvals/offer/o-1', label: `Offer on your ${LABEL} match`, amount: '620 AUD' },
         ],
@@ -690,66 +690,70 @@ describe('counter pages: copy-cull render suite', () => {
         {
           id: 'c-1',
           type: 'WANT',
-          category: LABEL,
-          location: 'Canberra, Australian Capital Territory, Australia — matching within 150 km',
-          state: 'PUBLISHED',
-          status: 'active',
-          expiresAt: '2026-10-01',
-          priceBand: '0–800 AUD',
-          matchSummary: 'no matches yet',
-          attributes: 'condition: good',
+          title: LABEL,
+          sentence: chome.attributesSentence({ condition: 'good', frame: 'large' }),
+          state: 'live',
+          until: DAY('2026-10-01T00:00:00.000Z'),
+          reach: 'within 150 km of Canberra, Australian Capital Territory, Australia',
+          hasLimit: true,
+          introduced: 3,
+          mode: 'relay',
+          lapsingSoon: true,
         },
         {
           id: 'c-2',
           type: 'HAVE',
-          category: LABEL,
-          location: 'Canberra, Australian Capital Territory, Australia — reaching all of Australia',
-          state: 'PUBLISHED',
-          status: 'active',
-          expiresAt: '2026-10-01',
-          matchSummary: 'no matches yet',
+          title: LABEL,
+          state: 'needs a change',
+          reason: screeningReasonInPlainWords('pii-in-card'),
+          until: DAY('2026-10-01T00:00:00.000Z'),
+          reach: 'anywhere in Australia',
+          hasLimit: false,
+          introduced: 0,
+          mode: 'mandate',
         },
-      ], 'Withdrawn — effective immediately.'),
+        {
+          id: 'c-3',
+          type: 'HAVE',
+          title: LABEL,
+          state: 'taken down',
+          until: DAY('2026-10-01T00:00:00.000Z'),
+          reach: 'anywhere',
+          hasLimit: false,
+          introduced: 1,
+          mode: 'relay',
+        },
+      ], 'Taken down.'),
     },
     {
-      name: 'card-edit',
-      html: chome.cardEditPage({
-        id: 'c-1',
-        type: 'WANT',
-        category: LABEL,
-        urgency: 'none',
-        status: 'active',
-        ttlDays: 60,
-        attributesJson: '{}',
-        collectWindowDefault: 240,
-      }),
+      name: 'take-down',
+      html: chome.takeDownPage({ id: 'c-1', type: 'WANT', thing: 'hardtail mountain bike' }),
     },
-    {
-      name: 'card-edit-screening-rejected',
-      html: chome.cardEditPage({
-        id: 'c-1',
-        type: 'WANT',
-        category: LABEL,
-        urgency: 'none',
-        status: 'active',
-        ttlDays: 60,
-        attributesJson: '{}',
-        collectWindowDefault: 240,
-        screeningRejection: {
-          plain: screeningReasonInPlainWords('pii-in-card'),
-          code: 'pii-in-card',
-        },
-      }),
-    },
+    { name: 'consent', html: chome.consentPage() },
     {
       name: 'settings',
       html: chome.settingsPage({
         hearsVia: 'email',
-        blindMode: false,
+        timezone: null,
         freqMatches: 'immediate',
         freqDigests: 'daily',
         complaintSuppressed: true,
         emailUnreachable: true,
+      }),
+    },
+    {
+      name: 'settings-filled',
+      html: chome.settingsPage({
+        hearsVia: 'email',
+        timezone: 'Australia/Sydney',
+        freqMatches: 'immediate',
+        freqDigests: 'daily',
+        complaintSuppressed: false,
+        emailUnreachable: false,
+        sharedProfile: 'Ana, Braddon',
+        approveWith: { pin: true, passkey: true },
+        arrangementSummary: 'Set: between conversations, quiet hours.',
+        keyCount: 2,
       }),
     },
     {
@@ -759,7 +763,7 @@ describe('counter pages: copy-cull render suite', () => {
           {
             type: 'WANT',
             category: LABEL,
-            attributes: 'condition: good · frame: large',
+            attributes: chome.attributesSentence({ condition: 'good', frame: 'large' }),
             expires: '2026-09-05',
             expiringSoon: true,
           },
@@ -800,7 +804,7 @@ describe('counter pages: copy-cull render suite', () => {
       name: 'settings-hears-through-assistant',
       html: chome.settingsPage({
         hearsVia: 'assistant',
-        blindMode: true,
+        timezone: null,
         freqMatches: 'immediate',
         freqDigests: 'daily',
         complaintSuppressed: false,
@@ -1074,38 +1078,68 @@ describe('counter pages: copy-cull render suite', () => {
     });
   }
 
-  it('the ledger shows where each card sits and how far it reaches', () => {
-    // A card in the wrong place is only visible to the person who lives in
+  it('the ledger shows where each one sits and how far it reaches, from the person\'s own place', () => {
+    // A posting in the wrong place is only visible to the person who lives in
     // the right one, so the resolved location goes on their own page.
     const ledger = Object.fromEntries(allPages().map((p) => [p.name, p.html])).ledger;
-    expect(ledger).toContain('Canberra, Australian Capital Territory, Australia');
-    expect(ledger).toContain('matching within 150 km');
-    // A card that reaches a whole country says so in the same line, in the
-    // same words: a radius would be a lie about it.
-    expect(ledger).toContain('reaching all of Australia');
+    expect(ledger).toContain('within 150 km of Canberra, Australian Capital Territory, Australia');
+    // One that reaches a whole country says so in the same line.
+    expect(ledger).toContain('anywhere in Australia');
+  });
+
+  it('a ledger row reads as plain words: pill, own name, values, one muted line', () => {
+    const ledger = Object.fromEntries(allPages().map((p) => [p.name, p.html])).ledger;
+    expect(ledger).toContain('>Want</span>');
+    expect(ledger).toContain('>Have</span>');
+    expect(ledger).toContain('Good, large.');
+    // No keys, no machine state, no band figures.
+    expect(ledger).not.toContain('condition:');
+    expect(ledger).not.toContain('PUBLISHED');
+    expect(ledger).not.toContain('0–800');
+    expect(ledger).toContain(
+      'Live until <time datetime="2026-10-01T00:00:00.000Z" data-local="day">',
+    );
+    expect(ledger).toContain('your limit is private · 3 introduced · your assistant brings every figure to you');
+    expect(ledger).toContain('nobody introduced yet · your assistant handles figures between your limits');
+    expect(ledger).toContain('Needs a change');
+    expect(ledger).toContain(pesc(screeningReasonInPlainWords('pii-in-card')));
+    expect(ledger).toContain('Taken down');
+    // Two buttons on an open row, plus "Keep it" where it is lapsing; no edit.
+    expect(ledger).toContain('href="/ledger/c-1/numbers">Your numbers</a>');
+    expect(ledger).toContain('href="/ledger/c-1/withdraw">Take it down</a>');
+    expect(ledger).toContain('action="/ledger/c-1/renew"><button type="submit">Keep it</button>');
+    expect(ledger).not.toContain('action="/ledger/c-2/renew"');
+    expect(ledger).not.toContain('/edit');
+    expect(ledger).not.toContain('href="/ledger/c-3/withdraw"');
+    expect(ledger).toContain(chome.LEDGER_CHANGE_LINE);
+  });
+
+  it('taking one down asks once, and "Not now" goes back', () => {
+    const html = Object.fromEntries(allPages().map((p) => [p.name, p.html]))['take-down'];
+    expect(html).toContain('<h1>Take down your hardtail mountain bike want?</h1>');
+    expect(html).toContain('<form method="POST" action="/ledger/c-1/withdraw">');
+    expect(html).toContain('>Take it down</button>');
+    expect(html).toContain('<a class="btn secondary" href="/ledger">Not now</a>');
   });
 
   it('pages given a category label show it', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
-    for (const name of ['dashboard', 'ledger', 'card-edit', 'renew', 'approval-offer']) {
+    for (const name of ['dashboard', 'ledger', 'renew', 'approval-offer']) {
       expect(byName[name], name).toContain(LABEL);
     }
   });
 
-  it('a rejected card gets its own attention item and its own reason', () => {
+  it('a want or have screening turned away gets a tile with its reason, and nothing to open', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
-    // Dashboard: the attention item, its own button wording, the edit link.
-    expect(byName['dashboard']).toContain(`Your ${LABEL} didn&#39;t pass screening`);
-    expect(byName['dashboard']).toContain('/ledger/c-9/edit');
-    expect(byName['dashboard']).toContain('See why and fix it');
+    expect(byName['dashboard']).toContain(`Your ${LABEL} needs a change.`);
+    expect(byName['dashboard']).toContain(pesc(screeningReasonInPlainWords('pii-in-card')));
+    expect(byName['dashboard']).toContain(
+      'Tell your assistant what to change and it will send it back to be checked.',
+    );
+    expect(byName['dashboard']).not.toContain('/edit');
+    expect(byName['dashboard']).not.toContain('See why and fix it');
     // Everything else on the dashboard keeps the decide-on-it wording.
     expect(byName['dashboard']).toContain('Review &amp; decide');
-    // Edit page: plain words up top, raw code small underneath.
-    expect(byName['card-edit-screening-rejected']).toContain(
-      screeningReasonInPlainWords('pii-in-card'),
-    );
-    expect(byName['card-edit-screening-rejected']).toContain('screening code: pii-in-card');
-    expect(byName['card-edit']).not.toContain('screening code:');
   });
 
   it('the dashboard leads with what is waiting, and navigation comes after it', () => {
@@ -1118,13 +1152,14 @@ describe('counter pages: copy-cull render suite', () => {
     // rather than a link to a list.
     expect(html.indexOf('class="todo urgent"')).toBeGreaterThan(waiting);
     expect(html.indexOf('class="todo urgent"')).toBeLessThan(nav);
-    // The decisions come first and the quiet half follows them.
-    expect(html.indexOf('WAITING FOR YOU')).toBeGreaterThan(waiting);
-    expect(html.indexOf('WAITING FOR YOU')).toBeLessThan(nav);
-    // The quiet half is a list of links rather than a stack of buttons.
+    // Nothing under Decisions wears a "waiting for you" badge: all of it is.
+    expect(html).not.toContain('WAITING FOR YOU');
+    // The quiet half is two links: the wants and haves, and settings.
     expect(html.indexOf('class="navlist"')).toBeGreaterThan(nav);
-    for (const href of ['/ledger', '/profile', '/arrangement', '/agent-keys', '/settings']) {
-      expect(html, href).toContain(`<a href="${href}"><span class="nav-t">`);
+    expect(html).toContain('<a href="/ledger"><span class="nav-t">Your wants and haves</span><span class="nav-d">1 live · 1 being checked</span></a>');
+    expect(html).toContain('<a href="/settings"><span class="nav-t">Settings</span>');
+    for (const href of ['/profile', '/arrangement', '/agent-keys', '/security']) {
+      expect(html, href).not.toContain(`<a href="${href}"><span class="nav-t">`);
     }
     // The kill switch stays at the bottom, in its own frame.
     expect(html.indexOf('class="kill"')).toBeGreaterThan(html.indexOf('class="navlist"'));
@@ -1153,6 +1188,8 @@ describe('counter pages: copy-cull render suite', () => {
     expect(html).toContain(
       'out by <time datetime="2026-09-08T00:00:00.000Z" data-local="day">Tuesday 8 September</time>',
     );
+    // And the tile keeps them in one press, without a PIN.
+    expect(html).toContain('<form method="POST" action="/renew/lapsing"><button type="submit">Keep them all</button></form>');
     expect(html).not.toContain('&lt;time');
     expect(html).not.toContain('Nothing to decide right now.');
     expect(lintHumanCopy(html)).toEqual([]);
@@ -1169,10 +1206,10 @@ describe('counter pages: copy-cull render suite', () => {
     }
   });
 
-  it('card rows carry the attributes detail line that tells same-category cards apart', () => {
+  it('rows carry the attributes sentence that tells two in the same category apart', () => {
     const byName = Object.fromEntries(allPages().map((p) => [p.name, p.html]));
-    expect(byName['ledger']).toContain('condition: good');
-    expect(byName['renew']).toContain('condition: good · frame: large');
+    expect(byName['ledger']).toContain('Good, large.');
+    expect(byName['renew']).toContain('Good, large.');
   });
 });
 
@@ -1184,7 +1221,7 @@ describe('counter pages: copy-cull render suite', () => {
 
 const settingsView = (hearsVia: chome.HearsVia): chome.EmailSettingsView => ({
   hearsVia,
-  blindMode: false,
+  timezone: null,
   freqMatches: 'immediate',
   freqDigests: 'daily',
   complaintSuppressed: false,
@@ -1192,23 +1229,33 @@ const settingsView = (hearsVia: chome.HearsVia): chome.EmailSettingsView => ({
 });
 
 describe('how do you want to hear about things?', () => {
-  it('leads the settings page, above the frequency dials and blind mode', () => {
+  it('is one section of the settings hub, in its place in the order', () => {
     const html = chome.settingsPage(settingsView('email'));
-    const ask = html.indexOf('<h2>How are you notified by OpenSwitchboard?</h2>');
-    expect(ask).toBeGreaterThan(-1);
-    expect(html.indexOf('<h2>Email frequency</h2>')).toBeGreaterThan(ask);
-    expect(html.indexOf('<h2>Blind mode</h2>')).toBeGreaterThan(ask);
+    const order = [
+      '<h2>What you share</h2>',
+      '<h2>How you approve things</h2>',
+      '<h2>How you hear about things</h2>',
+      '<h2>Your assistant</h2>',
+      "<h2>Keys for assistants that can't sign in</h2>",
+      '<h2>Time zone</h2>',
+      '<h2>Email</h2>',
+    ].map((h) => html.indexOf(pesc(h).replace(/&lt;/g, '<').replace(/&gt;/g, '>')));
+    for (const i of order) expect(i).toBeGreaterThan(-1);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    // Each link section is one fact and a way to change it.
+    expect(html).toContain('href="/profile"');
+    expect(html).toContain('href="/security"');
+    expect(html).toContain('href="/arrangement"');
+    expect(html).toContain('href="/agent-keys"');
   });
 
   it('puts the two answers in the words a person would use', () => {
     const html = chome.settingsPage(settingsView('email'));
     expect(html).toContain('By email.');
-    expect(html).toContain('Each match and reply reaches me by email. Best suited to chat assistants.');
+    expect(html).toContain('My assistant only acts when I talk to it, so email me when something needs me.');
     expect(html).toContain('Through my assistant.');
-    expect(html).toContain('My assistant checks on its own and provides updates back to me. Best suited to always-on agents.');
-    // The kind-of-assistant question belongs to onboarding and the arrangement
-    // page; settings never asks it again.
-    expect(html).not.toContain('Which kind of assistant do you use?');
+    expect(html).toContain('It checks on its own and tells me when something needs me.');
+    expect(html).not.toMatch(/[\s>]agents?\b/i);
     expect(html).toContain('action="/settings/hears-via"');
   });
 
@@ -1229,10 +1276,25 @@ describe('how do you want to hear about things?', () => {
     expect(assistant).not.toContain('value="email" checked');
   });
 
-  it('keeps the controls that were already there', () => {
-    const html = chome.settingsPage(settingsView('assistant'));
+  it('keeps the email dials under their plain names, and drops blind mode', () => {
+    const html = chome.settingsPage(settingsView('email'));
     expect(html).toContain('action="/settings/frequency"');
-    expect(html).toContain('action="/settings/blind-mode"');
+    expect(html).toContain('<label for="freq_matches">When someone comes forward</label>');
+    expect(html).toContain('<label for="freq_digests">Round-ups and reminders</label>');
+    expect(html).toContain('Sign-in codes and security notices always send.');
+    expect(html).not.toContain('Match summons');
+    expect(html).not.toContain('Blind mode');
+    expect(html).not.toContain('action="/settings/blind-mode"');
+  });
+
+  it('says the time zone as a fact, with the picker folded under "Change"', () => {
+    const set = chome.settingsPage({ ...settingsView('email'), timezone: 'Australia/Sydney' });
+    expect(set).toMatch(/Australia\/Sydney, \d{1,2}:\d{2}\s?(am|pm) now/);
+    expect(set).toContain('<details><summary>Change</summary>');
+    const unset = chome.settingsPage(settingsView('email'));
+    expect(unset).toContain('<p class="set-fact">Not set</p>');
+    expect(unset).not.toContain('<details><summary>Change</summary>');
+    expect(unset).toContain('<select id="timezone" name="timezone">');
   });
 });
 
@@ -1301,34 +1363,26 @@ describe('the dashboard the rehearsal left notes on', () => {
 });
 
 describe('the offers page the rehearsal left notes on', () => {
-  it('carries a negotiation control where a badge nobody could press used to be', () => {
+  it('says in one line how figures are handled, with a link to change it', () => {
     const html = chome.matchOffersPage(offersView());
-    expect(html).toContain('<h2>How your agent negotiates</h2>');
-    expect(html).toContain('action="/ledger/c-1/numbers"');
-    expect(html).toContain('name="return_to" value="m-1"');
-    expect(html).toContain('Pass on:');
     expect(html).toContain(
-      'your agent brings every offer to you and sends back the numbers you give it',
+      'How your assistant handles figures on this: Pass on &mdash; <a href="/ledger/c-1/numbers">change</a>',
     );
-    expect(html).toContain('Auto-negotiate:');
-    expect(html).toContain('your agent can put figures on the table inside your limits');
-    // The mode is no longer a badge sitting on its own next to the category.
-    expect(html).not.toContain('<span class="badge state">Pass on</span>');
-    // The numbers ride with the control, out of the way until they are wanted.
-    expect(html).toContain('<div id="negnumbers" hidden>');
-    expect(html).toContain('name="limit"');
-    expect(html).toContain('name="step"');
+    // The duplicated control and the limit block are gone.
+    expect(html).not.toContain('How your agent negotiates');
+    expect(html).not.toContain('id="negnumbers"');
+    expect(html).not.toContain('Your limit on this');
+    const auto = chome.matchOffersPage(offersView({ mode: 'mandate' }));
+    expect(auto).toContain('How your assistant handles figures on this: between your limits');
   });
 
-  it('a card on auto-negotiate shows the limits its agent works inside', () => {
-    const html = chome.matchOffersPage(
-      offersView({ mode: 'mandate', mandate: { limit: 380, step: 10, ccy: 'AUD' } }),
+  it('is titled by the thing and who it is with', () => {
+    expect(chome.matchOffersPage(offersView())).toContain(`<h1>${LABEL} · with the other side</h1>`);
+    const named = chome.matchOffersPage(
+      offersView({ thing: 'hardtail mountain bike', theirName: 'Tony', theirs: 'Theirs: Trek Marlin 5 · asking $620 AUD' }),
     );
-    expect(html).toContain('<div id="negnumbers">');
-    expect(html).toContain('id="negmode_mandate" name="mode" type="radio" value="mandate" checked');
-    expect(html).toContain('name="limit" type="number" step="0.01" min="0" value="380"');
-    expect(html).toContain('name="step" type="number" step="0.01" min="0" value="10"');
-    expect(html).toContain('name="ccy" type="text" maxlength="3" pattern="[A-Za-z]{3}" value="AUD"');
+    expect(named).toContain('<h1>Hardtail mountain bike · with Tony</h1>');
+    expect(named).toContain('<p class="muted">Theirs: Trek Marlin 5 · asking $620 AUD</p>');
   });
 
   it('with nothing sent, the box to type a figure into stands open', () => {
@@ -1458,10 +1512,7 @@ describe('the offers page the rehearsal left notes on', () => {
     expect(html).not.toContain('>proposed<');
   });
 
-  it('the sealed page keeps its own button, named for what is on it', () => {
-    const html = chome.matchOffersPage(offersView());
-    expect(html).toContain('href="/ledger/c-1/numbers">Your limit on this have</a>');
-  });
+
 });
 
 // ---------------------------------------------------------------------------

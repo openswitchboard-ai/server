@@ -153,7 +153,7 @@ function fakePool(rows: Record<string, any[]>) {
   } as any;
 }
 
-const REJECTED_QUERY = 'SELECT id, category, screening FROM cards';
+const REJECTED_QUERY = 'SELECT id, category, kind, screening FROM cards';
 const LEDGER_QUERY = 'SELECT c.*, (SELECT count(*)::int FROM matches m';
 
 let app: FastifyInstance;
@@ -178,19 +178,23 @@ const get = (url: string) =>
 // (1) The dashboard says something is waiting.
 // ---------------------------------------------------------------------------
 describe('main-page dashboard: something that failed screening', () => {
-  it('shows an attention item linking to its edit page', async () => {
+  it('shows a tile with the reason and what to tell the assistant, and no edit link', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(
       fakePool({
-        [REJECTED_QUERY]: [{ id: CARD, category: SLUG, screening: rejectedRow().screening }],
+        [REJECTED_QUERY]: [{ id: CARD, category: SLUG, kind: null, screening: rejectedRow().screening }],
       }),
     );
     const res = await get('/');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain(`Your ${PHRASE} didn&#39;t pass screening`);
-    expect(res.body).toContain(`/ledger/${CARD}/edit`);
-    expect(res.body).toContain('See why and fix it');
-    // The raw slug and the model's internal note never render.
+    expect(res.body).toContain(`Your ${PHRASE} needs a change.`);
+    expect(res.body).toContain('reads like an instruction aimed at an AI');
+    expect(res.body).toContain(
+      'Tell your assistant what to change and it will send it back to be checked.',
+    );
+    expect(res.body).not.toContain(`/ledger/${CARD}/edit`);
+    // The raw slug, the raw code and the model's internal note never render.
     expect(res.body).not.toContain(SLUG);
+    expect(res.body).not.toContain('prompt-injection');
     expect(res.body).not.toContain('stays internal');
   });
 
@@ -198,22 +202,23 @@ describe('main-page dashboard: something that failed screening', () => {
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({}));
     const res = await get('/');
     expect(res.statusCode).toBe(200);
-    expect(res.body).not.toContain('pass screening');
+    expect(res.body).not.toContain('needs a change');
     expect(res.body).toContain('Nothing to decide right now.');
   });
 });
 
 // ---------------------------------------------------------------------------
-// (2) The edit page says why, in plain words.
+// (2) The ledger says why, in plain words. There is no edit page any more
+// (28 September 2026): the assistant amends, and the old link lands on the list.
 // ---------------------------------------------------------------------------
-describe('ledger edit page: the reason in plain words', () => {
-  it('renders the plain-words sentence with the raw code small beneath', async () => {
+describe('ledger: the reason in plain words', () => {
+  it('the row says it needs a change and why, with no raw code', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({ [LEDGER_QUERY]: [rejectedRow()] }));
-    const res = await get(`/ledger/${CARD}/edit`);
+    const res = await get('/ledger');
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('This want didn&#39;t pass screening.');
+    expect(res.body).toContain('Needs a change');
     expect(res.body).toContain('reads like an instruction aimed at an AI');
-    expect(res.body).toContain('screening code: prompt-injection');
+    expect(res.body).not.toContain('prompt-injection');
     // The model's own note is internal and never reaches the page.
     expect(res.body).not.toContain('stays internal');
   });
@@ -221,10 +226,17 @@ describe('ledger edit page: the reason in plain words', () => {
   it('a card that is not rejected carries no screening block', async () => {
     const ok = { ...rejectedRow(), lifecycle_state: 'PUBLISHED', screening: { pass: true, at: REJECTED_AT } };
     vi.spyOn(db, 'getPool').mockReturnValue(fakePool({ [LEDGER_QUERY]: [ok] }));
-    const res = await get(`/ledger/${CARD}/edit`);
+    const res = await get('/ledger');
     expect(res.statusCode).toBe(200);
-    expect(res.body).not.toContain('pass screening');
-    expect(res.body).not.toContain('screening code:');
+    expect(res.body).not.toContain('Needs a change');
+    expect(res.body).not.toContain('reads like an instruction aimed at an AI');
+  });
+
+  it('the old edit address lands on the list', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue(fakePool({}));
+    const res = await get(`/ledger/${CARD}/edit`);
+    expect(res.statusCode).toBe(303);
+    expect(res.headers.location).toBe('/ledger');
   });
 });
 

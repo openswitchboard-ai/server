@@ -357,14 +357,15 @@ describe('how often to check is a number of minutes, with a floor', () => {
     expect(t.description).toMatch(/the floor is 30/i);
   });
 
-  it('the page offers a minutes box and the same sentence the server refuses with', () => {
+  it('the page offers a minutes box whose label carries the floor', () => {
     const page = home.arrangementPage({ check_every_minutes: 720 });
     expect(page).toContain('name="check_every_minutes"');
     expect(page).toContain('type="number"');
     expect(page).toContain('min="30"');
     expect(page).toContain('max="10080"');
-    expect(page).toContain('No more often than every 30 minutes');
-    expect(page).toContain('a few times a day is plenty');
+    expect(page).toContain('How often it checks (minutes, 30 or more)');
+    // The rule that a cadence needs "runs on its own" is an error, not a label.
+    expect(page).not.toContain('Needs the first of those two.');
   });
 
   it('the sweep note tells the agent the cadence its human asked for', () => {
@@ -482,7 +483,7 @@ describe('every check_in sweep carries it', () => {
 describe('the page the human reads it on', () => {
   it('says it back in plain words', () => {
     const page = home.arrangementPage(FULL, { updated: pages.localTime('2026-09-02T04:00:00.000Z') });
-    expect(page).toContain('How your agents behave');
+    expect(page).toContain('<h1>How your assistant works.</h1>');
     expect(page).toContain('every 12 hours');
     expect(page).toContain('a new match');
     expect(page).toContain('Mention something now and then');
@@ -493,7 +494,7 @@ describe('the page the human reads it on', () => {
 
   it('says when nothing is set, and offers no clear control then', () => {
     const empty = home.arrangementPage({});
-    expect(empty).toContain('Nothing is set yet');
+    expect(empty).toContain('Nothing set yet.');
     expect(empty).not.toContain('/arrangement/clear');
     expect(home.arrangementPage(FULL)).toContain('/arrangement/clear');
   });
@@ -516,8 +517,8 @@ describe('the page the human reads it on', () => {
 
   it('restates the floor: an arrangement approves nothing', () => {
     const page = home.arrangementPage(FULL);
-    expect(page).toMatch(/never approve|can never do is approve/i);
-    expect(page).toContain('every single time');
+    expect(page).toMatch(/never approve anything/i);
+    expect(page).toContain('come to your main page every time');
   });
 
   it('escapes what the human typed back into the boxes', () => {
@@ -526,20 +527,44 @@ describe('the page the human reads it on', () => {
     expect(nasty).toContain('&lt;script&gt;');
   });
 
-  it('the dashboard links to it and says when it is empty', () => {
+  it('the settings hub links to it and says when it is empty', () => {
     const base = {
-      killSwitchOn: false,
-      cardCounts: { total: 0, published: 0, pending: 0 },
-      pendingApprovals: [],
+      hearsVia: 'email' as const,
+      timezone: null,
+      freqMatches: 'immediate',
+      freqDigests: 'daily',
+      complaintSuppressed: false,
+      emailUnreachable: false,
     };
-    const empty = home.dashboardPage(base);
-    expect(empty).toContain('/arrangement');
-    expect(empty).toContain('Nothing is set yet');
-    const filled = home.dashboardPage({
+    const empty = home.settingsPage(base);
+    expect(empty).toContain('href="/arrangement"');
+    expect(empty).toContain('Nothing set yet.');
+    const filled = home.settingsPage({
       ...base,
-      arrangementSummary: 'how often your agents check — twice a day (and 5 more)',
+      arrangementSummary: home.arrangementSummaryLine(arrangement.arrangementInPlainWords(FULL)),
     });
-    expect(filled).toContain('twice a day (and 5 more)');
+    expect(filled).toContain('Set: between conversations, how often it checks');
+  });
+
+  it('names no products, says "assistant", and shows how the person hears as a fact', () => {
+    const page = home.arrangementPage(FULL, { hearsVia: 'email' });
+    for (const name of ['OpenClaw', 'Grok', 'Hermes', 'Meta Muse', 'ChatGPT', 'Antigravity', 'Claude']) {
+      expect(page, name).not.toContain(name);
+    }
+    expect(page).not.toMatch(/[\s>]agents?\b/i);
+    expect(page).toContain('You hear about things by email. <a href="/settings">Change</a>');
+    // runs_on_its_own is still asked here: it is a different field.
+    expect(page).toContain('name="runs_on_its_own"');
+    for (const label of [
+      'How often it checks (minutes, 30 or more)',
+      "What's worth interrupting you for (one per line)",
+      'What can wait for a round-up',
+      'Quiet hours',
+      'How often it should suggest things',
+      'Anything else',
+    ]) {
+      expect(page, label).toContain(label);
+    }
   });
 
   it('passes the banned-phrase lint and never says "the counter"', () => {
