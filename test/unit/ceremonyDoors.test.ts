@@ -133,7 +133,11 @@ describe('the doors an emailed code does not open', () => {
     expect(HANDLERS.get('/pin/set')!).toMatch(/needsFreshCeremony\([^;]*isStronglyElevated\(s\)\)/s);
     expect(HANDLERS.get('/passkey/options')!).toMatch(/needsFreshCeremony\([^;]*isStronglyElevated\(s\)\)/s);
     expect(HANDLERS.get('/pin/set')!).not.toMatch(/sess\.isElevated\(s\)/);
-    expect(HANDLERS.get('/passkey/options')!).not.toMatch(/sess\.isElevated\(s\)/);
+    // The one weaker window it may lean on is a recovery hold's: the passkey
+    // fitted there waits out the same hold (pin.ts passkeyHeldUntil).
+    const options = HANDLERS.get('/passkey/options')!;
+    expect(options.match(/sess\.isElevated\(s\)/g) ?? []).toHaveLength(1);
+    expect(options).toMatch(/await pinHeldUntil\(s\.accountId!\)\) && sess\.isElevated\(s\)/);
   });
 });
 
