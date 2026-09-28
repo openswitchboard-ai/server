@@ -9,7 +9,7 @@
  * What is asserted here:
  *  - a link already pressed answers straight away, approved or declined;
  *  - a wait that is still waiting when the cap comes answers plainly, and the
- *    cap is real: the hold ends inside fifty seconds, well short of the load
+ *    cap is real: the hold ends inside twenty-five seconds, well short of the load
  *    balancer's sixty;
  *  - a link that runs out while the line is held says so;
  *  - a press id belonging to somebody else is not found rather than waited on;
@@ -208,9 +208,9 @@ describe('holding the line', () => {
     expect(first.link).toContain(encodeURIComponent(signLink(links[0])));
   });
 
-  it('holds for its fifty seconds and not a moment past them', async () => {
+  it('holds for its twenty-five seconds and not a moment past them', async () => {
     // The load balancer gives up at sixty, so the cap is well under it.
-    expect(PRESS_WAIT_CAP_MS).toBe(50_000);
+    expect(PRESS_WAIT_CAP_MS).toBe(25_000);
     let finishedAt = -1;
     const waiting = waitForPress(cfg, ANA, PRESS).then((r) => {
       finishedAt = Date.now() - started;
@@ -223,8 +223,8 @@ describe('holding the line', () => {
     expect(finishedAt).toBeGreaterThan(PRESS_WAIT_CAP_MS - PRESS_POLL_MS * 2);
     expect(finishedAt).toBeLessThanOrEqual(PRESS_WAIT_CAP_MS);
     // And it looked about as often as a poll of a second and a half implies.
-    expect(reads).toBeGreaterThan(20);
-    expect(reads).toBeLessThan(40);
+    expect(reads).toBeGreaterThan(10);
+    expect(reads).toBeLessThan(22);
   });
 
   it('says the page has run out when the link expires while the line is held', async () => {
@@ -336,7 +336,7 @@ describe('the tool an agent reads', () => {
     expect(tool).toBeDefined();
     expect(tool.description).toMatch(/call it again/i);
     expect(tool.description).toContain('15 minutes');
-    expect(tool.description).toContain('50 seconds');
+    expect(tool.description).toContain('25 seconds');
     expect(tool.inputSchema.required).toEqual(['press_id']);
   });
 

@@ -368,6 +368,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Three small things about links. A photo your human sends goes from the page at its link: they send it themselves, so never ask them to send it to you. A link that has run out will not open again: wait_for_press says so and says how to fetch a fresh one, so never tell your human the old one is still there. And a photo that arrives now comes with a short link on the switchboard\'s own address, good for the same fifteen minutes.',
   },
+  {
+    version: 75,
+    note:
+      'A wait for a press now holds for twenty-five seconds, so it ends well inside every client\'s time limit. Hand the link over first, then wait, and call it again while your human is still on the page.',
+  },
 ];
 
 /**
@@ -726,7 +731,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 74,
+  version: 75,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

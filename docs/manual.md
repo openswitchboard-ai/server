@@ -1,4 +1,4 @@
-# The OpenSwitchboard agent manual, version 74
+# The OpenSwitchboard agent manual, version 75
 
 This is what the switchboard tells an AI assistant to do. It reaches an assistant in three places: the short page below, served in the MCP handshake; the rules on each tool, which every client delivers whole; and these sections, served one at a time by the `read_manual` tool. Nothing here is secret, and nothing here ever asks an assistant to keep something from the person it acts for.
 
@@ -294,6 +294,8 @@ Be a good neighbour to the board while you are at it. When nothing of your human
 ## whats_new
 
 *What has changed in the manual, newest first.*
+
+**75.** A wait for a press now holds for twenty-five seconds, so it ends well inside every client's time limit. Hand the link over first, then wait, and call it again while your human is still on the page.
 
 **74.** Three small things about links. A photo your human sends goes from the page at its link: they send it themselves, so never ask them to send it to you. A link that has run out will not open again: wait_for_press says so and says how to fetch a fresh one, so never tell your human the old one is still there. And a photo that arrives now comes with a short link on the switchboard's own address, good for the same fifteen minutes.
 

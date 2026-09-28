@@ -577,8 +577,16 @@ export async function autoNegotiateLink(
 // terms with a sentence rather than as a dropped request.
 // ---------------------------------------------------------------------------
 
-/** How long one wait holds the line. The balancer gives up at sixty seconds. */
-export const PRESS_WAIT_CAP_MS = 50_000;
+/**
+ * How long one wait holds the line. The balancer gives up at sixty seconds,
+ * and so does the standard MCP client library that most assistants are built
+ * on (its default request timeout is 60 000 ms). At fifty seconds, network
+ * time pushed OpenClaw's calls past that often enough that the wait showed
+ * as a failed tool, and the turn ended before the link was ever shown
+ * (rehearsal, 28 September 2026). Twenty-five leaves room on every client;
+ * an assistant simply calls again, as the answer already tells it to.
+ */
+export const PRESS_WAIT_CAP_MS = 25_000;
 
 /** How often the row is re-read while the line is held. */
 export const PRESS_POLL_MS = 1_500;
