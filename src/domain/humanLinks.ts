@@ -588,6 +588,9 @@ export async function autoNegotiateLink(
  */
 export const PRESS_WAIT_CAP_MS = 25_000;
 
+/** A page made less than this long ago is handed straight back, not waited on. */
+export const FRESH_LINK_MS = 15_000;
+
 /** How often the row is re-read while the line is held. */
 export const PRESS_POLL_MS = 1_500;
 
@@ -700,6 +703,8 @@ export const PRESS_SENTENCES = {
  * reading at that moment, is worth more than another line of manual.
  */
 export const PRESS_WHAT_TO_DO = {
+  showFirst:
+    'This page was made moments ago. Your reply to your human must contain the web address above, on its own line, with what the page asks. Say that now, and only then call wait_for_press again.',
   // PASTE THE ADDRESS, said in those words because "put the page in front of
   // your human" was read as satisfied by MENTIONING a link.
   //
@@ -772,6 +777,7 @@ interface PressRow {
   used_at: Date | string | null;
   decision: 'approved' | 'declined' | null;
   expires_at: Date | string;
+  created_at?: Date | string | null;
 }
 
 /**
@@ -818,7 +824,7 @@ export async function waitForPress(
   const read = async (): Promise<PressRow> => {
     const r = await getPool().query(
       `SELECT id, account_id, action, ref_id, amount, ccy, counterparty_account, payload,
-              used_at, decision, expires_at
+              used_at, decision, expires_at, created_at
          FROM approval_links WHERE id = $1 AND account_id = $2`,
       [pressId, accountId],
     );
@@ -875,7 +881,17 @@ export async function waitForPress(
         note: pressNote(PRESS_SENTENCES.expired),
       };
     }
-    if (Date.now() + pollMs > deadline) {
+    // A WAIT THAT ARRIVES AS THE LINK IS MADE ANSWERS AT ONCE (28 September
+    // 2026). An assistant that fetched the page and waited in the same turn
+    // spoke only after the wait, from its "still waiting" answer, and the
+    // address never reached its human: on clients that show nothing until a
+    // turn ends, the person saw "still waiting" and no link, run after run.
+    // So a wait on a page made moments ago does not hold. It hands the page
+    // straight back as the thing to say, and says to wait again after. A
+    // client that already showed it loses nothing but one quick call.
+    const justMade =
+      !!row.created_at && Date.now() - new Date(row.created_at).getTime() < FRESH_LINK_MS;
+    if (justMade || Date.now() + pollMs > deadline) {
       const link = linkFromRow(cfg, row);
       const asks = PAGE_ASKS[row.action];
       const left = minutesLeft(row.expires_at);
@@ -889,7 +905,7 @@ export async function waitForPress(
         say: sayText,
         link,
         expires_in_minutes: left,
-        what_to_do: PRESS_WHAT_TO_DO.waiting,
+        what_to_do: justMade ? PRESS_WHAT_TO_DO.showFirst : PRESS_WHAT_TO_DO.waiting,
         note: pressNote(
           // THE ADDRESS FIRST (28 September 2026). With "It runs out in 14
           // minutes." leading and the address last, an assistant repeated the
