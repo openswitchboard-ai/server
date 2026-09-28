@@ -113,9 +113,10 @@ reporting path below and nowhere else.
   key is split so that reading anything from the ledger needs **two
   keyholders** to act. This is the mechanism behind the promise the privacy
   page already makes.
-- **Thirty days**, then deleted. Nothing about a person survives beyond that
-  window except the postings they chose to keep up and the counts in the
-  transparency report.
+- **Thirty days**, then deleted (ninety where a report or a safety review
+  preserved the introduction's entries, longer under a preservation request).
+  Other records outlive the window, and the public pages list them: see
+  "What we hold" under the law-enforcement runbook below.
 - Built as a Postgres table (`ledger_entries`, migration 033), encrypted per
   row: X25519 + HKDF wraps a fresh AES-256-GCM key for each entry, the private
   half split 2-of-3 with Shamir and never on a server. A held item keeps its
@@ -126,8 +127,11 @@ reporting path below and nowhere else.
   `photo_quarantine` (migration 038, ninety days): a photo refused for sexual
   content, moved to a quarantine prefix rather than deleted so that anything
   that must be referred to police still exists to be referred. None of the
-  three holds content a server can read, and nobody has looked at a quarantined
-  image.
+  three holds content a server can read, and no path in this repository
+  displays or fetches a quarantined image. The ninety days on a quarantine
+  row is not a deletion date for a held item: a `held` row stays until a
+  person marks it `--cleared` (object deleted then) or `--referred` (kept
+  forever); only a cleared row is swept, at its ninety days.
 - **Key ceremonies held.** One per environment, each on a laptop rather than
   a server, with `scripts/safety/generate.mts`. The private half was split
   2-of-3 and never written whole. The records below name the fingerprint and
@@ -278,9 +282,9 @@ never told there was a photo at all.
    do, a US-connected matter goes through the ACCCE, who deal with NCMEC
    themselves. Registering is an open item.
 5. **Write it down.** Date, tracking id, review id, quarantine id, who was
-   told, what they said, and what was handed over. It is one line in the
-   transparency report as well: date, kind, what was produced, nothing
-   identifying.
+   told, what they said, and what was handed over. It is counted in the
+   transparency report as well: kind and what was produced, nothing
+   identifying, aggregated and delayed.
 
 **What is logged, and what is not.** `{event:'photo-refused', reason_code:
 'KNOWN_ABUSE_IMAGE'}` at the moment of refusal; `{event:'photo-quarantined',
@@ -302,12 +306,34 @@ apply. Child sexual abuse material carries mandatory reporting. Preservation
 requests and warrants under the Telecommunications (Interception and Access)
 Act and the Crimes Act can reach us.
 
-**What we hold** (all of it within the window unless noted): account email;
-the area they set; first name and suburb where they chose to share them;
-postings (no window; they are up until withdrawn); ledger entries for thirty
-days; photos for thirty days; timestamps and introduction ids. We do not hold
-IP addresses beyond the load balancer's own logs, and we hold nothing after
-the window.
+**What we hold, and for how long** (the public pages say the same):
+
+- Account: email (encrypted), the area they set, first name and suburb where
+  they chose to share them, passkey record, agent keys, timestamps. Kept while
+  the account exists; there is no self-serve account deletion in the code.
+- Postings and introductions: kept as records after withdrawal or expiry
+  (`expireDueCards` marks them EXPIRED; nothing deletes cards or matches).
+- Consent log: WORM bucket, Object Lock governance two years, no expiry after.
+- Ledger entries: thirty days; ninety where a report (`REPORT_PRESERVE_DAYS`)
+  or a safety review (`REVIEW_PRESERVE_DAYS`) preserved them; longer under a
+  preservation request (`preserved_until`).
+- Relay copies of messages: deleted when collected, or fourteen days
+  uncollected (`MESSAGE_TTL_DAYS`).
+- Conversation photos: the bytes go fifteen minutes after collection
+  (`VIEW_URL_TTL_S`) or at fourteen days uncollected; S3 lifecycle backstop at
+  fifteen days. The ledger holds only the object key, never the bytes.
+- Photo quarantine: `held` until a person decides; `cleared` deletes the
+  object at once and the row at ninety days; `referred` kept forever. S3
+  lifecycle backstop on the quarantine prefix at 400 days.
+- `reports` (reporter, reported, match, the reporter's words up to 300
+  characters) and `safety_reviews` (flag names only): no deletion in the code
+  yet.
+- `suspended_emails`: hashes, kept until the suspension is lifted.
+- Email events: ninety days, hashes only. Shelf gaps: 180 days.
+- IP addresses: the application's request log (CloudWatch, one month), the
+  ALB access logs (ninety days) and the CloudFront access logs for the
+  website (ninety days).
+- Database backups: fourteen days on prod (three on dev).
 
 **How a request is met.**
 
@@ -323,8 +349,9 @@ the window.
    Australian Federal Police through the Australian Centre to Counter Child
    Exploitation without waiting to be asked (Criminal Code s 474.25), and the
    material is preserved for them; nothing is deleted before that decision.
-5. Every request is a line in the transparency report: date, kind, what was
-   produced, nothing identifying.
+5. Every request is counted in the transparency report: kind and what was
+   produced, nothing identifying, aggregated and delayed subject to legal
+   secrecy obligations.
 
 **Two kinds of request, two standards.** Message and photo content is a stored
 communication under the Telecommunications (Interception and Access) Act: it is
@@ -353,8 +380,9 @@ is monitored daily; the operator is the responder and names a fallback before
 any absence longer than a day.
 
 **Transparency report.** Published each year, the first twelve months after
-launch, or sooner if a request arrives: date, kind, what was produced, nothing
-identifying.
+launch. Requests are counted by kind and what was produced, nothing
+identifying, and the counts are aggregated and delayed, subject to legal
+secrecy obligations.
 
 ## Plaintext, and being honest about it
 
@@ -481,5 +509,10 @@ first month of launch.
   overseas users change it.
 - Whether the two-keyholder ceremony satisfies a warrant's timing
   requirements, and who the second keyholder should be.
-- IP addresses do sit in the application logs for one month (Fastify request
-  logs); the public pages now say so.
+- IP addresses sit in the application logs for one month (Fastify request
+  logs) and in the ALB and CloudFront access logs for ninety days; the public
+  pages now say so.
+- A photo refused for sexual content is held until a person marks it cleared
+  or referred, and the tooling shows ids, labels and ages only. Is deciding
+  "nothing to refer" without viewing the image an acceptable basis for
+  clearing it, or should unmatched sexual-label refusals follow a fixed rule?
