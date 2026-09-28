@@ -152,13 +152,44 @@ export async function fileReport(
   const words_kept = !reason || verdict.outcome === 'pass';
 
   const pool = getPool();
-  const inserted = await pool.query(
-    `INSERT INTO reports (reporter_account, reported_account, match_id, reason_words)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [input.reporterAccount, reported, input.matchId, words_kept ? (reason ?? null) : null],
-  );
-  const reportId = inserted.rows[0].id as string;
+  // THE CEILING IS HELD AT THE WRITE, NOT ONLY BEFORE IT (2026-09-28 review).
+  // The count above is the cheap early answer, taken before the words cost a
+  // model call; on its own it was check-then-insert, and a burst of presses in
+  // parallel all read four and all wrote. So the write takes a lock keyed on
+  // the reporter for the length of one short transaction, and the INSERT
+  // carries the count in its own WHERE — a fresh statement after the lock, so
+  // it sees every report committed before it. Past the ceiling nothing is
+  // written and the same sentence comes back.
+  const client = await pool.connect();
+  let reportId: string | undefined;
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('osb-report:' || $1, 0))`, [
+      input.reporterAccount,
+    ]);
+    const inserted = await client.query(
+      `INSERT INTO reports (reporter_account, reported_account, match_id, reason_words)
+       SELECT $1, $2, $3, $4
+        WHERE (SELECT count(*) FROM reports
+                WHERE reporter_account = $1 AND created_at > now() - interval '24 hours') < $5
+       RETURNING id`,
+      [input.reporterAccount, reported, input.matchId, words_kept ? (reason ?? null) : null, cap],
+    );
+    await client.query('COMMIT');
+    reportId = inserted.rows[0]?.id as string | undefined;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+  if (!reportId) {
+    throw new OsbError('QUOTA_EXCEEDED', {
+      retry_after: 3600,
+      human_action: REPORT_CEILING_WORDS,
+    });
+  }
+
 
   // SEVER. The state leaving 'open' is what stops delivery both ways.
   const severed = await severMatch(input.matchId, input.reporterAccount, cfg);
