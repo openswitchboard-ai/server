@@ -201,8 +201,7 @@ const theMatch = () => ({
 });
 
 function fakePool() {
-  return {
-    query: async (sql: string, params: any[] = []) => {
+  const query = async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
       world.sql.push({ sql, params });
 
@@ -304,6 +303,11 @@ function fakePool() {
         return rows([{ n: world.reportsFiled24h }]);
       }
       if (/INSERT INTO reports/.test(sql)) {
+        // The ceiling rides in the INSERT's own WHERE: what was filed before
+        // this run, plus what this run has written, against the cap.
+        if (/count\(\*\) FROM reports/.test(sql)) {
+          if (world.reportsFiled24h + world.reports.length >= params[4]) return rows([]);
+        }
         world.reports.push({
           reporter: params[0],
           reported: params[1],
@@ -337,8 +341,10 @@ function fakePool() {
       }
       if (/read_calls|write_calls/.test(sql)) return rows([{ n: 0, oldest: null }]);
       return rows([]);
-    },
-  } as any;
+  };
+  // The report write takes a connection of its own for its lock; here it is
+  // the same world, and BEGIN / the lock / COMMIT fall through to nothing.
+  return { query, connect: async () => ({ query, release: () => {} }) } as any;
 }
 
 let app: FastifyInstance;
@@ -1064,7 +1070,28 @@ describe('five reports a day, and what the fifth one is told', () => {
     expect(counted!.params[0]).toBe(ANA);
   });
 
+  it('a burst in parallel cannot write past the ceiling: the write itself is capped, under a lock', async () => {
+    const { fileReport, MAX_REPORTS_PER_DAY } = await reportsModule();
+    // One short of the ceiling, and three presses at once. Every one of them
+    // passes the early count; only one may be written.
+    world.reportsFiled24h = MAX_REPORTS_PER_DAY - 1;
+    const results = await Promise.allSettled([
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }),
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }),
+      fileReport(cfg, { reporterAccount: ANA, matchId: MATCH }),
+    ]);
+    expect(world.reports).toHaveLength(1);
+    const refused = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+    expect(refused).toHaveLength(2);
+    for (const r of refused) expect(r.reason.payload.code).toBe('QUOTA_EXCEEDED');
+    const lock = world.sql.find((q) => /pg_advisory_xact_lock/.test(q.sql));
+    expect(lock?.params).toEqual([ANA]);
+    const insert = world.sql.find((q) => /INSERT INTO reports/.test(q.sql))!;
+    expect(insert.sql).toMatch(/WHERE \(SELECT count\(\*\) FROM reports/);
+  });
+
   it('the deployment can set its own number', async () => {
+
     const { fileReport } = await reportsModule();
     world.reportsFiled24h = 1;
     await expect(

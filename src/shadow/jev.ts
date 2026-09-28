@@ -66,6 +66,114 @@ export const JEV_RETRY_MS = 400;
 /** The statuses worth asking again about: rate limited, and overloaded. */
 export const JEV_RETRY_STATUSES = [429, 529];
 
+/**
+ * The largest answer body read. A handful of short answers is a few hundred
+ * bytes; anything near this is not an answer, and a body is never buffered
+ * past it (2026-09-28 review).
+ */
+export const JEV_MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * WHERE THE KEY MAY BE SENT (2026-09-28 review). JEV_ENDPOINT can be
+ * overridden from the environment, and the request carries the bearer key, so
+ * an override is held to https and to the documented endpoint's own host. The
+ * suite (NODE_ENV=test) may point it anywhere, because it stubs fetch.
+ */
+export function jevEndpointAllowed(
+  endpoint: string,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): boolean {
+  if (nodeEnv === 'test') return true;
+  try {
+    const u = new URL(endpoint);
+    return u.protocol === 'https:' && u.host === new URL(JEV_ENDPOINT).host;
+  } catch {
+    return false;
+  }
+}
+
+/** A token count as a whole number that fits the column, whatever was sent. */
+function tokenCount(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? Math.min(2_000_000_000, Math.max(0, Math.trunc(n))) : 0;
+}
+
+/** A body read no further than the cap. Throws past it. */
+
+async function readCappedJson(res: any): Promise<unknown> {
+  const declared = Number(res?.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > JEV_MAX_BODY_BYTES) throw new Error('too-large');
+  let text: string;
+  const reader = res?.body?.getReader?.();
+  if (reader) {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > JEV_MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new Error('too-large');
+      }
+      chunks.push(value);
+    }
+    text = Buffer.concat(chunks).toString('utf8');
+  } else if (typeof res?.text === 'function') {
+    text = String(await res.text());
+    if (Buffer.byteLength(text, 'utf8') > JEV_MAX_BODY_BYTES) throw new Error('too-large');
+  } else {
+    throw new Error('unreadable');
+  }
+  return JSON.parse(text);
+}
+
+/**
+ * Only the answers to questions that were asked, and inside each only what
+ * the question allows: a choice that is one of the offered keys, probabilities
+ * over the offered keys, a noul in [0, 1], a score's legend cut to a line.
+ * Anything else is dropped rather than stored.
+ */
+export function whitelistAnswers(
+  answers: Record<string, JevAnswer>,
+  questions: Record<string, JevQuestion>,
+): Record<string, JevAnswer> {
+  const out: Record<string, JevAnswer> = {};
+  const clamp01 = (n: number) => Math.min(1, Math.max(0, Number.isFinite(n) ? n : 0));
+  const onlyKeys = (p: Record<string, number>, keys: string[]) => {
+    const kept: Record<string, number> = {};
+    for (const k of keys) if (typeof p?.[k] === 'number') kept[k] = clamp01(p[k]);
+    return kept;
+  };
+  for (const [id, q] of Object.entries(questions)) {
+    const a = answers[id];
+    if (!a || a.type !== q.type) continue;
+    if (q.type === 'choice' && a.type === 'choice') {
+      const keys = Object.keys(q.criteria);
+      if (!keys.includes(a.choice)) continue;
+      out[id] = {
+        type: 'choice',
+        choice: a.choice,
+        probabilities: onlyKeys(a.probabilities, keys),
+        confidence: clamp01(a.confidence),
+      };
+    } else if (q.type === 'noul' && a.type === 'noul') {
+      if (!Number.isFinite(a.noul)) continue;
+      out[id] = { type: 'noul', noul: clamp01(a.noul) };
+    } else if (q.type === 'score' && a.type === 'score') {
+      if (!Number.isFinite(a.score)) continue;
+      out[id] = {
+        type: 'score',
+        score: a.score,
+        legend: String(a.legend ?? '').slice(0, 200),
+        probabilities: onlyKeys(a.probabilities, q.criteria),
+        confidence: clamp01(a.confidence),
+      };
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The question and answer shapes, as docs.typesafe.ai/api.md describes them.
 // ---------------------------------------------------------------------------
@@ -321,6 +429,7 @@ export async function postToJev(req: {
     questions,
   });
   const endpoint = req.endpoint ?? JEV_ENDPOINT;
+  if (!jevEndpointAllowed(endpoint)) return { ok: false, reason: 'bad-endpoint' };
   const timeoutMs = req.timeoutMs ?? JEV_TIMEOUT_MS;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -347,9 +456,15 @@ export async function postToJev(req: {
         }
         return { ok: false, reason: `http-${res.status}` };
       }
-      const payload = await res.json();
-      const answers = readJevAnswers(payload);
+      let payload: unknown;
+      try {
+        payload = await readCappedJson(res);
+      } catch (e: any) {
+        return { ok: false, reason: e?.message === 'too-large' ? 'too-large' : 'unreadable' };
+      }
+      const answers = whitelistAnswers(readJevAnswers(payload), questions);
       if (!Object.keys(answers).length) return { ok: false, reason: 'unreadable' };
+
       const usage = (payload as any)?.usage;
       return {
         ok: true,
@@ -357,8 +472,8 @@ export async function postToJev(req: {
         ...(usage && typeof usage === 'object'
           ? {
               usage: {
-                input_tokens: Number(usage.input_tokens ?? 0),
-                output_tokens: Number(usage.output_tokens ?? 0),
+                input_tokens: tokenCount(usage.input_tokens),
+                output_tokens: tokenCount(usage.output_tokens),
               },
             }
           : {}),

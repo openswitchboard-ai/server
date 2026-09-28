@@ -43,14 +43,16 @@
  * AN ERROR IS A HOLD, NEVER A PASS — the same rule as the check after it. A
  * call that did not come back has not said the picture is unknown.
  *
- * BEING SWITCHED OFF IS NOT AN ERROR, AND IT PASSES. A deployment without the
- * licensed files or without a subscription key has no hash matching at all,
- * and holding every photo in that state would mean no deployment could carry a
- * photo until somebody at Microsoft had answered an email. It passes with a
- * detail saying so, the pipe carries on, and Rekognition still screens every
- * picture. Photos are dev-only today, which is what makes that trade
- * acceptable; an operator who wants the opposite in prod changes the one
- * branch below, and the boot line says which deployments are in that state.
+ * BEING SWITCHED OFF IS NOT AN ERROR, AND IT PASSES. A deployment with no
+ * subscription secret configured has no hash matching at all (a dev checkout
+ * without the licensed files), and it passes with a detail saying so; the pipe
+ * carries on and Rekognition still screens every picture.
+ *
+ * BUT A DEPLOYMENT THAT IS MEANT TO MATCH AND CANNOT HOLDS (2026-09-28
+ * review). Where the secret IS configured and the SDK did not load, this used
+ * to pass every photo as "off" for the life of the process. Now it holds, with
+ * PHOTOS_PAUSED, and the loader tries again a minute later
+ * (safety/photodna.ts, photoDnaState).
  *
  * WHAT IS WRITTEN DOWN: the reason code, and the tracking id on the review
  * row. NEVER THE HASH. A hash is a handle on one specific picture, a log line
@@ -59,7 +61,7 @@
  */
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { s3 } from '../../aws.js';
-import { edgeHashes, matchHashes, photoDnaAvailable } from '../../safety/photodna.js';
+import { edgeHashes, matchHashes, photoDnaState } from '../../safety/photodna.js';
 import { quarantinePhoto } from '../../safety/photoQuarantine.js';
 import { KNOWN_ABUSE_IMAGE_FLAG, openKnownImageReview } from '../../safety/reviews.js';
 import { suspendAccount } from '../../safety/suspend.js';
@@ -78,6 +80,10 @@ export const KNOWN_ABUSE_IMAGE_SUSPENSION = 'known_abuse_image';
 
 /** The detail that says this deployment has no hash matching in it. */
 export const PHOTODNA_OFF_DETAIL = 'photodna_off';
+
+/** The sentence a sender reads while hash matching is meant to be on and is
+ *  not up yet. */
+export const PHOTOS_PAUSED = 'photos are paused for a moment; try again shortly.';
 
 /** Counts and codes only, the same rule every other line in this service follows. */
 function hashLog(event: string, fields: Record<string, string | number> = {}): void {
@@ -99,9 +105,22 @@ export const photoHashMatch: Check = {
     // Nothing to look at at the presign door, where no object exists yet, and
     // nothing at all in a deployment that carries no photos.
     if (!cfg?.photoModeration || !item.object) return passed('photoHashMatch');
-    if (!(await photoDnaAvailable(cfg))) {
+    const dna = await photoDnaState(cfg);
+    if (dna === 'off') {
       return passed('photoHashMatch', { detail: PHOTODNA_OFF_DETAIL });
     }
+    if (dna === 'unavailable') {
+      hashLog('photo-hash-match-unavailable', {
+        reason_code: 'photodna-not-loaded',
+      });
+      return {
+        name: 'photoHashMatch',
+        outcome: 'hold',
+        reason_code: 'photodna-not-loaded',
+        plain_words: PHOTOS_PAUSED,
+      };
+    }
+
     const { bucket, key } = item.object;
 
     let outcome: Awaited<ReturnType<typeof matchHashes>>;

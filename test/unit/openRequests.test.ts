@@ -141,7 +141,10 @@ function fakePool() {
         return rows([
           {
             s3_key: p.s3_key,
-            left_s: Math.ceil((p.collected_at.getTime() + windowMs - Date.now()) / 1000),
+            // Every row's type came off the allowlist at presign.
+            content_type: 'image/jpeg',
+            left_s:
+ Math.ceil((p.collected_at.getTime() + windowMs - Date.now()) / 1000),
           },
         ]);
       }

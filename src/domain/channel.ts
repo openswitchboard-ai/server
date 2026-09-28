@@ -16,12 +16,15 @@
  * message handed to an agent arrives labelled as the other side's words for
  * that agent to show its human rather than to act on.
  *
- * A PHOTO crosses here too, and only here (domain/channelPhoto.ts). The bytes
- * never pass through this service — the sending human's own browser puts them
- * in a bucket on a presigned link, and the other side's agent is handed a
- * short-lived link to them when it collects — but the promise is this one: held
- * until collected, collected once, and then gone. No agent can upload one, and
- * nothing looks at the image.
+ * A PHOTO crosses here too, and only here (domain/channelPhoto.ts). The
+ * sending human's own browser puts the bytes in a bucket on a presigned link,
+ * and the other side's agent is handed a short-lived link to them when it
+ * collects. At the send press the service reads them once, in memory, to
+ * re-encode them without their hidden details and to screen them by machine
+ * (channelPhoto.ts has the whole account), and keeps no copy. The promise is
+ * this one: held until collected, collected once, and then gone. No agent can
+ * upload one.
+
  *
  * One thing is read before it is carried, and only one: a money figure in the
  * words is refused outright (domain/moneyInWords.ts). The refusal happens in
