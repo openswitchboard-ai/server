@@ -593,6 +593,8 @@ export const PRESS_POLL_MS = 1_500;
 
 export interface PressAnswer {
   pressed: boolean;
+  /** While still waiting: the page address and what it asks, to say as it is. */
+  say?: string;
   decision?: 'approved' | 'declined';
   /** Present only when the link ran out before anyone pressed it. */
   expired?: true;
@@ -877,8 +879,14 @@ export async function waitForPress(
       const link = linkFromRow(cfg, row);
       const asks = PAGE_ASKS[row.action];
       const left = minutesLeft(row.expires_at);
+      const sayText = `${link}\n${asks ? `That page asks ${asks}, and nothing has come through yet. ${runsOutIn(left)}` : `${PRESS_SENTENCES.waiting} ${runsOutIn(left)}`}`;
       return {
         pressed: false,
+        // SAY, AS THE LINK ACTIONS DO (28 September 2026). Every answer that
+        // hands over a link carries it in `say`, the field assistants read as
+        // "say this"; this one alone carried it only in a note, and an
+        // assistant kept answering "still waiting" with no address in it.
+        say: sayText,
         link,
         expires_in_minutes: left,
         what_to_do: PRESS_WHAT_TO_DO.waiting,
