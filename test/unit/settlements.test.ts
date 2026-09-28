@@ -359,6 +359,13 @@ describe('settle tool', () => {
     expect(t!.inputSchema.additionalProperties).toBe(false);
   });
 
+  it('makes no custody claim: a protected payment, never escrow or held money', () => {
+    const d = TOOLS.find((x) => x.name === 'settle')!.description;
+    expect(d.startsWith('Propose a protected payment on an introduction')).toBe(true);
+    expect(d).toContain('the date the payment goes to the seller on its own');
+    expect(d).not.toMatch(/escrow|held money|custod/i);
+  });
+
   it('answers SETTLEMENT_UNAVAILABLE when the deployment has no Stripe secret', async () => {
     // Every tool call now begins with ONE read: has this account been stopped
     // (docs/trust-and-safety.md, step 6). This file otherwise runs with no
