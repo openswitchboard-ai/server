@@ -5,6 +5,7 @@ import {
   SendMessageCommand,
 } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
+import { rejectStuckScreening } from '../domain/screening.js';
 import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
@@ -238,7 +239,14 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   } catch (e: any) {
                     log('ttl-expiry: session purge failed', { error: e?.message });
                   }
-                  // rf-content: call screening.rejectStuckScreening() here
+                  // And postings the screen never answered: after STUCK_SCREENING_HOURS
+                  // they are refused in plain words rather than left pending for ever.
+                  try {
+                    const stuck = await rejectStuckScreening();
+                    if (stuck > 0) log('ttl-expiry: refused postings the screen never answered', { count: stuck });
+                  } catch (e: any) {
+                    log('ttl-expiry: stuck-screening sweep failed', { error: e?.message });
+                  }
                   await runSequencerTick(cfg, log);
                   break;
                 }
