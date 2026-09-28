@@ -1084,7 +1084,10 @@ async function oneRun(
         // "…let me know how it went and I'll close out the posting" was a
         // deferred offer made when a new message showed it was not done yet
         // (28 September 2026).
-        /\b(archive|file (it|that) away|wind (it|that) up|take (it|that|the posting|your posting|the listing|your listing|it all) down|close (it|that) off|close (it|that|the posting|your posting|the listing|your listing)? ?out|close out|take down)\b/i.test(said)
+        // …and "take the 'looking for' posting down" failed on the quoted words
+        // in the middle (29 September 2026). So the verbs, with up to forty
+        // characters of anything between the verb and its end, in one sentence.
+        /\b(archive|take down)\b|\b(take|pull)\b[^.?!\n]{0,40}\b(down|off)\b|\b(file|close|wind)\b[^.?!\n]{0,40}\b(away|off|out|up)\b/i.test(said)
           ? pass(`S6.offered_to_file.${id}`, `${id}'s assistant offered, once, to file the introduction away.`, 'it offered')
           : fail(`S6.offered_to_file.${id}`, `${id}'s assistant offered, once, to file the introduction away.`, `no offer in: "${said.slice(0, 140)}"`),
       );
