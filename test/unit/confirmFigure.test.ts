@@ -273,7 +273,9 @@ describe('a figure on a posting is read back once', () => {
 
   it('writes down the number, the account, the gate and the figure it read back', async () => {
     const p = (await publishRefusal(listing({ ask: { amount: 620, ccy: 'AUD' } })))!;
-    const asked = world.sql.find((s) => /INSERT INTO posting_references/.test(s.text))!;
+    const asked = world.sql.find(
+      (s) => /INSERT INTO posting_references/.test(s.text) && JSON.stringify(s.params[2]).includes('figure'),
+    )!;
     expect(asked.params[0]).toBe(p.reference);
     expect(asked.params[1]).toBe(ACCOUNT);
     expect(asked.params[2]).toEqual(['figure']);

@@ -665,7 +665,8 @@ describe('the refusal an assistant is handed', () => {
 
   it('keeps the ordinary questions where detail_unknown was never sent', async () => {
     const p = (await refusal(listing({ attributes: {} })))!;
-    expect(p.human_action).toBe(DETAIL_HUMAN_ACTION);
+    // The fixture chose a reach, so its question rides along (28 September 2026).
+    expect(p.human_action).toBe(DETAIL_AND_RADIUS_HUMAN_ACTION);
   });
 
   it('never refuses an amend, because an amend only ever adds', async () => {

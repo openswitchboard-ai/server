@@ -532,7 +532,7 @@ function figureWillAsk(attempt: Attempt, figures: PostingFigure[]): boolean {
  * whole line at 300 characters.
  */
 export const FIGURE_RADIUS_TAIL =
-  ' Ask the last question too, and send `reach` back as "country" or the same radius.';
+  ' Ask the last question too; send `reach` as "country", or "radius" with a distance.';
 
 /**
  * THE SHELF RULES AT THE DOOR (domain/shelfRules.ts), read from the taxonomy.
@@ -780,8 +780,11 @@ async function runPublish(
   // the detail gate, so that gate can carry it.
   const isGoods = String(card.category ?? '').split('.')[0] === 'goods';
   const offering = card.type === 'offering';
-  const radiusToConfirm =
-    isGoods && card.geo?.reach === 'radius' && !attempt.asked.has('reach');
+  // ANY REACH THE ASSISTANT SENT IS CONFIRMED ONCE (28 September 2026), not
+  // only a radius: an assistant twice posted a spring "reaching all of
+  // Australia" without ever asking its human, and the rule is that how far a
+  // thing reaches is the human's answer. The question rides with the others.
+  const radiusToConfirm = isGoods && !!card.geo?.reach && !attempt.asked.has('reach');
   const radiusQuestion = offering
     ? 'Would you post it to someone further away, or is it pick-up only?'
     : 'Would you be happy to have it posted to you from further away, or will you only collect it?';
@@ -867,11 +870,20 @@ async function runPublish(
   // and rejected: the Queanbeyan spring arrived with exactly that, "radius" and
   // 8 km, and the human would have posted it anywhere.
   const figures = figuresOnPosting(card);
+  // A chosen country or anywhere rides along with a figure read-back when one
+  // is asked anyway, and never costs a round trip of its own; only a radius
+  // does (above).
+  if (isGoods && card.geo?.reach && card.geo.reach !== 'radius' && !attempt.asked.has('reach') && figureWillAsk(attempt, figures)) {
+    await askOnce(accountId, attempt, 'reach');
+    await confirmFigures(accountId, attempt, figures, radiusQuestion);
+  }
   if (isGoods && card.geo?.reach === 'radius' && !attempt.asked.has('reach')) {
     if (!figureWillAsk(attempt, figures)) {
       throw new OsbError('NEEDS_DETAIL', {
         reference: await askOnce(accountId, attempt, 'reach'),
-        human_action: offering
+        human_action: card.geo.reach !== 'radius'
+          ? 'You chose how far this reaches without asking. Ask your human the question below, then post again: "country" if they would post it, or "radius" with a distance if it is pick-up only.'
+          : offering
           ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
           : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
         questions: [radiusQuestion],

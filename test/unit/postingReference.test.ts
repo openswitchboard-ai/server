@@ -298,8 +298,10 @@ describe('the reference', () => {
   it('holds not one word about the thing, whichever gate wrote it', async () => {
     // The detail gate first: the number, the account, the gate, and no figure.
     const thin = (await post(spring())).refusal!;
+    // (The reach it chose is asked in the same breath since 28 September 2026.)
     expect(world.sql.filter((s) => /INTO posting_references/.test(s.text))).toEqual([
       expect.objectContaining({ params: [thin.reference, ACCOUNT, ['detail'], null] }),
+      expect.objectContaining({ params: [thin.reference, ACCOUNT, ['reach'], null] }),
     ]);
 
     // And the figure gate, which writes the one thing about the posting that is
@@ -309,7 +311,7 @@ describe('the reference', () => {
     ).refusal!;
     expect(figure.code).toBe('CONFIRM_FIGURE');
     const writes = world.sql.filter((s) => /INTO posting_references/.test(s.text));
-    expect(writes[1].params).toEqual([
+    expect(writes[writes.length - 1].params).toEqual([
       thin.reference,
       ACCOUNT,
       ['figure'],
