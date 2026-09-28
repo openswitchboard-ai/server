@@ -126,9 +126,14 @@ export function matchBoxHtml(box: MatchBoxView, timezone?: string | null): strin
         `<a class="btn${i === 0 ? '' : ' secondary'}" href="${esc(a.href)}">${esc(a.label)}</a>`,
     )
     .join('');
+  // No "waiting for you" badge: every box under Decisions is waiting by
+  // definition, and the accent border and each waiting step's own tag say so.
+  // The muted line under the title tells two boxes about the same kind of
+  // thing apart: the other side's own words for theirs, and their asking
+  // figure where they gave one (28 September 2026).
   return `<section class="matchbox" aria-labelledby="${id}">
-<span class="badge match">WAITING FOR YOU</span>
 <h3 class="mb-title" id="${id}">${esc(boxTitle(box.head))}</h3>
+${box.head.theirs ? `<p class="mb-theirs">${esc(box.head.theirs)}</p>` : ''}
 ${timelineHtml(box.steps, {
   timezone,
   limit: BOX_STEP_LIMIT,
@@ -330,6 +335,32 @@ export function groupWaitingByMatch(
   }
 
   return { byMatch, otherLinks };
+}
+
+/**
+ * Everything waiting, less anything on an introduction still in line.
+ *
+ * The page never shows an in-line introduction (domain/sequencer.ts: "the
+ * holder is never shown them at all", and the person waiting is told one
+ * sentence by their assistant). The reads in domain/counterOps.ts already
+ * carry the live filter; this is the second wall, applied to every list the
+ * main page groups, including the open links, whose reads live elsewhere.
+ */
+export function dropInLine<W extends WaitingInputs>(w: W, inLine: Set<string>): W {
+  if (!inLine.size) return w;
+  const keep = (id: unknown) => !inLine.has(String(id));
+  return {
+    ...w,
+    openLinks: w.openLinks.filter((l) => {
+      const m = matchOfLink(l);
+      return !m || keep(m);
+    }),
+    offers: w.offers.filter((o) => keep(o.match_id)),
+    disclosures: w.disclosures.filter((d) => keep(d.match_id)),
+    settlements: w.settlements.filter((st) => keep(st.match_id)),
+    messages: w.messages.filter((m) => keep(m.match_id)),
+    ...(w.ownOpenOffers ? { ownOpenOffers: w.ownOpenOffers.filter((o) => keep(o.match_id)) } : {}),
+  };
 }
 
 /** A box's steps: the match's own story, then what is waiting, oldest first. */
