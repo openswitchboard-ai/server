@@ -186,7 +186,7 @@ describe('holding the line', () => {
     expect(r.note.text).toContain('their first name and their suburb');
     expect(r.note.text).toContain('nothing has come through yet');
     expect(r.note.text.split('\n')[0]).toBe(r.link);
-    expect(r.note.text).toMatch(/here is the page again/i);
+    expect(r.note.text).toMatch(/That page asks /);
     // It puts the page in front of the human rather than reporting a state,
     // and it reads sanely whether or not they were handed it a minute ago.
     expect(r.note.text).toContain('nothing has come through yet');
@@ -281,7 +281,7 @@ describe('holding the line', () => {
     const r = await waiting;
     expect(r.expires_in_minutes).toBe(9);
     expect(r.note.text).toContain('It runs out in 9 minutes.');
-    expect(r.note.text.split('\n').at(-1)).toBe(r.link);
+    expect(r.note.text.split('\n')[0]).toBe(r.link);
   });
 
   it('answers a link that was already dead on the first look', async () => {
