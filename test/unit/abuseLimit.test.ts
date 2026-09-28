@@ -21,15 +21,48 @@ describe('per-IP abuse limiter', () => {
 });
 
 describe('rate-limit bypass', () => {
+  const DEV = { envName: 'dev' };
   it('refuses without a configured token; accepts only the exact token', async () => {
     const { rateLimitBypassed } = await import('../../src/abuseLimit.js');
     delete process.env.RATELIMIT_BYPASS_TOKEN;
-    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) })).toBe(false);
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) }, DEV)).toBe(false);
     process.env.RATELIMIT_BYPASS_TOKEN = 'a'.repeat(40);
-    expect(rateLimitBypassed({})).toBe(false);
-    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'b'.repeat(40) })).toBe(false);
-    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) })).toBe(true);
+    expect(rateLimitBypassed({}, DEV)).toBe(false);
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'b'.repeat(40) }, DEV)).toBe(false);
+    expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) }, DEV)).toBe(true);
     delete process.env.RATELIMIT_BYPASS_TOKEN;
+  });
+
+  it('never exempts anything in prod, whatever the token says', async () => {
+    // A stray variable on a prod task must not switch the limits off.
+    const { rateLimitBypassed } = await import('../../src/abuseLimit.js');
+    process.env.RATELIMIT_BYPASS_TOKEN = 'a'.repeat(40);
+    try {
+      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) }, { envName: 'prod' })).toBe(false);
+      expect(rateLimitBypassed({ 'x-osb-ratelimit-bypass': 'a'.repeat(40) }, { envName: '' })).toBe(false);
+    } finally {
+      delete process.env.RATELIMIT_BYPASS_TOKEN;
+    }
+  });
+});
+
+describe('the PIN and anonymous-session pacing', () => {
+  it('holds ten PIN tries a minute per account, and each account is its own', async () => {
+    const { pinAttemptLimiter } = await import('../../src/abuseLimit.js');
+    pinAttemptLimiter.reset();
+    for (let i = 0; i < 10; i++) expect(pinAttemptLimiter.limited('acct-a')).toBe(false);
+    expect(pinAttemptLimiter.limited('acct-a')).toBe(true);
+    expect(pinAttemptLimiter.limited('acct-b')).toBe(false);
+    pinAttemptLimiter.reset();
+    expect(pinAttemptLimiter.limited('acct-a')).toBe(false);
+  });
+
+  it('holds sessions made for nobody to ten a minute per connection', async () => {
+    const { anonymousSessionLimiter } = await import('../../src/abuseLimit.js');
+    anonymousSessionLimiter.reset();
+    for (let i = 0; i < 10; i++) expect(anonymousSessionLimiter.limited('9.9.9.9')).toBe(false);
+    expect(anonymousSessionLimiter.limited('9.9.9.9')).toBe(true);
+    anonymousSessionLimiter.reset();
   });
 });
 

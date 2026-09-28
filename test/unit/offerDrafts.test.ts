@@ -183,7 +183,7 @@ function fakePool() {
           },
         ]);
       }
-      if (/SELECT pin_hash, pin_failed_attempts, pin_locked_until FROM accounts/.test(sql)) {
+      if (/SET pin_failed_attempts = pin_failed_attempts \+ 1/.test(sql)) {
         return rows([{ pin_hash: PIN_HASH, pin_failed_attempts: 0, pin_locked_until: null }]);
       }
       if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
@@ -295,7 +295,7 @@ const inject = (method: 'GET' | 'POST', url: string, body?: Record<string, strin
     url,
     headers: {
       host: 'my.test',
-      cookie: `osb_counter=${SID}`,
+      cookie: `__Host-osb_counter=${SID}`,
       ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
     },
     ...(body ? { payload: new URLSearchParams(body).toString() } : {}),
@@ -496,16 +496,18 @@ describe('the pages that show a carried figure', () => {
   });
 
   it('the offer main page carries no door and no draft: a number of your own goes through the assistant', () => {
-    const html = cpages.mainPage({
-      action: 'offer-accept',
-      refId: offerId(1),
-      facts: [{ k: 'You are agreeing to', v: '400 AUD' }],
-      anomalies: [],
-      hasPin: true,
-      hasPasskey: false,
-      elevated: false,
-      postPath: '/approve',
-    });
+    const html = cpages.oneQuestionPage({
+        session: { action: 'offer-accept', refId: offerId(1) },
+        question: 'Accept $400 AUD for your Mountain bike?',
+        detail: [cpages.OFFER_ELSEWHERE_LINE],
+        yesLabel: 'Accept',
+        noLabel: 'Not now',
+        needsPin: true,
+        money: true,
+        hasPin: true,
+        hasPasskey: false,
+        elevated: false,
+      });
     expect(html).not.toContain('<details class="more"');
     expect(html).not.toContain(cpages.DRAFT_LINE);
     expect(html).toContain('>Accept<');

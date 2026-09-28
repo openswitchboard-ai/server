@@ -115,6 +115,12 @@ export async function verifyByCode(
   verificationId: string,
   code: string,
 ): Promise<VerifyResult> {
+  // Every verification id is a uuid. Anything else was never handed out, and
+  // carried into the query it would throw and come back as a 500; it is
+  // answered the way an id nobody has is.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(verificationId)) {
+    return { ok: false, reason: 'not-found' };
+  }
   const r = await getPool().query('SELECT * FROM email_verifications WHERE id = $1', [
     verificationId,
   ]);

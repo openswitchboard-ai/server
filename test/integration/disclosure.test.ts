@@ -127,7 +127,7 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     });
     expect(r.asked, 'the main page should ask for the two fields').toBe(true);
     expect(r.status).toBe(200);
-    expect(r.body).toContain('Approved');
+    expect(r.body).toContain('<h1>Shared</h1>');
     expect(await optinCount(matchId)).toBe(1);
     expect(await readSharedProfilePage(ana.jar)).toEqual({
       firstName: 'Ana',

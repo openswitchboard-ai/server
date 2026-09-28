@@ -24,7 +24,7 @@ import { OsbError } from '../protocol.js';
 import { getHearsVia } from './accounts.js';
 import { readLaneFacts, sayFor } from './lanes.js';
 import { assertNotSwap, getMatch, ownCardId, sideOf } from './matches.js';
-import { categoryPhrase } from './matchRules.js';
+import { categoryPhrase, ownThingPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink, signLink } from '../counter/links.js';
 import type { Config } from '../config.js';
@@ -109,6 +109,18 @@ async function thingOf(cardId: string): Promise<string> {
   return r.rows[0] ? categoryPhrase(r.rows[0].category) : 'what you posted';
 }
 
+/**
+ * The reader's own want or have, in their own words where they gave any, with
+ * the first letter up the way the page's heading has it ("your Trek"). Only
+ * ever the reader's own posting; the other side's words are theirs.
+ */
+async function ownThingWords(m: { account_want: string; card_want: string; card_have: string; category: string }, accountId: string): Promise<string> {
+  const cardId = accountId === m.account_want ? m.card_want : m.card_have;
+  const r = await getPool().query('SELECT category, kind FROM cards WHERE id = $1', [cardId]);
+  const words = ownThingPhrase(r.rows[0]?.category ?? m.category, r.rows[0]?.kind ?? null).words;
+  return words ? words[0].toUpperCase() + words.slice(1) : words;
+}
+
 /** This account's own card behind an introduction, or a refusal. */
 async function ownCardFor(accountId: string, matchId: string): Promise<string> {
   const m = await getMatch(matchId);
@@ -147,7 +159,7 @@ export async function sendNumberLink(
 ): Promise<HumanLink> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
-  sideOf(m, accountId);
+  const side = sideOf(m, accountId);
   // No page for a figure on a swap (domain/swaps.ts): the refusal says why,
   // and no link is minted that could only ever be refused when pressed.
   assertNotSwap(m);
@@ -192,15 +204,23 @@ export async function sendNumberLink(
       ? ''
       : ' — this is your one number for this one, and it stays sealed until the seller sees them all';
   const page = url(cfg, token);
+  // The same words the page's heading uses: a seller asks a price for their
+  // own thing, a buyer offers one for the thing they are after.
+  const thing = await ownThingWords(m, accountId);
+  const figure = money(rounded, ccy);
+  const short = `$${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)}`;
+  const asks =
+    side === 'have'
+      ? `whether to ask ${figure}${thing ? ` for your ${thing}` : ''}`
+      : `whether to offer ${figure}${thing ? ` for the ${thing}` : ''}`;
+  const button = side === 'have' ? `Offer it at ${short}` : `Offer ${short}`;
+  const theirs = side === 'have' ? `for their ${thing}` : `for the ${thing}`;
   return {
-    say: saySentence(
-      `whether to send ${money(rounded, ccy)} to the other side, and nothing goes until you press it${sealed}`,
-      page,
-    ),
+    say: saySentence(`${asks}, and nothing goes until you press it${sealed}`, page),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to send ${money(rounded, ccy)} to the other side. They press Send and it goes; they press Not now and nothing does.${oneNumber} Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page asking your human whether to ${side === 'have' ? 'ask' : 'offer'} ${figure}${thing ? ` ${theirs}` : ''}. They press ${button} and it goes to the other side; nothing is agreed until one of them accepts.${oneNumber} Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -228,7 +248,7 @@ export async function acceptNumberLink(
 ): Promise<HumanLink> {
   if (!offerId) throw Object.assign(new Error('which number?'), { validation: true });
   const r = await getPool().query(
-    `SELECT o.*, m.category, m.account_want, m.account_have FROM offers o
+    `SELECT o.*, m.category, m.account_want, m.account_have, m.card_want, m.card_have FROM offers o
      JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
     [offerId],
   );
@@ -244,7 +264,10 @@ export async function acceptNumberLink(
   }
   if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
     throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: `That figure is ${o.state} — there is nothing left to accept.`,
+      human_action:
+        o.state === 'accepted-by-human'
+          ? 'That figure has already been accepted.'
+          : 'That figure is no longer on the table.',
     });
   }
   // And its own clock, refused HERE rather than at the press: minting a page
@@ -263,10 +286,9 @@ export async function acceptNumberLink(
     counterpartyAccount: o.proposer_account,
   });
   const page = url(cfg, token);
-  const forWhat =
-    o.account_have === accountId
-      ? ` for your ${categoryPhrase(o.category)}`
-      : ` for the ${categoryPhrase(o.category)} you are after`;
+  // The same words the page's heading uses: "Accept $415 AUD for your Trek?"
+  const thing = await ownThingWords(o, accountId);
+  const forWhat = thing ? (o.account_have === accountId ? ` for your ${thing}` : ` for the ${thing}`) : '';
   return {
     say: saySentence(
       `whether to accept ${money(Number(o.amount), o.ccy)}${forWhat}, and saying yes takes your passkey or PIN`,

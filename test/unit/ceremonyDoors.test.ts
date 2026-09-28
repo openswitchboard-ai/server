@@ -79,7 +79,9 @@ describe('the doors that ask again', () => {
   it('every one of them runs the ceremony before it acts', () => {
     for (const path of SENSITIVE) {
       const body = HANDLERS.get(path)!;
-      expect(body, `POST ${path} does not run the ceremony`).toMatch(/await (ceremony|pressCeremony)\(/);
+      expect(body, `POST ${path} does not run the ceremony`).toMatch(
+        /await (ceremony|pressCeremony|credentialCeremony)\(/,
+      );
       expect(body, `POST ${path} runs the ceremony without honouring its answer`).toMatch(
         /if \(!okNow\) return;/,
       );
@@ -105,6 +107,34 @@ const settlementView = (over: Partial<any> = {}): any => ({
   evidence: [],
   ...ASKS,
   ...over,
+});
+
+/**
+ * THE DOORS AN EMAILED CODE DOES NOT OPEN (28 September 2026).
+ *
+ * On an account holding a passkey and no PIN, signing in with an emailed code
+ * opens a window for the everyday presses. Anyone who can read the inbox can
+ * produce that code, so the doors that hand out something lasting — a new
+ * credential, an agent key, an authorised assistant — take the account's own
+ * credential instead, and never lean on that window.
+ */
+const CREDENTIAL_DOORS = ['/authorize', '/agent-keys', '/confirm'];
+
+describe('the doors an emailed code does not open', () => {
+  it('take the credential ceremony, never the everyday one', () => {
+    for (const path of CREDENTIAL_DOORS) {
+      const body = HANDLERS.get(path)!;
+      expect(body, `POST ${path}`).toMatch(/await credentialCeremony\(/);
+      expect(body, `POST ${path}`).not.toMatch(/await (ceremony|pressCeremony)\(/);
+    }
+  });
+
+  it('setting a PIN and fitting a passkey look only at a window the account\'s own credential opened', () => {
+    expect(HANDLERS.get('/pin/set')!).toMatch(/needsFreshCeremony\([^;]*isStronglyElevated\(s\)\)/s);
+    expect(HANDLERS.get('/passkey/options')!).toMatch(/needsFreshCeremony\([^;]*isStronglyElevated\(s\)\)/s);
+    expect(HANDLERS.get('/pin/set')!).not.toMatch(/sess\.isElevated\(s\)/);
+    expect(HANDLERS.get('/passkey/options')!).not.toMatch(/sess\.isElevated\(s\)/);
+  });
 });
 
 describe('the one door that must NOT ask again', () => {
