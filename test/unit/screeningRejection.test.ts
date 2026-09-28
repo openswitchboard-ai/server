@@ -275,7 +275,7 @@ describe('screening reasons in plain words', () => {
     // The families held back because of the law around them share the one
     // general sentence their seed entries carry (denylist.ts, heldBackReason),
     // so they count once between them.
-    const heldBack = new Set(['wildlife-products', 'alcohol', 'event-tickets']);
+    const heldBack = new Set(['alcohol', 'event-tickets']);
     const seen = new Set<string>();
     for (const c of codes) {
       const s = screeningReasonInPlainWords(c);

@@ -64,6 +64,9 @@ const REASON_SENTENCES: Record<string, string> = {
   // refused elsewhere hears where it can go.
   'live-animals':
     'Live animals stay off the switchboard everywhere it runs, apart from lost and found pets going home. This one cannot go back on the board as it stands.',
+  // Never allowed, not held back (founder decision, 28 September 2026).
+  'wildlife-products':
+    'Wildlife products stay off the switchboard everywhere it runs. This one cannot go back on the board as it stands.',
   // The families held back because of the law around them (the deny-list
   // seed's 'vertical-policy-pending' entries) are not here: their one
   // sentence is the entry's own closed_reason, read by heldBackReason below.
