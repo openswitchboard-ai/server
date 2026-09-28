@@ -430,7 +430,7 @@ d('integration gates against live deployment', () => {
     const matchPage = await page.text();
     // The heading says the box is a confirmation of what her assistant carried.
     expect(matchPage).toContain('Confirm the number your assistant brought');
-    expect(matchPage).toContain('Your agent brought this number from you');
+    expect(matchPage).toContain('Your assistant brought this number from you');
     expect(matchPage).toContain('value="500"');
     // A figure never travels in a URL. Every link and form target of our own
     // on this page is a bare path, so there is nowhere for a number to ride.
@@ -439,7 +439,7 @@ d('integration gates against live deployment', () => {
     const numbers = await counterFetch(dana.jar, `/ledger/${dw.result.intent_id}/numbers`);
     expect(numbers.status).toBe(200);
     const numbersPage = await numbers.text();
-    expect(numbersPage).toContain('Your agent brought this number from you');
+    expect(numbersPage).toContain('Your assistant brought this number from you');
     expect(numbersPage).toContain(`/matches/${mid}`);
 
     // The link her assistant was handed asks her the one question about the
@@ -470,7 +470,7 @@ d('integration gates against live deployment', () => {
     expect(hers.message.text).toContain('collect this weekend');
     // Sending a figure answers the question the carried one was asking.
     const after = await counterFetch(dana.jar, `/matches/${mid}`);
-    expect(await after.text()).not.toContain('Your agent brought this number from you');
+    expect(await after.text()).not.toContain('Your assistant brought this number from you');
     // Her page, her numbers: nothing about how her card negotiates crosses.
     expect(eliSees.raw).not.toContain('mandate');
     expect(eliSees.raw).not.toContain('negotiation_mode');

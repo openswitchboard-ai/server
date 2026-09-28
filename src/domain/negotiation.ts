@@ -48,9 +48,9 @@ export const MODE_NAMES: Record<NegotiationMode, string> = {
 
 /** The one-line explanation each mode carries on the human's own pages. */
 export const MODE_EXPLANATIONS: Record<NegotiationMode, string> = {
-  relay: 'Your agent brings every offer to you and sends back the numbers you give it.',
+  relay: 'Your assistant brings every offer to you and sends back the numbers you give it.',
   mandate:
-    'You set an opening figure and a walk-away limit; your agent can move between them without asking each time.',
+    'You set an opening figure and a walk-away limit; your assistant can move between them without asking each time.',
 };
 
 export interface Mandate {

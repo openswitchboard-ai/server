@@ -479,7 +479,7 @@ describe('the pages that show a carried figure', () => {
   };
 
   it('the line is the agreed one, and it passes the banned-phrase lint', () => {
-    expect(cpages.DRAFT_LINE).toBe('Your agent brought this number from you — check it and send.');
+    expect(cpages.DRAFT_LINE).toBe('Your assistant brought this number from you. Check it and send.');
     for (const html of [
       chome.matchOffersPage(withDraft),
       chome.cardNumbersPage({

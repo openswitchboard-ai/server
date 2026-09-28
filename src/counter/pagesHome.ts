@@ -560,6 +560,34 @@ ${cpages.ceremonyScript(c)}`);
 export const REJECTED_TILE_LINE =
   'Tell your assistant what to change and it will send it back to be checked.';
 
+/**
+ * Where a payment stands, as the main page's tile says it. A state with no
+ * phrase here gets the bare label, never the state's own name.
+ */
+const SETTLEMENT_TILE_STATES: Record<string, string> = {
+  approved: 'approved, waiting for payment',
+  funded: 'paid, waiting for handover',
+  'evidence-locked': 'handed over, waiting for receipt to be confirmed',
+  confirmed: 'receipt confirmed, payment on its way',
+  disputed: 'on hold',
+  'resolution-proposed': 'on hold, a way to settle it is on the table',
+  resolved: 'agreed, payment on its way',
+  'settled-split': 'closed',
+};
+const SETTLEMENT_APPROVAL_STATES = ['proposed', 'approved-by-buyer', 'approved-by-seller'];
+
+export function settlementTileLabel(thing: string, state: string, needsMyApproval: boolean): string {
+  const head = `Payment on your ${thing} match`;
+  const where = SETTLEMENT_APPROVAL_STATES.includes(state)
+    ? needsMyApproval
+      ? 'waiting for your approval'
+      : 'waiting for the other side to approve'
+    : Object.hasOwn(SETTLEMENT_TILE_STATES, state)
+      ? SETTLEMENT_TILE_STATES[state]
+      : undefined;
+  return where ? `${head}: ${where}` : head;
+}
+
 /** The main page's line after "Keep them all", and the ledger's after "Keep it". */
 export const RENEWED_NOTICE = 'Renewed.';
 
@@ -1378,15 +1406,15 @@ export function agentKeysPage(v: AgentKeysView, notice?: string, error?: string)
 Revoke one you have finished with to make room.</p>`
     : `<form method="POST" action="/agent-keys" id="keyForm">
   <label for="name">What is this key for?</label>
-  <input id="name" name="name" type="text" maxlength="60" required placeholder="the laptop agent">
+  <input id="name" name="name" type="text" maxlength="60" required placeholder="the laptop assistant">
   ${cpages.ceremonyField(v, 'key')}
   ${cpages.ceremonySubmit(v, { formId: 'keyForm', label: 'Make a key' })}
 </form>
 ${cpages.ceremonyAlt(v, 'keyForm')}
 ${cpages.ceremonyNote(v)}`;
 
-  return layout('Agent keys', `
-<h1>Agent keys.</h1>
+  return layout('Keys for assistants', `
+<h1>Keys for assistants that can't sign in.</h1>
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
 ${errBox(error)}
 <h2>Your keys</h2>
@@ -1395,12 +1423,12 @@ ${rows}
 ${createForm}
 ${foldedDetail(
   'What a key can do',
-  `<p class="small">Most agents sign in through your browser the first time they
+  `<p class="small">Most assistants sign in through your browser the first time they
 call the switchboard. A few cannot do that. Give one of those a key instead: a
 long password it sends with every request.</p>
 <p class="small">Anyone holding a key can post wants and haves and negotiate as your
-agent. It still cannot approve anything — approvals only ever happen here, on
-this page, where you confirm them yourself. Keep a key somewhere private, and revoke it the
+assistant. It still cannot approve anything. Approvals only happen on your own
+pages, where you confirm them yourself. Keep a key somewhere private, and revoke it the
 moment you have finished with it. Keys lapse after 90 days, and the kill switch
 stops them dead along with everything else.</p>`,
 )}
@@ -1410,14 +1438,14 @@ ${cpages.ceremonyScript(v)}`);
 
 /** The one and only sighting of the plaintext key. */
 export function agentKeyCreatedPage(v: { name: string; token: string; expires: string }): string {
-  return layout('Your new agent key', `
+  return layout('Your new key', `
 <h1>Here is your key.</h1>
-<p class="lead">Copy it now and paste it into your agent's configuration. This
+<p class="lead">Copy it now and paste it into your assistant's settings. This
 page is the only place it is ever shown.</p>
 <div class="fact"><div class="k">${esc(v.name)}</div><div class="v" id="keybox">${esc(v.token)}</div></div>
 <button type="button" id="copybtn" class="approve">Copy the key</button>
 <p class="small muted">Lost it? Revoke it and make another.</p>
-<p class="small muted">Your agent sends it as a header:</p>
+<p class="small muted">Your assistant sends it as a header:</p>
 <div class="fact"><div class="k">Header</div><div class="v">Authorization: Bearer ${esc(v.token.slice(0, 11))}…</div></div>
 <p class="small muted">It lapses on ${v.expires}. Revoke it any time from
 your keys page.</p>
@@ -1506,8 +1534,9 @@ ${rows}
 export function unsubPage(token: string): string {
   return layout('Unsubscribe', `
 <h1>Fewer emails.</h1>
-<p class="lead">This switches off match summons and activity digests. Sign-in
-codes, approval requests and security notices keep sending.</p>
+<p class="lead">This switches off two kinds of email: “When someone comes forward”
+and “Round-ups and reminders”. Sign-in codes, approval requests and security notices
+keep sending.</p>
 <form method="POST" action="/email/unsub">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Unsubscribe me</button>

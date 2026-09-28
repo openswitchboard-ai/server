@@ -869,7 +869,7 @@ export function renderSecurityNotice(
     'pin-set': 'OpenSwitchboard: a PIN was set',
     'pin-set-by-code': 'OpenSwitchboard: a PIN was set with an emailed code',
     'passkey-added': 'OpenSwitchboard: a passkey was added',
-    'agent-key-created': 'OpenSwitchboard: a new agent key was created',
+    'agent-key-created': 'OpenSwitchboard: a new assistant key was created',
   }[v.event];
   // Blind mode is the caller's job here: it strips agentName, and the copy
   // below carries nothing else about the account.
@@ -882,7 +882,7 @@ export function renderSecurityNotice(
     'pin-set-by-code':
       'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
-    'agent-key-created': `A new agent key${namedHtml} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
+    'agent-key-created': `A new assistant key${namedHtml} was just created on your account. Anything holding that key can act as your assistant until it lapses or you revoke it.`,
   }[v.event];
   const textLine = {
     'agent-authorized': `A new assistant${namedText} was just authorised to use your account.`,
@@ -891,7 +891,7 @@ export function renderSecurityNotice(
     'pin-set-by-code':
       'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
-    'agent-key-created': `A new agent key${namedText} was just created on your account. Anything holding that key can act as your agent until it lapses or you revoke it.`,
+    'agent-key-created': `A new assistant key${namedText} was just created on your account. Anything holding that key can act as your assistant until it lapses or you revoke it.`,
   }[v.event];
   // A security notice is one of the three exemptions: it goes out whatever
   // hears_via says, because it is about the account rather than the network.
