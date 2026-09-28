@@ -1,4 +1,9 @@
-import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
+import {
+  ChangeMessageVisibilityCommand,
+  DeleteMessageCommand,
+  ReceiveMessageCommand,
+  SendMessageCommand,
+} from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
@@ -18,6 +23,7 @@ import { sweepLedgerEntries } from '../safety/ledger.js';
 import { sweepShelfGaps } from '../domain/shelfGaps.js';
 import { sweepPostingRefs } from '../domain/postingRef.js';
 import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
+import { purgeOldEmailEvents } from './emailEventsWorker.js';
 import {
   notifyMatchCreated,
   notifyYourMove,
@@ -69,6 +75,62 @@ async function runSequencerTick(cfg: Config, log: (msg: string, extra?: any) => 
   }
 }
 
+/**
+ * A human's session a day past its expiry. The session is refused on read the
+ * moment it lapses; the row only has to go eventually, and a day's grace keeps
+ * this well clear of any request in flight on it.
+ */
+export async function purgeExpiredCounterSessions(): Promise<{ sessions: number }> {
+  const r = await getPool().query(
+    `DELETE FROM counter_sessions WHERE expires_at < now() - interval '1 day'`,
+  );
+  return { sessions: r.rowCount ?? 0 };
+}
+
+/**
+ * THE MESSAGES KEEP THEIR CLAIM WHILE THEY RUN (2026-09-28 review). A received
+ * message is invisible for VISIBILITY_S and then SQS hands it to the next
+ * receiver. Several ops run longer than a minute — the settlement sweep with a
+ * Stripe call per settlement, a digest page, a backfill page — and a batch of
+ * five is worked one after another, so the fifth had been waiting through the
+ * other four. A message that reappeared mid-run was run twice.
+ *
+ * So every message received and not yet finished has its invisibility pushed
+ * out to VISIBILITY_S from now, every HEARTBEAT_MS, until it is deleted or has
+ * failed. A failed message is dropped from the heartbeat and reappears when
+ * its last extension runs out, which is the redelivery it always had.
+ */
+export const OPS_VISIBILITY_S = 120;
+export const OPS_HEARTBEAT_MS = 60_000;
+
+export function startVisibilityHeartbeat(
+  queueUrl: string,
+  pending: Set<string>,
+  log: (msg: string, extra?: any) => void,
+  everyMs = OPS_HEARTBEAT_MS,
+  visibilityS = OPS_VISIBILITY_S,
+): () => void {
+  const timer = setInterval(() => {
+    for (const handle of [...pending]) {
+      sqs
+        .send(
+          new ChangeMessageVisibilityCommand({
+            QueueUrl: queueUrl,
+            ReceiptHandle: handle,
+            VisibilityTimeout: visibilityS,
+          }),
+        )
+        .catch((e: any) => {
+          // Nothing to do but say so: the op carries on, and at worst the
+          // message is redelivered as it would have been before this existed.
+          log('ops: visibility heartbeat failed', { error: e?.name ?? 'Error' });
+        });
+    }
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => void) {
   let stopped = false;
   (async () => {
@@ -79,358 +141,385 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
             QueueUrl: cfg.opsQueueUrl,
             MaxNumberOfMessages: 5,
             WaitTimeSeconds: 20,
-            VisibilityTimeout: 60,
+            VisibilityTimeout: OPS_VISIBILITY_S,
           }),
         );
-        for (const msg of r.Messages ?? []) {
-          try {
-            const body = JSON.parse(msg.Body ?? '{}');
-            switch (body.op) {
-              case 'ttl-expiry': {
-                const n = await expireDueCards();
-                if (n > 0) log('ttl-expiry: expired cards', { count: n });
-                // The same tick sweeps the relay: messages nobody collected
-                // are deleted once they pass their expiry, and the send
-                // tallies are dropped once their hour is behind us. Counts
-                // only — the sweep never looks at what it deletes.
-                const swept = await sweepExpiredChannelMessages();
-                if (swept.messages > 0 || swept.rate_windows > 0) {
-                  log('ttl-expiry: channel sweep', swept);
-                }
-                // And the photos, on the same tick: the bytes of one that was
-                // collected go once the link handed over has run out, and the
-                // bytes of one nobody ever came for go at its expiry. Counts
-                // only — the sweep never looks at what it deletes.
-                try {
-                  const pics = await sweepConversationPhotos(cfg);
-                  if (pics.photos > 0) log('ttl-expiry: photo sweep', pics);
-                } catch (e: any) {
-                  log('ttl-expiry: photo sweep failed', { error: e?.message });
-                }
-                // And the ledger, on the same tick: an entry past its thirty
-                // days goes, unless lawful process asked us to hold it. Counts
-                // only, and the sweep could not read what it deletes if it
-                // wanted to — the key to do that is not on this machine.
-                try {
-                  const led = await sweepLedgerEntries();
-                  if (led.entries > 0) log('ttl-expiry: ledger sweep', led);
-                } catch (e: any) {
-                  log('ttl-expiry: ledger sweep failed', { error: e?.message });
-                }
-                // And the shelf gap log, on the same tick: a gap past its 180
-                // days goes, and a shelf question in flight goes after a day
-                // (domain/shelfGaps.ts). Counts only.
-                try {
-                  const shelves = await sweepShelfGaps();
-                  if (shelves.gaps > 0 || shelves.attempts > 0) {
-                    log('ttl-expiry: shelf gap sweep', shelves);
+        const pending = new Set(
+          (r.Messages ?? []).map((m) => m.ReceiptHandle).filter((h): h is string => !!h),
+        );
+        const stopHeartbeat = startVisibilityHeartbeat(cfg.opsQueueUrl, pending, log);
+        try {
+          for (const msg of r.Messages ?? []) {
+            try {
+              const body = JSON.parse(msg.Body ?? '{}');
+              switch (body.op) {
+                case 'ttl-expiry': {
+                  const n = await expireDueCards();
+                  if (n > 0) log('ttl-expiry: expired cards', { count: n });
+                  // The same tick sweeps the relay: messages nobody collected
+                  // are deleted once they pass their expiry, and the send
+                  // tallies are dropped once their hour is behind us. Counts
+                  // only — the sweep never looks at what it deletes.
+                  const swept = await sweepExpiredChannelMessages();
+                  if (swept.messages > 0 || swept.rate_windows > 0) {
+                    log('ttl-expiry: channel sweep', swept);
                   }
-                } catch (e: any) {
-                  log('ttl-expiry: shelf gap sweep failed', { error: e?.message });
-                }
-                // And the posting references, on the same tick: an attempt
-                // nobody ever came back to finish goes after a week
-                // (domain/postingRef.ts). A reference that reached a posting is
-                // already gone — it became that posting's id. Counts only, and
-                // the row holds nothing about the thing to begin with.
-                try {
-                  const refs = await sweepPostingRefs();
-                  if (refs.references > 0) log('ttl-expiry: posting reference sweep', refs);
-                } catch (e: any) {
-                  log('ttl-expiry: posting reference sweep failed', { error: e?.message });
-                }
-                // And photo quarantine, on the same tick — with one rule the
-                // other sweeps do not have. It may take only what an operator
-                // has CLEARED, past its ninety days. A held item past expiry is
-                // a decision nobody has made: it is counted, said out loud and
-                // left alone, because a cron that deletes something that might
-                // have had to be referred is the defect this table exists to
-                // fix. A referred item is never swept at any age.
-                try {
-                  const q = await sweepPhotoQuarantine();
-                  if (q.items > 0 || q.overdue > 0) log('ttl-expiry: quarantine sweep', q);
-                } catch (e: any) {
-                  log('ttl-expiry: quarantine sweep failed', { error: e?.message });
-                }
-                // The fit sequencer's two clocks ride the same tick, so they
-                // need no schedule of their own: a live slot that has shown no
-                // movement lapses and the next in line goes live, and a
-                // best-offer gathering window whose time is up closes.
-                await runSequencerTick(cfg, log);
-                break;
-              }
-              case 'sequencer-tick': {
-                // The same two clocks, on their own schedule where one is set
-                // up. Both halves are idempotent, so running twice costs a
-                // pair of statements and changes nothing.
-                await runSequencerTick(cfg, log);
-                break;
-              }
-              case 'create-account': {
-                if (cfg.envName === 'prod') {
-                  // Prod registration is CLOSED in 0.C — no bootstrap bypass.
-                  log('ops: create-account refused in prod');
+                  // And the photos, on the same tick: the bytes of one that was
+                  // collected go once the link handed over has run out, and the
+                  // bytes of one nobody ever came for go at its expiry. Counts
+                  // only — the sweep never looks at what it deletes.
+                  try {
+                    const pics = await sweepConversationPhotos(cfg);
+                    if (pics.photos > 0) log('ttl-expiry: photo sweep', pics);
+                  } catch (e: any) {
+                    log('ttl-expiry: photo sweep failed', { error: e?.message });
+                  }
+                  // And the ledger, on the same tick: an entry past its thirty
+                  // days goes, unless lawful process asked us to hold it. Counts
+                  // only, and the sweep could not read what it deletes if it
+                  // wanted to — the key to do that is not on this machine.
+                  try {
+                    const led = await sweepLedgerEntries();
+                    if (led.entries > 0) log('ttl-expiry: ledger sweep', led);
+                  } catch (e: any) {
+                    log('ttl-expiry: ledger sweep failed', { error: e?.message });
+                  }
+                  // And the shelf gap log, on the same tick: a gap past its 180
+                  // days goes, and a shelf question in flight goes after a day
+                  // (domain/shelfGaps.ts). Counts only.
+                  try {
+                    const shelves = await sweepShelfGaps();
+                    if (shelves.gaps > 0 || shelves.attempts > 0) {
+                      log('ttl-expiry: shelf gap sweep', shelves);
+                    }
+                  } catch (e: any) {
+                    log('ttl-expiry: shelf gap sweep failed', { error: e?.message });
+                  }
+                  // And the posting references, on the same tick: an attempt
+                  // nobody ever came back to finish goes after a week
+                  // (domain/postingRef.ts). A reference that reached a posting is
+                  // already gone — it became that posting's id. Counts only, and
+                  // the row holds nothing about the thing to begin with.
+                  try {
+                    const refs = await sweepPostingRefs();
+                    if (refs.references > 0) log('ttl-expiry: posting reference sweep', refs);
+                  } catch (e: any) {
+                    log('ttl-expiry: posting reference sweep failed', { error: e?.message });
+                  }
+                  // And photo quarantine, on the same tick — with one rule the
+                  // other sweeps do not have. It may take only what an operator
+                  // has CLEARED, past its ninety days. A held item past expiry is
+                  // a decision nobody has made: it is counted, said out loud and
+                  // left alone, because a cron that deletes something that might
+                  // have had to be referred is the defect this table exists to
+                  // fix. A referred item is never swept at any age.
+                  try {
+                    const q = await sweepPhotoQuarantine();
+                    if (q.items > 0 || q.overdue > 0) log('ttl-expiry: quarantine sweep', q);
+                  } catch (e: any) {
+                    log('ttl-expiry: quarantine sweep failed', { error: e?.message });
+                  }
+                  // The fit sequencer's two clocks ride the same tick, so they
+                  // need no schedule of their own: a live slot that has shown no
+                  // movement lapses and the next in line goes live, and a
+                  // best-offer gathering window whose time is up closes.
+                  // And the SES event log, on the same tick: rows past ninety
+                  // days go, and it never holds an address (migration 056).
+                  try {
+                    const ev = await purgeOldEmailEvents();
+                    if (ev.deleted > 0 || ev.scrubbed > 0) log('ttl-expiry: email event retention', ev);
+                  } catch (e: any) {
+                    log('ttl-expiry: email event retention failed', { error: e?.message });
+                  }
+                  // And human sessions a day past their expiry.
+                  try {
+                    const s = await purgeExpiredCounterSessions();
+                    if (s.sessions > 0) log('ttl-expiry: expired sessions purged', s);
+                  } catch (e: any) {
+                    log('ttl-expiry: session purge failed', { error: e?.message });
+                  }
+                  // rf-content: call screening.rejectStuckScreening() here
+                  await runSequencerTick(cfg, log);
                   break;
                 }
-                const id = await createAccount({
-                  email: body.email,
-                  first_name: body.first_name,
-                  locality: body.locality,
-                  login_code_hash: body.login_code_hash,
-                });
-                log('ops: account bootstrapped', { account_id: id });
-                break;
-              }
-              case 'create-match': {
-                const id = await createMatch(body.card_want, body.card_have, body.score ?? 0.9);
-                log('ops: match created', { match_id: id });
-                // 0.E: the dev bootstrap path summons humans too (idempotent).
-                await notifyMatchCreated(cfg, id);
-                break;
-              }
-              case 'pulse-refresh': {
-                // EventBridge 15-min tick: rebuild the k-anonymous demand-
-                // pulse aggregates (see domain/pulse.ts for the k-floor).
-                const rows = await refreshPulseAggregates();
-                log('pulse-refresh: aggregates rebuilt', { rows });
-                break;
-              }
-              case 'backfill-embeddings': {
-                // One-shot, idempotent: embed published cards that predate
-                // 0.F and hand each to the matching queue.
-                const n = await backfillEmbeddings(cfg, async (cardId) => {
-                  await sqs.send(
-                    new SendMessageCommand({
-                      QueueUrl: cfg.matchingQueueUrl,
-                      MessageBody: JSON.stringify({ kind: 'card-published', card_id: cardId }),
-                    }),
-                  );
-                });
-                log('backfill-embeddings: cards embedded', { count: n });
-                break;
-              }
-              case 'backfill-geo': {
-                // One-shot, idempotent: place cards written before 0.3.0, then
-                // hand each placed card back to the matching queue so pairs
-                // that could not meet on unequal bucket strings get another go.
-                if (!body.after) log('backfill-geo: starting', gazetteerSource());
-                const r = await backfillCardGeo(log, body.after);
-                log('backfill-geo: pass done', {
-                  placed: r.placed.length,
-                  unplaced: r.unplaced,
-                  countryless: r.countryless,
-                  refused: r.refused,
-                  more: !!r.next,
-                });
-                if (body.rematch !== false && r.placed.length) {
-                  // A card that just gained a centre point gets another go at
-                  // the counterparties it could not reach on a bucket string.
-                  const live = await getPool().query(
-                    `SELECT id FROM cards WHERE id = ANY($1::uuid[])
-                       AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
-                    [r.placed],
-                  );
-                  for (const row of live.rows) {
+                case 'sequencer-tick': {
+                  // The same two clocks, on their own schedule where one is set
+                  // up. Both halves are idempotent, so running twice costs a
+                  // pair of statements and changes nothing.
+                  await runSequencerTick(cfg, log);
+                  break;
+                }
+                case 'create-account': {
+                  if (cfg.envName === 'prod') {
+                    // Prod registration is CLOSED in 0.C — no bootstrap bypass.
+                    log('ops: create-account refused in prod');
+                    break;
+                  }
+                  const id = await createAccount({
+                    email: body.email,
+                    first_name: body.first_name,
+                    locality: body.locality,
+                    login_code_hash: body.login_code_hash,
+                  });
+                  log('ops: account bootstrapped', { account_id: id });
+                  break;
+                }
+                case 'create-match': {
+                  const id = await createMatch(body.card_want, body.card_have, body.score ?? 0.9);
+                  log('ops: match created', { match_id: id });
+                  // 0.E: the dev bootstrap path summons humans too (idempotent).
+                  await notifyMatchCreated(cfg, id);
+                  break;
+                }
+                case 'pulse-refresh': {
+                  // EventBridge 15-min tick: rebuild the k-anonymous demand-
+                  // pulse aggregates (see domain/pulse.ts for the k-floor).
+                  const rows = await refreshPulseAggregates();
+                  log('pulse-refresh: aggregates rebuilt', { rows });
+                  break;
+                }
+                case 'backfill-embeddings': {
+                  // One-shot, idempotent: embed published cards that predate
+                  // 0.F and hand each to the matching queue.
+                  const n = await backfillEmbeddings(cfg, async (cardId) => {
                     await sqs.send(
                       new SendMessageCommand({
                         QueueUrl: cfg.matchingQueueUrl,
+                        MessageBody: JSON.stringify({ kind: 'card-published', card_id: cardId }),
+                      }),
+                    );
+                  });
+                  log('backfill-embeddings: cards embedded', { count: n });
+                  break;
+                }
+                case 'backfill-geo': {
+                  // One-shot, idempotent: place cards written before 0.3.0, then
+                  // hand each placed card back to the matching queue so pairs
+                  // that could not meet on unequal bucket strings get another go.
+                  if (!body.after) log('backfill-geo: starting', gazetteerSource());
+                  const r = await backfillCardGeo(log, body.after);
+                  log('backfill-geo: pass done', {
+                    placed: r.placed.length,
+                    unplaced: r.unplaced,
+                    countryless: r.countryless,
+                    refused: r.refused,
+                    more: !!r.next,
+                  });
+                  if (body.rematch !== false && r.placed.length) {
+                    // A card that just gained a centre point gets another go at
+                    // the counterparties it could not reach on a bucket string.
+                    const live = await getPool().query(
+                      `SELECT id FROM cards WHERE id = ANY($1::uuid[])
+                         AND lifecycle_state = 'PUBLISHED' AND expires_at > now()`,
+                      [r.placed],
+                    );
+                    for (const row of live.rows) {
+                      await sqs.send(
+                        new SendMessageCommand({
+                          QueueUrl: cfg.matchingQueueUrl,
+                          MessageBody: JSON.stringify({
+                            kind: 'card-published',
+                            card_id: row.id,
+                          }),
+                        }),
+                      );
+                    }
+                    log('backfill-geo: cards requeued for matching', { count: live.rowCount });
+                  }
+                  if (r.next) {
+                    await sqs.send(
+                      new SendMessageCommand({
+                        QueueUrl: cfg.opsQueueUrl,
+                        MessageBody: JSON.stringify({ ...body, after: r.next }),
+                      }),
+                    );
+                  }
+                  break;
+                }
+                case 'snap-categories': {
+                  // One-shot, idempotent: move cards sitting under categories
+                  // the taxonomy has never heard of onto their nearest open
+                  // node, re-embed them, and hand them back to the matcher.
+                  // Every remap is logged here with its old and new path.
+                  const r = await snapCardCategories(cfg, log, {
+                    after: body.after,
+                    dryRun: body.dry_run === true,
+                    minScore: body.min_score,
+                  });
+                  log('snap-categories: pass done', {
+                    scanned: r.scanned,
+                    remapped: r.remapped.length,
+                    already_open: r.already_open,
+                    islands: r.islands,
+                    unmatched: r.unmatched,
+                    embed_failed: r.embed_failed,
+                    dry_run: body.dry_run === true,
+                    more: !!r.next,
+                  });
+                  if (!body.dry_run && body.rematch !== false) {
+                    await requeueSnapped(cfg, r.remapped.map((x) => x.card_id), log);
+                  }
+                  if (r.next) {
+                    await sqs.send(
+                      new SendMessageCommand({
+                        QueueUrl: cfg.opsQueueUrl,
+                        MessageBody: JSON.stringify({ ...body, after: r.next }),
+                      }),
+                    );
+                  }
+                  break;
+                }
+                case 'match-notify': {
+                  // 0.E: immediate match summons for both humans (enqueued by
+                  // the matcher / the dev create-match op). Idempotent via the
+                  // summons:{match}:{account} dedupe key.
+                  await notifyMatchCreated(cfg, body.match_id);
+                  break;
+                }
+                case 'channel-nudge': {
+                  // A message is waiting on an open conversation; tell the
+                  // recipient's human so the exchange does not stall. Enqueued by
+                  // channel_send (domain/channelNotify.ts), which also throttles;
+                  // idempotent via the channel-waiting dedupe key.
+                  await sendChannelWaitingNudge(cfg, {
+                    matchId: body.match_id,
+                    channelId: body.channel_id,
+                    recipientAccount: body.recipient_account,
+                    notifiedAt: body.notified_at,
+                  });
+                  break;
+                }
+                case 'your-move-notify': {
+                  // One step now: 'names' — the counterparty opted in and it is
+                  // now this human's turn to reciprocate (enqueued by
+                  // recordStage3OptIn). Idempotent via the
+                  // your-move:{match}:{account} dedupe key. A 'details' job from
+                  // before 13 September 2026 may still be on the queue; nothing
+                  // raises that step any more and notifyYourMove drops it.
+                  await notifyYourMove(
+                    cfg,
+                    body.match_id,
+                    body.account_id,
+                    body.step === 'details' ? 'details' : 'names',
+                  );
+                  break;
+                }
+                case 'email-digest-tick': {
+                  // EventBridge daily/weekly ticks. Batched summons first, then
+                  // the activity digest — each honours per-account frequency
+                  // and the quiet default (nothing happened -> no email).
+                  // Both halves run even if the other reports failures; a
+                  // failure still rethrows afterwards so the job redelivers and
+                  // the failed sends retry (dedupe keys protect the rest).
+                  //
+                  // PAGED, the same way backfill-geo is: twenty-five accounts a
+                  // message, and a continuation carrying the last id when the
+                  // page was full. The two halves page independently — an
+                  // account may be on a daily digest and a weekly summons — so
+                  // each carries its own cursor and each stops when its own
+                  // pages run out.
+                  const cadence = body.cadence === 'weekly' ? 'weekly' : 'daily';
+                  let summons: TickPass | undefined, digests: TickPass | undefined;
+                  let failed: unknown;
+                  const doSummons = !body.after || body.after.summons !== null;
+                  const doDigests = !body.after || body.after.digests !== null;
+                  try {
+                    if (doSummons) summons = await runSummonsBatch(cfg, cadence, body.after?.summons);
+                  } catch (e) {
+                    failed = e;
+                  }
+                  try {
+                    if (doDigests) digests = await runDigestTick(cfg, cadence, body.after?.digests);
+                  } catch (e) {
+                    failed ??= e;
+                  }
+                  log('email-digest-tick: pass done', {
+                    cadence,
+                    summons: summons?.sent,
+                    digests: digests?.sent,
+                    more: !!(summons?.next || digests?.next),
+                  });
+                  if (failed) throw failed;
+                  if (summons?.next || digests?.next) {
+                    await sqs.send(
+                      new SendMessageCommand({
+                        QueueUrl: cfg.opsQueueUrl,
                         MessageBody: JSON.stringify({
-                          kind: 'card-published',
-                          card_id: row.id,
+                          ...body,
+                          after: {
+                            // null rather than absent: a half that has finished
+                            // must not start again from the top on the next page.
+                            summons: summons?.next ?? null,
+                            digests: digests?.next ?? null,
+                          },
                         }),
                       }),
                     );
                   }
-                  log('backfill-geo: cards requeued for matching', { count: live.rowCount });
+                  break;
                 }
-                if (r.next) {
-                  await sqs.send(
-                    new SendMessageCommand({
-                      QueueUrl: cfg.opsQueueUrl,
-                      MessageBody: JSON.stringify({ ...body, after: r.next }),
-                    }),
-                  );
-                }
-                break;
-              }
-              case 'snap-categories': {
-                // One-shot, idempotent: move cards sitting under categories
-                // the taxonomy has never heard of onto their nearest open
-                // node, re-embed them, and hand them back to the matcher.
-                // Every remap is logged here with its old and new path.
-                const r = await snapCardCategories(cfg, log, {
-                  after: body.after,
-                  dryRun: body.dry_run === true,
-                  minScore: body.min_score,
-                });
-                log('snap-categories: pass done', {
-                  scanned: r.scanned,
-                  remapped: r.remapped.length,
-                  already_open: r.already_open,
-                  islands: r.islands,
-                  unmatched: r.unmatched,
-                  embed_failed: r.embed_failed,
-                  dry_run: body.dry_run === true,
-                  more: !!r.next,
-                });
-                if (!body.dry_run && body.rematch !== false) {
-                  await requeueSnapped(cfg, r.remapped.map((x) => x.card_id), log);
-                }
-                if (r.next) {
-                  await sqs.send(
-                    new SendMessageCommand({
-                      QueueUrl: cfg.opsQueueUrl,
-                      MessageBody: JSON.stringify({ ...body, after: r.next }),
-                    }),
-                  );
-                }
-                break;
-              }
-              case 'match-notify': {
-                // 0.E: immediate match summons for both humans (enqueued by
-                // the matcher / the dev create-match op). Idempotent via the
-                // summons:{match}:{account} dedupe key.
-                await notifyMatchCreated(cfg, body.match_id);
-                break;
-              }
-              case 'channel-nudge': {
-                // A message is waiting on an open conversation; tell the
-                // recipient's human so the exchange does not stall. Enqueued by
-                // channel_send (domain/channelNotify.ts), which also throttles;
-                // idempotent via the channel-waiting dedupe key.
-                await sendChannelWaitingNudge(cfg, {
-                  matchId: body.match_id,
-                  channelId: body.channel_id,
-                  recipientAccount: body.recipient_account,
-                  notifiedAt: body.notified_at,
-                });
-                break;
-              }
-              case 'your-move-notify': {
-                // One step now: 'names' — the counterparty opted in and it is
-                // now this human's turn to reciprocate (enqueued by
-                // recordStage3OptIn). Idempotent via the
-                // your-move:{match}:{account} dedupe key. A 'details' job from
-                // before 13 September 2026 may still be on the queue; nothing
-                // raises that step any more and notifyYourMove drops it.
-                await notifyYourMove(
-                  cfg,
-                  body.match_id,
-                  body.account_id,
-                  body.step === 'details' ? 'details' : 'names',
-                );
-                break;
-              }
-              case 'email-digest-tick': {
-                // EventBridge daily/weekly ticks. Batched summons first, then
-                // the activity digest — each honours per-account frequency
-                // and the quiet default (nothing happened -> no email).
-                // Both halves run even if the other reports failures; a
-                // failure still rethrows afterwards so the job redelivers and
-                // the failed sends retry (dedupe keys protect the rest).
-                //
-                // PAGED, the same way backfill-geo is: twenty-five accounts a
-                // message, and a continuation carrying the last id when the
-                // page was full. The two halves page independently — an
-                // account may be on a daily digest and a weekly summons — so
-                // each carries its own cursor and each stops when its own
-                // pages run out.
-                const cadence = body.cadence === 'weekly' ? 'weekly' : 'daily';
-                let summons: TickPass | undefined, digests: TickPass | undefined;
-                let failed: unknown;
-                const doSummons = !body.after || body.after.summons !== null;
-                const doDigests = !body.after || body.after.digests !== null;
-                try {
-                  if (doSummons) summons = await runSummonsBatch(cfg, cadence, body.after?.summons);
-                } catch (e) {
-                  failed = e;
-                }
-                try {
-                  if (doDigests) digests = await runDigestTick(cfg, cadence, body.after?.digests);
-                } catch (e) {
-                  failed ??= e;
-                }
-                log('email-digest-tick: pass done', {
-                  cadence,
-                  summons: summons?.sent,
-                  digests: digests?.sent,
-                  more: !!(summons?.next || digests?.next),
-                });
-                if (failed) throw failed;
-                if (summons?.next || digests?.next) {
-                  await sqs.send(
-                    new SendMessageCommand({
-                      QueueUrl: cfg.opsQueueUrl,
-                      MessageBody: JSON.stringify({
-                        ...body,
-                        after: {
-                          // null rather than absent: a half that has finished
-                          // must not start again from the top on the next page.
-                          summons: summons?.next ?? null,
-                          digests: digests?.next ?? null,
-                        },
+                case 'email-renewal-tick': {
+                  // Daily sweep; a renewal email lands once, 7 days before a
+                  // card batch expires (see digestEngine.runRenewalTick).
+                  // Paged like the digest tick above, for the same reasons.
+                  const r = await runRenewalTick(cfg, body.after);
+                  if (r.sent > 0) log('email-renewal-tick: renewal emails sent', { count: r.sent });
+                  if (r.next) {
+                    await sqs.send(
+                      new SendMessageCommand({
+                        QueueUrl: cfg.opsQueueUrl,
+                        MessageBody: JSON.stringify({ ...body, after: r.next }),
                       }),
-                    }),
-                  );
+                    );
+                  }
+                  break;
                 }
-                break;
-              }
-              case 'email-renewal-tick': {
-                // Daily sweep; a renewal email lands once, 7 days before a
-                // card batch expires (see digestEngine.runRenewalTick).
-                // Paged like the digest tick above, for the same reasons.
-                const r = await runRenewalTick(cfg, body.after);
-                if (r.sent > 0) log('email-renewal-tick: renewal emails sent', { count: r.sent });
-                if (r.next) {
-                  await sqs.send(
-                    new SendMessageCommand({
-                      QueueUrl: cfg.opsQueueUrl,
-                      MessageBody: JSON.stringify({ ...body, after: r.next }),
-                    }),
-                  );
+                case 'settlement-auto-release': {
+                  // EventBridge hourly tick. A seller declared handover and the
+                  // buyer's window has run out, so the held payment goes to the
+                  // seller. The whole of the work — and the only place a
+                  // scheduled transition context is minted — lives in
+                  // settlementAutoRelease.ts; this case just calls it.
+                  const r = await runAutoReleaseSweep(cfg, log);
+                  if (r.due > 0) log('auto-release sweep: pass done', r);
+                  break;
                 }
-                break;
+                case 'accept-offer-by-human': {
+                  const offer = await acceptOfferByHuman(
+                    body.offer_id,
+                    body.account_id,
+                    body.recorded_via ?? 'internal-ops',
+                    // cfg is what lets the acceptance tell the other human their
+                    // figure was taken; without it the deal is recorded and
+                    // nobody is told.
+                    cfg,
+                  );
+                  log('ops: offer accepted by human', { offer_id: offer.offer_id });
+                  break;
+                }
+                default:
+                  // The shape, never the contents: an ops message carries
+                  // account ids, email addresses and people's own words.
+                  log('ops: unknown op', { op: body?.op, fields: Object.keys(body ?? {}) });
               }
-              case 'settlement-auto-release': {
-                // EventBridge hourly tick. A seller declared handover and the
-                // buyer's window has run out, so the held payment goes to the
-                // seller. The whole of the work — and the only place a
-                // scheduled transition context is minted — lives in
-                // settlementAutoRelease.ts; this case just calls it.
-                const r = await runAutoReleaseSweep(cfg, log);
-                if (r.due > 0) log('auto-release sweep: pass done', r);
-                break;
-              }
-              case 'accept-offer-by-human': {
-                const offer = await acceptOfferByHuman(
-                  body.offer_id,
-                  body.account_id,
-                  body.recorded_via ?? 'internal-ops',
-                  // cfg is what lets the acceptance tell the other human their
-                  // figure was taken; without it the deal is recorded and
-                  // nobody is told.
-                  cfg,
-                );
-                log('ops: offer accepted by human', { offer_id: offer.offer_id });
-                break;
-              }
-              default:
-                // The shape, never the contents: an ops message carries
-                // account ids, email addresses and people's own words.
-                log('ops: unknown op', { op: body?.op, fields: Object.keys(body ?? {}) });
+              await sqs.send(
+                new DeleteMessageCommand({
+                  QueueUrl: cfg.opsQueueUrl,
+                  ReceiptHandle: msg.ReceiptHandle!,
+                }),
+              );
+            } catch (e: any) {
+              log('ops: message failed (will redeliver)', { error: e?.message });
+            } finally {
+              if (msg.ReceiptHandle) pending.delete(msg.ReceiptHandle);
             }
-            await sqs.send(
-              new DeleteMessageCommand({
-                QueueUrl: cfg.opsQueueUrl,
-                ReceiptHandle: msg.ReceiptHandle!,
-              }),
-            );
-          } catch (e: any) {
-            log('ops: message failed (will redeliver)', { error: e?.message });
           }
+        } finally {
+          stopHeartbeat();
         }
       } catch (e: any) {
         log('ops: receive loop error', { error: e?.message });
+
         await new Promise((res) => setTimeout(res, 5000));
       }
     }
