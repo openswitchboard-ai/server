@@ -418,7 +418,14 @@ export async function presignPhotoUpload(
       ContentLength: size, // signed: the browser cannot send a different size
       ChecksumSHA256: String(input.sha256_b64), // signed: nor different bytes
     }),
-    { expiresIn: UPLOAD_URL_TTL_S, unhoistableHeaders: new Set(['x-amz-checksum-sha256']) },
+    {
+      expiresIn: UPLOAD_URL_TTL_S,
+      unhoistableHeaders: new Set(['x-amz-checksum-sha256']),
+      // Signed, so S3 refuses a PUT whose type is not the allow-listed one
+      // (2026-09-28 review). The send / manifest step checks it again on the
+      // stored object, and every GET overrides it from the row regardless.
+      signableHeaders: new Set(['content-type']),
+    },
   );
   const r = await getPool().query(
     `INSERT INTO conversation_photos

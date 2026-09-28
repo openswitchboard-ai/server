@@ -9,10 +9,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const signed: { kind: string; input: any }[] = [];
+const signed: { kind: string; input: any; opts?: any }[] = [];
 vi.mock('@aws-sdk/s3-request-presigner', () => ({
-  getSignedUrl: vi.fn(async (_client: unknown, command: any) => {
-    signed.push({ kind: command.constructor.name, input: command.input });
+  getSignedUrl: vi.fn(async (_client: unknown, command: any, opts: any) => {
+    signed.push({ kind: command.constructor.name, input: command.input, opts });
     return `https://bucket.test/${encodeURIComponent(command.input.Key)}`;
   }),
 }));
@@ -23,6 +23,7 @@ import {
   MAX_EVIDENCE_BYTES,
   evidenceViewLinks,
   objectAsDeclared,
+  presignEvidenceUpload,
   writeEvidenceManifest,
 } from '../../src/domain/evidence.js';
 import type { Config } from '../../src/config.js';
@@ -84,7 +85,23 @@ describe('settlement evidence is what it was declared to be', () => {
     expect(objectAsDeclared({ ContentType: 'image/jpeg' }, 'image/jpeg')).toBe(false);
   });
 
+  it('the upload link signs the content type', async () => {
+    rows = [];
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async () => ({ rows: [{ n: 0 }], rowCount: 1 }),
+    } as any);
+    await presignEvidenceUpload(cfg, { id: SID } as any, 'seller-acct', {
+      filename: 'a.jpg',
+      content_type: 'image/jpeg',
+      size: 1000,
+      sha256_b64: 'A'.repeat(43) + '=',
+    });
+    const put = signed.find((s) => s.kind === 'PutObjectCommand')!;
+    expect([...put.opts.signableHeaders]).toEqual(['content-type']);
+  });
+
   it('every view link is served as the row\'s type, inline, under a fixed name', async () => {
+
     rows = [
       { s3_key: 'k/a.jpg', content_type: 'image/jpeg' },
       { s3_key: 'k/b.webp', content_type: 'image/webp' },
