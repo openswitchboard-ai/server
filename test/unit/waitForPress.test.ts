@@ -481,4 +481,17 @@ describe('hand it over, then wait', () => {
       expect(lintHumanCopy(text)).toEqual([]);
     }
   });
+
+  // 28 September 2026: an assistant that waited in the same turn it fetched
+  // the page never showed its human the address.
+  it('hands a page made moments ago straight back instead of holding', async () => {
+    links = [theLink({ created_at: new Date(Date.now() - 2_000) })];
+    const before = reads;
+    const r = await waitForPress(cfg, ANA, PRESS);
+    expect(r.pressed).toBe(false);
+    expect(reads - before).toBe(1);
+    expect(r.say!.split('\n')[0]).toBe(r.link);
+    expect(r.what_to_do).toContain('must contain the web address');
+  });
 });
+
