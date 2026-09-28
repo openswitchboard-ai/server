@@ -9,7 +9,12 @@
  *    (accounts.email_complaint_suppressed_at) until the human re-enables it
  *    from the counter settings page.
  *  - Every event (bounce, complaint, delivery, reject, ...) is logged to
- *    email_events with the raw payload.
+ *    email_events — its type, message id, account, the recipients as keyed
+ *    hashes and the bounce/complaint type fields. NEVER an address and never
+ *    the raw payload (2026-09-28 review, migration 056): the payload carries
+ *    every address in it several times over, and nothing ever read it.
+ *    Rows go after EMAIL_EVENT_RETENTION_DAYS (purgeOldEmailEvents, on the
+ *    ttl-expiry tick).
  *
  * SNS subscription uses raw message delivery, so the SQS body IS the SES
  * event JSON. An SNS envelope (Type: Notification) is unwrapped if one ever
@@ -27,8 +32,54 @@ interface SesEvent {
   eventType?: string;
   notificationType?: string; // legacy field name, same values
   mail?: { messageId?: string; destination?: string[] };
-  bounce?: { bounceType?: string; bouncedRecipients?: { emailAddress?: string }[] };
-  complaint?: { complainedRecipients?: { emailAddress?: string }[] };
+  bounce?: {
+    bounceType?: string;
+    bounceSubType?: string;
+    bouncedRecipients?: { emailAddress?: string }[];
+  };
+  complaint?: {
+    complaintFeedbackType?: string;
+    complainedRecipients?: { emailAddress?: string }[];
+  };
+}
+
+/** How long an SES event row is kept. Long enough to see a pattern in
+ *  bounces; short enough that the table is not a history of who was mailed. */
+export const EMAIL_EVENT_RETENTION_DAYS = 90;
+
+/**
+ * The retention pass, on the ttl-expiry tick: rows past ninety days go, in
+ * bounded batches, and any row a task on the old code wrote during a rolling
+ * deploy has its retired address columns emptied.
+ */
+export async function purgeOldEmailEvents(
+  batch = 5000,
+): Promise<{ deleted: number; scrubbed: number }> {
+  const pool = getPool();
+  const del = await pool.query(
+    `DELETE FROM email_events WHERE id IN (
+       SELECT id FROM email_events
+        WHERE created_at < now() - make_interval(days => $1::int)
+        LIMIT $2)`,
+    [EMAIL_EVENT_RETENTION_DAYS, batch],
+  );
+  const scrub = await pool.query(
+    `UPDATE email_events SET recipients = NULL, raw = NULL
+      WHERE recipients IS NOT NULL OR raw IS NOT NULL`,
+  );
+  return { deleted: del.rowCount ?? 0, scrubbed: scrub.rowCount ?? 0 };
+}
+
+/** The type fields SES sent, and nothing that names anybody. */
+function eventDetail(ev: SesEvent): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  const take = (k: string, v: unknown) => {
+    if (typeof v === 'string' && /^[A-Za-z-]{1,40}$/.test(v)) out[k] = v;
+  };
+  take('bounceType', ev.bounce?.bounceType);
+  take('bounceSubType', ev.bounce?.bounceSubType);
+  take('complaintFeedbackType', ev.complaint?.complaintFeedbackType);
+  return Object.keys(out).length ? out : null;
 }
 
 async function accountIdForEmail(email: string): Promise<string | null> {
@@ -112,16 +163,18 @@ export async function processSesEvent(raw: string, log: (msg: string, extra?: an
 
   const pool = getPool();
   await pool.query(
-    `INSERT INTO email_events (event_type, ses_message_id, account_id, recipients, raw)
+    `INSERT INTO email_events (event_type, ses_message_id, account_id, recipient_hashes, detail)
      VALUES ($1,$2,$3,$4,$5)`,
     [
       eventType,
       messageId,
       affected.find((a) => a.accountId)?.accountId ?? null,
-      JSON.stringify(destination),
-      raw,
+      JSON.stringify(destination.map((d) => emailHash(String(d)))),
+      ((d) => (d ? JSON.stringify(d) : null))(eventDetail(ev)),
+
     ],
   );
+
 
   // The address goes on the global list whether or not an account answers to
   // it — a registration attempt is a send too, and an address that hard-bounced
