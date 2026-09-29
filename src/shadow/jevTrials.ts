@@ -176,9 +176,23 @@ const PERSONAL_PATTERNS: RegExp[] = [
 const PERSONAL_KEYS =
   /(?:^|_)(?:name|first_?name|last_?name|surname|email|phone|mobile|contact|address|street|suburb|postcode|zip|location|lat|lon|lng|coordinates|handle|username|instagram|facebook|whatsapp|telegram)(?:$|_)/i;
 
+/**
+ * NO PRICES EITHER (29 September 2026, when Jev started judging pairs). The
+ * price band is never sent, but a posting can still carry a figure in its own
+ * words or under a key of its own ("budget", "asking_price"). Neither is
+ * needed to say whether two things are the same thing, so a key that names a
+ * price is dropped whatever it holds, and a sum of money written into a value
+ * or into `kind` becomes "[removed]" like a phone number does.
+ */
+const MONEY_PATTERN =
+  /(?:[$€£¥]\s?\d[\d,]*(?:\.\d+)?\s?[km]?\b)|(?:\b(?:aud|usd|nzd|eur|gbp)\s?\d[\d,]*(?:\.\d+)?\b)|(?:\b\d[\d,]*(?:\.\d+)?\s?(?:dollars?|bucks|aud|usd|nzd)\b)/gi;
+const PRICE_KEYS =
+  /(?:^|_)(?:price|prices|budget|cost|costs|amount|asking|ask|rrp|msrp|paid|fee|fees|hourly_rate|day_rate|daily_rate|dollars?|currency|spend)(?:$|_)/i;
+
 export function withoutPersonalDetails(text: string): string {
   let out = text;
   for (const re of PERSONAL_PATTERNS) out = out.replace(re, ' [removed] ');
+  out = out.replace(MONEY_PATTERN, ' [removed] ');
   return out.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -186,7 +200,7 @@ function scalarAttributes(attributes: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!attributes || typeof attributes !== 'object') return out;
   for (const [k, v] of Object.entries(attributes as Record<string, unknown>)) {
-    if (PERSONAL_KEYS.test(k)) continue;
+    if (PERSONAL_KEYS.test(k) || PRICE_KEYS.test(k)) continue;
     if (typeof v === 'string') {
       const clean = withoutPersonalDetails(v);
       if (clean && clean !== '[removed]') out[k] = clean;

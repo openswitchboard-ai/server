@@ -20,11 +20,18 @@
  * a decision somebody makes deliberately, with a DPA in hand — not one that
  * arrives by a small edit to a call site.
  *
- * DEV ONLY, TWICE OVER. The feature is off unless JEV_SECRET_ARN is set, and
- * it refuses to come up in prod even if somebody sets it. There is no
- * osb/prod/jev secret and infra never makes one. Belt and braces because the
- * infra deploy reaches both environments from one command, and "prod got the
- * env var by accident" is a thing that happens to every project eventually.
+ * THE SHADOW IS DEV ONLY, TWICE OVER. The trials are off unless
+ * JEV_SECRET_ARN is set, and they refuse to come up in prod even if somebody
+ * sets it (askJev below). Belt and braces because the infra deploy reaches
+ * both environments from one command.
+ *
+ * THE ONE EXCEPTION IS THE BORDERLINE JUDGE (founder, 29 September 2026;
+ * src/domain/jevJudge.ts). That decision was made deliberately, as the
+ * paragraph above asked: Jev decides the tier of a borderline pair where
+ * JEV_MATCHING is on (config.ts; on in dev, OFF in prod by default until a
+ * data-processing agreement and privacy wording are in place). It has its own
+ * entry point, askJevForMatching, gated on that flag and nothing else; askJev
+ * keeps refusing prod, so switching the judge on never switches the shadow on.
  *
  * WHAT NEVER LEAVES. No price, no geography, no account id, no email, no
  * conversation text, no free text beyond the poster's own word for the thing
@@ -246,8 +253,11 @@ export type JevResult =
 
 interface JevState {
   cfg: Config;
-  /** Settled at init: false in prod, and false with no secret configured. */
+  /** The SHADOW. Settled at init: false in prod, and false with no secret configured. */
   enabled: boolean;
+  /** The BORDERLINE JUDGE (jevJudge.ts). Settled at init: JEV_MATCHING on
+   *  and a secret configured, in any environment. */
+  matching?: boolean;
   key?: string;
   keyFetchedAt?: number;
 }
@@ -263,27 +273,42 @@ let state: JevState | undefined;
  */
 export function initJev(cfg: Config, log: (msg: string) => void = () => {}): void {
   const hasArn = !!cfg.jevSecretArn;
+  const wantsMatching = cfg.jevMatching === true;
+  const matching = wantsMatching && hasArn;
   if (cfg.envName === 'prod') {
-    state = { cfg, enabled: false };
-    if (hasArn) {
+    state = { cfg, enabled: false, matching };
+    if (hasArn && !wantsMatching) {
       log(
-        'jev shadow refuses to start in prod: JEV_SECRET_ARN is set on a prod task, ' +
-          'which infra does not do. The shadow is dev-only and stays off here.',
+        'jev shadow refuses to start in prod: JEV_SECRET_ARN is set on a prod task ' +
+          'with JEV_MATCHING off. The shadow is dev-only and stays off here.',
       );
     }
-    return;
+  } else {
+    state = { cfg, enabled: hasArn, matching };
+    log(
+      hasArn
+        ? 'jev shadow is on for this deployment: answers are recorded and change nothing'
+        : 'jev shadow is off for this deployment: JEV_SECRET_ARN is not set',
+    );
   }
-  state = { cfg, enabled: hasArn };
-  log(
-    hasArn
-      ? 'jev shadow is on for this deployment: answers are recorded and change nothing'
-      : 'jev shadow is off for this deployment: JEV_SECRET_ARN is not set',
-  );
+  if (matching) {
+    log(
+      'jev matching is on for this deployment: borderline pairs are judged by Jev, ' +
+        'and by the rules wherever Jev does not answer in time',
+    );
+  } else if (wantsMatching) {
+    log('jev matching is on in config but JEV_SECRET_ARN is not set: the rules judge every pair');
+  }
 }
 
 /** True only where the shadow may actually call out. */
 export function jevEnabled(): boolean {
   return !!state?.enabled;
+}
+
+/** True only where the borderline judge may call out (jevJudge.ts). */
+export function jevMatchingEnabled(): boolean {
+  return !!state?.matching;
 }
 
 /** For the suite: forget the decision and the cached key. */
@@ -400,6 +425,38 @@ export async function askJev(
 }
 
 /**
+ * Ask Jev FOR THE MATCHER (src/domain/jevJudge.ts), which is the one path
+ * allowed to call out in prod, and only where JEV_MATCHING is on and a secret
+ * is configured. Settled at boot like askJev's gate; nothing a caller passes
+ * can turn it on. One attempt, no retry: a matching run is waiting on it, and
+ * the rules' answer is always there to fall back on.
+ */
+export async function askJevForMatching(
+  subject: unknown,
+  questions: Record<string, JevQuestion>,
+  opts: { timeoutMs: number },
+): Promise<JevResult> {
+  const cfg = state?.cfg;
+  if (!cfg) return { ok: false, reason: 'not-initialised' };
+  if (!jevMatchingEnabled()) return { ok: false, reason: 'disabled' };
+  let key: string;
+  try {
+    key = await apiKey(cfg);
+  } catch {
+    return { ok: false, reason: 'no-key' };
+  }
+  return postToJev({
+    state: subject,
+    questions,
+    apiKey: key,
+    endpoint: cfg.jevEndpoint ?? JEV_ENDPOINT,
+    model: cfg.jevModel ?? JEV_MODEL,
+    timeoutMs: opts.timeoutMs,
+    retry: false,
+  });
+}
+
+/**
  * The HTTP half on its own: everything above the wire and nothing about this
  * deployment.
  *
@@ -418,6 +475,8 @@ export async function postToJev(req: {
   endpoint?: string;
   model?: string;
   timeoutMs?: number;
+  /** One retry on 429/529 (the default), or none. */
+  retry?: boolean;
 }): Promise<JevResult> {
   const { state: subject, questions, apiKey: key } = req;
   if (!Object.keys(questions).length) return { ok: false, reason: 'no-questions' };
@@ -449,7 +508,7 @@ export async function postToJev(req: {
         signal: ac.signal,
       });
       if (!res.ok) {
-        if (attempt === 1 && JEV_RETRY_STATUSES.includes(res.status)) {
+        if (attempt === 1 && req.retry !== false && JEV_RETRY_STATUSES.includes(res.status)) {
           clearTimeout(timer);
           await new Promise((r) => setTimeout(r, JEV_RETRY_MS));
           continue;
