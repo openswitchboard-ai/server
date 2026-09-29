@@ -99,6 +99,14 @@ export const TONY: FactSheet = {
     // assistant raised, the want went up as "a brake mod, elastomers or a
     // die-spring", and it only nearly met a seller who had exactly the spring.
     'It is the SPRING you want: the stiffer upgrade brake spring. If your assistant suggests something else instead (an elastomer kit, a die-spring mod, a whole kit), say thanks but no, you just want the spring. You do not know its part number or exact name.',
+    // AND WHEN IT IS SAID AS A CONFIRMATION, NOT A SUGGESTION (29 September
+    // 2026). Bilby wrote "Quick check before I post it: Want: a used ... Brake
+    // Performance Kit (the elastomer upgrade set)", Tony answered only the
+    // price part, and the want went up as a complete elastomer kit. The seller
+    // had the spring alone; the matcher (Jev on dev) rightly called them
+    // different things and they never met. A person reads back what is about
+    // to go up in his name.
+    'Whenever your assistant tells you what it is about to post for you, or what it has posted, check what it calls the thing. If it calls it anything other than the spring (a kit, an elastomer set, a whole upgrade package), say no, that is not it: you want the spring on its own, and ask it to put it up as that.',
     'You have NOT decided what you are willing to pay. If you are asked about a budget or a price, say you are not sure and ask what they usually go for.',
     'Only if you are pushed a second time for the most you would pay, say $25.',
     'You are fine with it being posted to you.',
