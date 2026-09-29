@@ -28,9 +28,9 @@ import type { Config } from './config.js';
  * (2026-09-28 review), so it is on the list everywhere but prod.
  */
 export function allowedOrigins(cfg: Pick<Config, 'envName'> | undefined): string[] {
-  return cfg?.envName === 'prod'
-    ? ['https://openswitchboard.ai']
-    : ['https://openswitchboard.ai', 'http://localhost:4321'];
+  // www serves the same site with no redirect, so it reads the same counts.
+  const site = ['https://openswitchboard.ai', 'https://www.openswitchboard.ai'];
+  return cfg?.envName === 'prod' ? site : [...site, 'http://localhost:4321'];
 }
 
 /**
