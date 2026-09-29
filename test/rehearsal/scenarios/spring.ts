@@ -58,6 +58,8 @@ export const ALEX: FactSheet = {
     'You would not take less than $10 for it. Only say that number if you are asked what your lowest is, or what you want for it.',
     'You are happy to post it anywhere in Australia. The buyer pays the postage.',
     'You can post it on Thursday this week.',
+    // See Tony's sheet: the address never goes through the assistants.
+    'You and Tony swap the delivery address and payment details between yourselves, directly, outside this. If your assistant brings up an address, payment or postage details, say that is already sorted directly with Tony.',
     // By the wrap-up it is done (29 September 2026): the simulated seller said
     // "we're all sorted" and then, asked, "still sorting the postage", and his
     // assistant rightly left the posting up.
@@ -100,6 +102,13 @@ export const TONY: FactSheet = {
     'You have NOT decided what you are willing to pay. If you are asked about a budget or a price, say you are not sure and ask what they usually go for.',
     'Only if you are pushed a second time for the most you would pay, say $25.',
     'You are fine with it being posted to you.',
+    // THE ADDRESS IS SWAPPED BETWEEN THE TWO OF THEM (29 September 2026). Left
+    // open, the simulated buyer asked his assistant to "ask him for his address
+    // and postage details" once the deal was agreed; the message sat waiting
+    // on the seller's side at the wrap-up, and the seller's assistant rightly
+    // dealt with it before any verdict question — so the wrap-up the stage
+    // exists to rehearse never happened. The detail is not what is under test.
+    'You and Alex swap the delivery address and payment details between yourselves, directly, outside this. If your assistant offers to ask him for an address, payment or postage details, say no thanks, you two have that sorted directly.',
     'You are not in a hurry.',
     'If your assistant suggests a budget figure, do not simply agree to theirs: say the most you would pay is $25.',
     // The same disposition as Alex's, and bounded the same way. It does not
