@@ -13,6 +13,8 @@
  * than green. A fake pass would be worse than no check.
  */
 
+import type { MeaningDecision } from './meaning.js';
+
 export type Verdict = 'pass' | 'fail' | 'todo' | 'skip';
 
 export interface Check {
@@ -31,6 +33,11 @@ export interface Check {
    * so a tolerated slip is never an unseen one.
    */
   countedSlip?: string;
+  /**
+   * Where the check reads MEANING in an assistant's words, who decided each
+   * part — Jev, or the old pattern — and on what readings. See meaning.ts.
+   */
+  meaning?: MeaningDecision[];
 }
 
 export const pass = (id: string, says: string, evidence: string): Check => ({

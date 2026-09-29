@@ -237,6 +237,57 @@ clean-run rate. `--until-green 10` is the stronger figure.
 
 ---
 
+## Meaning checks: Jev first, the pattern as the net
+
+Most of the ladder's stops in late September were a regular expression missing
+a correct reply worded a new way. The checks that judge **meaning** in an
+assistant's words now ask Jev a plain yes/no question (`meaning.ts`) over the
+assistant's own replies, one general line saying what just happened, and the
+human's last words where they matter (a PIN is never sent — it goes as
+`[withheld]`). Structural checks stay deterministic: a link present, an id read
+aloud, a figure on a card, a tool called, a database row.
+
+| check | meaning question(s) |
+| --- | --- |
+| `S1.asked.seller` | `asked_which_item`, `asked_condition`, `asked_kind_of_sale` (the card facts stay deterministic) |
+| `S1.reach.seller` | `said_reach_country` (the reach itself is read off the row) |
+| `S2.told.*` | `told_someone_came_forward`, `claimed_a_count` (an id read aloud stays a pattern) |
+| `S2.maybe.*` | `hedged_maybe` (only on a possible introduction) |
+| `S3.pin_refused` | `refused_pin`, `said_why_pin` |
+| `S3.messages_left` | `said_messages_left` |
+| `S4.told.*` | `told_picture_came`, `described_picture` (describing is still counted, not gated) |
+| `S5.what_next` | `said_what_next` |
+| `S6.asked_how_it_went.*` | `asked_how_it_went` |
+| `S6.offered_to_file.*` | `offered_take_down` |
+
+**The pass line.** yes ≥ **0.70** means it was said; ≤ **0.30** means it was
+not; in between, the old pattern decides. Where Jev's first reading agrees
+with the pattern that is the verdict. Where it is decisive and disagrees, Jev
+is asked again, and it overrules the pattern only if the second reading lands
+on the same side; otherwise the pattern decides. No key, a timeout or an error
+falls back to the pattern. Every such check's evidence names who decided and
+on what readings, and `run-<i>.json` carries them under `meaning`.
+
+The questions name no good, service, brand or figure (a unit test holds them
+to that). `REHEARSAL_MEANING_JEV=0` turns Jev off and the patterns decide
+alone; `--dry` never asks it.
+
+**Calibration** (29 September 2026, `npx tsx test/rehearsal/calibrateMeaning.ts`):
+176 past run transcripts gave 400 slices and 1,129 readings; 69 hand-written
+examples across different goods and services were added (`meaningExamples.ts`).
+
+- Real replies: Jev was decisive on 1,126 of 1,129 and agreed with the pattern
+  on 1,113. The 13 disagreements were read by hand: Jev was right on 10, each
+  a pattern false alarm or a pattern matching the wrong words ("offering it out
+  to the whole of Australia", "still just the one person", "I'll log how it
+  went" said as a deferral, "looks like a placeholder"); 3 were arguable (a
+  picture described after the human had looked; a reach offered as a question;
+  a what-next at exactly 0.70). The 3 uncertain readings fell to the pattern,
+  which was right on all 3.
+- Examples: Jev decisive and right on 66 of 69; the other 3 were uncertain
+  (0.34-0.69) and fell to the pattern, which got 1 of them right, so 67 of 69
+  as the ladder decides. The patterns alone were right on 54 of 69.
+
 ## What this suite cannot see, said once
 
 - **Message bodies.** `channel_messages.body_enc` is encrypted under a
