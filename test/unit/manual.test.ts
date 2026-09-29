@@ -697,6 +697,12 @@ describe('what the switchboard calls things, in front of a model', () => {
  * the story. Versions 36, 39, 41 and 43 were re-hashed for that rewording (the
  * rule in each is unchanged), and version 72 says so to connected sessions.
  * test/unit/noTestStories.test.ts keeps the stories out from here on.
+ *
+ * A SECOND EXCEPTION, 30 September 2026. Version 38 said no automated check
+ * looks at a photo. That stopped being true when photos gained their
+ * machine checks, and the founder decided a served note must not state
+ * something false. Its one sentence about screening was restated to match the
+ * code and version 38 was re-hashed; every other word of it is unchanged.
  */
 const SHIPPED_NOTE_SHA256: Record<number, string> = {
   1: '1ced45c2ad7e8df82a4466e87f6b1ad58d43a7c8386608f3cbd914d90b6445b7',
@@ -736,7 +742,7 @@ const SHIPPED_NOTE_SHA256: Record<number, string> = {
   35: 'f96671bfe73c4c4f63f31a1635a96ade1c43127d0ec5dd7f8e482d1d76fe25ce',
   36: '93b62dadbd0e2bee6dae47ef13a6d1d2fcf684c9c7c10a5d94e27d998f86f980',
   37: '7ea548cfe98c458d9f2ca98b58f9a6ebd532dd5bc8e1ed2cc45cd7a92c7ec80c',
-  38: 'e30726148ece9cc697ba539646d670815aefefc436b6d6ef75f6355041e02068',
+  38: '762799a6ebfd8f60d07796107693307b613a489e5248f4ede99eaed015b51466',
   39: 'dff4ef7ad6c1e1b73dc23621ade0fcbbb57d2be4d12ce77e9ce9af675cf76f2e',
   40: '1850fe97d047c43b48ef55abb034d67fb7ac71672f7acaf6b4f620b9b6eee2c9',
   41: '7181b1458919d0b58c9fde2d5bdc30eef95bb397393363579486c12fccfafe64',
@@ -1164,10 +1170,11 @@ describe('version 38: a photo, when words are not enough', () => {
     expect(note).toMatch(/show it to your human if you can render an image/i);
   });
 
-  it('says nobody screens it, and what that asks of the agent', () => {
+  it('says a machine checks it once and no person looks, and what that asks of the agent', () => {
     const note = entry().note;
-    expect(note).toMatch(/no automated check looks at it and nobody at the switchboard looks at it/i);
-    expect(note).toMatch(/what arrives is unscreened/i);
+    expect(note).toMatch(/a machine checks each picture once before the other side is told it exists/i);
+    expect(note).toMatch(/no person at the switchboard looks at it/i);
+    expect(note).not.toMatch(/unscreened/i);
     expect(note).toMatch(/putting one in front of your human unasked is a thing to think about first/i);
   });
 
