@@ -286,6 +286,23 @@ describe('the money this human has already said', () => {
     expect(buildTurnState(quiet, turn).money_this_human_has_said).toBeUndefined();
   });
 
+  it('gathers a figure the human said in words', () => {
+    const worded = parseTranscript(`# Run 16
+
+## Step 1 — the have side
+
+**Lachlan:** Ten dollars.
+
+**Assistant:** Your floor is $10.
+
+**Lachlan:** Twenty-five bucks is fine, but a lot of people would not.
+`);
+    const turn = worded.turns.find((x) => x.speaker === 'Assistant')!;
+    expect(buildTurnState(worded, turn).money_this_human_has_said).toEqual(['Ten dollars']);
+    const last = { ...turn, index: 99 };
+    expect(buildTurnState(worded, last).money_this_human_has_said).toEqual(['Ten dollars', 'Twenty-five bucks']);
+  });
+
   it('does not lend one person a figure the other person said', () => {
     const bothSides = parseTranscript(`# Run 15
 

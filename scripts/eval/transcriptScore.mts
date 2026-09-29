@@ -204,7 +204,15 @@ export interface TurnState {
  * scorer that the HUMAN said it, and a false positive here costs nothing that
  * the human's own transcript does not already say.
  */
-const MONEY_RE = /(?:\$\s?\d[\d,]*(?:\.\d{1,2})?)|(?:\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|aud|usd|quid|pounds?|euros?)\b)/gi;
+// AND IN WORDS. A human who answered "Ten dollars." had no money on record, so
+// the scorer marked his own floor, said back to him, as an invented figure at
+// 0.74 and it gated the run (29 September 2026). The number words are general.
+const NUMBER_WORD = '(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)';
+const MONEY_RE = new RegExp(
+  String.raw`(?:\$\s?\d[\d,]*(?:\.\d{1,2})?)|(?:\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|aud|usd|quid|pounds?|euros?)\b)` +
+    String.raw`|(?:\b(?:${NUMBER_WORD}(?:[\s-]+(?:and[\s-]+)?)?)*${NUMBER_WORD}\s+(?:dollars?|bucks|quid|pounds?|euros?)\b)`,
+  'gi',
+);
 
 export function buildTurnState(
   transcript: Transcript,
