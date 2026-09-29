@@ -185,12 +185,11 @@ export interface Config {
    *  a stand-in; there is one real value and it is the default. */
   photoDnaEndpoint: string;
   /** Secrets Manager secret holding {apiKey} for TypeSafe AI's System One
-   *  model (src/shadow/jev.ts). Unset = the shadow is off, which is every
-   *  deployment except dev. IT IS NEVER SET ON PROD: infra hands it to dev
-   *  tasks only, there is no prod secret, and the client refuses to start in
-   *  prod even if the variable reaches it anyway. Nothing the switchboard
-   *  does changes when this is on — Jev is asked, the answer is written down
-   *  beside ours, and that is the whole of it (docs/jev-shadow.md). */
+   *  model (src/shadow/jev.ts). Unset = Jev is never asked. In dev it turns
+   *  on the shadow trials (answers written down, nothing changes) and, with
+   *  JEV_MATCHING on, the borderline judge. In prod the shadow trials refuse
+   *  to start whatever is set; the key is used there only by the judge, and
+   *  only once JEV_MATCHING=on and the osb/prod/jev secret exist. */
   jevSecretArn?: string;
   /** Where the shadow's questions are sent. A parameter only so the suite can
    *  point it at a stand-in; there is one real value and it is the default. */
@@ -206,6 +205,13 @@ export interface Config {
    *  the same named fields, without the copies. LEAN_SWEEP=on|off; unset is
    *  on in dev and off in prod, so the rehearsal ladder runs it first. */
   leanSweep: boolean;
+  /** JEV AS THE JUDGE ON THE BORDERLINE (founder, 29 September 2026;
+   *  src/domain/jevJudge.ts). JEV_MATCHING=on|off; unset is ON in dev and OFF
+   *  in prod. It is off in prod until a data-processing agreement with TypeSafe
+   *  and the privacy wording are in place: switching it on there is one env
+   *  var plus the osb/prod/jev secret (JEV_SECRET_ARN). Anything else set here
+   *  is a boot failure. On with no JEV_SECRET_ARN is rules only, said at boot. */
+  jevMatching: boolean;
 }
 
 export function loadConfig(): Config {
@@ -285,6 +291,7 @@ export function loadConfig(): Config {
     jevModel: process.env.JEV_MODEL || JEV_MODEL,
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
     leanSweep: leanSweepFrom(process.env.LEAN_SWEEP, envName),
+    jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
   };
 }
 
@@ -315,6 +322,20 @@ export function leanSweepFrom(raw: string | undefined, envName: string): boolean
   if (v === 'on' || v === 'true' || v === '1') return true;
   if (v === 'off' || v === 'false' || v === '0') return false;
   throw new Error('LEAN_SWEEP must be on or off');
+}
+
+/**
+ * JEV_MATCHING wins when it says on or off; otherwise dev asks Jev and prod
+ * does not. Prod stays off by default because what is sent to TypeSafe needs a
+ * data-processing agreement and privacy wording first. Anything else set there
+ * is a boot failure, the same as LEAN_SWEEP.
+ */
+export function jevMatchingFrom(raw: string | undefined, envName: string): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v) return envName === 'dev';
+  if (v === 'on') return true;
+  if (v === 'off') return false;
+  throw new Error('JEV_MATCHING must be on or off');
 }
 
 /**

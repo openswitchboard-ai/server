@@ -119,6 +119,37 @@ they would have been with the shadow off; both hooks are started rather than
 awaited, wrapped in `try`/`catch` at the call site and again inside, and the
 client never throws. A shadow that something acts on is not a shadow.
 
+## The borderline judge (29 September 2026)
+
+The founder decided on 29 September 2026 that Jev should help decide
+matches. That is a separate path from the shadow, in
+`src/domain/jevJudge.ts`, and it is the one thing that changes outcomes:
+
+- It is gated by `JEV_MATCHING=on|off` (`src/config.ts`): **on in dev and off
+  in prod by default**; any other value fails at boot. It also needs
+  `JEV_SECRET_ARN`. It has its own entry point, `askJevForMatching`; `askJev`,
+  which the two trials use, still refuses prod, so turning the judge on in
+  prod never turns the shadow on.
+- It judges only pairs that pass every hard rule and that the rules placed at
+  POSSIBLE, NEAR-MISS, or SURE on closeness of meaning. It never judges a pair
+  the rules called NOTHING, a SURE from "the want is covered", or a swap.
+- SURE where same_kind_of_thing >= 0.7 and compatible >= 0.7 and the parts
+  guard allows it (where either side is a part, the want must say what it
+  fits); POSSIBLE where same_kind_of_thing >= 0.3 and compatible > 0.3;
+  otherwise NOTHING (not a near miss).
+- One call per pair, for the best five candidates of a posting, all at once,
+  2 s timeout, no retry. On a timeout, an error, a half answer or the flag
+  off, the rules' tier stands. `matches.judged_by` (migration 060) records
+  `rules` or `jev`.
+- It sends `jevPairState` and nothing else. Since the same date that state
+  also drops attribute keys that name a price and any sum of money written
+  into a value or the kind.
+
+**Before it is switched on in prod**, the DPA below and privacy wording must
+be in place, and infra must provide the `osb/prod/jev` secret, pass its ARN as
+`JEV_SECRET_ARN` to the prod task with read access, and set
+`JEV_MATCHING=on`.
+
 ## The rehearsal transcript scorer
 
 `scripts/eval/jev-transcript-score.mts` (`npm run jev-transcript`) is a third,

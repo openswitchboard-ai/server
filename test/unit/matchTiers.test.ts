@@ -520,7 +520,7 @@ describe('the engine searches the whole board, and the hard rules still hold', (
     expect(out.searched).toBe(1);
     expect(out.matchesCreated).toHaveLength(1);
     expect(out.possibles).toHaveLength(0);
-    // certainty is the last column written.
+    // certainty is the tenth column written ($10).
     expect(board.inserted[0][9]).toBe('sure');
     expect(log).toHaveBeenCalledWith('matcher: match created', expect.objectContaining({ via_search: true, certainty: 'sure' }));
   });

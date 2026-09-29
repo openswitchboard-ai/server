@@ -656,6 +656,17 @@ const isAPart = (p: PostingWords) => [...attrsOf(p).keys()].some((k) => PART_KEY
 const saysWhatItFits = (p: PostingWords) =>
   [...attrsOf(p).entries()].some(([k, v]) => FIT_KEYS.has(k) && tokensOf(v).some(meaningful)) || kindSaysFor(p);
 
+/**
+ * THE PARTS GUARD, on its own, for the borderline judge (jevJudge.ts): the
+ * same test wantCoveredBy applies. Where either side is a part (a part, part
+ * number or fits key, or "for"/"fits" in its own words), the want must itself
+ * say which model or what it fits before a pair can be SURE. False means cap
+ * the pair at POSSIBLE.
+ */
+export function partsGuardAllowsSure(want: PostingWords, have: PostingWords): boolean {
+  return !((isAPart(want) || isAPart(have)) && !saysWhatItFits(want));
+}
+
 export interface Covered {
   covered: boolean;
   /** The first reason it is not, for a log line or a calibration table. */
@@ -760,9 +771,20 @@ export interface TierParts {
   failed?: PairEval['failed'];
   /** Which rule decided the tier, for a log line or a calibration table. */
   why: string;
+  /** The same, as a fixed word a caller can branch on (jevJudge.ts reads it). */
+  rule: TierRule;
   weights?: PairEval['weights'];
   thinness?: number;
 }
+
+export type TierRule =
+  | 'hard-rule'
+  | 'sure-close'
+  | 'sure-covered'
+  | 'possible-meaning'
+  | 'possible-words'
+  | 'near-miss'
+  | 'nothing';
 
 export interface TierResult {
   tier: Tier;
@@ -861,7 +883,7 @@ export function tierFor(f: PairFacts): TierResult {
     shelfGate: false,
   });
   const semantic = Math.max(0, Math.min(1, Number(f.semantic) || 0));
-  const parts: Omit<TierParts, 'why'> = {
+  const parts: Omit<TierParts, 'why' | 'rule'> = {
     semantic,
     words,
     shelvesCompatible,
@@ -872,18 +894,18 @@ export function tierFor(f: PairFacts): TierResult {
     ...(ev.weights ? { weights: ev.weights } : {}),
     ...(ev.thinness !== undefined ? { thinness: ev.thinness } : {}),
   };
-  const out = (tier: Tier, why: string): TierResult => ({
+  const out = (tier: Tier, why: string, rule: TierRule): TierResult => ({
     tier,
     score: ev.score,
-    parts: { ...parts, why },
+    parts: { ...parts, why, rule },
   });
-  if (!ev.hardRulesPass) return out('nothing', `hard rule: ${ev.failed}`);
+  if (!ev.hardRulesPass) return out('nothing', `hard rule: ${ev.failed}`, 'hard-rule');
 
   const bump = Math.max(Number(f.bumpWant ?? 0), Number(f.bumpHave ?? 0));
   const conflict =
     words.head === 'conflict' || words.brand === 'conflict' || words.negated || words.attributes === 'conflict';
   if (!conflict && semantic >= SURE_MIN_COSINE + bump && words.score >= SURE_MIN_WORDS) {
-    return out('sure', 'close in meaning, the words agree, nothing contradicts');
+    return out('sure', 'close in meaning, the words agree, nothing contradicts', 'sure-close');
   }
   // THE WANT IS COVERED: see the block over wantCoveredBy. One direction only,
   // and only where the caller said which side is the want.
@@ -898,17 +920,21 @@ export function tierFor(f: PairFacts): TierResult {
       : wantCoveredBy(f.b, f.a, parts.categoryCloseness)
     ).covered
   ) {
-    return out('sure', 'everything the want asks for, the have says, and nothing contradicts');
+    return out('sure', 'everything the want asks for, the have says, and nothing contradicts', 'sure-covered');
   }
   if (semantic >= POSSIBLE_MIN_COSINE + bump) {
-    return out('possible', conflict ? 'very close in meaning, the words disagree' : 'very close in meaning');
+    return out(
+      'possible',
+      conflict ? 'very close in meaning, the words disagree' : 'very close in meaning',
+      'possible-meaning',
+    );
   }
   if (words.sharedDistinctive && semantic >= POSSIBLE_WORDS_MIN_COSINE + bump) {
-    return out('possible', 'a distinctive word in common, close enough in meaning');
+    return out('possible', 'a distinctive word in common, close enough in meaning', 'possible-words');
   }
   const nearMiss =
     shelvesCompatible && ev.score >= NEAR_MISS_MIN_BLEND
-      ? out('near-miss', 'compatible shelf, over the near-miss floor')
+      ? out('near-miss', 'compatible shelf, over the near-miss floor', 'near-miss')
       : undefined;
-  return nearMiss ?? out('nothing', 'below every line');
+  return nearMiss ?? out('nothing', 'below every line', 'nothing');
 }

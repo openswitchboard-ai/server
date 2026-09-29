@@ -44,8 +44,10 @@ import {
   POSSIBLE_PER_POSTING_PER_DAY,
   tierFor,
   type Tier,
+  type TierResult,
 } from './matchTiers.js';
-import { jevEnabled } from '../shadow/jev.js';
+import { jevEnabled, jevMatchingEnabled } from '../shadow/jev.js';
+import { jevJudgesTier, judgeWithJev, type Judge, type JudgeRequest } from './jevJudge.js';
 import {
   JEV_PAIR_MIN_SCORE,
   shadowPairTrials,
@@ -646,6 +648,19 @@ export async function runMatchingForCard(
   // order the engine ranked them rather than the order they happened to
   // arrive. Empty and untouched on any deployment where the shadow is off.
   const shadowPairs: JevPairCandidate[] = [];
+  // FIRST PASS: every hard rule and the rules' tier, for every candidate.
+  // Nothing is written until the borderline judge (domain/jevJudge.ts) has
+  // had its say, so its few calls for this posting can be made together.
+  const judgedPairs: {
+    cand: CandidateRow;
+    viaSearch: boolean;
+    swap: boolean;
+    want: typeof source | CandidateRow;
+    have: typeof source | CandidateRow;
+    wantBand?: PriceBand;
+    haveBand?: PriceBand;
+    judged: TierResult;
+  }[] = [];
 
   for (const { cand, viaSearch } of candidates) {
     outcome.evaluated++;
@@ -752,7 +767,51 @@ export async function runMatchingForCard(
       ...(swap ? {} : { wantIs: sourceIsWant ? ('a' as const) : ('b' as const) }),
     });
     if (!judged.parts.hardRulesPass) continue;
-    let tier: Tier = judged.tier;
+    judgedPairs.push({ cand, viaSearch, swap, want, have, wantBand, haveBand, judged });
+  }
+
+  // THE BORDERLINE JUDGE (domain/jevJudge.ts). Where JEV_MATCHING is on, the
+  // pairs the rules placed at POSSIBLE, NEAR-MISS or SURE on meaning alone are
+  // put to Jev together — the best JEV_JUDGE_TOP_N by fit, one call each, at
+  // most one timeout for the lot — and its answer is the tier. A pair it does
+  // not answer in time keeps the rules' tier. Never a swap.
+  const sides = (c: typeof source | CandidateRow) => ({
+    id: c.id,
+    category: c.category,
+    kind: (c as any).kind ?? null,
+    also_called: (c as any).also_called,
+    not_these: (c as any).not_these,
+    attributes: c.attributes,
+  });
+  const judgeRequests: JudgeRequest[] = jevMatchingEnabled()
+    ? judgedPairs
+        .filter((p) => !p.swap && jevJudgesTier(p.judged))
+        .map((p) => ({
+          key: p.cand.id,
+          want: sides(p.want),
+          have: sides(p.have),
+          score: p.judged.score,
+        }))
+    : [];
+  const verdicts = await judgeWithJev(judgeRequests, log);
+  const putToJudge = new Set(judgeRequests.map((r) => r.key));
+
+  // SECOND PASS: the tier each pair ends with, the possible cap, and the writes.
+  for (const { cand, viaSearch, swap, want, have, wantBand, haveBand, judged } of judgedPairs) {
+    const verdict = verdicts.get(cand.id);
+    let tier: Tier = verdict ? verdict.tier : judged.tier;
+    const judgedBy: Judge = verdict ? 'jev' : 'rules';
+    if (verdict) {
+      log('matcher: jev judged a pair', {
+        card_want: want.id,
+        card_have: have.id,
+        rules_tier: judged.tier,
+        jev_tier: verdict.tier,
+        same_kind: Number(verdict.nouls.same_kind.toFixed(3)),
+        compatible: Number(verdict.nouls.compatible.toFixed(3)),
+        latency_ms: verdict.latencyMs,
+      });
+    }
 
     // Noted, never acted on. The pair is recorded exactly as the engine judged
     // it, and the judging above is already complete: nothing below this line
@@ -760,7 +819,8 @@ export async function runMatchingForCard(
     // have been with the shadow off. What travels is the two postings' plain
     // words, categories and attributes — never the bands that were just
     // decrypted, never the geography, never an account id.
-    if (jevEnabled() && judged.score >= JEV_PAIR_MIN_SCORE) {
+    // A pair the borderline judge may just have asked about is not asked twice.
+    if (jevEnabled() && !putToJudge.has(cand.id) && judged.score >= JEV_PAIR_MIN_SCORE) {
       shadowPairs.push({
         want: {
           id: want.id,
@@ -775,7 +835,12 @@ export async function runMatchingForCard(
           attributes: have.attributes,
         },
         score: judged.score,
-        decision: tier === 'sure' || tier === 'possible' ? 'match' : tier === 'near-miss' ? 'near-miss' : 'discard',
+        decision:
+          judged.tier === 'sure' || judged.tier === 'possible'
+            ? 'match'
+            : judged.tier === 'near-miss'
+              ? 'near-miss'
+              : 'discard',
         weights: judged.parts.weights!,
       });
     }
@@ -811,8 +876,8 @@ export async function runMatchingForCard(
         // keen and the details open to both (see createMatch in matches.ts).
         `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
                               kind, limits_overlap, clears_ask_25,
-                              stage, interest_want, interest_have, certainty, swap)
-         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10,$11)
+                              stage, interest_want, interest_have, certainty, swap, judged_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10,$11,$12)
          ON CONFLICT (card_want, card_have) DO NOTHING
          RETURNING id`,
         [
@@ -831,6 +896,7 @@ export async function runMatchingForCard(
           swap ? swapKind((want as any).kind, (have as any).kind) : ((want as any).kind ?? null),
           tier,
           swap,
+          judgedBy,
         ],
       );
       if (ins.rows[0]) {
@@ -849,6 +915,7 @@ export async function runMatchingForCard(
           // Which rule decided the tier, and whether search found it. The
           // words themselves stay out of the log.
           why: judged.parts.why,
+          judged_by: judgedBy,
           via_search: viaSearch,
           swap,
           shelves_compatible: judged.parts.shelvesCompatible,
