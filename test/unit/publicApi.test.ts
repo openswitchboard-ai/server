@@ -158,6 +158,7 @@ describe('the 2026-09-28 review', () => {
     });
     expect(site.headers['access-control-allow-origin']).toBe('https://openswitchboard.ai');
     expect(allowedOrigins({ envName: 'dev' })).toContain('http://localhost:4321');
+    expect(allowedOrigins({ envName: 'prod' })).toContain('https://www.openswitchboard.ai');
   });
 
   it('a cold cache is filled once however many requests arrive together', async () => {
