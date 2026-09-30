@@ -14,11 +14,8 @@
  *
  * THE TWO HALVES.
  *
- *   HASH    happens here, on this task, from the bytes. The SDK is a small
- *           web-assembly module that turns an image into an edge hash — up to
- *           two of them, because it also hashes the picture with its border
- *           taken off, and a cropped or letterboxed copy of a known image is
- *           exactly the thing a single hash would miss. No image and no hash
+ *   HASH    happens here, on this task, from the bytes. The SDK, a licensed
+ *           module, turns an image into one or two hashes. No image and no hash
  *           leaves this function except to the service below.
  *   MATCH   is Microsoft's own, over HTTPS. It is told hashes and nothing
  *           else: no image, no key, no account, no conversation.

@@ -25,8 +25,8 @@ touches Stripe. Payments come later.
 
 ```
 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
-NAGATHA_HOST=ubuntu@16.176.240.234 NAGATHA_KEY=~/.ssh/openclaw-test.pem \
-DUET_B_HOST=ubuntu@16.176.240.234  DUET_B_KEY=~/.ssh/openclaw-test.pem \
+NAGATHA_HOST=ubuntu@<box> NAGATHA_KEY=<key.pem> \
+DUET_B_HOST=ubuntu@<box>  DUET_B_KEY=<key.pem> \
 DUET_B_PROFILE=bilby \
 npm run rehearsal -- --stage 6 --until-green 5
 ```

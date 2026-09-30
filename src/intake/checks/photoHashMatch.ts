@@ -126,9 +126,7 @@ export const photoHashMatch: Check = {
     let outcome: Awaited<ReturnType<typeof matchHashes>>;
     try {
       const bytes = await fetchBytes(bucket, key);
-      // One or two, because the picture is hashed with its border taken off as
-      // well: a cropped or letterboxed copy of a known image is exactly what a
-      // single hash would miss.
+      // The SDK may return one hash or two; both are matched.
       outcome = await matchHashes(await edgeHashes(bytes, cfg), cfg);
     } catch (e: any) {
       // NEVER A PASS. No detail from the error beyond its name: the messages
