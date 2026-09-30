@@ -32,6 +32,30 @@ vi.mock('../../src/crypto.js', async (orig) => ({
   }),
 }));
 
+const TEST_PIN = '246810';
+const notices: string[] = [];
+vi.mock('../../src/counter/pin.js', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  verifyPinAttempt: vi.fn(async (_a: string, pin: string) => ({ ok: pin === TEST_PIN })),
+  pinHeldUntil: vi.fn(async () => undefined),
+  passkeyHeldUntil: vi.fn(async () => undefined),
+}));
+vi.mock('../../src/abuseLimit.js', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  pinAttemptLimiter: { limited: async () => false },
+}));
+vi.mock('../../src/domain/counterOps.js', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  accountEmail: vi.fn(async () => 'someone@example.test'),
+}));
+vi.mock('../../src/counter/email.js', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  sendSecurityNoticeEmail: vi.fn(async (_c: unknown, _to: string, _a: string, event: string) => {
+    notices.push(event);
+    return 'sent';
+  }),
+}));
+
 import * as db from '../../src/db.js';
 import { buildApp } from '../../src/app.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
@@ -200,6 +224,7 @@ const cfg = {
   region: 'us-east-1',
   quotas: { maxOpenCards: 20, maxPublishesPerDay: 20, maxOffersPerHour: 6 },
   docsBase: 'https://openswitchboard.ai/docs',
+  sealedContact: true,
 } as unknown as Config;
 
 const SID = 'osb_cs_testsessionvaluetestsessionvalue';
@@ -213,6 +238,7 @@ interface World {
   statements: { sql: string; params: any[] }[];
   elevated: boolean;
   matchState: string;
+  via: string;
 }
 let w: World;
 
@@ -227,13 +253,23 @@ function fakePool() {
               id: 'sess-1',
               account_id: BEPPE,
               pin_ok_until: w.elevated ? new Date(Date.now() + 60_000) : null,
-              elevated_via: 'pin',
+              elevated_via: w.via,
               oauth_ctx: null,
             },
           ])
         : rows([]);
     }
     if (/SELECT suspended_at FROM accounts/.test(sql)) return rows([]);
+    if (/SELECT \* FROM accounts WHERE id = \$1/.test(sql)) return rows([{ id: params[0], pin_hash: 'x' }]);
+    if (/FROM webauthn_credentials/.test(sql)) return rows([]);
+    if (/UPDATE counter_sessions SET pin_ok_until/.test(sql)) return rows([]);
+    if (/UPDATE contact_keys SET last_seen_at = now\(\) WHERE account_id = \$1 AND key_id = \$2 RETURNING/.test(sql)) {
+      return rows(w.keys.filter((k) => k.account_id === params[0] && k.key_id === params[1]));
+    }
+    if (/INSERT INTO contact_keys/.test(sql)) {
+      w.keys.push({ account_id: params[0], key_id: params[1], public_key: params[2] });
+      return rows([]);
+    }
     if (/SELECT \* FROM approval_links WHERE id = \$1$/.test(sql.trim())) {
       return rows(w.link && w.link.id === params[0] ? [w.link] : []);
     }
@@ -327,6 +363,7 @@ beforeAll(async () => {
 let logged: string[];
 beforeEach(() => {
   consentEvents.length = 0;
+  notices.length = 0;
   const id = randomUUID();
   const row = {
     id,
@@ -350,6 +387,7 @@ beforeEach(() => {
     statements: [],
     elevated: true,
     matchState: 'open',
+    via: 'pin',
   };
   w.link.token_hash = sha256hex(signLink(row));
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
@@ -419,7 +457,7 @@ describe('the send press', () => {
       { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) },
       MATCH,
     );
-    const r = await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    const r = await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     expect(r.statusCode).toBe(200);
     expect(r.json().title).toBe('Sent');
     expect(w.sealed).toHaveLength(1);
@@ -433,15 +471,22 @@ describe('the send press', () => {
     expect(JSON.stringify(consentEvents)).not.toMatch(/Example|0412/);
     assertNothingReadable();
     // A second press finds the link spent.
-    const again = await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    const again = await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     expect(again.statusCode).toBe(410);
   });
 
-  it('asks for the credential outside the window, before anything is stored', async () => {
-    w.elevated = false;
+  it('asks for the credential at every press, window or no, before anything is stored', async () => {
+    // Elevated, and still asked: a fresh ceremony, the same as money.
+    w.elevated = true;
     const env = await S.seal({ phone: MARK_PHONE }, { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) }, MATCH);
-    const r = await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
-    expect(r.statusCode).toBe(401);
+    for (const pin of [undefined, '111111']) {
+      const r = await post(`/a/${encodeURIComponent(token())}/contact`, {
+        decision: 'yes',
+        ...(pin ? { pin } : {}),
+        envelopes: [env],
+      });
+      expect(r.statusCode).toBe(401);
+    }
     expect(w.sealed).toHaveLength(0);
     expect(w.link.used_at).toBeNull();
   });
@@ -450,7 +495,7 @@ describe('the send press', () => {
 describe('opening deletes', () => {
   it('hands over the copy once, deletes every copy, and the page opens it', async () => {
     const env = await S.seal({ phone: MARK_PHONE }, { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) }, MATCH);
-    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     const id = w.sealed[0].id;
     const first = await openSealed(ANA, id, bob.key_id);
     expect(first.ok).toBe(true);
@@ -468,7 +513,7 @@ describe('opening deletes', () => {
 
   it('opens nothing once the introduction is closed, as a report closes it', async () => {
     const env = await S.seal({ phone: MARK_PHONE }, { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) }, MATCH);
-    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     w.matchState = 'closed';
     expect(await openSealed(ANA, w.sealed[0].id, bob.key_id)).toEqual({ ok: false, reason: 'not_found' });
     expect(w.copies).toHaveLength(1);
@@ -476,7 +521,7 @@ describe('opening deletes', () => {
 
   it('deletes nothing when this browser holds none of the keys', async () => {
     const env = await S.seal({ phone: MARK_PHONE }, { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) }, MATCH);
-    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     const id = w.sealed[0].id;
     expect(await openSealed(ANA, id, 'e'.repeat(32))).toEqual({ ok: false, reason: 'no_key' });
     expect(w.copies).toHaveLength(1);
@@ -484,12 +529,66 @@ describe('opening deletes', () => {
 
   it('sweeps what nobody opened once its seven days are up', async () => {
     const env = await S.seal({ phone: MARK_PHONE }, { key_id: bob.key_id, public_key: S.b64u(bob.publicRaw) }, MATCH);
-    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', envelopes: [env] });
+    await post(`/a/${encodeURIComponent(token())}/contact`, { decision: 'yes', pin: TEST_PIN, envelopes: [env] });
     expect(await sweepSealedContacts()).toEqual({ copies: 0, sends: 0 });
     w.sealed[0].expires_at = new Date(Date.now() - 1000);
     expect((await sweepSealedContacts()).copies).toBe(1);
     expect(w.copies).toHaveLength(0);
     expect(await openSealed(ANA, w.sealed[0].id, bob.key_id)).toEqual({ ok: false, reason: 'expired' });
+  });
+});
+
+describe('setting a browser up to receive', () => {
+  it('touches a key the account already has, with no ceremony', async () => {
+    w.keys.push({ account_id: BEPPE, key_id: bob.key_id, public_key: Buffer.from(bob.publicRaw) });
+    w.elevated = false;
+    const r = await post('/contact-keys', { public_key: S.b64u(bob.publicRaw) });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ key_id: bob.key_id, added: false });
+    expect(notices).toEqual([]);
+  });
+
+  it('adds a new one only with a strong ceremony, spends no PIN attempt on a quiet check, and says so by email', async () => {
+    const k = await S.makeKeyPair();
+    w.elevated = false;
+    let tries = 0;
+    const { verifyPinAttempt } = await import('../../src/counter/pin.js');
+    (verifyPinAttempt as any).mockImplementation(async (_a: string, pin: string) => {
+      tries++;
+      return { ok: pin === TEST_PIN };
+    });
+    const quiet = await post('/contact-keys', { public_key: S.b64u(k.publicRaw) });
+    expect(quiet.statusCode).toBe(401);
+    expect(quiet.json().error).toBe('ceremony_required');
+    expect(tries).toBe(0);
+    // An emailed code's window is not strong enough.
+    w.elevated = true;
+    w.via = 'code';
+    const codeWindow = await post('/contact-keys', { public_key: S.b64u(k.publicRaw) });
+    expect(codeWindow.statusCode).toBe(401);
+    expect(w.keys.some((x) => x.key_id === k.key_id)).toBe(false);
+    w.via = 'pin';
+    w.elevated = false;
+    const withPin = await post('/contact-keys', { public_key: S.b64u(k.publicRaw), pin: TEST_PIN });
+    expect(withPin.statusCode).toBe(200);
+    expect(withPin.json().added).toBe(true);
+    expect(w.keys.some((x) => x.account_id === BEPPE && x.key_id === k.key_id)).toBe(true);
+    expect(notices).toContain('contact-browser-added');
+  });
+});
+
+describe('where it is switched off', () => {
+  it('has no routes and changes nothing', async () => {
+    const off = buildApp({ ...cfg, sealedContact: false } as Config);
+    await off.ready();
+    const r = await off.inject({
+      method: 'POST',
+      url: '/contact-keys',
+      headers: { host: 'my.test', cookie: `__Host-osb_counter=${SID}`, 'content-type': 'application/json', origin: 'https://my.test' },
+      payload: '{}',
+    });
+    expect(r.statusCode).toBe(404);
+    await off.close();
   });
 });
 

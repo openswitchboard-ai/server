@@ -211,6 +211,13 @@ export interface Config {
    *  var plus the osb/prod/jev secret (JEV_SECRET_ARN). Anything else set here
    *  is a boot failure. On with no JEV_SECRET_ARN is rules only, said at boot. */
   jevMatching: boolean;
+  /** SEALED CONTACT DETAILS (1 October 2026; domain/sealedContact.ts): the
+   *  send-contact page, the receiving keys, and the refusal of an address or a
+   *  phone number in the words. SEALED_CONTACT=on|off; unset is ON in dev and
+   *  OFF in prod, so prod behaves exactly as before until Lachlan switches it
+   *  on after a green rehearsal streak that includes the contact step. Absent
+   *  on a hand-built config is off. */
+  sealedContact?: boolean;
 }
 
 export function loadConfig(): Config {
@@ -292,6 +299,7 @@ export function loadConfig(): Config {
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
     leanSweep: leanSweepFrom(process.env.LEAN_SWEEP, envName),
     jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
+    sealedContact: sealedContactFrom(process.env.SEALED_CONTACT, envName),
   };
 }
 
@@ -322,6 +330,16 @@ export function leanSweepFrom(raw: string | undefined, envName: string): boolean
   if (v === 'on' || v === 'true' || v === '1') return true;
   if (v === 'off' || v === 'false' || v === '0') return false;
   throw new Error('LEAN_SWEEP must be on or off');
+}
+
+/** SEALED_CONTACT wins when it says on or off; otherwise dev is on and prod
+ *  is off. Anything else is a boot failure, the same as LEAN_SWEEP. */
+export function sealedContactFrom(raw: string | undefined, envName: string): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v) return envName === 'dev';
+  if (v === 'on') return true;
+  if (v === 'off') return false;
+  throw new Error('SEALED_CONTACT must be on or off');
 }
 
 /**

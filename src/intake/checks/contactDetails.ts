@@ -25,7 +25,10 @@ export const contactDetails: Check = {
   // may well quote the address they were sent, and a report is never refused
   // for its words (intake/pipe.ts, REFUSAL_FREE_DOORS).
   doors: ['message', 'offer_words'],
-  async run(item): Promise<CheckResult> {
+  async run(item, cfg): Promise<CheckResult> {
+    // Off where the send-contact page is off (config.sealedContact): with no
+    // page to point at, the words keep the older rule.
+    if (!cfg?.sealedContact) return passed('contactDetails');
     const kind = item.text ? contactDetailRule(item.text) : undefined;
     if (!kind) return passed('contactDetails');
     return {

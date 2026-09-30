@@ -383,6 +383,19 @@ export const SENTENCES = {
     thing: 'anything that comes back',
   }),
 
+  /**
+   * The other side wants to send their contact details and this human has no
+   * browser set up to receive them. The page sets one up with their PIN or
+   * passkey; the other side is told when it is ready.
+   */
+  contact_setup: waitingOn({
+    about: 'The other person wants to send their contact details, and this human has no browser set up to receive them.',
+    budget: 600,
+    head: (c: Ctx) =>
+      `${c.who ?? 'The other person'} wants to send your human their contact details, and no browser of theirs is set up to receive them yet. Give them the page as it is: they open it once and confirm with their PIN or passkey, and the other side is told it is ready.`,
+    thing: 'the details once they are sent',
+  }),
+
   /** The other side has sent this human their contact details, sealed. */
   contact_waiting: waitingOn({
     about: 'The other person has sent this human their contact details, sealed, and a page waits for them.',

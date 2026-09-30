@@ -202,7 +202,7 @@ const validation = (message: string) =>
  * or refuses. Empty is fine and common: most photos are the whole of what
  * somebody wanted to say.
  */
-export function checkCaption(raw: unknown): string | undefined {
+export function checkCaption(raw: unknown, sealedContact = false): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   const text = String(raw).trim();
   if (!text) return undefined;
@@ -216,7 +216,7 @@ export function checkCaption(raw: unknown): string | undefined {
   // AN ADDRESS OR A PHONE NUMBER NEVER TRAVELS IN THE WORDS either, and a
   // caption is words (domain/contactInWords.ts). The person typed this on
   // their own page, so the page says it to them in its own line.
-  if (carriesContactDetails(text)) {
+  if (sealedContact && carriesContactDetails(text)) {
     throw Object.assign(validation(CONTACT_IN_CAPTION_LINE), { contactInWords: true });
   }
   return text;

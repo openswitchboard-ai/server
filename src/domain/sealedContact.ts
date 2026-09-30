@@ -105,12 +105,35 @@ export async function checkPublicKey(b64u: unknown): Promise<Buffer> {
   return raw;
 }
 
-/** Register (or touch) one browser's public key for this account. */
-export async function registerContactKey(
+/**
+ * A browser's key, checked, and whether this account already has it. A key
+ * already registered is only touched; a NEW one is added by addContactKey,
+ * and only after the route has run a strong ceremony (a PIN or a passkey,
+ * never an emailed code's window): a browser that can open somebody's
+ * contact details is a credential of sorts, and it is fitted like one.
+ */
+export async function touchContactKey(
   accountId: string,
   publicKey: unknown,
-): Promise<{ key_id: string }> {
+): Promise<{ key_id: string; known: boolean; raw: Buffer }> {
   const raw = await checkPublicKey(publicKey);
+  const keyId = keyIdOf(raw);
+  const r = await getPool().query(
+    'UPDATE contact_keys SET last_seen_at = now() WHERE account_id = $1 AND key_id = $2 RETURNING key_id',
+    [accountId, keyId],
+  );
+  return { key_id: keyId, known: !!r.rowCount, raw };
+}
+
+/**
+ * Add a new browser key. At the cap the least recently seen browser is
+ * dropped to make room; the caller has already run a strong ceremony and
+ * sends a notice either way, saying so.
+ */
+export async function addContactKey(
+  accountId: string,
+  raw: Buffer,
+): Promise<{ key_id: string; evicted: number }> {
   const keyId = keyIdOf(raw);
   const pool = getPool();
   await pool.query(
@@ -119,14 +142,39 @@ export async function registerContactKey(
      ON CONFLICT (account_id, key_id) DO UPDATE SET last_seen_at = now()`,
     [accountId, keyId, raw],
   );
-  // The cap: the least recently seen browsers past it are forgotten.
-  await pool.query(
+  const gone = await pool.query(
     `DELETE FROM contact_keys WHERE account_id = $1 AND key_id IN (
        SELECT key_id FROM contact_keys WHERE account_id = $1
         ORDER BY last_seen_at DESC OFFSET $2)`,
     [accountId, MAX_KEYS_PER_ACCOUNT],
   );
-  return { key_id: keyId };
+  return { key_id: keyId, evicted: gone.rowCount ?? 0 };
+}
+
+/** This account's receiving browsers, for its Security page. */
+export async function listContactKeys(
+  accountId: string,
+): Promise<{ key_id: string; created_at: Date; last_seen_at: Date }[]> {
+  const r = await getPool().query(
+    `SELECT key_id, created_at, last_seen_at FROM contact_keys WHERE account_id = $1
+      ORDER BY created_at ASC`,
+    [accountId],
+  );
+  return r.rows;
+}
+
+/** Forget one receiving browser. Copies made for it can never open now, so they go too. */
+export async function removeContactKey(accountId: string, keyId: string): Promise<boolean> {
+  const r = await getPool().query('DELETE FROM contact_keys WHERE account_id = $1 AND key_id = $2', [
+    accountId,
+    keyId,
+  ]);
+  await getPool().query(
+    `DELETE FROM sealed_contact_copies WHERE key_id = $2 AND sealed_id IN (
+       SELECT id FROM sealed_contacts WHERE recipient_account = $1)`,
+    [accountId, keyId],
+  );
+  return !!r.rowCount;
 }
 
 export interface PublicContactKey {
@@ -156,7 +204,7 @@ export interface Envelope {
 }
 
 /** The only fields a send may carry. Anything else is refused unread. */
-const SEND_FIELDS = new Set(['decision', 'pin', 'envelopes']);
+const SEND_FIELDS = new Set(['decision', 'pin', 'passkey', 'envelopes']);
 const ENVELOPE_FIELDS = new Set(['key_id', 'epk', 'iv', 'ct']);
 
 /**
@@ -181,7 +229,7 @@ export function looksLikeText(bytes: Uint8Array): boolean {
 export function assertSealedBody(
   body: unknown,
   recipientKeyIds: readonly string[],
-): { envelopes: Envelope[]; pin: string } {
+): { envelopes: Envelope[]; pin: string; passkey: string } {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw new SealedRefusal('bad_request', 'a send is a JSON object');
   }
@@ -194,6 +242,26 @@ export function assertSealedBody(
   if (b.decision !== 'yes') throw new SealedRefusal('bad_request', 'a send says yes');
   const pin = b.pin === undefined ? '' : typeof b.pin === 'string' ? b.pin : '';
   if (pin && !/^[0-9]{6,12}$/.test(pin)) throw new SealedRefusal('bad_request', 'a PIN is digits');
+  // A passkey assertion, made for this press. Its shape is WebAuthn's, and it
+  // is checked by the ceremony; here it only has to be a JSON object that says
+  // nothing else.
+  let passkey = '';
+  if (b.passkey !== undefined) {
+    if (typeof b.passkey !== 'string' || b.passkey.length > 8000) {
+      throw new SealedRefusal('bad_request', 'a passkey is an assertion');
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(b.passkey);
+    } catch {
+      throw new SealedRefusal('bad_request', 'a passkey is an assertion');
+    }
+    const allowed = new Set(['id', 'rawId', 'type', 'response', 'clientExtensionResults']);
+    if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).some((k) => !allowed.has(k))) {
+      throw new SealedRefusal('plaintext_refused', 'only scrambled copies are accepted here');
+    }
+    passkey = b.passkey;
+  }
   const list = b.envelopes;
   if (!Array.isArray(list) || list.length < 1 || list.length > MAX_COPIES) {
     throw new SealedRefusal('bad_envelope', 'a send carries one scrambled copy per device');
@@ -229,7 +297,7 @@ export function assertSealedBody(
     }
     envelopes.push({ key_id: keyId, epk, iv, ct });
   }
-  return { envelopes, pin };
+  return { envelopes, pin, passkey };
 }
 
 /**
@@ -257,6 +325,10 @@ export async function storeSealed(input: {
         older.rows.map((r: any) => r.id),
       ]);
     }
+    await client.query('DELETE FROM contact_setup_asks WHERE match_id = $1 AND sender_account = $2', [
+      input.matchId,
+      input.senderAccount,
+    ]);
     const r = await client.query(
       `INSERT INTO sealed_contacts (match_id, sender_account, recipient_account, expires_at)
        VALUES ($1, $2, $3, now() + make_interval(days => ${SEALED_TTL_DAYS}))
@@ -288,6 +360,7 @@ export interface SealedRow {
   created_at: Date;
   expires_at: Date;
   opened_at: Date | null;
+  opened_key_id?: string | null;
   missed_at: Date | null;
   replaced_at: Date | null;
 }
@@ -334,7 +407,13 @@ export async function openSealed(
   id: string,
   keyId: string,
 ): Promise<
-  | { ok: true; envelope: { key_id: string; epk: string; iv: string; ct: string }; match_id: string }
+  | {
+      ok: true;
+      envelope: { key_id: string; epk: string; iv: string; ct: string };
+      match_id: string;
+      /** How many other browsers this account has: a notice goes where there are any. */
+      otherBrowsers: number;
+    }
   | { ok: false; reason: 'not_found' | 'opened' | 'expired' | 'no_key' }
 > {
   if (!/^[0-9a-f]{32}$/.test(keyId)) return { ok: false, reason: 'no_key' };
@@ -373,10 +452,18 @@ export async function openSealed(
       return { ok: false, reason: 'no_key' };
     }
     await client.query('DELETE FROM sealed_contact_copies WHERE sealed_id = $1', [id]);
-    await client.query('UPDATE sealed_contacts SET opened_at = now() WHERE id = $1', [id]);
+    await client.query('UPDATE sealed_contacts SET opened_at = now(), opened_key_id = $2 WHERE id = $1', [
+      id,
+      keyId,
+    ]);
+    const others = await client.query(
+      'SELECT count(*)::int AS n FROM contact_keys WHERE account_id = $1 AND key_id <> $2',
+      [recipientAccount, keyId],
+    );
     await client.query('COMMIT');
     return {
       ok: true,
+      otherBrowsers: Number(others.rows[0]?.n ?? 0),
       match_id: String(row.match_id),
       envelope: {
         key_id: String(copy.key_id),
@@ -402,7 +489,26 @@ export async function markMissed(recipientAccount: string, id: string): Promise<
   );
 }
 
+/**
+ * A send waiting on the other side's browser. Recorded when the sender's
+ * agent asks for the page and the other person has no browser set up yet, so
+ * neither side meets a dead end: the other person's assistant is handed a
+ * setup page, and the sender's is told when it is ready.
+ */
+export async function recordSetupAsk(matchId: string, sender: string, recipient: string): Promise<void> {
+  await getPool().query(
+    `INSERT INTO contact_setup_asks (match_id, sender_account, recipient_account)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (match_id, sender_account) DO UPDATE SET created_at = now()`,
+    [matchId, sender, recipient],
+  );
+}
+
 export interface SweepContact {
+  /** For the recipient: somebody wants to send, and no browser is set up yet. */
+  setup?: { sender_account: string };
+  /** For the sender: the other side's browser is set up now. */
+  ready?: { recipient_account: string };
   /** For the recipient: a page is waiting. */
   waiting?: { id: string; sender_account: string; expires_at: Date };
   /** For the sender: the other person could not open the last one. */
@@ -431,6 +537,23 @@ export async function contactsForSweep(
       ORDER BY s.created_at DESC`,
     [accountId, matchIds],
   );
+  const asks = await getPool().query(
+    `SELECT a.match_id, a.sender_account, a.recipient_account,
+            EXISTS (SELECT 1 FROM contact_keys k WHERE k.account_id = a.recipient_account) AS ready
+       FROM contact_setup_asks a
+       JOIN matches m ON m.id = a.match_id AND m.state = 'open'
+      WHERE a.match_id = ANY($2::uuid[])
+        AND (a.recipient_account = $1 OR a.sender_account = $1)
+        AND a.created_at > now() - make_interval(days => ${SEALED_TTL_DAYS})`,
+    [accountId, matchIds],
+  );
+  for (const a of asks.rows as any[]) {
+    const m = String(a.match_id);
+    const entry = out.get(m) ?? {};
+    if (a.recipient_account === accountId && !a.ready) entry.setup = { sender_account: String(a.sender_account) };
+    if (a.sender_account === accountId && a.ready) entry.ready = { recipient_account: String(a.recipient_account) };
+    if (entry.setup || entry.ready) out.set(m, entry);
+  }
   for (const row of r.rows as any[]) {
     const m = String(row.match_id);
     const entry = out.get(m) ?? {};
@@ -482,12 +605,16 @@ export async function sweepSealedContacts(): Promise<{ copies: number; sends: nu
     `DELETE FROM sealed_contacts
       WHERE expires_at <= now() - make_interval(days => ${SEALED_ROW_GRACE_DAYS})`,
   );
+  await pool.query(
+    `DELETE FROM contact_setup_asks WHERE created_at <= now() - make_interval(days => ${SEALED_TTL_DAYS})`,
+  );
   return { copies: c.rowCount ?? 0, sends: s.rowCount ?? 0 };
 }
 
 /** Everything of one account's, on deletion: its keys and every send either way. */
 export const ACCOUNT_DELETION_SQL = [
   'DELETE FROM contact_keys WHERE account_id = $1',
+  'DELETE FROM contact_setup_asks WHERE sender_account = $1 OR recipient_account = $1',
   `DELETE FROM sealed_contact_copies WHERE sealed_id IN (
      SELECT id FROM sealed_contacts WHERE sender_account = $1 OR recipient_account = $1)`,
   `UPDATE sealed_contacts SET expires_at = now()
@@ -498,6 +625,18 @@ export const ACCOUNT_DELETION_SQL = [
 export function contactWaitingSay(who: string, link: string): string {
   const name = who ? `${who[0].toUpperCase()}${who.slice(1)}` : 'The other person';
   return `${name} has sent you their contact details. Here is your page. It shows them once, so have somewhere to write them down: ${link}`;
+}
+
+/** The ready sentence for a human whose browser is not set up to receive yet. */
+export function contactSetupSay(who: string, link: string): string {
+  const name = who ? `${who[0].toUpperCase()}${who.slice(1)}` : 'The other person';
+  return `${name}'s contact details are ready to come to you. Open this page once to set up this browser to receive them: ${link}`;
+}
+
+/** What the sender's agent is told once the other side's browser is set up. */
+export function contactReadyNote(who: string): string {
+  const name = who ? `${who[0].toUpperCase()}${who.slice(1)}` : 'The other person';
+  return `${name}'s browser is set up to receive contact details now. Fetch respond(request_send_contact) and hand your human the page.`;
 }
 
 /** What the sender's agent is told when the other side could not open them. */
@@ -546,6 +685,31 @@ export async function attachContactsToSweep(
       };
       const behind = typeof m.note?.text === 'string' ? ` ${m.note.text}` : '';
       m.note = { text: `${said}${behind}`, provenance: 'switchboard-system' };
+    }
+    if (c.setup) {
+      const who =
+        (await disclosedFirstName(accountId, c.setup.sender_account, { match_id: m.intro_id }, 'contact-sweep')) ?? '';
+      const link = `${cfg.counterOrigin}/contact-keys/setup`;
+      const said = contactSetupSay(who, link);
+      out.setup = true;
+      out.link = link;
+      out.say = said;
+      out.note = {
+        text: sayFor('contact_setup', facts.arrangement, {
+          hearsVia: facts.hearsVia,
+          ...(who ? { who: `${who[0].toUpperCase()}${who.slice(1)}` } : {}),
+        }),
+        provenance: 'switchboard-system',
+      };
+      const behind = typeof m.note?.text === 'string' ? ` ${m.note.text}` : '';
+      m.note = { text: `${said}${behind}`, provenance: 'switchboard-system' };
+    }
+    if (c.ready) {
+      const who =
+        (await disclosedFirstName(accountId, c.ready.recipient_account, { match_id: m.intro_id }, 'contact-sweep')) ??
+        '';
+      out.ready = true;
+      out.ready_note = { text: contactReadyNote(who), provenance: 'switchboard-system' };
     }
     if (c.missed) {
       const who =

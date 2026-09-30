@@ -536,6 +536,12 @@ describe('the wordings themselves, one sentence at a time', () => {
       /never say you will come back on your own/,
     ],
     [
+      'contact_setup',
+      /bring them the details once they are sent/,
+      /Confirm with your human how often/,
+      /never say you will come back on your own/,
+    ],
+    [
       'contact_waiting',
       /bring them anything else that comes/,
       /Confirm with your human how often/,

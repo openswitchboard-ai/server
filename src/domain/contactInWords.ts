@@ -40,23 +40,29 @@ const AMBIGUOUS_STREET_TYPES = [
 ] as const;
 
 const WORD = "[A-Za-z][A-Za-z'’-]*";
+/**
+ * Words that, straight after a number, make it a time, a distance or a count
+ * rather than a house number: "meet at 10 on Smith St", "2 pm High St",
+ * "5 minutes from King St", "3 blocks off George St".
+ */
+const NOT_A_HOUSE = String.raw`(?!(?:on|in|at|near|by|off|along|down|up|past|from|to|around|outside|opposite|behind|across|am|pm|o'?clock|mins?|minutes?|hrs?|hours?|km|kms|m|metres?|meters?|blocks?|doors?|houses?|streets?|stops?|lots?|times?|x|of|or|and)\b)`;
 /** A street number: 12, 12a, 3/45, 3-5, unit 3/45. */
 const STREET_NUMBER = String.raw`(?:(?:unit|apt|apartment|flat|shop|suite)\s*\d{1,5}[a-z]?\s*[,/]?\s*)?\d{1,5}[a-z]?(?:\s*[/-]\s*\d{1,5}[a-z]?)?`;
 
 const PLAIN_RE = new RegExp(
-  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+(?:${WORD}\s+){1,3}(?:${PLAIN_STREET_TYPES.join('|')})\b\.?`,
+  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+${NOT_A_HOUSE}(?:${WORD}\s+){1,3}(?:${PLAIN_STREET_TYPES.join('|')})\b\.?`,
   'i',
 );
 
 // The ambiguous types: either the name words are capitalised...
 const AMBIGUOUS_CAPS_RE = new RegExp(
-  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+(?:[A-Z][A-Za-z'’-]*\s+){1,3}(?:${AMBIGUOUS_STREET_TYPES.map(
+  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+${NOT_A_HOUSE}(?:[A-Z][A-Za-z'’-]*\s+){1,3}(?:${AMBIGUOUS_STREET_TYPES.map(
     (t) => `${t[0].toUpperCase()}${t.slice(1)}|${t}`,
   ).join('|')})\b`,
 );
 // ...or the type ends the phrase: a comma, a full stop, a line end, the end.
 const AMBIGUOUS_END_RE = new RegExp(
-  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+(?:${WORD}\s+){1,3}(?:${AMBIGUOUS_STREET_TYPES.join('|')})\s*(?:[,.;!?\n]|$)`,
+  String.raw`(?:^|[^\w$.:])${STREET_NUMBER}\s+${NOT_A_HOUSE}(?:${WORD}\s+){1,3}(?:${AMBIGUOUS_STREET_TYPES.join('|')})\s*(?:[,.;!?\n]|$)`,
   'i',
 );
 

@@ -136,6 +136,8 @@ export const EXEMPT_TEMPLATES = new Set<string>([
   'security-pin-set-by-code',
   'security-passkey-added',
   'security-agent-key-created',
+  'security-contact-browser-added',
+  'security-contact-opened',
   // The one email a deleted account is sent, to the address it held, just
   // before that address is erased. Nothing else ever goes to it again.
   'account-deleted',
@@ -879,7 +881,12 @@ export type SecurityNoticeEvent =
   /** A PIN set through the lost-passkey road, behind an emailed code alone. */
   | 'pin-set-by-code'
   | 'passkey-added'
-  | 'agent-key-created';
+  | 'agent-key-created'
+  /** A browser was set up to receive sealed contact details. */
+  | 'contact-browser-added'
+  /** Contact details sent to this account were opened, on an account with
+   *  more than one receiving browser. */
+  | 'contact-opened';
 
 export function renderSecurityNotice(
   v: { event: SecurityNoticeEvent; agentName?: string; counterUrl: string },
@@ -892,6 +899,8 @@ export function renderSecurityNotice(
     'pin-set-by-code': 'OpenSwitchboard: a PIN was set with an emailed code',
     'passkey-added': 'OpenSwitchboard: a passkey was added',
     'agent-key-created': 'OpenSwitchboard: a new assistant key was created',
+    'contact-browser-added': 'OpenSwitchboard: a browser was set up to receive contact details',
+    'contact-opened': 'OpenSwitchboard: contact details sent to you were opened',
   }[v.event];
   // Blind mode is the caller's job here: it strips agentName, and the copy
   // below carries nothing else about the account.
@@ -905,6 +914,10 @@ export function renderSecurityNotice(
       'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new assistant key${namedHtml} was just created on your account. Anything holding that key can act as your assistant until it lapses or you revoke it.`,
+    'contact-browser-added':
+      'A browser was just set up to receive contact details sent to you. It can open addresses and phone numbers other people send you. You can remove it on your security page.',
+    'contact-opened':
+      'Contact details sent to you were just opened on one of your browsers. If you did not open them, remove the browsers you do not recognise on your security page.',
   }[v.event];
   const textLine = {
     'agent-authorized': `A new assistant${namedText} was just authorised to use your account.`,
@@ -914,6 +927,10 @@ export function renderSecurityNotice(
       'A PIN was just set on your account using a code we emailed you. It cannot move money for 24 hours. Your passkey still works.',
     'passkey-added': 'A passkey was just added to your account. Whatever device holds it can approve things on your account.',
     'agent-key-created': `A new assistant key${namedText} was just created on your account. Anything holding that key can act as your assistant until it lapses or you revoke it.`,
+    'contact-browser-added':
+      'A browser was just set up to receive contact details sent to you. It can open addresses and phone numbers other people send you. You can remove it on your security page.',
+    'contact-opened':
+      'Contact details sent to you were just opened on one of your browsers. If you did not open them, remove the browsers you do not recognise on your security page.',
   }[v.event];
   // A security notice is one of the three exemptions: it goes out whatever
   // hears_via says, because it is about the account rather than the network.

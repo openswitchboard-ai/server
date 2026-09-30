@@ -460,15 +460,25 @@ export async function reportLink(
 // to its human rather than handing over a page that cannot send.
 // ---------------------------------------------------------------------------
 
-/** What an agent is told when the other side has no browser ready yet. */
+/**
+ * What an agent is told when the other side has no browser set up yet. Not a
+ * dead end: the other side's assistant is handed a page to set one up
+ * (domain/sealedContact.ts, contact_setup), and this side's check_in says when
+ * it is ready.
+ */
 export const CONTACT_NOT_READY =
-  'Their side is not ready to receive contact details yet. It gets ready the next time they open their main page on the switchboard. Ask them in a message to open it once, then fetch this page again.';
+  'Their browser is not set up to receive contact details yet. Their assistant has been given a page to set it up, and your check_in says when it is ready: fetch this page again then. Tell your human it will come to them once the other side is ready.';
+
+/** Where a deployment has the send-contact page switched off. */
+export const CONTACT_OFF_HERE =
+  'Sending contact details through the switchboard is not on here yet. The older rule stands: an address or a phone number travels in a message only when your human gives it to you for that purpose, and you say it is theirs.';
 
 export async function sendContactLink(
   cfg: Config,
   accountId: string,
   matchId: string,
 ): Promise<HumanLink> {
+  if (!cfg.sealedContact) throw new OsbError('NOT_UNLOCKED_YET', { human_action: CONTACT_OFF_HERE });
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
@@ -482,8 +492,9 @@ export async function sendContactLink(
     });
   }
   const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
-  const { contactKeysFor } = await import('./sealedContact.js');
+  const { contactKeysFor, recordSetupAsk } = await import('./sealedContact.js');
   if (!(await contactKeysFor(counterparty)).length) {
+    await recordSetupAsk(matchId, accountId, counterparty);
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: CONTACT_NOT_READY });
   }
   const { token, id } = await createApprovalLink({
@@ -495,7 +506,7 @@ export async function sendContactLink(
   const page = url(cfg, token);
   return {
     say: saySentence(
-      'you to type your address or phone number yourself, on your own device, and it sends them scrambled so only their browser can read them. I never see them, so type them there and never to me',
+      'you to type your address or phone number yourself, on your own device, and it sends them scrambled so only their browser can read them. I never see them, so type them there and never to me. Sending takes your PIN or passkey',
       page,
     ),
     link: page,

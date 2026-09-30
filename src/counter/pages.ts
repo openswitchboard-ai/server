@@ -931,9 +931,30 @@ export function pinRecoveredPage(from: string): string {
  * inside that row rather than standing as a choice of its own.
  */
 export function securityPage(
-  v: { hasPin: boolean; passkeyCount: number; passkeySetOn?: string; passkeyKind?: string },
+  v: {
+    hasPin: boolean;
+    passkeyCount: number;
+    passkeySetOn?: string;
+    passkeyKind?: string;
+    /** Browsers set up to receive contact details, where the page is on. */
+    receivers?: { keyId: string; setOn: string; lastSeen: string }[];
+  },
   notice?: string,
 ): string {
+  const receivers = v.receivers
+    ? `<h2>Browsers that receive contact details</h2>
+${
+  v.receivers.length
+    ? v.receivers
+        .map(
+          (r) => `<div class="row"><span class="nav-t">Set up ${esc(r.setOn)}</span>
+<span class="nav-d">Last used ${esc(r.lastSeen)}</span>
+<form method="POST" action="/contact-keys/remove"><input type="hidden" name="key_id" value="${esc(r.keyId)}"><button type="submit" class="secondary">Remove</button></form></div>`,
+        )
+        .join('\n')
+    : '<p class="small muted">None yet. A browser is set up the first time someone sends you their details, or from your main page.</p>'
+}`
+    : '';
   const detail = [v.passkeyKind, v.passkeySetOn].filter(Boolean).join(', ');
   return layout('How you approve things', `
 <h1>How you approve things.</h1>
@@ -949,6 +970,7 @@ ${detail ? `<span class="nav-d">${esc(detail)}</span>` : ''}
 <span class="nav-d">Six or more digits you type.</span></a>
 </div>
 <p class="small muted">Lost both? A code we email you signs you back in.</p>
+${receivers}
 <a class="btn secondary" href="/">Back</a>`);
 }
 
@@ -1189,9 +1211,6 @@ export interface OneQuestionView {
    *  about what happened. Optional to fill in — a report with nothing typed in
    *  it still stands, because the thing that matters is that somebody said so. */
   collectReason?: { label: string; hint: string; value: string; maxLength: number };
-  /** This person's key slot: the page makes this browser's receiving key for
-   *  sealed contact details if it has none (counter/sealedScript.ts). */
-  keySlot?: string;
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
@@ -1241,7 +1260,7 @@ ${detail}
 </form>
 ${ceremonyAlt(c, 'oneQuestion', { name: 'decision', value: 'yes' })}
 ${foot ? `<p class="small muted">${foot}</p>` : ''}
-${ceremonyScript(c)}${v.keySlot ? sealedKeysTag(v.keySlot) : ''}`);
+${ceremonyScript(c)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1519,16 +1538,16 @@ export interface ContactSendView {
 }
 
 export function contactSendPage(v: ContactSendView): string {
-  const pinBox = !v.elevated && v.hasPin;
-  const passkeyOnly = !v.elevated && !v.hasPin && v.hasPasskey;
-  const passkeyAlt = !v.elevated && v.hasPin && v.hasPasskey;
-  const takes = v.elevated
-    ? ''
-    : v.hasPin && v.hasPasskey
-      ? 'This takes your PIN or your passkey.'
+  // A FRESH CEREMONY every send, like money: the window is never enough.
+  const pinBox = v.hasPin;
+  const passkeyOnly = !v.hasPin && v.hasPasskey;
+  const passkeyAlt = v.hasPin && v.hasPasskey;
+  const takes =
+    v.hasPin && v.hasPasskey
+      ? 'Sending takes your PIN or your passkey every time.'
       : v.hasPin
-        ? 'This takes your PIN.'
-        : 'This takes your passkey.';
+        ? 'Sending takes your PIN every time.'
+        : 'Sending takes your passkey every time.';
   const title = `Send your contact details to ${v.who}?`;
   return layout(
     title,
@@ -1603,7 +1622,7 @@ export function contactReceivePage(v: ContactReceiveView): string {
 </div>
 <div id="r_nokey" hidden>
   <p>This browser can't open them. They were scrambled for the browsers you had signed in on before they were sent.</p>
-  <p>If you use the switchboard on another device, open this link there. Otherwise ask ${esc(v.who)} to send them again. This browser is ready now.</p>
+  <p>If you use the switchboard on another device, open this link there. Otherwise <a href="/contact-keys/setup">set up this browser</a> and ask ${esc(v.who)} to send them again.</p>
 </div>
 <style>.sealed-shown { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; }</style>
 ${sealedScriptTag()}`,
@@ -1611,9 +1630,76 @@ ${sealedScriptTag()}`,
   );
 }
 
-/** The key-maker on its own, for a signed-in page that shows nothing sealed. */
+/**
+ * The main page's quiet check: this browser's receiving key, touched where it
+ * is already registered. A browser that is not set up is shown one small line
+ * offering to set it up, because that takes a ceremony and a quiet check never
+ * runs one.
+ */
 export function sealedKeysTag(slot: string): string {
-  return `<div id="sealed" data-mode="keys" data-slot="${esc(slot)}" hidden></div>${sealedScriptTag()}`;
+  return `<div id="sealed" data-mode="keys" data-slot="${esc(slot)}" hidden></div>
+<p class="small muted" id="sealed-setup" hidden>This browser is not set up to receive contact details. <a href="/contact-keys/setup">Set it up</a></p>
+${sealedScriptTag()}`;
+}
+
+export interface ContactSetupView {
+  slot: string;
+  hasPin: boolean;
+  hasPasskey: boolean;
+  /** Inside a strong window (a PIN or a passkey): the button asks nothing more. */
+  elevated: boolean;
+}
+
+/** Set this browser up to receive contact details. */
+export function contactSetupPage(v: ContactSetupView): string {
+  const pinBox = !v.elevated && v.hasPin;
+  const passkeyOnly = !v.elevated && !v.hasPin && v.hasPasskey;
+  const passkeyAlt = !v.elevated && v.hasPin && v.hasPasskey;
+  return layout(
+    'Set up this browser',
+    `
+<h1>Set up this browser to receive contact details.</h1>
+<p class="lead">When someone sends you their address or phone number, it is scrambled so only your own browsers can read it. This makes this browser one of them.</p>
+<noscript><p class="small muted">This page needs scripts switched on.</p></noscript>
+<p class="small muted" id="snoscript" hidden>This browser cannot do this. Open the page in an up-to-date browser.</p>
+<div id="serr" role="alert"></div>
+<div id="sealed" data-mode="setup" data-slot="${esc(v.slot)}" data-passkey-only="${passkeyOnly ? '1' : '0'}"></div>
+<form id="sealedForm" method="dialog" hidden>
+  ${
+    pinBox
+      ? `<label for="c_pin">Confirm with your PIN</label>
+  <input id="c_pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
+      : ''
+  }
+  <div class="actions">
+  <button type="submit" class="approve" id="c_send">Set up this browser</button>
+  <a class="btn secondary" href="/">Not now</a>
+  </div>
+  ${passkeyAlt ? '<button type="button" class="secondary" id="c_passkey">Use your passkey instead</button>' : ''}
+</form>
+<p class="small muted">We email you when a browser is set up. You can remove it on your <a href="/security">security page</a>.</p>
+${sealedScriptTag()}`,
+    { sealed: true },
+  );
+}
+
+/** Opened already. The page says whether it was this browser that opened them. */
+export function contactOpenedPage(v: { who: string; when: string; slot: string; openedKeyId: string }): string {
+  return layout(
+    'Already opened',
+    `
+<h1>Already opened.</h1>
+<p class="lead">${esc(v.who)}'s contact details were opened ${esc(v.when)}. They open once, so they are gone from here now.</p>
+<div id="sealed" data-mode="opened" data-slot="${esc(v.slot)}" data-opened="${esc(v.openedKeyId)}"></div>
+<p id="o_here" hidden>They were opened on this browser.</p>
+<div id="o_elsewhere" hidden>
+  <p>They were opened on another of your browsers.</p>
+  <p class="small muted">If that was not you, remove the browsers you do not recognise on your <a href="/security">security page</a>, and press Stop all wants and haves on your main page.</p>
+</div>
+<p class="small muted">If you need them again, ask ${esc(v.who)} to send them again.</p>
+${sealedScriptTag()}`,
+    { sealed: true },
+  );
 }
 
 /**

@@ -13,7 +13,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { authenticate, recordManualVersion, unauthorized, type AuthContext } from '../auth/oauth.js';
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
-import { TOOLS, dispatchTool, internalError } from './tools.js';
+import { dispatchTool, internalError, toolsFor } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
@@ -85,7 +85,7 @@ async function buildMcpServer(
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOLS.map((t) => ({
+    tools: toolsFor(cfg).map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,

@@ -752,8 +752,8 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             category: categoryLeafLabel(m.category),
             count: m.count,
           })),
-          keySlot: sealed.keySlot(s.accountId),
-          contactsWaiting: await Promise.all(
+          ...(cfg.sealedContact ? { keySlot: sealed.keySlot(s.accountId) } : {}),
+          contactsWaiting: !cfg.sealedContact ? [] : await Promise.all(
             (await sealed.contactsWaitingFor(s.accountId)).map(async (c) => ({
               href: `/c/${c.id}`,
               who:
@@ -1007,9 +1007,21 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       const passkeyKind = (first?.transports ?? [])
         .map((t: string) => PASSKEY_KINDS[t])
         .find(Boolean);
+      const say = (d: Date) =>
+        new Intl.DateTimeFormat('en-AU', { timeZone: tz, day: 'numeric', month: 'short', year: 'numeric' })
+          .format(new Date(d))
+          .replace('Sept', 'Sep');
+      const receivers = cfg.sealedContact
+        ? (await sealed.listContactKeys(s.accountId!)).map((k) => ({
+            keyId: k.key_id,
+            setOn: say(k.created_at),
+            lastSeen: say(k.last_seen_at),
+          }))
+        : undefined;
       return html(
         reply,
         pages.securityPage({
+          ...(receivers ? { receivers } : {}),
           hasPin: !!a?.pin_hash,
           passkeyCount: keys.length,
           passkeyKind,
@@ -2330,25 +2342,97 @@ in on this device and lets you approve what is waiting.</p>
         slot: sealed.keySlot(accountId),
         keys,
         ttlDays: sealed.SEALED_TTL_DAYS,
-        ...(await ceremonyFor(accountId, sess.isElevated(s))),
+        // A FRESH CEREMONY, every send, like money (review of 1 October 2026):
+        // whatever window is open, the press asks again.
+        ...(await ceremonyFor(accountId, false)),
       };
     };
 
-    /** A browser's own key, registered against the person signed in. */
+    /** What a fresh-ceremony refusal on the send says. */
+    const CONTACT_WORDS: FreshWords = { takes: 'Sending your contact details takes', held: 'send contact details' };
+
+    /** Off where the send-contact page is off: every route below is absent. */
+    const sealedOff = (reply: FastifyReply): boolean => {
+      if (cfg.sealedContact) return false;
+      void reply.code(404).send({ error: 'not_found' });
+      return true;
+    };
+
+    /**
+     * A browser's own key, registered against the person signed in.
+     *
+     * A key this account already has is only touched. A NEW one takes a strong
+     * ceremony — the PIN, or a passkey that already elevated this session —
+     * never an emailed code's window, because a browser that can open somebody's
+     * contact details is a credential of sorts (review of 1 October 2026). No
+     * PIN is ever checked unless one was typed, so the main page's quiet check
+     * cannot spend PIN attempts. Every new browser sends a security notice.
+     */
     counter.post('/contact-keys', async (req, reply) => {
+      if (sealedOff(reply)) return;
+      reply.header('cache-control', 'no-store');
       const s = await requireSession(req, reply);
       if (!s) return;
+      const b: any = req.body ?? {};
+      let touched: { key_id: string; known: boolean; raw: Buffer };
       try {
-        const r = await sealed.registerContactKey(s.accountId!, (req.body as any)?.public_key);
-        return reply.header('cache-control', 'no-store').send(r);
+        touched = await sealed.touchContactKey(s.accountId!, b.public_key);
       } catch (e: any) {
         if (e instanceof sealed.SealedRefusal) return reply.code(400).send({ error: e.code });
         throw e;
       }
+      if (touched.known) return reply.send({ key_id: touched.key_id, added: false });
+      const pin = typeof b.pin === 'string' ? b.pin : '';
+      if (!sess.isStronglyElevated(s as Session)) {
+        if (!pin) {
+          return reply.code(401).send({
+            error: 'ceremony_required',
+            error_description: 'Setting up this browser takes your PIN or your passkey.',
+          });
+        }
+        if (!(await credentialCeremony(s as Session, reply, pin))) return;
+      }
+      const added = await sealed.addContactKey(s.accountId!, touched.raw);
+      const email = await ops.accountEmail(s.accountId!, 'security-notice');
+      if (email) {
+        await notifyBestEffort(req, 'contact-browser-added', () =>
+          sendSecurityNoticeEmail(cfg, email, s.accountId!, 'contact-browser-added'),
+        );
+      }
+      return reply.send({ key_id: added.key_id, added: true, evicted: added.evicted });
+    });
+
+    /** Forget one receiving browser, from the Security page. */
+    counter.post('/contact-keys/remove', async (req, reply) => {
+      if (sealedOff(reply)) return;
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      await sealed.removeContactKey(s.accountId!, String((req.body as any)?.key_id ?? ''));
+      return reply.redirect('/security', 303);
+    });
+
+    /** Set this browser up to receive contact details: the ceremony, then the key. */
+    counter.get('/contact-keys/setup', async (req, reply) => {
+      if (!cfg.sealedContact) return html(reply, pages.messagePage('Not found', '<p>There is nothing here.</p>'), 404);
+      const signedIn = await sess.loadSession(req);
+      if (!signedIn?.accountId) {
+        sess.rememberReturnPath(reply, '/contact-keys/setup');
+        return html(reply, pages.signInToSeePage(), 401);
+      }
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      return sealedHtml(
+        reply,
+        pages.contactSetupPage({
+          slot: sealed.keySlot(s.accountId!),
+          ...(await ceremonyFor(s.accountId!, sess.isStronglyElevated(s as Session))),
+        }),
+      );
     });
 
     /** The send page's one press: scrambled copies in, nothing readable. */
     counter.post('/a/:token/contact', async (req, reply) => {
+      if (sealedOff(reply)) return;
       reply.header('cache-control', 'no-store');
       const token = String((req.params as any).token ?? '');
       const check = await verifyLinkToken(token);
@@ -2374,7 +2458,7 @@ in on this device and lets you approve what is waiting.</p>
       const v = await contactSendView(s.accountId, row, token, s as Session);
       if ('error' in v) return reply.code(409).send({ error: 'not_open', error_description: v.error });
       // THE DOOR THAT REFUSES PLAINTEXT, before the body is used for anything.
-      let body: { envelopes: sealed.Envelope[]; pin: string };
+      let body: { envelopes: sealed.Envelope[]; pin: string; passkey: string };
       try {
         body = sealed.assertSealedBody(
           req.body,
@@ -2389,8 +2473,11 @@ in on this device and lets you approve what is waiting.</p>
         }
         throw e;
       }
-      // The same credential sharing a first name takes (the window rule).
-      if (!(await ceremony(s as Session, reply, body.pin))) return;
+      // A fresh ceremony at the press, whatever window is open: the PIN, or a
+      // passkey assertion made for this press and carried in the body.
+      if (!(await moneyCeremony(s as Session, reply, { pin: body.pin, passkey: body.passkey }, refuseJson(reply), CONTACT_WORDS))) {
+        return;
+      }
       // The suspension check, and the ledger's record that this went: who to
       // whom, on which introduction, when. There are no words at this door.
       const verdict = await runIntake(cfg, {
@@ -2449,6 +2536,7 @@ in on this device and lets you approve what is waiting.</p>
     };
 
     counter.get('/c/:id', async (req, reply) => {
+      if (!cfg.sealedContact) return html(reply, pages.messagePage('Not found', '<p>There is nothing here.</p>'), 404);
       const id = String((req.params as any).id);
       const signedIn = await sess.loadSession(req);
       if (!signedIn?.accountId) {
@@ -2472,6 +2560,19 @@ in on this device and lets you approve what is waiting.</p>
         (await ops.disclosedFirstName(s.accountId!, row.sender_account, { match_id: row.match_id }, 'contact-receive-page')) ??
         'the other person';
       const state = sealed.sealedState(row);
+      if (state === 'opened' && row.opened_at) {
+        // Said by the page itself, which alone knows whether THIS browser is
+        // the one that opened them.
+        return sealedHtml(
+          reply,
+          pages.contactOpenedPage({
+            who: `${name[0].toUpperCase()}${name.slice(1)}`,
+            when: await plainWhen(s.accountId!, new Date(row.opened_at)),
+            slot: sealed.keySlot(s.accountId!),
+            openedKeyId: String(row.opened_key_id ?? ''),
+          }),
+        );
+      }
       if (state !== 'waiting') {
         const [title, text] = sealedGoneWords(state, name);
         return html(reply, pages.messagePage(title, `<p>${pages.esc(text)}</p>`));
@@ -2490,13 +2591,27 @@ in on this device and lets you approve what is waiting.</p>
 
     /** The one read: the copy for this browser, and every copy deleted. */
     counter.post('/c/:id/open', async (req, reply) => {
+      if (sealedOff(reply)) return;
       reply.header('cache-control', 'no-store');
       const s = await requireSession(req, reply);
       if (!s) return;
       const id = String((req.params as any).id);
       const keyId = String((req.body as any)?.key_id ?? '');
       const r = await sealed.openSealed(s.accountId!, id, keyId);
-      if (r.ok) return reply.send({ envelope: r.envelope, match_id: r.match_id });
+      if (r.ok) {
+        // An account with more than one receiving browser is told that one of
+        // them opened these, so an opening somebody else made does not pass
+        // unseen (review of 1 October 2026).
+        if (r.otherBrowsers > 0) {
+          const email = await ops.accountEmail(s.accountId!, 'security-notice');
+          if (email) {
+            await notifyBestEffort(req, 'contact-opened', () =>
+              sendSecurityNoticeEmail(cfg, email, s.accountId!, 'contact-opened'),
+            );
+          }
+        }
+        return reply.send({ envelope: r.envelope, match_id: r.match_id });
+      }
       const words: Record<string, string> = {
         not_found: 'There is nothing here to open.',
         opened: 'These have already been opened, and they only open once. Ask them to send them again if you need them.',
@@ -2508,6 +2623,7 @@ in on this device and lets you approve what is waiting.</p>
 
     /** Opened on a browser holding none of the keys: the sender is told. */
     counter.post('/c/:id/missed', async (req, reply) => {
+      if (sealedOff(reply)) return;
       const s = await requireSession(req, reply);
       if (!s) return;
       await sealed.markMissed(s.accountId!, String((req.params as any).id));
@@ -2638,6 +2754,9 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.shelfPickPage(v.view));
       }
       if (row.action === 'contact-send') {
+        if (!cfg.sealedContact) {
+          return html(reply, pages.donePage('Not on here', '<p>Sending contact details is not switched on here yet.</p>'));
+        }
         // NOT consumed on the view, like the photo page: the person types
         // before they press, and the press is what spends the link.
         const v = await contactSendView(s.accountId, row, token, s as Session);
@@ -2661,7 +2780,6 @@ in on this device and lets you approve what is waiting.</p>
           return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
         }
         q.elevated = creds.elevationFor(row.action, sess.isElevated(s));
-        q.keySlot = sealed.keySlot(s.accountId);
         return html(reply, pages.oneQuestionPage(q));
       }
       // The one left is a payment approval. It burns on the PRESS, the way the
@@ -2771,7 +2889,7 @@ in on this device and lets you approve what is waiting.</p>
         }
         let caption: string | undefined;
         try {
-          caption = checkCaption(pb.caption);
+          caption = checkCaption(pb.caption, !!cfg.sealedContact);
         } catch (e: any) {
           const why =
             e instanceof OsbError
@@ -3050,7 +3168,6 @@ in on this device and lets you approve what is waiting.</p>
       );
       if ('error' in q) return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
       q.elevated = creds.elevationFor(action, sess.isElevated(s));
-      q.keySlot = sealed.keySlot(s.accountId!);
       return html(reply, pages.oneQuestionPage(q));
     };
 

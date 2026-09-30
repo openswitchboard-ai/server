@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS sealed_contacts (
   -- Set when the recipient opened the page on a browser holding no key the
   -- details were scrambled to. The sender's side is told so it can send again.
   missed_at         timestamptz,
+  -- Which of the recipient's browser keys opened it, so their other browsers
+  -- can say it was opened elsewhere, and when.
+  opened_key_id     text,
   -- Set when a newer send on the same introduction replaced this one.
   replaced_at       timestamptz
 );
@@ -62,7 +65,20 @@ CREATE TABLE IF NOT EXISTS sealed_contact_copies (
 COMMENT ON TABLE sealed_contact_copies IS
   'Scrambled contact details, readable only by the recipient''s own browser. Deleted on open, or at seven days.';
 
--- 4. The send page is a link action like every other page a human presses,
+-- 4. A SEND WAITING ON THE OTHER SIDE'S BROWSER. When somebody wants to send
+-- their details and the other person has no browser set up to receive them,
+-- this row says so: the other person's assistant is handed a page to set one
+-- up, and the sender's assistant is told when it is ready. It holds no
+-- details. Deleted when the sender sends, and swept at seven days.
+CREATE TABLE IF NOT EXISTS contact_setup_asks (
+  match_id          uuid        NOT NULL REFERENCES matches(id),
+  sender_account    uuid        NOT NULL REFERENCES accounts(id),
+  recipient_account uuid        NOT NULL REFERENCES accounts(id),
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (match_id, sender_account)
+);
+
+-- 5. The send page is a link action like every other page a human presses,
 -- so the check on approval_links.action learns its name. Rewritten in full, as
 -- 049 did; test/unit/linkActionsMigrated.test.ts holds this list to the one in
 -- src/counter/links.ts.

@@ -76,6 +76,26 @@ const PASSES = [
   'I am 5 minutes away',
   'the 3 bedroom place is empty',
   'lap 2 of the 5 km loop is hilly',
+  // Added with the review of 1 October 2026: street numbers against times,
+  // quantities, postcodes, units, prices and dates.
+  'meet at 10 on Smith St',
+  'I can be there at 2 pm near High St',
+  'it is 5 minutes from King St',
+  'park 3 blocks off George St',
+  'I am in unit 5',
+  'unit 5, level 2',
+  'Canberra 2600',
+  'Newtown NSW 2042 is fine',
+  '$12 each or 3 for $30',
+  '2 for 1 on Main St today',
+  'on 12 March at 10',
+  'see you 10/10 at 6',
+  'the 7.30 bus from Station St',
+  '12:30 outside the Market St entrance',
+  'we are about 3 streets over',
+  '4 doors down from the bakery',
+  'it has 2 ports and 1 cable',
+  'we have 20 left, 5 in each box',
 ];
 
 describe('contact details in the words', () => {

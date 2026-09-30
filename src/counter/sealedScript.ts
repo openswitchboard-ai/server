@@ -165,20 +165,40 @@ export const SEALED_PAGE_JS = String.raw`
   }
 
   /** This browser's own key for the person signed in, made the first time. */
-  async function ensureKey() {
+  async function localKey() {
     var k = await get('keys', slot);
     if (!k) {
       var made = await S.makeKeyPair();
       k = { key_id: made.key_id, privateKey: made.privateKey, publicRaw: made.publicRaw };
       await put('keys', slot, k);
     }
+    return k;
+  }
+  /**
+   * Register this browser's key. A key the account already has is only
+   * touched; a new one takes the PIN (passed here) or a passkey that has
+   * already elevated the session. Answers false where a ceremony is needed.
+   */
+  async function register(k, pin) {
+    var body = { public_key: S.b64u(k.publicRaw) };
+    if (pin) body.pin = pin;
+    try {
+      await postJson('/contact-keys', body);
+      return true;
+    } catch (e) {
+      if (e && e.code === 'ceremony_required') return false;
+      throw e;
+    }
+  }
+  /** The quiet check: registered already, or say that it is not. */
+  async function ensureKey() {
+    var k = await localKey();
     var stamp = 'osb-sealed-touched:' + slot + ':' + k.key_id, last = 0;
     try { last = Number(localStorage.getItem(stamp) || 0); } catch (e) {}
-    if (Date.now() - last > 12 * 3600 * 1000) {
-      await postJson('/contact-keys', { public_key: S.b64u(k.publicRaw) });
-      try { localStorage.setItem(stamp, String(Date.now())); } catch (e) {}
-    }
-    return k;
+    if (Date.now() - last < 12 * 3600 * 1000) return { key: k, ready: true };
+    var ok = await register(k, '');
+    if (ok) { try { localStorage.setItem(stamp, String(Date.now())); } catch (e) {} }
+    return { key: k, ready: ok };
   }
 
   function say(el, text) { if (el) { el.textContent = text; el.hidden = !text; } }
@@ -190,20 +210,75 @@ export const SEALED_PAGE_JS = String.raw`
     var d = document.createElement('div'); d.className = 'err'; d.textContent = text; box.appendChild(d);
   }
 
-  async function passkeyCeremony() {
+  /** A passkey assertion, made now. */
+  async function passkeyAssertion() {
     var opts = await postJson('/login/passkey/options');
     opts.challenge = S.unb64u(opts.challenge).buffer;
     (opts.allowCredentials || []).forEach(function (c) { c.id = S.unb64u(c.id).buffer; });
     var cred = await navigator.credentials.get({ publicKey: opts });
-    await postJson('/login/passkey/verify', { id: cred.id, rawId: S.b64u(cred.rawId), type: cred.type,
+    return { id: cred.id, rawId: S.b64u(cred.rawId), type: cred.type,
       response: { clientDataJSON: S.b64u(cred.response.clientDataJSON),
         authenticatorData: S.b64u(cred.response.authenticatorData),
         signature: S.b64u(cred.response.signature),
         userHandle: cred.response.userHandle ? S.b64u(cred.response.userHandle) : null },
-      clientExtensionResults: cred.getClientExtensionResults(), elevate_only: true });
+      clientExtensionResults: cred.getClientExtensionResults() };
+  }
+  /** The passkey, used to open this session's window. */
+  async function passkeyElevate() {
+    var a = await passkeyAssertion();
+    a.elevate_only = true;
+    await postJson('/login/passkey/verify', a);
+  }
+  function failWords(e) {
+    return e && e.code === 'pin_incorrect' ? 'That PIN is not right. Try again.'
+      : e && e.name === 'NotAllowedError' ? "That didn't work. Try again."
+      : (e && e.message) || 'That did not go through. Try again.';
   }
 
-  if (mode === 'keys') { ensureKey().catch(function () {}); return; }
+  if (mode === 'keys') {
+    ensureKey().then(function (r) {
+      if (!r.ready) { var p = document.getElementById('sealed-setup'); if (p) p.hidden = false; }
+    }).catch(function () {});
+    return;
+  }
+
+  if (mode === 'opened') {
+    localKey().then(function (k) {
+      var here = k.key_id === root.getAttribute('data-opened');
+      document.getElementById(here ? 'o_here' : 'o_elsewhere').hidden = false;
+    }).catch(function () { document.getElementById('o_elsewhere').hidden = false; });
+    return;
+  }
+
+  if (mode === 'setup') {
+    var sform = document.getElementById('sealedForm');
+    var spin = document.getElementById('c_pin');
+    var sbtn = document.getElementById('c_send');
+    var spk = document.getElementById('c_passkey');
+    var sOnly = root.getAttribute('data-passkey-only') === '1';
+    sform.hidden = false;
+    async function setup(viaPasskey) {
+      showErr(''); sbtn.disabled = true; if (spk) spk.disabled = true;
+      try {
+        var k = await localKey();
+        if (viaPasskey) await passkeyElevate();
+        var ok = await register(k, !viaPasskey && spin ? spin.value : '');
+        if (!ok) throw new Error('That takes your PIN or your passkey.');
+        try { localStorage.setItem('osb-sealed-touched:' + slot + ':' + k.key_id, String(Date.now())); } catch (e) {}
+        var page = document.getElementById('page'); page.innerHTML = '';
+        var h = document.createElement('h1'); h.textContent = 'This browser is set up.'; page.appendChild(h);
+        var q = document.createElement('p');
+        q.textContent = 'Contact details sent to you from now on can be opened here. Your assistant tells the other side it is ready.';
+        page.appendChild(q); h.setAttribute('tabindex', '-1'); h.focus();
+      } catch (e) {
+        if (spin) spin.value = '';
+        showErr(failWords(e)); sbtn.disabled = false; if (spk) spk.disabled = false;
+      }
+    }
+    sform.addEventListener('submit', function (ev) { ev.preventDefault(); setup(sOnly); });
+    if (spk) spk.addEventListener('click', function (ev) { ev.preventDefault(); setup(true); });
+    return;
+  }
 
   if (mode === 'send') {
     var form = document.getElementById('sealedForm');
@@ -218,7 +293,6 @@ export const SEALED_PAGE_JS = String.raw`
     var action = root.getAttribute('data-action');
     var needsPasskey = root.getAttribute('data-passkey-only') === '1';
     form.hidden = false;
-    ensureKey().catch(function () {});
     // Prefill what this browser was asked to remember, if anything.
     (async function () {
       try {
@@ -241,7 +315,9 @@ export const SEALED_PAGE_JS = String.raw`
       sendBtn.disabled = true; if (pkBtn) pkBtn.disabled = true;
       var old = sendBtn.textContent; sendBtn.textContent = 'Sending…';
       try {
-        if (viaPasskey) await passkeyCeremony();
+        // A FRESH CEREMONY: the passkey assertion is made for this press and
+        // goes with it; the server checks it at the press itself.
+        var assertion = viaPasskey ? await passkeyAssertion() : null;
         var details = {}; if (a) details.address = a; if (p) details.phone = p;
         var envelopes = [];
         for (var i = 0; i < keys.length; i++) envelopes.push(await S.seal(details, keys[i], match));
@@ -253,7 +329,8 @@ export const SEALED_PAGE_JS = String.raw`
           await del('remember', slot + ':data'); await del('remember', slot + ':key');
         }
         var body = { decision: 'yes', envelopes: envelopes };
-        if (!viaPasskey && pinBox && pinBox.value) body.pin = pinBox.value;
+        if (assertion) body.passkey = JSON.stringify(assertion);
+        else if (pinBox && pinBox.value) body.pin = pinBox.value;
         var done = await postJson(action, body);
         addr.value = ''; phone.value = ''; if (pinBox) pinBox.value = '';
         var page = document.getElementById('page');
@@ -263,9 +340,7 @@ export const SEALED_PAGE_JS = String.raw`
         h.setAttribute('tabindex', '-1'); h.focus();
       } catch (e) {
         if (pinBox) pinBox.value = '';
-        showErr(e && e.code === 'pin_incorrect' ? 'That PIN is not right. Try again.'
-          : e && e.name === 'NotAllowedError' ? "That didn't work. Try again."
-          : (e && e.message) || 'That did not go through. Try again.');
+        showErr(failWords(e));
         sendBtn.disabled = false; if (pkBtn) pkBtn.disabled = false; sendBtn.textContent = old;
       }
     }
@@ -284,7 +359,7 @@ export const SEALED_PAGE_JS = String.raw`
     var reveal = document.getElementById('r_reveal');
     (async function () {
       var k;
-      try { k = await ensureKey(); } catch (e) { showErr('This browser could not get ready to open it. Try another browser.'); return; }
+      try { k = (await ensureKey()).key; } catch (e) { showErr('This browser could not get ready to open it. Try another browser.'); return; }
       if (have.indexOf(k.key_id) === -1) {
         nokey.hidden = false;
         postJson('/c/' + id + '/missed', {}).catch(function () {});

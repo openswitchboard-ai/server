@@ -165,7 +165,12 @@ These are the invariants worth reading the code to check:
   message, an offer note or a photo caption carrying an address or a phone
   number is refused (`src/intake/checks/contactDetails.ts`). The ledger
   records that contact details were sent, who to whom and when, and never
-  what they were. The page is served by this server, so the protection is
+  what they were. Setting a browser up to receive takes the PIN or a passkey
+  (never an emailed code) and sends a security notice; the browsers are
+  listed, with a remove button, on the security page. Sending takes a fresh
+  PIN or passkey every time. Behind `SEALED_CONTACT=on|off` (unset: on in dev,
+  off in prod); where it is off, nothing about messages or the tools changes.
+  The page is served by this server, so the protection is
   against every copy at rest, in logs and in both assistants; it is no
   protection against a server changed to serve a different page.
 - Publish is blocked until screening passes, with no bypass. If Bedrock is

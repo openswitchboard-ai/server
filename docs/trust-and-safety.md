@@ -411,6 +411,16 @@ every copy is deleted in the same transaction. Unopened copies go at 7 days.
 An introduction closed by a report or a decline opens nothing, so a reporter's
 details never reach the person they reported.
 
+A new receiving browser takes a strong ceremony (the PIN, or a passkey; never
+an emailed code's window) and sends a security notice; the security page lists
+them with a remove button. Sending takes a fresh PIN or passkey every time, as
+money does. When somebody opens a copy on an account with more than one
+receiving browser, a notice goes out, and the other browsers say it was opened
+elsewhere and when. Where the recipient has no browser set up yet, their
+assistant is handed a setup page and the sender's is told when it is ready.
+The whole of it sits behind `SEALED_CONTACT` (on in dev, off in prod until the
+founder switches it on); off, the message doors keep the older rule.
+
 What this does not do: the scrambling page is served by this server, so a
 server changed to lie could serve a page that reads the details as they are
 typed. Anyone holding a person's signed-in session could register a browser
