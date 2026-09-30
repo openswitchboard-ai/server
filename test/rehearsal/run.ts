@@ -108,6 +108,7 @@ import {
   type CardFacts,
   type ToolCallLine,
   moneySaid,
+  useScenarioWords,
 } from './checks.js';
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
@@ -118,7 +119,7 @@ import { DEFAULT_STREAK, PROMISE_RULE } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
 import { runTable, seriesSummary } from './report.js';
-import { ALEX, FIRST_WORDS, TONY, TONY_WANT, WRONG_THING, type FactSheet } from './scenarios/spring.js';
+import { loadScenario, missingData } from './data.js';
 import { judgeRun, judgeSeries, type RunSummary } from './series.js';
 import { renderTranscript, STAGE_NAMES } from './transcript.js';
 import { readToolCalls } from './toolLog.js';
@@ -133,8 +134,26 @@ import {
   type RunResult,
   type SideId,
   type StageResult,
+  type FactSheet,
   type TranscriptTurn,
 } from './types.js';
+
+// ---------------------------------------------------------------------------
+// The scenario. It is evaluation data kept outside this repository (data.ts);
+// without it there is nothing to rehearse, so say so and stop cleanly.
+// ---------------------------------------------------------------------------
+
+const scenario = await loadScenario();
+if (!scenario) {
+  console.error(missingData('scenario'));
+  process.exit(0);
+}
+const { ALEX, FIRST_WORDS, TONY, TONY_WANT, WRONG_THING } = scenario;
+useScenarioWords({
+  identifying: scenario.IDENTIFYING_WORDS,
+  condition: scenario.CONDITION_WORDS,
+  forbiddenCategoryPrefix: scenario.FORBIDDEN_CATEGORY_PREFIX,
+});
 
 // ---------------------------------------------------------------------------
 // Flags.

@@ -7,7 +7,8 @@
  * Reads every non-dry run transcript under realism-reports/rehearsal/ (git-
  * ignored; the words never leave this machine except to Jev), cuts out the
  * slice each meaning check reads, asks Jev, and puts its reading beside the
- * pattern's. Then the hand-written examples in meaningExamples.ts, whose right
+ * pattern's. Then the hand-written examples (meaningExamples.ts, kept with the
+ * rehearsal's other data outside this repository; see data.ts), whose right
  * answers are known. Writes every row to --out for a person to label the
  * disagreements, and prints per-meaning agreement.
  */
@@ -29,7 +30,7 @@ import {
   pinPattern,
 } from './checks.js';
 import { bandOf, liveAsk, type MeaningId, type MeaningState } from './meaning.js';
-import { MEANING_EXAMPLES } from './meaningExamples.js';
+import { loadMeaningExamples, missingData } from './data.js';
 
 interface Turn { stage: number; side: string; role: 'human' | 'assistant'; text: string }
 
@@ -149,6 +150,11 @@ async function main() {
   const limit = Number(argv[argv.indexOf('--limit') + 1] ?? 0) || Infinity;
   const outFile = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : 'meaning-calibration.json';
   const root = join(process.cwd(), 'realism-reports', 'rehearsal');
+  const examples = await loadMeaningExamples();
+  if (!examples) {
+    console.error(missingData('meaning examples'));
+    process.exit(0);
+  }
   const items: Item[] = [];
   if (existsSync(root) && !argv.includes('--examples-only')) {
     const dirs = readdirSync(root).sort().reverse();
@@ -168,7 +174,8 @@ async function main() {
     }
     console.log(`${runs} run transcript(s), ${items.length} slice(s)`);
   }
-  for (const [i, ex] of MEANING_EXAMPLES.entries()) {
+  for (const [i, raw] of examples.entries()) {
+    const ex = { ...raw, id: raw.id as MeaningId };
     items.push({
       source: `example ${i}`,
       ids: [[ex.id, regexFor(ex.id, ex.said)]],

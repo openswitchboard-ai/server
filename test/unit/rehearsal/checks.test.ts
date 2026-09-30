@@ -7,7 +7,7 @@
  * that can only be exercised by spending money on two live assistants is a
  * reading nobody will ever fix.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { pgTimeMs } from '../../rehearsal/db.js';
 import { linkIn } from '../../rehearsal/presses.js';
 import {
@@ -30,11 +30,26 @@ import {
   figuresOn,
   identifyingAttributes,
   questionsAsked,
+  useScenarioWords,
   type CardFacts,
   type JevSlip,
 } from '../../rehearsal/checks.js';
 import { cannedSimulator, humanSystemPrompt } from '../../rehearsal/human.js';
-import { ALEX as SPRING_SELLER, TONY as SPRING_BUYER } from '../../rehearsal/scenarios/spring.js';
+import { loadScenario, missingData } from '../../rehearsal/data.js';
+
+// The scenario is evaluation data kept outside this repository (see
+// test/rehearsal/data.ts). The tests that need a real fact sheet skip without
+// it; the word and shelf checks are tested on words of their own.
+const scenario = await loadScenario();
+if (!scenario) console.warn(missingData('scenario'));
+
+beforeAll(() => {
+  useScenarioWords({
+    identifying: ['fanatec', 'clubsport', 'brake', 'spring'],
+    condition: ['used', 'good condition'],
+    forbiddenCategoryPrefix: 'goods.motoring',
+  });
+});
 
 const card = (o: Partial<CardFacts> = {}): CardFacts => ({
   id: 'c1',
@@ -126,14 +141,14 @@ describe('reading a posting', () => {
  * assistant that inventing one is safe.
  */
 describe('the simulated human and a figure read back to them', () => {
-  it('is told to confirm their own figure and to deny one they never gave', () => {
-    const prompt = humanSystemPrompt(SPRING_SELLER);
+  it.skipIf(!scenario)('is told to confirm their own figure and to deny one they never gave', () => {
+    const prompt = humanSystemPrompt(scenario!.ALEX);
     expect(prompt).toContain('I never gave a figure');
     expect(prompt).toMatch(/whether a figure is one you gave/i);
   });
 
-  it('answers the read-back in the dry-run stub as well', async () => {
-    const buyer = cannedSimulator(SPRING_BUYER);
+  it.skipIf(!scenario)('answers the read-back in the dry-run stub as well', async () => {
+    const buyer = cannedSimulator(scenario!.TONY);
     const asked = 'Is $45 AUD the figure you gave as the most you would pay, or is it one I put there myself?';
     expect(await buyer.reply([], asked)).toBe('I never gave a figure.');
   });

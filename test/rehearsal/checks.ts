@@ -12,7 +12,6 @@
  * which is the same as a check nobody can trust.
  */
 import { isCritical } from './levels.js';
-import { CONDITION_WORDS, FORBIDDEN_CATEGORY_PREFIX, IDENTIFYING_WORDS } from './scenarios/spring.js';
 import { describeDecisions, holds, type MeaningDecision, type MeaningDecisions, type MeaningId } from './meaning.js';
 import { fail, pass, skip, type Check, type TranscriptTurn } from './types.js';
 
@@ -58,6 +57,23 @@ export interface CardFacts {
   createdAt: string;
 }
 
+/**
+ * THE SCENARIO'S WORDS. Which words identify the thing, which say its state,
+ * and which shelf it must not land on belong to the errand being rehearsed,
+ * and the errand is data (see data.ts). The runner hands them over once it has
+ * loaded the scenario; until then nothing identifies anything and no shelf is
+ * forbidden.
+ */
+export interface ScenarioWords {
+  identifying: readonly string[];
+  condition: readonly string[];
+  forbiddenCategoryPrefix?: string;
+}
+let scenarioWords: ScenarioWords = { identifying: [], condition: [] };
+export function useScenarioWords(words: ScenarioWords): void {
+  scenarioWords = words;
+}
+
 /** Every string a card carries, lowercased, for the "does it say what it is" reads. */
 export function cardWords(card: CardFacts): string {
   const bits: string[] = [card.category, card.kind ?? ''];
@@ -73,12 +89,12 @@ export function cardWords(card: CardFacts): string {
 /** How many of the scenario's identifying words the posting carries. */
 export function identifyingAttributes(card: CardFacts): string[] {
   const words = cardWords(card);
-  return IDENTIFYING_WORDS.filter((w) => words.includes(w));
+  return scenarioWords.identifying.filter((w) => words.includes(w));
 }
 
 export function hasCondition(card: CardFacts): string | undefined {
   const words = cardWords(card);
-  return CONDITION_WORDS.find((w) => words.includes(w));
+  return scenarioWords.condition.find((w) => words.includes(w));
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +389,8 @@ export function checkShelf(
     return pass(id, says, 'the assistant put the shelf question to its human rather than guessing');
   }
   if (!seller || !buyer) return fail(id, says, 'one of the two postings is missing');
-  const motoring = [seller, buyer].filter((c) => c.category.startsWith(FORBIDDEN_CATEGORY_PREFIX));
+  const forbidden = scenarioWords.forbiddenCategoryPrefix;
+  const motoring = forbidden ? [seller, buyer].filter((c) => c.category.startsWith(forbidden)) : [];
   if (motoring.length) {
     return fail(id, says, `filed under ${motoring.map((c) => c.category).join(' and ')}`);
   }

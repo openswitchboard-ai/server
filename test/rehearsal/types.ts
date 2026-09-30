@@ -17,6 +17,29 @@ import type { MeaningDecision } from './meaning.js';
 
 export type Verdict = 'pass' | 'fail' | 'todo' | 'skip';
 
+/**
+ * ONE SIMULATED PERSON: everything they know, and nothing else. The sheets
+ * themselves are scenario data and live outside this repository (see data.ts).
+ */
+export interface FactSheet {
+  /** The name the transcript writes: `**Alex:**`. */
+  name: string;
+  side: 'seller' | 'buyer';
+  /** First name and locality the account is minted with, the locality written
+   *  the way the area box's suggestion list stores it (town and state). */
+  firstName: string;
+  locality: string;
+  /** The suburb the names step should carry, where the sheet has one. */
+  suburb?: string;
+  /** The first thing they say, in their own words. Fixed. */
+  opening: string;
+  /** Everything they know, as lines a small model is told to answer from. */
+  facts: string[];
+  /** Figures this person may state, and only when asked. Anything else on a
+   *  card or in a message is an assistant's invention. */
+  figuresTheyMayGive: number[];
+}
+
 export interface Check {
   /** 'S1.manual', 'S3.pin_refused' — stable across runs, so a rate can be counted. */
   id: string;

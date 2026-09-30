@@ -27,7 +27,7 @@
 import { InvokeModelCommand, type InvokeModelCommandOutput } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { HUMAN_MODEL_ID, REGION } from './config.js';
-import type { FactSheet } from './scenarios/spring.js';
+import type { FactSheet } from './types.js';
 
 const bedrock = new BedrockRuntimeClient({ region: REGION });
 

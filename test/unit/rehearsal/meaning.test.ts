@@ -5,7 +5,7 @@
  * and the pattern agree, when they disagree once, when they disagree twice,
  * when the judge is unsure, and when it is not there at all.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   checkAskedHowItWent,
   checkIntroductionTold,
@@ -16,6 +16,7 @@ import {
   checkReach,
   checkSellerAsked,
   checkWhatNext,
+  useScenarioWords,
   type CardFacts,
 } from '../../rehearsal/checks.js';
 import {
@@ -30,6 +31,11 @@ import {
 } from '../../rehearsal/meaning.js';
 
 const state = { situation: 'x', assistant_said: ['something was said'] };
+
+// The card checks read the scenario's words; these tests bring their own.
+beforeAll(() => {
+  useScenarioWords({ identifying: ['fanatec', 'clubsport', 'brake', 'spring'], condition: ['used'] });
+});
 
 /** An asker that answers from a queue of readings, one call at a time. */
 function scripted(...calls: Partial<Record<MeaningId, number | null>>[] | { reason: string }[]): MeaningAsker & { calls: MeaningId[][] } {
