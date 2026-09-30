@@ -133,6 +133,7 @@ import { configureMeaning, judgeMeanings, type MeaningDecisions, type MeaningId 
 import { DEFAULT_STREAK, PROMISE_RULE } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import { acceptOffer, DRY_PNG, linkIn, plainShapePng, pressOneQuestion, sendPhoto, typeFigure } from './presses.js';
+import { FailFast, StageRecorder } from './recorder.js';
 import { runTable, seriesSummary } from './report.js';
 import { loadScenario, missingData } from './data.js';
 import { judgeRun, judgeSeries, type RunSummary } from './series.js';
@@ -270,7 +271,6 @@ interface Side {
   toolActivity: (string[] | undefined)[];
 }
 
-class FailFast extends Error {}
 
 const log = (m: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${m}`);
 
@@ -307,9 +307,8 @@ async function oneRun(
   const startedAt = new Date().toISOString();
   const windowFromMs = Date.now();
   const turns: TranscriptTurn[] = [];
-  const stages: StageResult[] = [];
-  let current: Check[] = [];
-  let currentStage = 0;
+  const rec = new StageRecorder({ keepGoing: KEEP_GOING, names: STAGE_NAMES, log });
+  const stages = rec.stages;
   let runError: string | undefined;
   /** Set the moment the introduction is read, so finish() can pass it on. */
   let possibleIntro = false;
@@ -366,7 +365,7 @@ async function oneRun(
     // seller had handed a link over and the buyer had not — one link anywhere
     // in the stage was enough to look fine (21 September 2026).
     for (const id of ['seller', 'buyer'] as SideId[]) {
-      const mine = turns.filter((t) => t.stage === currentStage && t.side === id && t.speaker !== 'human');
+      const mine = turns.filter((t) => t.stage === rec.stage && t.side === id && t.speaker !== 'human');
       if (!mine.length) continue;
       const anyLink = mine.some((t) => /https?:\/\/\S+/.test(t.text));
       const askedToPress = mine.some((t) => /\bpress|\btap\b|\bclick/i.test(t.text));
@@ -382,35 +381,17 @@ async function oneRun(
     const sinceTurn = Date.now() - lastTurnMs;
     if (run > RUN_BUDGET_MS) return `the run passed ${Math.round(RUN_BUDGET_MS / 60_000)} minutes and was still going`;
     if (sinceTurn > STALL_BUDGET_MS)
-      return `stage ${currentStage} heard nothing at all for ${Math.round(STALL_BUDGET_MS / 60_000)} minutes${waitingOnWhat()}`;
+      return `stage ${rec.stage} heard nothing at all for ${Math.round(STALL_BUDGET_MS / 60_000)} minutes${waitingOnWhat()}`;
     return undefined;
   };
 
-  const record = (c: Check): Check => {
-    current.push(c);
-    log(`  [${c.verdict.toUpperCase()}] ${c.id} — ${c.evidence}`);
-    if (c.verdict === 'fail' && !KEEP_GOING) {
-      throw new FailFast(`${c.id}: ${c.evidence}`);
-    }
-    return c;
-  };
+  const record = (c: Check): Check => rec.record(c);
   const openStage = (n: number) => {
-    if (currentStage) closeStage();
-    currentStage = n;
-    current = [];
+    rec.openStage(n);
     stageStartedMs = Date.now();
     log(`--- stage ${n} ${STAGE_NAMES[n] ?? ''} ---`);
   };
-  const closeStage = () => {
-    if (!currentStage) return;
-    stages.push({
-      stage: currentStage,
-      name: STAGE_NAMES[currentStage] ?? '',
-      checks: current,
-      passed: stagePassed(current),
-    });
-    currentStage = 0;
-  };
+  const closeStage = () => rec.closeStage();
 
   // --- accounts, keys, assistants -----------------------------------------
   const sides: Record<SideId, Side> = {} as any;
@@ -438,6 +419,10 @@ async function oneRun(
    */
   const takedownChecks = async (stage: number): Promise<void> => {
     if (!sides.seller || !sides.buyer) return;
+    // Once per stage: a stop raised by these very checks is not a reason to
+    // gather them again.
+    if (takedownsCheckedFor.has(stage)) return;
+    takedownsCheckedFor.add(stage);
     const raw: TakedownEvent[] = takedownsFromTools(turns);
     if (!DRY) {
       const rows = await db.takedownsBy([sides.seller.actor.accountId, sides.buyer.actor.accountId], sinceIso);
@@ -503,9 +488,10 @@ async function oneRun(
       record(checkTakedownClaimBacked(stage, id, claims));
     }
   };
+  const takedownsCheckedFor = new Set<number>();
   /** Close the stage now open, once the takedown checks have looked at it. */
   const closeStageChecked = async (): Promise<void> => {
-    if (currentStage) await takedownChecks(currentStage);
+    if (rec.stage) await takedownChecks(rec.stage);
     closeStage();
   };
 
@@ -1372,6 +1358,10 @@ async function oneRun(
   } catch (e) {
     runError = e instanceof FailFast ? `cut short on a failed check — ${e.message}` : (e as Error).message;
     log(`run ${runNo} stopped: ${runError}`);
+    // A failed check stops the run, but not before the stage it stopped in has
+    // gathered what it gathers at its close (test/rehearsal/recorder.ts): an
+    // unasked takedown in the same turn as a failed wrap-up is still recorded.
+    if (e instanceof FailFast) await rec.gatherBeforeStop(takedownChecks);
     return finish();
   } finally {
     // Teardown ALWAYS, whatever stopped the run.
