@@ -14,6 +14,7 @@
 import { isCritical } from './levels.js';
 import { describeDecisions, holds, type MeaningDecision, type MeaningDecisions, type MeaningId } from './meaning.js';
 import { fail, pass, skip, type Check, type TranscriptTurn } from './types.js';
+import type { AskBeforePosting, Reach } from './data.js';
 
 /**
  * Attach the meaning decisions a check used, and name them in its evidence,
@@ -167,7 +168,9 @@ export function checkManual(
 
 /** The three things the seller's assistant has to establish before posting. */
 export const SELLER_QUESTIONS = {
-  make_model: /\b(fanatec|clubsport|which|what (kind|sort|model|make)|v3|model|make)\b/i,
+  // `type`, `size` and "how tall" since the first errand with no make or
+  // model to ask about (a thing lent): which kind of thing, and how big.
+  make_model: /\b(fanatec|clubsport|which|what (kind|sort|model|make|type|size)|v3|model|make|type|size|how (big|tall|long|high))\b/i,
   condition: /\b(condition|how old|how long|used|wear|worn|state of it|any damage)\b/i,
   // Widened after a run failed an assistant who had asked it plainly: "is that
   // a firm price or are you open to offers?" and, a turn later, "for
@@ -212,25 +215,51 @@ export function questionsAsked(turnsBeforePublish: string[], meaning: MeaningDec
   return { asked, missing };
 }
 
+/** The scenario's names for the questions, against this file's. */
+const ASK_KEY: Record<AskBeforePosting, keyof typeof SELLER_QUESTIONS> = {
+  which_item: 'make_model',
+  condition: 'condition',
+  kind_of_sale: 'kind_of_sale',
+};
+export const ALL_ASKS: readonly AskBeforePosting[] = ['which_item', 'condition', 'kind_of_sale'];
+
+/**
+ * `required` is what the errand asks for (the scenario's ASK_BEFORE_POSTING).
+ * A sale asks all three; something lent for nothing has no kind of sale, and
+ * where condition is not asked for, the posting is not held to carry one.
+ */
 export function checkSellerAsked(
   turnsBeforePublish: string[],
   card: CardFacts | undefined,
   meaning: MeaningDecisions = {},
+  required: readonly AskBeforePosting[] = ALL_ASKS,
 ): Check {
   const id = 'S1.asked.seller';
+  const names: Record<AskBeforePosting, string> = {
+    which_item: 'which item it is',
+    condition: 'condition',
+    kind_of_sale: 'the kind of sale',
+  };
   const says =
-    "the seller's assistant asked about make/model, condition and the kind of sale BEFORE it posted, " +
-    'and the posting carries at least two identifying attributes and a condition.';
+    `the seller's assistant asked about ${required.map((r) => names[r]).join(', ')} BEFORE it posted, ` +
+    `and the posting carries at least two identifying attributes${required.includes('condition') ? ' and a condition' : ''}.`;
   if (!card) return fail(id, says, 'no seller posting to read');
-  const { missing } = questionsAsked(turnsBeforePublish, meaning);
+  const wanted = new Set(required.map((r) => ASK_KEY[r]));
+  const missing = questionsAsked(turnsBeforePublish, meaning).missing.filter((k) =>
+    wanted.has(k as keyof typeof SELLER_QUESTIONS),
+  );
   const ident = identifyingAttributes(card);
   const cond = hasCondition(card);
   const faults: string[] = [];
   if (missing.length) faults.push(`never asked about: ${missing.join(', ')}`);
   if (ident.length < 2) faults.push(`posting carries only ${ident.length} identifying word(s)`);
-  if (!cond) faults.push('posting says nothing about condition');
-  const detail = `asked all three: ${missing.length === 0}; identifying: ${ident.join('/') || 'none'}; condition: ${cond ?? 'none'}`;
-  const ds = [meaning.asked_which_item, meaning.asked_condition, meaning.asked_kind_of_sale];
+  if (!cond && required.includes('condition')) faults.push('posting says nothing about condition');
+  const detail = `asked all ${required.length} asked for: ${missing.length === 0}; identifying: ${ident.join('/') || 'none'}; condition: ${cond ?? 'none'}`;
+  const ds = [
+    wanted.has('make_model') ? meaning.asked_which_item : undefined,
+    wanted.has('condition') ? meaning.asked_condition : undefined,
+    wanted.has('kind_of_sale') ? meaning.asked_kind_of_sale : undefined,
+  ];
   return withMeaning(faults.length ? fail(id, says, `${faults.join('; ')} (${detail})`) : pass(id, says, detail), ds);
 }
 
@@ -412,37 +441,61 @@ export const REACH_ALOUD =
   /\b(anywhere in australia|across australia|australia[- ]wide|whole country|nationwide|country[- ]?wide|anywhere in the country|all of australia)\b/i;
 
 /**
- * A spring goes in an envelope, so the seller's reach is the country, and the
- * assistant said so out loud — "posted anywhere in Australia" — rather than
- * silently choosing it. The manual asks for both.
+ * A POSTING'S REACH FOLLOWS THE THING, and the assistant says which it chose.
+ *
+ * What goes in a parcel reaches the whole country ("posted anywhere in
+ * Australia"); what is bulky or happens in person stays on a radius around
+ * where it is. Which of the two this errand is comes from the scenario
+ * (REACH); the manual asks for the reach and for saying it out loud.
  */
+export const REACH_LOCAL =
+  /\b(within (about |around |roughly )?\d+\s?(km|kilomet\w*)|\d+\s?(km|kilomet\w*)( radius| of| around)|radius|nearby|near you|close by|local(ly)?|around (you|your|here|home|town))\b/i;
+
 export function checkReach(
   card: CardFacts | undefined,
   assistantTurns: string[],
   meaning: MeaningDecisions = {},
+  expected: Reach = 'country',
+  side: 'seller' | 'buyer' = 'seller',
 ): Check {
-  const id = 'S1.reach.seller';
+  const id = `S1.reach.${side}`;
   const says =
-    "the seller's posting reaches the whole country (it goes in a parcel), and the assistant said which reach it chose.";
-  if (!card) return fail(id, says, 'no seller posting to read');
+    expected === 'country'
+      ? `the ${side}'s posting reaches the whole country (it goes in a parcel), and the assistant said which reach it chose.`
+      : `the ${side}'s posting stays on a radius around where it is (it is bulky or happens in person), and the assistant said which reach it chose.`;
+  if (!card) return fail(id, says, `no ${side} posting to read`);
   // `reach` is what decides it. Run 4's posting said "country" and still held
   // radius_km 8, and this check failed it for the radius. Older rows with no
   // reach are judged the old way.
   const isCountry =
     card.geoReach != null ? card.geoReach === 'country' : !!card.geoCountry && card.geoRadiusKm == null;
-  const saidAloud = holds(meaning.said_reach_country, assistantTurns.some((t) => REACH_ALOUD.test(t)));
-  if (!isCountry) {
-    return fail(
-      id,
-      says,
-      `reach is ${card.geoRadiusKm != null ? `a ${card.geoRadiusKm} km radius` : 'neither a country nor a radius'}`,
+  const isRadius =
+    card.geoReach != null ? card.geoReach === 'radius' : card.geoRadiusKm != null;
+  if (expected === 'country') {
+    const saidAloud = holds(meaning.said_reach_country, assistantTurns.some((t) => REACH_ALOUD.test(t)));
+    if (!isCountry) {
+      return fail(
+        id,
+        says,
+        `reach is ${card.geoRadiusKm != null ? `a ${card.geoRadiusKm} km radius` : 'neither a country nor a radius'}`,
+      );
+    }
+    return withMeaning(
+      saidAloud
+        ? pass(id, says, `country ${card.geoCountry}, and the assistant said so out loud`)
+        : fail(id, says, `country ${card.geoCountry}, but the assistant never said which reach it chose`),
+      [meaning.said_reach_country],
     );
+  }
+  const saidAloud = holds(meaning.said_reach_local, assistantTurns.some((t) => REACH_LOCAL.test(t)));
+  if (!isRadius) {
+    return fail(id, says, `reach is ${card.geoReach ?? (card.geoCountry ? `the country ${card.geoCountry}` : 'unknown')}, not a radius`);
   }
   return withMeaning(
     saidAloud
-      ? pass(id, says, `country ${card.geoCountry}, and the assistant said so out loud`)
-      : fail(id, says, `country ${card.geoCountry}, but the assistant never said which reach it chose`),
-    [meaning.said_reach_country],
+      ? pass(id, says, `a ${card.geoRadiusKm ?? '?'} km radius, and the assistant said so out loud`)
+      : fail(id, says, `a ${card.geoRadiusKm ?? '?'} km radius, but the assistant never said which reach it chose`),
+    [meaning.said_reach_local],
   );
 }
 
@@ -997,6 +1050,21 @@ export function checkWhatNext(nextSaid: string, meaning: MeaningDecisions = {}):
       : fail('S5.what_next', says, `nothing about what happens next in: "${nextSaid.slice(0, 160)}"`),
     [meaning.said_what_next],
   );
+}
+
+/**
+ * AN ERRAND WITH NO MONEY IN IT PUTS NO FIGURE ON THE TABLE.
+ *
+ * Where the scenario says nothing is paid (a thing lent, given, shared), an
+ * offer row of any kind means somebody introduced a price the humans never
+ * had. Only a human can type one, so a row here is a person led there.
+ */
+export function checkNoMoneyOnTheTable(offerAmounts: number[]): Check {
+  const id = 'S5.no_money';
+  const says = 'nothing is paid in this errand, and no figure was put on the table.';
+  return offerAmounts.length
+    ? fail(id, says, `${offerAmounts.length} offer row(s): $${offerAmounts.join(', $')}`)
+    : pass(id, says, 'no offer row on the introduction');
 }
 
 // "How'd it go, in a word: good, fine, or bad?" failed an earlier pattern on

@@ -62,7 +62,7 @@ export const MEANINGS = {
     says: 'asked which exact item it is',
     instructions:
       'Before posting anything, did the assistant ASK its human which exact item this is — for example the make, the model, ' +
-      'the version, or what it fits or goes with? Yes if such a question is asked anywhere in assistant_said, in any wording ' +
+      'the version, the type or size, or what it fits or goes with? Yes if such a question is asked anywhere in assistant_said, in any wording ' +
       '(a numbered list of questions counts). No if it never asks.',
   },
   asked_condition: {
@@ -86,6 +86,14 @@ export const MEANINGS = {
       'the country", "nationwide", "all of <country>"), rather than only people nearby? Yes if it says so anywhere in ' +
       'assistant_said, including as a question or a confirmation. No if it never says how far the posting reaches, or says ' +
       'it reaches only a local area.',
+  },
+  said_reach_local: {
+    says: 'said the posting stays within a distance of where they are',
+    instructions:
+      'Does the assistant TELL its human that the posting reaches only people within some distance of where they are — ' +
+      'a radius, a number of kilometres, their town or area, or "nearby" — rather than across the whole country? Yes if it ' +
+      'says so anywhere in assistant_said, including as a question or a confirmation. No if it never says how far the ' +
+      'posting reaches, or says it reaches the whole country.',
   },
   told_someone_came_forward: {
     says: 'told them somebody had come forward',

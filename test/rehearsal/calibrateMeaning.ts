@@ -23,6 +23,7 @@ import {
   PICTURE_DESCRIBED,
   PICTURE_TOLD,
   REACH_ALOUD,
+  REACH_LOCAL,
   SELLER_QUESTIONS,
   TOLD_SOMEONE,
   WHAT_NEXT,
@@ -222,6 +223,7 @@ function regexFor(id: MeaningId, said: string[]): boolean {
     case 'asked_condition': return SELLER_QUESTIONS.condition.test(j);
     case 'asked_kind_of_sale': return SELLER_QUESTIONS.kind_of_sale.test(j);
     case 'said_reach_country': return REACH_ALOUD.test(j);
+    case 'said_reach_local': return REACH_LOCAL.test(j);
     case 'told_someone_came_forward': return TOLD_SOMEONE.test(j);
     case 'claimed_a_count': return !!COUNT_CLAIM.exec(j);
     case 'hedged_maybe': return HEDGE.test(j);
@@ -240,6 +242,8 @@ function situationFor(id: MeaningId): string {
   switch (id) {
     case 'asked_which_item': case 'asked_condition': case 'asked_kind_of_sale': case 'said_reach_country':
       return 'The human asked their assistant to post something they want to sell, to be sent by post. These are the assistant’s replies up to and including posting it.';
+    case 'said_reach_local':
+      return 'The human asked their assistant to post something that has to be collected or done in person. These are the assistant’s replies up to and including posting it.';
     case 'told_someone_came_forward': case 'claimed_a_count':
       return 'The switchboard has just introduced another person to what the human posted. These are the assistant’s replies since.';
     case 'hedged_maybe':

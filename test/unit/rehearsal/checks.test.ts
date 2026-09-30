@@ -27,6 +27,7 @@ import {
   checkSellerAsked,
   checkShelf,
   checkSpeech,
+  checkNoMoneyOnTheTable,
   figuresOn,
   identifyingAttributes,
   questionsAsked,
@@ -179,6 +180,32 @@ describe('reach', () => {
     expect(checkReach(card(), ['I have set it to reach anywhere in Australia.']).verdict).toBe('pass');
     expect(checkReach(card(), ['Done, it is up.']).verdict).toBe('fail');
     expect(checkReach(card({ geoCountry: null, geoRadiusKm: 25 }), ['anywhere in Australia']).verdict).toBe('fail');
+  });
+
+  // An errand collected in person stays on a radius, on either side.
+  it('wants a radius where the errand says so, and the assistant saying so', () => {
+    const local = card({ geoRadiusKm: 25, geoReach: null });
+    expect(checkReach(local, ['I have kept it within 25 km of you.'], {}, 'radius').verdict).toBe('pass');
+    expect(checkReach(local, ['Done, it is up.'], {}, 'radius').verdict).toBe('fail');
+    const wide = card({ geoRadiusKm: 8, geoReach: 'country' });
+    expect(checkReach(wide, ['anywhere in Australia'], {}, 'radius').verdict).toBe('fail');
+    expect(checkReach(local, ['nearby only'], {}, 'radius', 'buyer').id).toBe('S1.reach.buyer');
+  });
+});
+
+describe('an errand with no money in it', () => {
+  it('asks only what the errand asks for before posting', () => {
+    const said = ['What kind is it, and how tall does it go?'];
+    expect(checkSellerAsked(said, card(), {}, ['which_item']).verdict).toBe('pass');
+    // Without condition asked for, the posting is not held to carry one.
+    expect(checkSellerAsked(said, card({ attributes: { make: 'Fanatec', model: 'ClubSport' } }), {}, ['which_item']).verdict).toBe('pass');
+    // The default is still all three.
+    expect(checkSellerAsked(said, card()).verdict).toBe('fail');
+  });
+
+  it('fails any figure put on the table', () => {
+    expect(checkNoMoneyOnTheTable([]).verdict).toBe('pass');
+    expect(checkNoMoneyOnTheTable([20]).verdict).toBe('fail');
   });
 });
 

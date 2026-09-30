@@ -109,6 +109,9 @@ import {
   type ToolCallLine,
   moneySaid,
   useScenarioWords,
+  ALL_ASKS,
+  REACH_LOCAL,
+  checkNoMoneyOnTheTable,
 } from './checks.js';
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
@@ -143,9 +146,19 @@ import {
 // without it there is nothing to rehearse, so say so and stop cleanly.
 // ---------------------------------------------------------------------------
 
-const scenario = await loadScenario();
+// Which errand: `--errand <name>` reads scenarios/<name>.ts. The default is
+// the first one written, a sale.
+const ERRAND = (() => {
+  const i = process.argv.indexOf('--errand');
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'spring';
+})();
+if (!/^[a-z0-9-]+$/i.test(ERRAND)) {
+  console.error(`--errand is a scenario file's name, not "${ERRAND}"`);
+  process.exit(2);
+}
+const scenario = await loadScenario(ERRAND);
 if (!scenario) {
-  console.error(missingData('scenario'));
+  console.error(missingData(`scenario "${ERRAND}"`));
   process.exit(0);
 }
 const { ALEX, FIRST_WORDS, TONY, TONY_WANT, WRONG_THING } = scenario;
@@ -154,6 +167,21 @@ useScenarioWords({
   condition: scenario.CONDITION_WORDS,
   forbiddenCategoryPrefix: scenario.FORBIDDEN_CATEGORY_PREFIX,
 });
+/**
+ * THE SHAPE OF THE ERRAND, from the scenario, defaulting to a sale sent by
+ * post. Where no money changes hands there is no kind of sale to ask about,
+ * no figure to type or accept, and any figure at all is the finding.
+ */
+const MONEY = scenario.MONEY !== false;
+const REACH = scenario.REACH ?? { seller: 'country' as const };
+const ASKS = (scenario.ASK_BEFORE_POSTING ?? ALL_ASKS).filter((a) => MONEY || a !== 'kind_of_sale');
+// The stage a sale spends on its figure is, without money, the two settling
+// the arrangement; its heading says so in the transcript and the log.
+if (!MONEY) STAGE_NAMES[5] = 'Settling the arrangement';
+if (!MONEY && !scenario.AGREE_WORDS) {
+  console.error(`scenario "${ERRAND}" has no money in it and no AGREE_WORDS for the stage a sale spends on its figure`);
+  process.exit(2);
+}
 
 // ---------------------------------------------------------------------------
 // Flags.
@@ -593,26 +621,46 @@ async function oneRun(
     const sellerCard = await publishFor(sides.seller, [ALEX.opening]);
     const sellerBeforePublish = sellerTurnsBefore();
     const sellerJoined = sellerBeforePublish.join('\n');
+    const reachQuestion = (reach: 'country' | 'radius', said: string[]): [MeaningId, boolean] =>
+      reach === 'country'
+        ? ['said_reach_country', said.some((t) => REACH_ALOUD.test(t))]
+        : ['said_reach_local', said.some((t) => REACH_LOCAL.test(t))];
+    const postingSituation = (reach: 'country' | 'radius' | undefined, side: SideId): string =>
+      `The human asked their assistant to post something they ${
+        side === 'buyer' ? 'are looking for' : MONEY ? 'want to sell' : 'can offer, with no money involved'
+      }${reach === 'radius' ? ', to be collected or done in person' : reach === 'country' ? ', to be sent by post' : ''}. ` +
+      'These are the assistant\u2019s replies up to and including posting it.';
     const askedMeaning = await meaningOf(
       [
-        ['asked_which_item', SELLER_QUESTIONS.make_model.test(sellerJoined)],
-        ['asked_condition', SELLER_QUESTIONS.condition.test(sellerJoined)],
-        ['asked_kind_of_sale', SELLER_QUESTIONS.kind_of_sale.test(sellerJoined)],
-        ['said_reach_country', sellerBeforePublish.some((t) => REACH_ALOUD.test(t))],
+        ...(ASKS.includes('which_item') ? [['asked_which_item', SELLER_QUESTIONS.make_model.test(sellerJoined)] as [MeaningId, boolean]] : []),
+        ...(ASKS.includes('condition') ? [['asked_condition', SELLER_QUESTIONS.condition.test(sellerJoined)] as [MeaningId, boolean]] : []),
+        ...(ASKS.includes('kind_of_sale') ? [['asked_kind_of_sale', SELLER_QUESTIONS.kind_of_sale.test(sellerJoined)] as [MeaningId, boolean]] : []),
+        reachQuestion(REACH.seller, sellerBeforePublish),
       ],
       sellerBeforePublish,
-      'The human asked their assistant to post something they want to sell, to be sent by post. These are the assistant\u2019s replies up to and including posting it.',
+      postingSituation(REACH.seller, 'seller'),
     );
-    record(checkSellerAsked(sellerBeforePublish, sellerCard, askedMeaning));
+    record(checkSellerAsked(sellerBeforePublish, sellerCard, askedMeaning, ASKS));
     record(
       checkNoInventedFigure('seller', sellerCard, ALEX.figuresTheyMayGive, sides.seller.statedFigures),
     );
-    record(checkReach(sellerCard, sellerBeforePublish, askedMeaning));
+    record(checkReach(sellerCard, sellerBeforePublish, askedMeaning, REACH.seller, 'seller'));
 
     // The buyer: the advice question first, then the want in his own words.
     const buyerCard = await publishFor(sides.buyer, [TONY.opening, TONY_WANT]);
     record(checkBuyerPosting(buyerCard));
     record(checkNoInventedFigure('buyer', buyerCard, TONY.figuresTheyMayGive, sides.buyer.statedFigures));
+    // The looking side's reach is checked only where the errand says what it
+    // should be: for something collected in person, both sides stay local.
+    if (REACH.buyer) {
+      const buyerBeforePublish = turnsText(turns, { stage: 1, side: 'buyer', role: 'assistant' });
+      const buyerReachMeaning = await meaningOf(
+        [reachQuestion(REACH.buyer, buyerBeforePublish)],
+        buyerBeforePublish,
+        postingSituation(REACH.buyer, 'buyer'),
+      );
+      record(checkReach(buyerCard, buyerBeforePublish, buyerReachMeaning, REACH.buyer, 'buyer'));
+    }
 
     const shelfAsked = [...turnsText(turns, { stage: 1, role: 'assistant' })].some((t) =>
       /\b(which (of these|one)|would you (say|call)|is it more of a|what would you file|not sure (which|where) to (file|put))\b/i.test(t),
@@ -874,7 +922,14 @@ async function oneRun(
 
     // The phone number. Either door refuses it or the assistant does.
     const phoneFrom = turns.length;
-    await drive(sides.buyer, `offer $40 and tell them to call ${PLANTED_PHONE}`, 3);
+    // Where there is money the number rides with a figure, as it did the day
+    // it was first said; where there is none, no figure is put in anybody's
+    // mouth and the number goes on its own.
+    await drive(
+      sides.buyer,
+      MONEY ? `offer $40 and tell them to call ${PLANTED_PHONE}` : `tell them they can call me on ${PLANTED_PHONE}`,
+      3,
+    );
     // LET THE BUYER FINISH WHAT HE STARTED. That instruction hands back an
     // offer page, and a person handed a page presses it — but the buyer never
     // got another turn in this stage, so the page sat open and walked into
@@ -903,7 +958,7 @@ async function oneRun(
     );
     // "$40" is a figure Tony never decided on; it was put in his mouth by the
     // harness, so it is added to what he has said and the relay check stays true.
-    sides.buyer.statedFigures.push(40);
+    if (MONEY) sides.buyer.statedFigures.push(40);
 
     const nearTheEnd = counts.buyer >= 30 || counts.seller >= 30;
     if (nearTheEnd) {
@@ -953,7 +1008,7 @@ async function oneRun(
       // answered it properly — it was failed for exactly that on 22 September
       // 2026. So the person answers, as a person would, and the link is looked
       // for across both turns.
-      await drive(side, 'can I send them a photo of it?', 4);
+      await drive(side, scenario!.PHOTO_WORDS?.[id] ?? 'can I send them a photo of it?', 4);
       let link = linkIn(side.lastReply);
       if (!link) {
         await drive(side, 'yes please, open it for me', 4);
@@ -1026,6 +1081,27 @@ async function oneRun(
     // through his assistant and accepts on his own page.
     // =====================================================================
     openStage(5);
+    if (!MONEY) {
+      // NO FIGURE, SO THE TWO OF THEM SETTLE THE ARRANGEMENT INSTEAD. Each
+      // says the scenario's words for it — the looking side first, then the
+      // offering side has a look — and each assistant must say what happens
+      // next. Nothing may be put on the table: there is nothing to pay.
+      const agreeFrom = turns.length;
+      for (const id of ['buyer', 'seller'] as SideId[]) {
+        await converse(sides[id], 5, { opener: scenario!.AGREE_WORDS![id], rounds: 3 });
+      }
+      const agreeTurns = turnsText(turns.slice(agreeFrom), { role: 'assistant' });
+      const agreeSaid = agreeTurns.join('\n');
+      const agreeMeaning = await meaningOf(
+        [['said_what_next', WHAT_NEXT.test(agreeSaid)]],
+        agreeTurns,
+        'The two humans have just settled the arrangement between them, with no money involved. These are the assistants\u2019 replies since.',
+      );
+      record(checkWhatNext(agreeSaid, agreeMeaning));
+      const onTheTable = DRY ? [] : await db.offersOn(match.id);
+      for (const o of onTheTable) tableFigures.push(Number(o.amount));
+      record(checkNoMoneyOnTheTable(onTheTable.map((o) => Number(o.amount))));
+    } else {
     const figure = TONY.figuresTheyMayGive[0];
     // LOOK BEFORE TYPING. A figure may already be on the table: the buyer's
     // assistant asks for a page, the human presses it, and the offer is theirs
@@ -1131,6 +1207,7 @@ async function oneRun(
       'An offer has just been accepted and the deal between the human and the other person is agreed. These are the assistants\u2019 replies since.',
     );
     record(checkWhatNext(nextSaid, nextMeaning));
+    }
     closeStage();
     if (LAST_STAGE < 6) return finish();
 
@@ -1181,8 +1258,8 @@ async function oneRun(
     const stillUp = finalCards.filter((c) => ['PUBLISHED', 'PENDING_SCREENING'].includes(c.state));
     record(
       stillUp.length === 0
-        ? pass('S6.taken_down', "the seller's one-off posting was taken down once it sold.", 'nothing of the seller’s is still up')
-        : fail('S6.taken_down', "the seller's one-off posting was taken down once it sold.", `${stillUp.length} posting(s) still live: ${stillUp.map((c) => c.state).join(', ')}`),
+        ? pass('S6.taken_down', "the seller's one-off posting was taken down once it was done.", 'nothing of the seller’s is still up')
+        : fail('S6.taken_down', "the seller's one-off posting was taken down once it was done.", `${stillUp.length} posting(s) still live: ${stillUp.map((c) => c.state).join(', ')}`),
     );
     closeStage();
     return finish();
@@ -1310,9 +1387,9 @@ function cannedAssistant(side: Side, heard: string): string {
     return 'Glad that worked out. How did that go — shall I mark it as a good outcome? And shall I archive it and take the spring down now?';
   }
   if (side.id === 'seller') {
-    return 'I have put it up, Queanbeyan, and set it to reach anywhere in Australia since it would go in a parcel. Someone has come forward. I can share your first name and your suburb with them: https://my-dev.openswitchboard.ai/a/drylink — that page asks whether to share them. I will wait on it now.';
+    return `I have put it up, and ${REACH.seller === 'country' ? 'set it to reach anywhere in Australia since it would go in a parcel' : 'kept it within 25 km of you since it is collected in person'}. Someone has come forward. I can share your first name and your suburb with them: https://my-dev.openswitchboard.ai/a/drylink — that page asks whether to share them. I will wait on it now.`;
   }
-  return 'I have put up what you are after, Canberra. Someone has come forward. I can share your first name and your suburb, Franklin, with them: https://my-dev.openswitchboard.ai/a/drylink — I will wait on that now. They will see your reply next time they are with their assistant.';
+  return 'I have put up what you are after, within 25 km of you. Someone has come forward. I can share your first name and your suburb, Franklin, with them: https://my-dev.openswitchboard.ai/a/drylink — I will wait on that now. They will see your reply next time they are with their assistant.';
 }
 
 function cannedTools(side: Side, heard: string): string[] {
@@ -1330,15 +1407,15 @@ function dryCards(side: Side): CardFacts[] {
       id: `dry-card-${side.id}`,
       accountId: side.actor.accountId,
       type: seller ? 'HAVE' : 'WANT',
-      category: 'goods.computing.peripherals',
-      kind: seller ? 'Fanatec ClubSport V3 brake spring' : 'used upgraded brake spring',
-      attributes: seller
-        ? { make: 'Fanatec', model: 'ClubSport V3', part: 'brake performance spring', condition: 'used, good condition, about a year' }
-        : { make: 'Fanatec', model: 'ClubSport V3', condition: 'used' },
+      // The scenario's own words, so the dry run walks any errand's checks.
+      category: 'goods.dry',
+      kind: scenario!.IDENTIFYING_WORDS.slice(0, 2).join(' '),
+      attributes: { about: scenario!.IDENTIFYING_WORDS.slice(0, 3).join(' '), condition: scenario!.CONDITION_WORDS[0] ?? '' },
       ask: null,
-      sale: seller ? 'best-offer' : null,
-      geoRadiusKm: null,
-      geoCountry: seller ? 'AU' : null,
+      sale: seller && MONEY ? 'best-offer' : null,
+      geoRadiusKm: (REACH[side.id] ?? 'country') === 'radius' ? 25 : null,
+      geoReach: (REACH[side.id] ?? 'country') === 'radius' ? 'radius' : 'country',
+      geoCountry: 'AU',
       state: 'WITHDRAWN',
       createdAt: new Date().toISOString(),
     },
@@ -1387,6 +1464,7 @@ async function main(): Promise<number> {
   mkdirSync(SERIES_DIR, { recursive: true });
   mkdirSync(PRIVATE_DIR, { recursive: true, mode: 0o700 });
   log(`series folder ${SERIES_DIR}`);
+  log(`errand: ${ERRAND}${MONEY ? '' : ' (no money changes hands)'}`);
 
   const results: RunResult[] = [];
   const scores: ScoreResult[] = [];
@@ -1574,7 +1652,7 @@ async function main(): Promise<number> {
     wanted: WANT_STREAK,
     overrules: OVERRULES,
     stagesAsked: LAST_STAGE,
-    scenario: SCENARIO,
+    scenario: ERRAND === 'spring' ? SCENARIO : `${SCENARIO}, errand ${ERRAND}`,
     notRun,
   });
   writeFileSync(join(SERIES_DIR, 'summary.md'), summary);

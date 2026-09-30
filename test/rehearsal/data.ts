@@ -53,13 +53,47 @@ export interface Scenario {
   WRONG_THING: string;
   /** What each person says once connected, round by round. */
   FIRST_WORDS: { buyer: readonly string[]; seller: readonly string[] };
-  /** The shelf this item does not belong on. */
-  FORBIDDEN_CATEGORY_PREFIX: string;
+  /** The shelf this item does not belong on, where there is one. */
+  FORBIDDEN_CATEGORY_PREFIX?: string;
   /** Words that identify the thing, for "the posting says what it is". */
   IDENTIFYING_WORDS: readonly string[];
   /** Words that say what state it is in. */
   CONDITION_WORDS: readonly string[];
+
+  // --- The shape of the errand. Every field below is optional, and left out
+  // --- it means what the first scenario (a sale, sent by post) always meant.
+
+  /**
+   * Whether money changes hands. Default true. Where it is false there is no
+   * kind of sale to ask about, no figure is ever typed or accepted, the
+   * figures stage becomes the two people settling the arrangement, and a
+   * figure anywhere — on a posting, in a relay, on the table — is the finding.
+   */
+  MONEY?: boolean;
+  /**
+   * How far each posting should reach: 'country' for what goes in a parcel,
+   * 'radius' for what is bulky or happens in person. Default: the offering
+   * side 'country', the looking side unchecked.
+   */
+  REACH?: { seller: Reach; buyer?: Reach };
+  /**
+   * What the offering side's assistant must ask before it posts. Default all
+   * three. `kind_of_sale` is never asked where there is no money; a make and
+   * a model are not asked of something lent (the manual says so), so
+   * `which_item` there means which kind of thing and its size.
+   */
+  ASK_BEFORE_POSTING?: readonly AskBeforePosting[];
+  /** What each person says to start the photo step. Default "can I send them a photo of it?". */
+  PHOTO_WORDS?: { seller?: string; buyer?: string };
+  /**
+   * Where there is no money: what each person says to settle the arrangement
+   * in the stage a sale spends on its figure. Asked of the looking side first.
+   */
+  AGREE_WORDS?: { buyer: string; seller: string };
 }
+
+export type Reach = 'country' | 'radius';
+export type AskBeforePosting = 'which_item' | 'condition' | 'kind_of_sale';
 
 async function importData<T>(file: string): Promise<T | undefined> {
   const path = join(rehearsalDataDir(), file);
