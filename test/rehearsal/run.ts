@@ -842,6 +842,7 @@ async function oneRun(
     // =====================================================================
     // STAGE 2 — INTRODUCTION AND NAMES
     // =====================================================================
+    await closeStageChecked();
     openStage(2);
     const pressesBefore = presses.length;
     /**
