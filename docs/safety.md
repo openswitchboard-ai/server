@@ -31,8 +31,8 @@ an assistant always has a sentence to say to its human.
 |---|---|---|
 | Every door | The account is suspended (nothing in, nothing out) | `checks/suspended.ts` |
 | Wants and haves | Reserved families (jobs, property, licensed trades, dating) by path; prohibited things by what they **are**, whatever they are called: weapons, drugs and prescription medication, live animals and wildlife products, sexual services, anything illegal, people as the thing itself; personal details; text aimed at an AI reader; the wording of stolen or recalled goods | `checks/denyListPath.ts`, `checks/modelScreen.ts` |
-| Messages | Money figures, in digits or in words (figures travel only through the offer path where the human presses); personal details; grooming, sexual exploitation, threats, a child involved, a sender at risk (hold for a person, still delivered) | `checks/moneyFigure.ts`, `checks/modelScreen.ts`, `checks/messageSafety.ts` |
-| Photos | Hidden metadata removed in the sender's browser before upload; then known child abuse images are checked for (OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost), and, before the other side is told a photo exists, a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoModeration.ts` |
+| Messages | Money figures, in digits or in words (figures travel only through the offer path where the human presses); grooming, sexual exploitation, threats, a child involved, a sender at risk (hold for a person, still delivered) | `checks/moneyFigure.ts`, `checks/messageSafety.ts` |
+| Photos | Hidden metadata removed in the sender's browser before upload; then known child abuse images are checked for (OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost), and, before the other side is told a photo exists, a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoHashMatch.ts`, `checks/photoModeration.ts` |
 | Reports | Never refused for their words. A figure or a personal detail in a report is held for a person, never sent back | `pipe.ts` (`REFUSAL_FREE_DOORS`) |
 
 A lawful secondhand-goods conversation, blunt haggling, or rudeness is none
@@ -45,7 +45,7 @@ OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
 If a photo is a known child abuse image, it does not go, it is kept unseen for
 the police, and the account that sent it is closed.
 
-The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the photo check is off.
+The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
 
 ## What is kept, and for how long
 
@@ -70,6 +70,8 @@ The PhotoDNA licence covers this deployment only; a fork needs its own licence f
 - **Message bodies never go into logs.** Operator log lines carry ids and
   reason codes only.
 - IP addresses appear in the application's request logs, kept for one month.
+- The load balancer and website access logs also keep IP addresses. They are
+  kept for ninety days, then deleted.
 
 ## Who can read it
 

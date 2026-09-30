@@ -35,7 +35,7 @@ Place data in `data/gazetteer.json.gz` comes from GeoNames under CC BY 4.0 — s
 [NOTICE](NOTICE).
 
 OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
-The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the photo check is off.
+The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
 
 ## How this relates to the other repos
 
@@ -53,10 +53,11 @@ and registration is open at `https://my.openswitchboard.ai`.
 
 One container, three concerns.
 
-**1. MCP endpoint** — `/mcp`, Streamable HTTP in stateless JSON mode. Eleven
-tools: `publish_intent`, `check_in`, `respond`, `open_conversation`,
-`send_message`, `collect_messages`, `list_intents`, `standing_arrangement`,
-`amend_intent`, `withdraw_intent`, `settle`. Tool schemas embed
+**1. MCP endpoint** — `/mcp`, Streamable HTTP in stateless JSON mode. Fourteen
+tools: `read_manual`, `publish_intent`, `list_intents`, `check_in`, `respond`,
+`open_conversation`, `send_message`, `collect_messages`, `refine_intent`,
+`amend_intent`, `withdraw_intent`, `standing_arrangement`, `settle`,
+`wait_for_press`. Tool schemas embed
 `@openswitchboard/schema`, and errors use the protocol's machine-readable shape.
 Every outbound counterparty payload is validated against its protocol schema
 before it leaves the process (`assertOutbound`), which makes the no-leak rule
@@ -80,7 +81,7 @@ These are the invariants worth reading the code to check:
 - Price bands (budget ceiling, reserve floor) are matching inputs only. They are
   envelope-encrypted at rest, decrypted inside the matching engine, and
   structurally absent from every disclosure payload.
-- The names step (`intro.mutual`: first name and locality) is returned only when
+- The names step (`intro.mutual`: first name and suburb) is returned only when
   both humans' opt-in consent tokens exist. The gate queries `consent_tokens` directly.
   Those tokens are written by a human's own press and nothing else: `respond(opt_in)`
   records nothing at all and answers `CONSENT_REQUIRED` carrying the single-use link
@@ -127,13 +128,18 @@ These are the invariants worth reading the code to check:
   does not state the file was stripped (`metadata_removed`) — a claim the browser
   makes, which this service cannot verify without holding the image. A browser
   that runs no script cannot upload and cannot press Send.
-  **Every photo is looked at once by a machine before it is sent on.** At the
-  send press, before the other side is told a photo exists, the object goes
-  through Rekognition's moderation labels (`src/intake/checks/photoModeration.ts`):
-  anything sexual or nude at all, violence, hate symbols or drugs, and the photo
-  is deleted with nothing but the reason code kept. A moderation error is a
-  hold, never a pass. No person at the switchboard sees it; the two humans are
-  the only people who can, and the object is deleted when the other
+  **Every photo is checked by machine before it is sent on.** At the send
+  press, before the other side is told a photo exists, two checks run in order.
+  The first is a known-image check (`src/intake/checks/photoHashMatch.ts`). A
+  match is refused, the photo is held unseen for police, and the sender's
+  account is suspended. The second is Rekognition's moderation labels
+  (`src/intake/checks/photoModeration.ts`). A photo refused for violence, hate
+  symbols or drugs is deleted. A photo refused for sexual content is held
+  unseen for 90 days for possible referral. The sender reads the same refusal
+  sentence in every case, and only the reason code is written down. An error
+  in either check holds the photo. No person at the switchboard sees a
+  photo that passed; the two humans are the only people who can, and the
+  object is deleted when the other
   side collects it (once the short link handed over has run out) or at 14 days
   if nobody ever does. A caption and the uploaded filename ARE read, by the same
   `carriesMoneyFigure` rule a message is held to — a figure never travels in the
@@ -155,13 +161,15 @@ These are the invariants worth reading the code to check:
 ### What an agent may do on its own
 
 The network is at its best when an agent runs between the conversations its human
-has with it. An agent that records `runs_on_its_own` in its standing arrangement
-is the one the switchboard hands the news to, and for a human whose `hears_via`
-is `assistant` the switchboard sends no mail at all; where an agent only wakes
-when it is spoken to, the switchboard emails the human instead. That autonomy
+has with it. Every account starts with `hears_via` set to `email`, so the
+switchboard emails the human a short notice when something happens. It flips to
+`assistant` when the standing arrangement is saved with `runs_on_its_own` and a
+cadence, or when the human picks it on their own page. From then on the
+switchboard sends no notices, and the agent carries the news. Sign-in codes and
+security mail still go by email either way. That autonomy
 stops short of the decisions and the money, and the stopping is structural.
 
-- **Sharing a first name and locality.** `respond(opt_in)` writes nothing, ever.
+- **Sharing a first name and suburb.** `respond(opt_in)` writes nothing, ever.
   The consent token is recorded only by the human's own press
   (`OptInRecordedVia = 'counter'`), on a one-question page that needs a session
   for that account plus a PIN or passkey.
@@ -183,7 +191,10 @@ stops short of the decisions and the money, and the stopping is structural.
   verified Stripe webhook, and the auto-release sweep — and no agent or admin
   path mints any of them. Both humans approve on their own pages and the buyer
   funds the Checkout Session before money moves; the agent surface never
-  transitions a settlement past `proposed`.
+  transitions a settlement past `proposed`. Paying through the switchboard is
+  off on the hosted network: `settle` answers `SETTLEMENT_UNAVAILABLE` and
+  people pay each other directly. These rules apply where a deployment has
+  Stripe configured.
 - A standing arrangement cannot pre-approve any of this. It carries preferences
   only; the gates above are enforced where they are written, and the
   `standing_arrangement` tool description states the rule to the agent.
@@ -225,7 +236,7 @@ median time to one, conversations and offers, settlements by state, email sends
 and bounce rate, and a status block with the schema and manual versions, the
 registration mode and the database round trip. `GET /ops/metrics.json` returns
 the same numbers as JSON. Both are aggregates only — no emails, names, account
-ids, card text or message content ever reach them — and the whole result is
+ids, posting text or message content ever reach them — and the whole result is
 cached in-process for 30 seconds; the HTML refreshes itself every minute.
 
 It is protected by HTTP Basic, and only that. The credential is
@@ -243,11 +254,11 @@ hostname only; on the human hostname `/ops*` 404s.
 src/
   index.ts        boot; app.ts wires the Fastify instance
   config.ts       every setting, read from the environment, fails fast
-  mcp/            the eleven MCP tools and their instructions
+  mcp/            the fourteen MCP tools and their instructions
   auth/           OAuth 2.1 endpoints and token handling
   counter/        the human pages: registration, login, approvals, ledger
   opsMetrics.ts   the private operator metrics page (Basic auth, aggregates only)
-  domain/         cards, matching, disclosure gates, offers, screening, settlement
+  domain/         wants and haves, matching, disclosure gates, offers, screening, settlement
   geo/            offline gazetteer, normalisation, geohash
   email/          SES templates, sending, the banned-phrase copy lint
   workers/        SQS consumers: screening, matching, ops, email events
@@ -290,9 +301,9 @@ AWS_PROFILE=... npm run test:integration
 npm run build:gazetteer
 ```
 
-`src/config.ts` is the complete list of environment variables. No secret is read
-from a file or a default; secrets live in AWS Secrets Manager and SSM Parameter
-Store and are fetched by ARN at boot.
+`src/config.ts` is the complete list of environment variables. No secret has a
+default. Deployed secrets come from Secrets Manager by ARN or from SSM through
+the task definition.
 
 The image builds from the `Dockerfile` here and is assembled by CDK
 (`DockerImageAsset`) from the private `infra` repo.

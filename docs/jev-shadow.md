@@ -68,11 +68,11 @@ product or model where one is named, and how well does it fit.
 ## What is never sent
 
 No price and no price band. No geography of any kind — bucket, latitude,
-longitude, radius, country. No account id, no email, no card id, no ask, no
+longitude, radius, country. No account id, no email, no posting id, no ask, no
 urgency, no conversation, no message, no photograph, and no free text beyond
 the two fields above. The builders in `jevTrials.ts` are the only place that
 decides this, and the suite asserts on their **exact key sets** rather than on
-the absence of a few names, so a field added to a card later cannot quietly
+the absence of a few names, so a field added to a posting later cannot quietly
 join the request.
 
 The API key is never logged, never put in an error and never written down. The
@@ -108,9 +108,10 @@ Three separate things have to be true before a single request goes out:
    passes through a template. **There is no `osb/prod/jev` and infra never
    makes one** — the prod template is byte-for-byte unchanged by this work.
 2. `envName` is not `prod`. The client refuses to initialise in prod even with
-   the variable set, and says so in a boot line, because one infra deploy
-   reaches both environments and "prod got the env var by accident" is a thing
-   that happens to every project eventually.
+   the variable set, and says so in a boot line. Deploys are split: a push
+   deploys dev, and prod is a separate dispatch. The check stays anyway,
+   because "prod got the env var by accident" is a thing that happens to
+   every project eventually.
 3. The call site is one of the two trials. Nothing else asks.
 
 Nothing reads `jev_shadow` except the report script an operator runs by hand.

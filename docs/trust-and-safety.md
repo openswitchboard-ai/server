@@ -1,6 +1,6 @@
 # Trust and safety: one intake pipe
 
-Design, 2026-09-17; built the same day, steps 1–8 (step 9, the known-image check, pending). Raised by Lachlan alongside the decision to open
+Design, 2026-09-17; steps 1–8 built the same day, and step 9, the known-image check, built after. Raised by Lachlan alongside the decision to open
 the catalogue (see `taxonomy-question.md`): if anyone can post anything in plain
 words, the switchboard needs a real answer to abuse, to reporting, and to a
 lawful request for what it holds.
@@ -11,7 +11,7 @@ illegal activities that large tech have to consider. How do we stop or report
 those things and if law enforcement need detail on what is in the OSB, how
 should we provide."
 
-## Where we stand today
+## Before the build (17 September 2026)
 
 | Need | Today |
 |---|---|
@@ -57,9 +57,9 @@ person that the switchboard has not looked at and cannot account for.*
 | Check | What it catches | How | Runs on |
 |---|---|---|---|
 | Prohibited, by meaning | Weapons, drugs, prescription meds, live animals (lost and found pets going home excepted, on their own shelf and with no money), wildlife, sexual services, anything illegal, regardless of category name | Model classifier against the deny list's reason codes; the path glob stays as the cheap first pass | Postings, amendments |
-| PII | Names, emails, phones, street addresses, handles, coordinates | Existing model screen | Postings, messages |
+| PII | Names, emails, phones, street addresses, handles, coordinates | Existing model screen | Postings |
 | Money figures | Digits, symbols, spelled amounts, price phrasing | Existing `moneyInWords` | Messages |
-| Injection | Text aimed at an AI reader | Existing model screen | Postings, messages |
+| Injection | Text aimed at an AI reader | Existing model screen | Postings |
 | Stolen / recalled markers | Existing | Existing model screen | Postings |
 | Sexual content | Nudity and sexual imagery of any kind, and violence, hate symbols and drugs alongside it | Rekognition `DetectModerationLabels` on the uploaded object at the send press, before the other side is told it exists, `MinConfidence` 50. Refused on any of these top-level labels, in both the old and the current taxonomy names: Explicit, Explicit Nudity, Non-Explicit Nudity of Intimate parts and Kissing, Suggestive, Sexual Activity, Swimwear or Underwear, Violence, Visually Disturbing, Graphic Violence Or Gore, Hate Symbols, Drugs & Tobacco, Drugs, Tobacco. Alcohol, Gambling and Rude Gestures are deliberately not refused: a bottle of wine is a thing somebody may lawfully be handing over. A refusal keeps the reason code alone; an error is a hold, never a pass. WHAT HAPPENS TO THE BYTES DEPENDS ON THE FAMILY. A refusal on violence, hate or drugs deletes the object, as before. A refusal on any of the SEXUAL labels does not: the object is copied to `conversation-photos/quarantine/<introduction>/<name>` in the same bucket, the original is deleted, and a `photo_quarantine` row is written (migration 038) — held ninety days, status `held`. The reason is s 474.25 of the Criminal Code (Cth): a host that becomes aware of child abuse material must refer it to the Australian Federal Police, and Rekognition says "Explicit", never "a child". Deleting on sight destroys the referrable thing, fastest in exactly the cases where that is worst. A copy that fails leaves the original where it is and logs `{event:'photo-quarantine-failed', match_id}` — nothing is ever deleted that could not first be copied. The operator gets one line, `{event:'photo-quarantined', quarantine_id, match_id}`, with no key and no label; the sender's assistant reads the same plain sentence either way and nothing about quarantine reaches any user. A person decides with `scripts/safety/quarantine.mts`, which displays and fetches no image: `--cleared` deletes the object, `--referred` marks it and keeps it forever. The daily sweep takes only `cleared` rows past expiry; a `held` row past ninety days is logged as overdue and left alone, and a `referred` row is never swept | Photos |
 | Known abuse image | A known child abuse image | OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. See "A known-image match" below | Photos |
@@ -91,13 +91,18 @@ threshold is "any explicit label", not "probably illegal".
 ## Verdicts, and how much of review is automatic
 
 Nearly all of it. Pass and refuse are automatic and always were. **Hold** is
-the only verdict a person sees, and it is meant to be rare:
+the only verdict a person sees, and it is meant to be rare.
 
-1. First pass: the fast screen (Haiku on Bedrock, already in use).
-2. A hold from the first pass goes to a second, stronger model with the full
+Today there is one model pass: the fast screen (Haiku on Bedrock). Every hold
+opens a `safety_reviews` row and reaches a person. The operator is told by one
+log line, `{event:'safety-review', review_id, match_id}`, with no content in it.
+
+Planned:
+
+1. A hold from the first pass goes to a second, stronger model with the full
    context of the introduction. Where the two agree, that is the verdict.
-3. What remains uncertain after two models sits in a queue. Target: under one
-   in a hundred items. At launch the queue is an email to the operator.
+2. What remains uncertain after two models sits in a queue. Target: under one
+   in a hundred items. The queue may also email the operator.
 
 Two exceptions where a person is always in the loop, by law rather than by
 choice: anything the known-image check matches, and anything the sexual-content
@@ -297,7 +302,7 @@ any row, or in the ledger: a log line is the one thing in this system that is
 read casually. The tracking id is on the review row and nowhere
 else, because that is what a referral quotes.
 
-**The licence.** OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the photo check is off.
+**The licence.** OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
 
 ## Law enforcement: the runbook
 
@@ -313,7 +318,9 @@ Act and the Crimes Act can reach us.
 
 - Account: email (encrypted), the area they set, first name and suburb where
   they chose to share them, passkey record, agent keys, timestamps. Kept while
-  the account exists; there is no self-serve account deletion in the code.
+  the account exists. A person can delete their account from Settings, behind
+  a fresh PIN or passkey (`src/domain/accountDeletion.ts`); what safety and the
+  law need is kept, and the rest is erased.
 - Postings and introductions: kept as records after withdrawal or expiry
   (`expireDueCards` marks them EXPIRED; nothing deletes cards or matches).
 - Consent log: WORM bucket, Object Lock governance two years, no expiry after.
@@ -508,8 +515,8 @@ No new always-on infrastructure. Everything here is per-item.
 8. Terms, privacy, safety page, README, whitepaper.
 9. The known-image check.
 
-Steps 1 to 6 and 8 are release-bar tier one. Steps 7 and 9 follow within the
-first month of launch.
+All nine steps are built. Photos have been on in prod since 26 September 2026,
+with the known-image check on alongside them.
 
 ## Open questions for a lawyer
 
@@ -518,7 +525,8 @@ first month of launch.
 - The exact reporting route and timing for CSAM in Australia, and whether
   overseas users change it.
 - Whether the two-keyholder ceremony satisfies a warrant's timing
-  requirements, and who the second keyholder should be.
+  requirements. (Who holds the shares is settled: see the key ceremonies
+  above.)
 - IP addresses sit in the application logs for one month (Fastify request
   logs) and in the ALB and CloudFront access logs for ninety days; the public
   pages now say so.
