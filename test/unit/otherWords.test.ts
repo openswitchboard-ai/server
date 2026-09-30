@@ -605,7 +605,10 @@ describe('what a maybe hands the assistant to decide on', () => {
 
   it('carries NOTHING SENSITIVE about the other side', async () => {
     const p = await payloadFor('possible', SENSITIVE);
-    const flat = JSON.stringify(p);
+    // The schema version is the protocol's own number and says nothing about
+    // anybody, so it is left out of the digit search below.
+    const { schema_version: _version, ...rest } = p as Record<string, unknown>;
+    const flat = JSON.stringify(rest);
     // Not by name.
     for (const key of ['urgency', 'slots', 'ttl_days', 'price', 'price_enc', 'band', 'reserve',
                        'geo', 'geo_lat', 'geo_lon', 'geo_radius_km', 'account_id', 'email',
