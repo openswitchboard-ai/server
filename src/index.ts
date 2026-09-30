@@ -3,6 +3,8 @@ import { initDb, migrate } from './db.js';
 import { initEnvelope } from './crypto.js';
 import { ensureWebhookEndpoint, initStripe } from './stripe.js';
 import { initCounterKeys } from './counter/keys.js';
+import { useSharedLimiterStore } from './abuseLimit.js';
+import { postgresLimiterStore } from './rateLimitStore.js';
 import { buildApp } from './app.js';
 import { startScreeningWorker } from './workers/screeningWorker.js';
 import { startMatchingWorker } from './workers/matchingWorker.js';
@@ -37,6 +39,12 @@ async function main() {
 
   const app = buildApp(cfg);
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
+
+  // The abuse limiters count in Postgres from here on, so every task shares
+  // one window (N11; src/abuseLimit.ts). The keys are hashed under the counter
+  // key, which is why this waits for initCounterKeys. A store error falls back
+  // to this task's own count and is logged, never refused wholesale.
+  useSharedLimiterStore(postgresLimiterStore, (msg, extra) => app.log.error(extra, msg));
 
   if (settlementsConfigured(cfg)) {
     // Provision the Stripe webhook endpoint (idempotent). Settlements stay

@@ -571,7 +571,10 @@ d('integration gates against live deployment', () => {
       'awaiting-human',
     );
 
-    // Human acceptance arrives ONLY via the internal (no public route) interface.
+    // Human acceptance arrives ONLY from the human's own press on their page
+    // (test/e2e/counter.spec.ts drives that). The internal ops queue used to
+    // be able to accept; since N4 (30 September 2026) it refuses, and the
+    // offer stays exactly where the agent left it.
     const ui = await fetch(`${BASE_URL}/oauth/userinfo`, {
       headers: { authorization: `Bearer ${bob.accessToken}` },
     });
@@ -582,15 +585,15 @@ d('integration gates against live deployment', () => {
       account_id: bobAccountId,
       recorded_via: 'integration-suite',
     });
-    const accepted = await poll(async () => {
-      const l = await mcpCall(bob.accessToken, 'respond', {
-        intro_id: matchId,
-        action: 'list_offers',
-      });
-      const o = l.result.offers.find((x: any) => x.offer_id === offerId);
-      return o.state === 'accepted-by-human' ? o : undefined;
-    }, 'offer accepted by human via internal ops', 90_000);
-    expect(accepted.state).toBe('accepted-by-human');
+    // Long enough for the ops worker to have taken and dropped the message.
+    await new Promise((r) => setTimeout(r, 30_000));
+    const list2 = await mcpCall(bob.accessToken, 'respond', {
+      intro_id: matchId,
+      action: 'list_offers',
+    });
+    expect(list2.result.offers.find((o: any) => o.offer_id === offerId).state).toBe(
+      'awaiting-human',
+    );
 
     // A decline never carries a reason — assert on raw JSON.
     const offer2 = await mcpCall(alice.accessToken, 'respond', {

@@ -2,7 +2,6 @@
  * Internal ops CLI — sends messages to the env's IAM-gated ops queue.
  * Phase 0.C stand-in for interfaces that arrive in later phases:
  *   create-match  (0.F matching engine)  : --card-want <id> --card-have <id> [--score 0.9]
- *   accept-offer  (0.D counter human UI) : --offer-id <id> --account-id <id>
  *   ttl-expiry                           : trigger an expiry sweep now
  *   backfill-geo  (0.3.0 locations)      : place cards written before 0.3.0
  *                                          [--rematch false to skip requeue]
@@ -37,13 +36,10 @@ switch (cmd) {
     };
     break;
   case 'accept-offer':
-    body = {
-      op: 'accept-offer-by-human',
-      offer_id: arg('offer-id'),
-      account_id: arg('account-id'),
-      recorded_via: 'ops-cli',
-    };
-    break;
+    // Gone (N4, 30 September 2026): an accept is only ever the human's own
+    // press on their page, and the ops queue refuses the op.
+    console.error('accept-offer is not an ops command: only the human can accept, from their own page.');
+    process.exit(2);
   case 'ttl-expiry':
     body = { op: 'ttl-expiry' };
     break;
@@ -66,7 +62,7 @@ switch (cmd) {
     break;
   default:
     console.error(
-      'usage: ops.ts <create-match|accept-offer|ttl-expiry|backfill-geo|snap-categories> [--env dev] ...',
+      'usage: ops.ts <create-match|ttl-expiry|backfill-geo|snap-categories> [--env dev] ...',
     );
     process.exit(1);
 }

@@ -2,21 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { makeIpLimiter } from '../../src/abuseLimit.js';
 
 describe('per-IP abuse limiter', () => {
-  it('allows up to the cap, refuses beyond it, per IP independently', () => {
+  it('allows up to the cap, refuses beyond it, per IP independently', async () => {
     const lim = makeIpLimiter(3, 60_000);
-    expect(lim.limited('1.1.1.1')).toBe(false);
-    expect(lim.limited('1.1.1.1')).toBe(false);
-    expect(lim.limited('1.1.1.1')).toBe(false);
-    expect(lim.limited('1.1.1.1')).toBe(true);
-    expect(lim.limited('2.2.2.2')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(true);
+    expect(await lim.limited('2.2.2.2')).toBe(false);
   });
 
-  it('resets after the window elapses', () => {
+  it('resets after the window elapses', async () => {
     const lim = makeIpLimiter(1, 1);
-    expect(lim.limited('1.1.1.1')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(false);
     const until = Date.now() + 5;
     while (Date.now() < until) { /* let the 1ms window lapse */ }
-    expect(lim.limited('1.1.1.1')).toBe(false);
+    expect(await lim.limited('1.1.1.1')).toBe(false);
   });
 });
 
@@ -50,18 +50,18 @@ describe('the PIN and anonymous-session pacing', () => {
   it('holds ten PIN tries a minute per account, and each account is its own', async () => {
     const { pinAttemptLimiter } = await import('../../src/abuseLimit.js');
     pinAttemptLimiter.reset();
-    for (let i = 0; i < 10; i++) expect(pinAttemptLimiter.limited('acct-a')).toBe(false);
-    expect(pinAttemptLimiter.limited('acct-a')).toBe(true);
-    expect(pinAttemptLimiter.limited('acct-b')).toBe(false);
+    for (let i = 0; i < 10; i++) expect(await pinAttemptLimiter.limited('acct-a')).toBe(false);
+    expect(await pinAttemptLimiter.limited('acct-a')).toBe(true);
+    expect(await pinAttemptLimiter.limited('acct-b')).toBe(false);
     pinAttemptLimiter.reset();
-    expect(pinAttemptLimiter.limited('acct-a')).toBe(false);
+    expect(await pinAttemptLimiter.limited('acct-a')).toBe(false);
   });
 
   it('holds sessions made for nobody to ten a minute per connection', async () => {
     const { anonymousSessionLimiter } = await import('../../src/abuseLimit.js');
     anonymousSessionLimiter.reset();
-    for (let i = 0; i < 10; i++) expect(anonymousSessionLimiter.limited('9.9.9.9')).toBe(false);
-    expect(anonymousSessionLimiter.limited('9.9.9.9')).toBe(true);
+    for (let i = 0; i < 10; i++) expect(await anonymousSessionLimiter.limited('9.9.9.9')).toBe(false);
+    expect(await anonymousSessionLimiter.limited('9.9.9.9')).toBe(true);
     anonymousSessionLimiter.reset();
   });
 });

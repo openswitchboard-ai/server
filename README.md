@@ -88,8 +88,10 @@ These are the invariants worth reading the code to check:
   that human presses, whether or not a first name and area are already on file.
 - The only offer-accept state reachable through any agent API is
   `awaiting-human`. `accepted-by-human` is set exclusively by
-  `acceptOfferByHuman()`, which has no public route — it is reachable from the
-  human main pages and the IAM-gated internal ops queue.
+  `acceptOfferByHuman()`, which has no agent route — it is reachable only from
+  the human's own press on their page, and it refuses any other `recorded_via`
+  (the internal ops queue's accept op is refused too; migration 061 adds the
+  same rule as a database constraint).
 - Declines carry no reason (schema-level `additionalProperties: false`).
 - Every free-text field bound for a counterparty is provenance-labelled.
 - Locations are resolved server-side, and never guessed. A want or a have names

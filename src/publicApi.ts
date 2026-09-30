@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { K_ANON, readPulse, type PulseRow } from './domain/pulse.js';
 import { categoryLabelPath, decodeGeohash, isGeohash } from './domain/matchRules.js';
 import { getPool } from './db.js';
+import { makeIpLimiter } from './abuseLimit.js';
 import type { Config } from './config.js';
 
 /**
@@ -43,7 +44,7 @@ export const STATS_MEDIAN_WINDOW_DAYS = 90;
 
 const CACHE_MS = 60_000;
 
-// Modest per-IP rate limit: 60 requests per rolling minute across both routes.
+// Modest per-IP rate limit: 60 requests a minute across both routes, shared by every task.
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 60_000;
 
@@ -137,23 +138,10 @@ export function registerPublicRoutes(
   // being filled wait on the same promise rather than each starting a query.
   let pulseFill: Promise<void> | undefined;
   let statsFill: Promise<void> | undefined;
-  const hits = new Map<string, { windowStart: number; n: number }>();
-
-  const rateLimited = (req: FastifyRequest): boolean => {
-    const now = Date.now();
-    const ip = req.ip;
-    const h = hits.get(ip);
-    if (!h || now - h.windowStart >= RATE_WINDOW_MS) {
-      hits.set(ip, { windowStart: now, n: 1 });
-      // Opportunistic cleanup so the map cannot grow unboundedly.
-      if (hits.size > 10_000) {
-        for (const [k, v] of hits) if (now - v.windowStart >= RATE_WINDOW_MS) hits.delete(k);
-      }
-      return false;
-    }
-    h.n += 1;
-    return h.n > RATE_LIMIT;
-  };
+  // Counted across every task (src/abuseLimit.ts, N11); one limiter per
+  // registration so each app built in a test starts with an empty window.
+  const limiter = makeIpLimiter(RATE_LIMIT, RATE_WINDOW_MS, 'public-api');
+  const rateLimited = (req: FastifyRequest): Promise<boolean> => limiter.limited(req.ip);
 
   const cors = (req: FastifyRequest, reply: FastifyReply) => {
     const origin = req.headers.origin;
@@ -165,9 +153,9 @@ export function registerPublicRoutes(
     reply.header('cache-control', 'public, max-age=60');
   };
 
-  const guard = (req: FastifyRequest, reply: FastifyReply): boolean => {
+  const guard = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     cors(req, reply);
-    if (rateLimited(req)) {
+    if (await rateLimited(req)) {
       void reply.code(429).send({ error: 'rate_limited' });
       return false;
     }
@@ -184,7 +172,7 @@ export function registerPublicRoutes(
   });
 
   app.get('/public/pulse', async (req, reply) => {
-    if (!guard(req, reply)) return;
+    if (!(await guard(req, reply))) return;
     if (!pulseCache || Date.now() - pulseCache.at >= CACHE_MS) {
       pulseFill ??= (async () => {
         const rows = await deps.pulseRows();
@@ -212,7 +200,7 @@ export function registerPublicRoutes(
   });
 
   app.get('/public/stats', async (req, reply) => {
-    if (!guard(req, reply)) return;
+    if (!(await guard(req, reply))) return;
     if (!statsCache || Date.now() - statsCache.at >= CACHE_MS) {
       statsFill ??= (async () => {
         const stats = await deps.stats();

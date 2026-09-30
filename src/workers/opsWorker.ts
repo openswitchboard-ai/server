@@ -16,7 +16,7 @@ import { backfillCardGeo } from '../geo/backfill.js';
 import { requeueSnapped, snapCardCategories } from '../domain/categoryBackfill.js';
 import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
-import { acceptOfferByHuman } from '../domain/offers.js';
+import { sweepRateLimitWindows } from '../rateLimitStore.js';
 import { refreshPulseAggregates } from '../domain/pulse.js';
 import { closeDueGatherings, lapseDueSlots } from '../domain/sequencer.js';
 import { runAutoReleaseSweep } from './settlementAutoRelease.js';
@@ -43,9 +43,9 @@ import type { Config } from '../config.js';
  *  - ttl-expiry ticks from the EventBridge schedule;
  *  - dev/test bootstrap ops (create-account, create-match) used by the CLI
  *    bootstrap script and the integration suite (dev env only);
- *  - accept-offer-by-human: the ONLY path to the 'accepted-by-human' offer
- *    state. 0.D replaces this trigger with the counter's human-approval UI;
- *    the domain function itself (acceptOfferByHuman) is the stable interface.
+ *  - accept-offer-by-human: REFUSED since 30 September 2026 (N4). An accept
+ *    is only ever the human's press on their own page (counter/routes.ts);
+ *    the op is logged and dropped, and the offer is left as it was.
  *  - settlement-auto-release: the hourly tick behind the buyer's confirm-or-
  *    dispute window. This worker mints no transition context of any kind; it
  *    calls runAutoReleaseSweep, which owns the one scheduled context in the
@@ -243,6 +243,15 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     if (ev.deleted > 0 || ev.scrubbed > 0) log('ttl-expiry: email event retention', ev);
                   } catch (e: any) {
                     log('ttl-expiry: email event retention failed', { error: e?.message });
+                  }
+                  // And the abuse limiters' shared windows, once each has
+                  // closed (src/rateLimitStore.ts). Counts only, and the rows
+                  // hold hashes, never an address.
+                  try {
+                    const rl = await sweepRateLimitWindows();
+                    if (rl.rate_limit_windows > 0) log('ttl-expiry: rate-limit window sweep', rl);
+                  } catch (e: any) {
+                    log('ttl-expiry: rate-limit window sweep failed', { error: e?.message });
                   }
                   // And human sessions a day past their expiry.
                   try {
@@ -505,16 +514,16 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   break;
                 }
                 case 'accept-offer-by-human': {
-                  const offer = await acceptOfferByHuman(
-                    body.offer_id,
-                    body.account_id,
-                    body.recorded_via ?? 'internal-ops',
-                    // cfg is what lets the acceptance tell the other human their
-                    // figure was taken; without it the deal is recorded and
-                    // nobody is told.
-                    cfg,
-                  );
-                  log('ops: offer accepted by human', { offer_id: offer.offer_id });
+                  // REFUSED, ALWAYS (N4, 30 September 2026). An accept is a
+                  // human's press on their own page and nothing else, and a
+                  // queue message carries no press. acceptOfferByHuman refuses
+                  // any recorded_via but 'counter', and this op used to pass
+                  // 'internal-ops' or whatever the message said. It now does
+                  // nothing: the offer is untouched and the message is dropped
+                  // rather than redelivered. The shape, never the contents.
+                  log('ops: accept-offer-by-human refused: an accept needs the human\'s own press', {
+                    fields: Object.keys(body ?? {}),
+                  });
                   break;
                 }
                 default:

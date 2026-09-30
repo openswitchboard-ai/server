@@ -23,6 +23,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getPool } from './db.js';
+import { makeIpLimiter } from './abuseLimit.js';
 import { MANUAL } from './mcp/instructions.js';
 import { SCHEMA_VERSION } from './protocol.js';
 import { TRANSFER_ATTEMPT_CEILING } from './domain/settlements.js';
@@ -788,27 +789,17 @@ export function registerOpsMetricsRoutes(
 
   const mcpHost = new URL(cfg.publicOrigin).host.toLowerCase();
   let cache: { at: number; data: OpsDbMetrics } | undefined;
-  const failures = new Map<string, { windowStart: number; n: number }>();
+  // Failed sign-ins per IP, counted across every task (src/abuseLimit.ts,
+  // N11): a guesser spread over the tasks behind the load balancer gets ten
+  // tries a window in all, not ten per task. One limiter per registration so
+  // each app built in a test starts clean.
+  const failures = makeIpLimiter(FAIL_LIMIT, FAIL_WINDOW_MS, 'ops-metrics-auth-failure');
 
-  const failureLimited = (ip: string): boolean => {
-    const f = failures.get(ip);
-    if (!f || Date.now() - f.windowStart >= FAIL_WINDOW_MS) return false;
-    return f.n >= FAIL_LIMIT;
-  };
+  const failureLimited = async (ip: string): Promise<boolean> =>
+    (await failures.peek(ip)) >= FAIL_LIMIT;
 
-  const recordFailure = (ip: string): void => {
-    const now = Date.now();
-    const f = failures.get(ip);
-    if (!f || now - f.windowStart >= FAIL_WINDOW_MS) {
-      failures.set(ip, { windowStart: now, n: 1 });
-      if (failures.size > 10_000) {
-        for (const [k, v] of failures) {
-          if (now - v.windowStart >= FAIL_WINDOW_MS) failures.delete(k);
-        }
-      }
-      return;
-    }
-    f.n += 1;
+  const recordFailure = async (ip: string): Promise<void> => {
+    await failures.limited(ip);
   };
 
   /** Basic auth, never logged, constant-time. Returns true when it passed. */
@@ -846,12 +837,12 @@ export function registerOpsMetricsRoutes(
       void reply.code(404).send({ error: 'not_found' });
       return undefined;
     }
-    if (failureLimited(req.ip)) {
+    if (await failureLimited(req.ip)) {
       void reply.code(429).type('text/plain').send('too many failed attempts\n');
       return undefined;
     }
     if (!authorised(req)) {
-      recordFailure(req.ip);
+      await recordFailure(req.ip);
       void reply
         .code(401)
         .header('www-authenticate', 'Basic realm="OpenSwitchboard ops"')

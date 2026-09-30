@@ -782,7 +782,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-register: per-IP verification-email limit hit');
         return html(
           reply,
@@ -794,7 +794,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // thousand IPs and no IP that did anything wrong, so this is the only
       // limiter that can see it. The sentence is the same one an address that
       // already exists would get: nothing here enumerates anybody.
-      if (accountlessVerificationCeiling.limited()) {
+      if (await accountlessVerificationCeiling.limited()) {
         req.log.warn(
           { depth: accountlessVerificationCeiling.depth(), ceiling: ACCOUNTLESS_VERIFICATIONS_PER_HOUR },
           'counter-register: accountless verification ceiling hit',
@@ -1047,7 +1047,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       // The same per-IP rail sign-in has. This door sends an email too, and
       // being behind a session is no protection from one session pressing it
       // in a loop and draining the sending quota.
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'confirm-code: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1177,7 +1177,7 @@ in on this device and lets you approve what is waiting.</p>
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'pin-recover-code: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1466,7 +1466,7 @@ in on this device and lets you approve what is waiting.</p>
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-login: per-IP verification-email limit hit');
         return html(
           reply,
@@ -1476,7 +1476,7 @@ in on this device and lets you approve what is waiting.</p>
       }
       // The same ceiling over every accountless verification at once; see the
       // register door above, and src/abuseLimit.ts for why it exists at all.
-      if (accountlessVerificationCeiling.limited()) {
+      if (await accountlessVerificationCeiling.limited()) {
         req.log.warn(
           { depth: accountlessVerificationCeiling.depth(), ceiling: ACCOUNTLESS_VERIFICATIONS_PER_HOUR },
           'counter-login: accountless verification ceiling hit',
@@ -1501,7 +1501,7 @@ in on this device and lets you approve what is waiting.</p>
       let s = await sess.loadSession(req);
       if (!s) {
         // A row for somebody not signed in yet, so it is paced per connection.
-        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && anonymousSessionLimiter.limited(req.ip)) {
+        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await anonymousSessionLimiter.limited(req.ip)) {
           req.log.warn({ ip: req.ip }, 'login-passkey-options: per-IP anonymous session limit hit');
           return reply.code(429).send({ error: 'rate_limited', error_description: 'Too many tries from this connection. Wait a minute.' });
         }
@@ -1598,9 +1598,9 @@ in on this device and lets you approve what is waiting.</p>
       pin: string,
       refuse: Refuse = refuseJson(reply),
     ): Promise<boolean> => {
-      // Ten tries a minute per account before argon2 or the database is
+      // Ten tries a minute per account before argon2 or the lockout is
       // asked anything; the lockout in pin.ts is the rule, this is the pacing.
-      if (pinAttemptLimiter.limited(s.accountId!)) {
+      if (await pinAttemptLimiter.limited(s.accountId!)) {
         refuse({
           status: 429,
           body: {
@@ -4039,10 +4039,9 @@ this time, and nothing has moved. Try sending it again from the settlement page.
       if (!s) return;
       // Five an hour, per account. This is not a security boundary — the
       // cross-site check is — it is the thing that stops a loop turning one
-      // switch into an inbox. In memory and per process on purpose, the same
-      // reasoning as every other limiter in src/abuseLimit.ts: blunting a burst
-      // rather than precise global accounting.
-      if (killSwitchLimiter.limited(s.accountId!)) {
+      // switch into an inbox. Counted across every task, like every other
+      // limiter in src/abuseLimit.ts.
+      if (await killSwitchLimiter.limited(s.accountId!)) {
         return html(
           reply,
           pages.messagePage(
@@ -4205,7 +4204,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.get('/areas', async (req, reply) => {
       const s = await sess.loadSession(req);
       if (!s?.accountId) return reply.code(401).send({ error: 'not_signed_in' });
-      if (!rateLimitBypassed(req.headers as any, cfg) && areaSuggestLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as any, cfg) && await areaSuggestLimiter.limited(req.ip)) {
         return reply.code(429).send({ error: 'slow_down' });
       }
       const q = String((req.query as any)?.q ?? '');
@@ -4590,7 +4589,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
           429,
         );
       }
-      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && verificationEmailLimiter.limited(req.ip)) {
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-reverify: per-IP verification-email limit hit');
         return html(
           reply,
@@ -4653,7 +4652,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       }
       if (!s) {
         // A row for somebody not signed in yet, so it is paced per connection.
-        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && anonymousSessionLimiter.limited(req.ip)) {
+        if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await anonymousSessionLimiter.limited(req.ip)) {
           req.log.warn({ ip: req.ip }, 'authorize: per-IP anonymous session limit hit');
           return html(
             reply,

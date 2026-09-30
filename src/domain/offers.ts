@@ -917,17 +917,40 @@ async function notifyHumanOfOffer(_cfg: Config, _o: OfferRow): Promise<void> {
 }
 
 /**
- * INTERNAL-ONLY human acceptance. There is deliberately no HTTP route to this
- * function: in 0.C it is reachable only through the IAM-gated internal ops
- * queue (and tests); in 0.D the counter's human-approval UI becomes the
- * caller. Records the consent event in the WORM log first.
+ * Where an accept may be recorded from: the human's own press on their own
+ * page, and nowhere else. The counter's two accept doors (the offer-accept
+ * link and the page's own button, counter/routes.ts) are the only callers and
+ * both pass 'counter'. The database says the same (migration 061).
+ */
+export const ACCEPT_RECORDED_VIA = ['counter'] as const;
+export type AcceptRecordedVia = (typeof ACCEPT_RECORDED_VIA)[number];
+
+export function isAcceptRecordedVia(v: unknown): v is AcceptRecordedVia {
+  return typeof v === 'string' && (ACCEPT_RECORDED_VIA as readonly string[]).includes(v);
+}
+
+/**
+ * Human acceptance. There is deliberately no agent route to this function:
+ * it is reached only from the human's own press on their page, after the
+ * link and PIN ceremony. Records the consent event in the WORM log first.
+ *
+ * THE PRESS IS CHECKED HERE, NOT ONLY BY THE CALLERS (N4, 30 September 2026).
+ * recordedVia must be one of ACCEPT_RECORDED_VIA; anything else — missing,
+ * 'internal-ops', whatever a queue message said — is refused before anything
+ * is read or written. The internal ops queue's accept op is refused for the
+ * same reason (workers/opsWorker.ts).
  */
 export async function acceptOfferByHuman(
   offerId: string,
   humanAccountId: string,
-  recordedVia: string,
+  recordedVia: AcceptRecordedVia,
   cfg?: Config,
 ) {
+  if (!isAcceptRecordedVia(recordedVia)) {
+    throw new Error(
+      'acceptOfferByHuman: an accept is only recorded from the human\'s own press (recorded_via must be \'counter\')',
+    );
+  }
   const o = await loadOffer(offerId);
   // Humans hold every gate. A live offer is theirs to accept from their own
   // page whether or not their agent has brought it to them yet — the parking

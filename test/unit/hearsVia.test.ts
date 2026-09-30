@@ -531,7 +531,7 @@ describe('an acceptance reaches the person whose figure it was', () => {
   });
 
   it('sends nothing when the caller has no config to send with', async () => {
-    await offers.acceptOfferByHuman(OFFER, BEPPE, 'internal-ops');
+    await offers.acceptOfferByHuman(OFFER, BEPPE, 'counter');
     expect(vi.mocked(sendDealAgreedEmail)).not.toHaveBeenCalled();
   });
 });

@@ -200,7 +200,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
   // ---- RFC 7591 dynamic client registration ----------------------------------
   app.post('/oauth/register', async (req, reply) => {
-    if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && clientRegistrationLimiter.limited(req.ip)) {
+    if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await clientRegistrationLimiter.limited(req.ip)) {
       req.log.warn({ ip: req.ip }, 'oauth-register: per-IP rate limit hit');
       return reply.code(429).send({ error: 'rate_limited', error_description: 'too many registrations from this address; try again later' });
     }

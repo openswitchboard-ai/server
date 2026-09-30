@@ -275,13 +275,14 @@ describe('an SNS envelope is checked before it is believed', () => {
 
 // ---------------------------------------------------------------------------
 describe('the ceilings over the verification door', () => {
-  it('caps accountless sends across the whole process, not per connection', () => {
+  it('caps accountless sends across every task, not per connection', async () => {
+    accountlessVerificationCeiling.reset();
     expect(ACCOUNTLESS_VERIFICATIONS_PER_HOUR).toBe(200);
     // It takes no argument, which is the point: it cannot be keyed on anything
     // a caller controls.
     let refusedAt = 0;
     for (let i = 1; i <= ACCOUNTLESS_VERIFICATIONS_PER_HOUR + 5; i++) {
-      if (accountlessVerificationCeiling.limited()) {
+      if (await accountlessVerificationCeiling.limited()) {
         refusedAt = i;
         break;
       }
