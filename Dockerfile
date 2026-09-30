@@ -23,10 +23,14 @@ COPY migrations ./migrations
 COPY data ./data
 # The PhotoDNA SDK, if this build context has it. It is Microsoft-licensed and
 # is not in the repository, so what lands here is whatever the deploy put in
-# vendor/photodna on the way past (vendor/photodna/README.md). A build with
-# only the README carries only the README, the loader finds no files, and the
-# server reports PhotoDNA off rather than failing to start.
+# vendor/photodna on the way past, with its manifest.json
+# (vendor/photodna/README.md). A build with only the README carries only the
+# README and the server reports PhotoDNA off. A build with ANY of the SDK there
+# must verify, manifest and files, or the build fails: a deployment that
+# carries the SDK and cannot load it would hold every photo.
 COPY vendor ./vendor
+ARG PHOTODNA_MANIFEST_SHA256
+RUN node dist/scripts/safety/photodna-verify.mjs vendor/photodna
 USER node
 EXPOSE 8080
 CMD ["node", "dist/src/index.js"]

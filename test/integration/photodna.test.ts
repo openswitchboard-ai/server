@@ -1,52 +1,65 @@
 /**
- * One real round trip to PhotoDNA's match service, with Microsoft's own
- * published test hash (src/safety/photodna.ts).
+ * One real round trip to the PhotoDNA match service (src/safety/photodna.ts).
+ * OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
  *
- * WHAT THIS PROVES that the unit suite cannot. The request shape, the header
- * name, the endpoint and the response shape are all somebody else's, and the
- * code that reads them has to be right the first time it ever sees a real
- * match — a moment there is no way to rehearse. The test hash matches a source
- * named "Test" and nothing else, so the whole path can be proved without any
- * real image existing anywhere near it.
+ * It needs the licensed deployment's manifest in vendor/photodna (or
+ * PHOTODNA_SDK_DIR): the endpoint and the service's test value come from
+ * there, never from this repository. Without it, and without RUN_INTEGRATION,
+ * the whole file skips.
  *
- * NO IMAGE IS INVOLVED. Nothing is hashed, nothing is uploaded, and no
- * photograph is read. The licensed files are not needed either: this is the
- * client half only.
- *
- *   RUN_INTEGRATION=1 AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 \
+ *   RUN_INTEGRATION=1 AWS_PROFILE=<profile> AWS_REGION=us-east-1 \
  *     npx vitest run test/integration/photodna.test.ts
  *
- * It reads the dev subscription key out of Secrets Manager in process, and it
+ * It reads the subscription key out of Secrets Manager in process, and it
  * never prints it.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  PHOTODNA_ENDPOINT,
-  PHOTODNA_SDK_DIGESTS,
-  PHOTODNA_TEST_HASH,
+  PHOTODNA_MANIFEST,
   edgeHashes,
   matchHashes,
+  parsePhotoDnaManifest,
+  type PhotoDnaManifest,
 } from '../../src/safety/photodna.js';
 import type { Config } from '../../src/config.js';
 
-const RUN = process.env.RUN_INTEGRATION === '1';
+/** vendor/photodna unless named. Absent in CI and in a fresh checkout. */
+const SDK_DIR =
+  process.env.PHOTODNA_SDK_DIR ??
+  join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'photodna');
+
+function manifestOrNull(): PhotoDnaManifest | null {
+  try {
+    return parsePhotoDnaManifest(readFileSync(join(SDK_DIR, PHOTODNA_MANIFEST), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+const MANIFEST = manifestOrNull();
+const TEST_HASH = MANIFEST?.testHash ?? '';
+const RUN = process.env.RUN_INTEGRATION === '1' && !!MANIFEST?.testHash;
+if (process.env.RUN_INTEGRATION === '1' && !RUN) {
+  console.warn(
+    `photodna integration skipped: no ${PHOTODNA_MANIFEST} with a testHash in ${SDK_DIR}`,
+  );
+}
+const SDK_PRESENT =
+  !!MANIFEST &&
+  existsSync(join(SDK_DIR, MANIFEST.glue.file)) &&
+  existsSync(join(SDK_DIR, MANIFEST.wasm.file));
 
 const cfg = {
   photoDnaSecretArn: process.env.PHOTODNA_SECRET_ID ?? 'osb/dev/photodna',
-  photoDnaEndpoint: PHOTODNA_ENDPOINT,
+  photoDnaSdkDir: SDK_DIR,
 } as unknown as Config;
-
-/** vendor/photodna, and nowhere else. Absent in CI and in a fresh checkout. */
-const SDK_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'vendor', 'photodna');
-const SDK_PRESENT = Object.keys(PHOTODNA_SDK_DIGESTS).every((n) => existsSync(join(SDK_DIR, n)));
-const sdkCfg = { ...cfg, photoDnaSdkDir: SDK_DIR } as unknown as Config;
+const sdkCfg = cfg;
 
 describe.skipIf(!RUN)('the real match service', () => {
-  it('matches the published test hash, and says which list holds it', async () => {
-    const outcome = await matchHashes([PHOTODNA_TEST_HASH], cfg);
+  it('matches the service\'s test value, and says which list holds it', async () => {
+    const outcome = await matchHashes([TEST_HASH], cfg);
     expect(outcome.match).toBe(true);
     expect(outcome.sources).toContain('Test');
     // The tracking id is the thing a referral quotes, so it has to come back.
@@ -54,19 +67,18 @@ describe.skipIf(!RUN)('the real match service', () => {
   }, 30_000);
 
   it('refuses to read an answer about a hash the service would not accept', async () => {
-    // Still the right length, and no longer a hash the service will take: it
-    // answers 3002 rather than "no match". That has to reach the check as an
-    // error, because a picture nobody could ask about is not a picture anybody
-    // has said is unknown. Observed 18 September 2026.
+    // Still the right length, and no longer a hash the service will take.
+    // That has to reach the check as an error, because a picture nobody could
+    // ask about is not a picture anybody has said is unknown.
     const broken =
-      PHOTODNA_TEST_HASH.slice(0, -8) +
-      (PHOTODNA_TEST_HASH.endsWith('4') ? '5' : '4') +
-      PHOTODNA_TEST_HASH.slice(-7);
+      TEST_HASH.slice(0, -8) +
+      (TEST_HASH.charAt(TEST_HASH.length - 8) === '4' ? '5' : '4') +
+      TEST_HASH.slice(-7);
     await expect(matchHashes([broken], cfg)).rejects.toThrow('status code 3002');
   }, 30_000);
 
-  // Only where somebody has put the licensed files in vendor/photodna: a
-  // genuine no-match needs a genuine hash, and that needs the SDK.
+  // Only where the licensed files are there too: a genuine no-match needs a
+  // genuine hash, and that needs the SDK.
   it.skipIf(!SDK_PRESENT)('answers no match for a picture drawn by this test', async () => {
     const { default: sharp } = await import('sharp');
     const patch = await sharp({
