@@ -11,9 +11,10 @@
  * minted and goes nowhere but into a form POST to the deployment under test. It
  * is never put in a transcript, a report, a log line or an utterance.
  */
-import { createHash } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { counterFetch, type Jar, type TestActor } from '../integration/helpers.js';
+import { SEALED_CORE_JS } from '../../src/counter/sealedScript.js';
 
 const form = (o: Record<string, string>) => ({
   method: 'POST' as const,
@@ -73,6 +74,14 @@ export async function pressOneQuestion(
   const askBody = await ask.text();
   if (ask.status !== 200) {
     return { status: ask.status, body: strip(askBody).slice(0, 200), asked: false };
+  }
+  // The two sealed-contact pages are not forms: the browser scrambles or
+  // unscrambles, so the harness does what the page's script does.
+  if (askBody.includes('data-mode="send"')) return sendContactOn(actor, askBody);
+  if (askBody.includes('data-mode="receive"')) return openContactOn(actor, askBody);
+  if (askBody.includes('data-mode="setup"')) {
+    const ok = await setUpReceiving(actor);
+    return { status: ok ? 200 : 401, body: ok ? 'This browser is set up.' : 'set up failed' };
   }
   const needsPin = askBody.includes('name="pin"');
   const res = await counterFetch(
@@ -217,4 +226,103 @@ export const DRY_PNG = Buffer.from(
 /** Unused by the run; here so a caller can point at a file if it ever wants to. */
 export function pngFromFile(path: string): Buffer {
   return readFileSync(path);
+}
+
+
+// ---------------------------------------------------------------------------
+// SEALED CONTACT DETAILS (server src/domain/sealedContact.ts).
+//
+// The page's own crypto (SEALED_CORE_JS) runs here under Node's WebCrypto, so
+// the harness is a browser as far as the switchboard can tell: it holds a
+// receiving key per human, scrambles on the send page and unscrambles on the
+// receive page. Nothing readable is ever posted, and no assistant sees any of
+// it. What was sent and what was opened are kept here for the checks.
+// ---------------------------------------------------------------------------
+type SealedApi = {
+  b64u(b: ArrayBuffer | Uint8Array): string;
+  makeKeyPair(): Promise<{ privateKey: webcrypto.CryptoKey; publicRaw: Uint8Array; key_id: string }>;
+  seal(details: unknown, recipient: { key_id: string; public_key: string }, matchId: string): Promise<any>;
+  open(env: any, priv: webcrypto.CryptoKey, publicRaw: Uint8Array, matchId: string): Promise<any>;
+};
+const SEALED: SealedApi = new Function(`${SEALED_CORE_JS}\nreturn OSB_SEALED;`)();
+
+const receivingKeys = new Map<string, { privateKey: webcrypto.CryptoKey; publicRaw: Uint8Array; key_id: string }>();
+const contactToSend = new Map<string, { address?: string; phone?: string }>();
+/** What each human sent and what each opened, for the checks. */
+export const contactLog: { sent: { accountId: string; status: number }[]; opened: { accountId: string; details?: any; status: number }[] } = {
+  sent: [],
+  opened: [],
+};
+
+/** The details this human types when their send page opens. */
+export function setContactFor(accountId: string, details: { address?: string; phone?: string }): void {
+  contactToSend.set(accountId, details);
+}
+
+const unesc = (v: string) =>
+  v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const attr = (html: string, name: string) => {
+  const m = html.match(new RegExp(`${name}="([^"]*)"`));
+  return m ? unesc(m[1]) : '';
+};
+
+/** Is the send-contact page switched on where this run is pointed? */
+export async function sealedContactOn(jar: Jar): Promise<boolean> {
+  const r = await counterFetch(jar, '/contact-keys/setup');
+  return r.status !== 404;
+}
+
+/** This human sets their browser up to receive, with their PIN. */
+export async function setUpReceiving(actor: TestActor): Promise<boolean> {
+  let k = receivingKeys.get(actor.accountId);
+  if (!k) {
+    k = await SEALED.makeKeyPair();
+    receivingKeys.set(actor.accountId, k);
+  }
+  const r = await counterFetch(actor.jar, '/contact-keys', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ public_key: SEALED.b64u(k.publicRaw), pin: actor.pin }),
+  });
+  return r.status === 200;
+}
+
+async function sendContactOn(actor: TestActor, page: string): Promise<PressOutcome> {
+  const details = contactToSend.get(actor.accountId) ?? {};
+  const keys = JSON.parse(attr(page, 'data-keys') || '[]');
+  const match = attr(page, 'data-match');
+  const action = attr(page, 'data-action');
+  const envelopes = [];
+  for (const k of keys) envelopes.push(await SEALED.seal(details, k, match));
+  const res = await counterFetch(actor.jar, action, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ decision: 'yes', pin: actor.pin, envelopes }),
+  });
+  contactLog.sent.push({ accountId: actor.accountId, status: res.status });
+  return { status: res.status, body: (await res.text()).slice(0, 300) };
+}
+
+async function openContactOn(actor: TestActor, page: string): Promise<PressOutcome> {
+  const k = receivingKeys.get(actor.accountId);
+  const id = attr(page, 'data-id');
+  const match = attr(page, 'data-match');
+  if (!k) {
+    contactLog.opened.push({ accountId: actor.accountId, status: 0 });
+    return { status: 0, body: 'no receiving key in this browser' };
+  }
+  const res = await counterFetch(actor.jar, `/c/${id}/open`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ key_id: k.key_id }),
+  });
+  if (res.status !== 200) {
+    contactLog.opened.push({ accountId: actor.accountId, status: res.status });
+    return { status: res.status, body: (await res.text()).slice(0, 300) };
+  }
+  const got: any = await res.json();
+  const details = await SEALED.open(got.envelope, k.privateKey, k.publicRaw, got.match_id ?? match);
+  contactLog.opened.push({ accountId: actor.accountId, details, status: 200 });
+  // The details are NOT returned as page words: a transcript must not carry them.
+  return { status: 200, body: 'Opened: their details are on the page.' };
 }
