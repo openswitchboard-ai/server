@@ -187,8 +187,7 @@ describe.skipIf(!SDK_PRESENT)('hashing a picture this test drew', () => {
       .toBuffer();
 
     const hashes = await edgeHashes(png, cfgWith());
-    // One for the picture, and a second for the picture with its border taken
-    // off where there is one to take off.
+    // The SDK returns one hash or two.
     expect(hashes.length).toBeGreaterThanOrEqual(1);
     expect(hashes.length).toBeLessThanOrEqual(2);
     for (const h of hashes) {
