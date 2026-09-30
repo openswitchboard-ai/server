@@ -309,3 +309,13 @@ describe('the house register holds over every piece of the new copy', () => {
     for (const q of asked) expect(lintHumanCopy(q), q).toEqual([]);
   });
 });
+
+// Manual v78 (30 September 2026): a rehearsal assistant filed an introduction
+// away on "all done, thanks", unasked. Filing away is on the human's yes, the
+// same as taking a posting down (v77), and the tool an agent reads says so.
+describe('nothing is taken down or filed away unasked', () => {
+  it('says so on both tools that do it', () => {
+    expect(TOOLS.find((t) => t.name === 'respond')!.description).toContain('archive (ONLY on their yes)');
+    expect(TOOLS.find((t) => t.name === 'withdraw_intent')!.description).toContain('ONLY ON THEIR WORD');
+  });
+});

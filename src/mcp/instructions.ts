@@ -381,6 +381,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'One more rule that never bends: take no posting down unasked. A deal agreed, a pickup arranged or a thing handed over is not your human asking; ask them first, and take it down only on their yes.',
   },
+  {
+    version: 78,
+    note:
+      'Filing an introduction away is the same: only on your human\'s yes. "All done, thanks" is the moment to ask how it went and offer, once, to file it away, and file it on their yes.',
+  },
 ];
 
 /**
@@ -740,7 +745,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 77,
+  version: 78,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };
