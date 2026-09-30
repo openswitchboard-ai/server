@@ -1,6 +1,8 @@
 # Open question: how much taxonomy do we actually need?
 
-Raised by Lachlan, 2026-09-17, unresolved. Written down so it survives a compaction.
+Resolved 17 September 2026: the catalogue is a deny-list; unknown categories post in plain words; default_reach stays unwired.
+
+Raised by Lachlan, 2026-09-17. Written down so it survives a compaction.
 
 **His question, in his words:** "I get we want taxonomy for item types and locations
 to some extent, but do we need otherwise is the question." And earlier: "Are we

@@ -14,22 +14,14 @@ simulator recipients). All sends carry the
 `info@openswitchboard.ai`, and RFC 8058 one-click List-Unsubscribe headers
 (mailto + URL) on every account-bound message.
 
-## Warmup plan (run this when production access lands)
+## What gets sent
 
-Volume is tiny at launch, which is itself the best warmup. Still, do it
-deliberately:
-
-1. **Week 1**: transactional only (verification, approvals, kill-switch,
-   security). These have the highest engagement and the lowest complaint
-   surface. Cap: whatever real signups produce; no digests.
-2. **Week 2**: enable match summons for real accounts (they default to
-   `immediate`). Watch the SES reputation dashboard daily.
-3. **Week 3+**: digests and renewals flow on their schedules (daily 21:00
-   UTC / weekly Sunday 21:00 UTC / renewal sweep 20:30 UTC).
-4. Keep total daily volume under ~200 for the first month unless reputation
-   metrics are clean (see thresholds), then let it grow organically. There is
-   no purchased list and no cold outreach anywhere in the system, so ramp
-   risk is inherently low.
+Every notice is one fixed email: a sentence saying what happened, ending "Ask
+your assistant", with no link and no button. It goes only to people who hear
+by email (`hears_via = 'email'`). People who hear through their assistant get
+no notices. Three kinds of mail go to everyone whatever they chose: sign-in
+codes, security notices, and the kill-switch mail. `src/email/templates.ts`
+holds the list and `src/email/send.ts` enforces it on every send.
 
 ## Thresholds (check the SES reputation dashboard + `email_events`)
 
@@ -48,7 +40,8 @@ deliberately:
 Work the list in order; check off before moving on:
 
 1. DNS: confirm all three SES DKIM CNAMEs (`<token>._domainkey.openswitchboard.ai`),
-   the MAIL FROM MX + SPF TXT on `mail.openswitchboard.ai`, and the DMARC
+   the MAIL FROM MX + SPF TXT on `mail-w.openswitchboard.ai` (prod; dev uses
+   `mail.openswitchboard.ai`), and the DMARC
    record (`_dmarc.openswitchboard.ai`, `p=quarantine`) still resolve
    (Cloudflare is authoritative; an accidental proxy toggle or record edit is
    the usual suspect).
@@ -62,7 +55,7 @@ Work the list in order; check off before moving on:
 5. Send the full sample set to a Gmail, an Outlook and an iCloud mailbox you
    control (`npx tsx scripts/send-samples.ts --to you@example.com`) and read
    the raw headers of what arrives: `Authentication-Results` must show
-   `dkim=pass`, `spf=pass` (on mail.openswitchboard.ai), `dmarc=pass`.
+   `dkim=pass`, `spf=pass` (on mail-w.openswitchboard.ai for prod), `dmarc=pass`.
 6. Check content drift: new template copy that smells like marketing gets
    filtered. The banned-phrase lint catches voice; nothing catches a wall of
    links — keep emails content-thin (that is the product's own rule anyway).
@@ -82,8 +75,8 @@ Work the list in order; check off before moving on:
 Two test-harness faults contaminated the first iCloud run and are fixed:
 sample links pointed at dev / a dead host (`send-samples.ts` now follows
 `--env`), and the sample unsubscribe URL 404'd (dead-link page now 200).
-Domain age is the remaining factor and only clean volume fixes it: follow
-the warmup plan above, then re-score at two weeks. Launch bar until then:
+Domain age is the remaining factor and only clean volume fixes it; re-score
+at two weeks. Launch bar until then:
 authentication passes everywhere, no blocklist listings, nothing in Junk
 except at iCloud, and every verification code observed to arrive.
 
