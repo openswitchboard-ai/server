@@ -57,6 +57,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 import * as db from '../../src/db.js';
 import * as channel from '../../src/domain/channel.js';
 import { NUDGE_COALESCE_MINUTES } from '../../src/domain/channelNotify.js';
+import { WRAP_UP_WHAT_TO_DO } from '../../src/domain/matches.js';
 import { sqs } from '../../src/aws.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { OsbError, validatePayload } from '../../src/protocol.js';
@@ -265,6 +266,10 @@ function run(sql: string, params: any[] = []) {
   // Whether a deal is agreed here, for the wrap-up line (29 September 2026).
   if (/FROM offers WHERE match_id = \$1 AND state = 'accepted-by-human'/.test(sql)) {
     return rows(world.offers.filter((o: any) => o.state === 'accepted-by-human').slice(0, 1));
+  }
+  // Whether either posting is taken down, for the no-figure wrap-up line.
+  if (/JOIN cards c ON c.id IN \(m.card_want, m.card_have\)/.test(sql)) {
+    return rows(Object.values(world.cards).some((st) => st === 'WITHDRAWN') ? [{ '?column?': 1 }] : []);
   }
   // The one extra read a collection makes: the figures on this introduction,
   // both sides, exactly the reader the sweep uses.
@@ -843,6 +848,15 @@ describe('the sentence that comes back with a collection', () => {
     const buyer = await channel.receiveMessages(ANA, MATCH);
     expect(buyer.note.text).toMatch(/^What they put up has been taken down/);
     expect(buyer.note.text).not.toContain('400 AUD');
+  });
+
+  // 1 October 2026: a loan with no figure never carried the wrap-up questions.
+  it('carries the wrap-up questions once a posting is down, with no figure agreed', async () => {
+    const before: any = await channel.receiveMessages(ANA, MATCH);
+    expect(before.what_to_do).toBeUndefined();
+    world.cards['card-h'] = 'WITHDRAWN';
+    const after: any = await channel.receiveMessages(ANA, MATCH);
+    expect(after.what_to_do).toBe(WRAP_UP_WHAT_TO_DO);
   });
 
   it('never puts the other side words in the sentence', async () => {

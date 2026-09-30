@@ -1058,6 +1058,20 @@ export const DEAL_AGREED_WHAT_TO_DO =
   'The deal is agreed and the handover is theirs to arrange. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
 
 /**
+ * THE SAME TWO QUESTIONS WHERE NO FIGURE WAS EVER AGREED (1 October 2026).
+ *
+ * DEAL_AGREED_WHAT_TO_DO only rides where an offer was accepted, so an errand
+ * with no money in it — a loan, a swap, something given — never carried the
+ * wrap-up at all. In a ladder rehearsal the borrower's assistant read "what
+ * they put up has been taken down" on its sweep, offered to file the
+ * conversation away and take its own want down, and never asked how it went.
+ * One side taking theirs down is the plainest sign the thing is done, so the
+ * questions ride there: on the sweep entry, and on the conversation's answers.
+ */
+export const WRAP_UP_WHAT_TO_DO =
+  'One of the two postings has been taken down, so this may be done. When your human says it is — handed over, returned, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to file it away, and whether to take down anything of theirs still up.';
+
+/**
  * WHETHER THIS SWITCHBOARD HOLDS MONEY, said at the moment a deal is agreed.
  *
  * The manual describes the protected-payment path and says it only applies
@@ -1918,6 +1932,9 @@ export async function checkMatches(
       if (takenDown) {
         entry.taken_down = takenDown;
         entry.taken_down_note = sbNote(takenDownSentence(takenDown));
+        // The wrap-up questions, where no agreed figure has already put them
+        // here (deal_agreed below says the same with the deal in it).
+        entry.what_to_do = WRAP_UP_WHAT_TO_DO;
       }
     }
     // A pending offer FROM the other side must reach this agent on its ordinary

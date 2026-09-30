@@ -40,7 +40,7 @@
  * so, and the agent guidance tells an agent to relay a message the moment it
  * collects one.
  */
-import { DEAL_AGREED_WHAT_TO_DO } from './matches.js';
+import { DEAL_AGREED_WHAT_TO_DO, WRAP_UP_WHAT_TO_DO } from './matches.js';
 import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
 import {
@@ -642,7 +642,15 @@ async function wrapUpFor(matchId: string): Promise<{ what_to_do?: string }> {
       `SELECT 1 FROM offers WHERE match_id = $1 AND state = 'accepted-by-human' LIMIT 1`,
       [matchId],
     );
-    return r.rowCount ? { what_to_do: DEAL_AGREED_WHAT_TO_DO } : {};
+    if (r.rowCount) return { what_to_do: DEAL_AGREED_WHAT_TO_DO };
+    // No figure agreed: the same questions once either posting is taken down
+    // (WRAP_UP_WHAT_TO_DO in domain/matches.ts).
+    const down = await getPool().query(
+      `SELECT 1 FROM matches m JOIN cards c ON c.id IN (m.card_want, m.card_have)
+        WHERE m.id = $1 AND c.lifecycle_state = 'WITHDRAWN' LIMIT 1`,
+      [matchId],
+    );
+    return down.rowCount ? { what_to_do: WRAP_UP_WHAT_TO_DO } : {};
   } catch {
     return {};
   }

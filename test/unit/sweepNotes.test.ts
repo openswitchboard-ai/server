@@ -36,7 +36,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
 import * as db from '../../src/db.js';
 import { hearsViaNote } from '../../src/domain/accounts.js';
 import { runsOnItsOwnNote } from '../../src/domain/arrangement.js';
-import { checkMatches } from '../../src/domain/matches.js';
+import { checkMatches, DEAL_AGREED_WHAT_TO_DO, WRAP_UP_WHAT_TO_DO } from '../../src/domain/matches.js';
 import { TOOLS, dispatchTool } from '../../src/mcp/tools.js';
 import { lintEmailCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
@@ -199,6 +199,26 @@ describe('taken_down never travels bare', () => {
     expect(entry.taken_down).toBeUndefined();
     expect(entry.taken_down_note).toBeUndefined();
     expect(entry.note.text).toMatch(/connected now/i);
+    expect(entry.what_to_do).toBeUndefined();
+  });
+
+  // 1 October 2026: an errand with no figure in it (a loan) never carried the
+  // wrap-up questions, and the borrower's assistant never asked how it went.
+  it('carries the wrap-up questions once either side has taken theirs down, with no deal agreed', async () => {
+    for (const side of ['yours', 'theirs'] as const) {
+      world.withdrawn = side;
+      const [entry]: any = await checkMatches(cfg, ANA);
+      expect(entry.what_to_do).toBe(WRAP_UP_WHAT_TO_DO);
+      expect(entry.what_to_do).toMatch(/good, fine or bad/);
+      expect(entry.what_to_do).toMatch(/respond\(verdict\)/);
+    }
+  });
+
+  it('leaves the deal-agreed wrap-up in place where a figure was agreed', async () => {
+    world.withdrawn = 'theirs';
+    world.dealAgreed = true;
+    const [entry]: any = await checkMatches(cfg, ANA);
+    expect(entry.what_to_do).toContain(DEAL_AGREED_WHAT_TO_DO);
   });
 });
 
