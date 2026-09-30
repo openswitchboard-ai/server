@@ -1,7 +1,7 @@
 # Trust and safety: one intake pipe
 
 Design, 2026-09-17; steps 1–8 built the same day, and step 9, the known-image check, built after. Raised by Lachlan alongside the decision to open
-the catalogue (see `taxonomy-question.md`): if anyone can post anything in plain
+the catalogue (it is a deny list since 17 September 2026): if anyone can post anything in plain
 words, the switchboard needs a real answer to abuse, to reporting, and to a
 lawful request for what it holds.
 
@@ -142,18 +142,13 @@ reporting path below and nowhere else.
   forever). A cleared row is swept at its ninety days.
 - **Key ceremonies held.** One per environment, each on a laptop rather than
   a server, with `scripts/safety/generate.mts`. The private half was split
-  2-of-3 and never written whole. The records below name the fingerprint and
-  who holds which share; never the shares.
-  - **dev**, 17 September 2026: fingerprint `b9:ee:f5:ce:be:f2:51:eb`. All
-    three shares held by Lachlan Taylor (a test key for a test environment).
-    Public half at SSM `/osb/dev/safety/public-key`.
+  2-of-3 and never written whole. The records below name the fingerprint;
+  never the shares.
+  - **dev**, 17 September 2026: fingerprint `b9:ee:f5:ce:be:f2:51:eb`. A test
+    key for a test environment, with all three shares held by one person.
   - **prod**, 18 September 2026: fingerprint `86:e0:e6:72:48:36:93:84`.
-    One share to each of three keyholders, handed
-    over by Lachlan the same day; shares 2 and 3 were deleted from his machine
-    once handed over. Public half at SSM `/osb/prod/safety/public-key`, read
-    by the prod task from that deploy on. Nobody was present but Lachlan when
-    the key was made, so at that step the record rests on his word; the
-    design's protection is that no one share opens anything.
+    Three people hold one share each, one of them the founder. No one share
+    opens anything.
 - OPEN: unlike the settlement evidence bucket, a database row can be deleted
   or overwritten by an administrator (it still cannot be read). If tamper
   evidence matters, add an append-only hash chain over rows or move bodies to
