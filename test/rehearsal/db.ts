@@ -394,3 +394,41 @@ export async function closeGatheringFor(matchId: string): Promise<boolean> {
   );
   return rows.length > 0;
 }
+
+/**
+ * EVERY TAKEDOWN THESE ACCOUNTS MADE SINCE THE RUN BEGAN: a card of theirs
+ * withdrawn, and an introduction they filed away with respond(archive).
+ *
+ * A withdrawn card's updated_at is when it came down (WITHDRAWN is final).
+ * The introductions a withdrawal files away in the same breath are recorded
+ * as archived_via 'withdrawn' and are part of that withdrawal, so only the
+ * agent's own respond(archive) — 'agent-attested' — is read as an archive.
+ * Read before teardown, which withdraws everything left.
+ */
+export async function takedownsBy(
+  accountIds: (string | undefined)[],
+  sinceIso: string,
+): Promise<{ accountId: string; kind: 'withdraw' | 'archive'; id: string; atMs: number }[]> {
+  const list = ids(accountIds);
+  if (!list) return [];
+  const cards = await dbExec(
+    `SELECT account_id::text, id::text, updated_at::text
+       FROM cards
+      WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
+        AND created_at > :since::timestamptz
+        AND lifecycle_state = 'WITHDRAWN'`,
+    [{ name: 'ids', value: list }, { name: 'since', value: sinceIso }],
+  );
+  const archived = await dbExec(
+    `SELECT archived_by::text, id::text, archived_at::text
+       FROM matches
+      WHERE archived_by = ANY(string_to_array(:ids, ',')::uuid[])
+        AND archived_at > :since::timestamptz
+        AND archived_via = 'agent-attested'`,
+    [{ name: 'ids', value: list }, { name: 'since', value: sinceIso }],
+  );
+  return [
+    ...cards.map((r) => ({ accountId: String(r[0]), kind: 'withdraw' as const, id: String(r[1]), atMs: pgTimeMs(String(r[2])) })),
+    ...archived.map((r) => ({ accountId: String(r[0]), kind: 'archive' as const, id: String(r[1]), atMs: pgTimeMs(String(r[2])) })),
+  ];
+}

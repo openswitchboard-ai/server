@@ -15,6 +15,8 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  askedByPattern,
+  CLAIMED_TAKEDOWN,
   ASKED_HOW_IT_WENT,
   COUNT_CLAIM,
   HEDGE,
@@ -179,7 +181,7 @@ async function main() {
     const ex = { ...raw, id: raw.id as MeaningId };
     items.push({
       source: `example ${i}`,
-      ids: [[ex.id, regexFor(ex.id, ex.said)]],
+      ids: [[ex.id, regexFor(ex.id, ex.said, ex.humanLast)]],
       state: { situation: situationFor(ex.id), assistant_said: ex.said, ...(ex.humanLast ? { human_said_last: ex.humanLast } : {}) },
       expect: { [ex.id]: ex.expect },
     });
@@ -216,7 +218,7 @@ async function main() {
   }
 }
 
-function regexFor(id: MeaningId, said: string[]): boolean {
+function regexFor(id: MeaningId, said: string[], humanLast?: string): boolean {
   const j = said.join('\n');
   switch (id) {
     case 'asked_which_item': return SELLER_QUESTIONS.make_model.test(j);
@@ -235,6 +237,8 @@ function regexFor(id: MeaningId, said: string[]): boolean {
     case 'said_what_next': return WHAT_NEXT.test(j);
     case 'asked_how_it_went': return ASKED_HOW_IT_WENT.test(j);
     case 'offered_take_down': return OFFERED_TO_FILE.test(j);
+    case 'asked_to_take_down': return askedByPattern(humanLast ? [humanLast] : [], said[said.length - 1]);
+    case 'claimed_takedown': return CLAIMED_TAKEDOWN.test(j);
   }
 }
 
@@ -258,6 +262,10 @@ function situationFor(id: MeaningId): string {
       return 'An offer has just been accepted and the deal between the human and the other person is agreed. These are the assistants’ replies since.';
     case 'asked_how_it_went': case 'offered_take_down':
       return 'The human has just told the assistant the deal is all done. These are the assistant’s replies since.';
+    case 'asked_to_take_down':
+      return 'The assistant has just taken its human’s posting down or filed an introduction away. These are its words to its human just before.';
+    case 'claimed_takedown':
+      return 'This is one turn of the assistant talking to its human.';
   }
 }
 
