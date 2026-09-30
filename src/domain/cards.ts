@@ -34,9 +34,11 @@ import { SHELF_PICK_ACTION, generalShelf, shelfInWords, shelfPickLink } from './
 import {
   DETAIL_AND_RADIUS_HUMAN_ACTION,
   DETAIL_HUMAN_ACTION,
+  DETAIL_TOO_THIN_TO_EXCUSE,
   DETAIL_UNKNOWN_UNMATCHED,
   MAX_QUESTIONS,
   detailShortfall,
+  saysWhatSort,
 } from './postingDetail.js';
 import {
   FIGURE_HUMAN_ACTION,
@@ -792,6 +794,15 @@ async function runPublish(
   const shortfall = detailShortfall(card);
   if (shortfall) {
     const excused = attempt.asked.has('detail');
+    // A second attempt that still says nothing about what the thing is was
+    // not an answer from anybody (saysWhatSort, domain/postingDetail.ts).
+    if (excused && !saysWhatSort(card)) {
+      throw new OsbError('NEEDS_DETAIL', {
+        human_action: DETAIL_TOO_THIN_TO_EXCUSE,
+        questions: shortfall.questions,
+        reference: await askOnce(accountId, attempt, 'detail'),
+      });
+    }
     if (!excused) {
       // Minted or written down first, so the next attempt has something to
       // recognise — and something no rewording of the posting can move.

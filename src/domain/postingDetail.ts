@@ -172,6 +172,24 @@ function statedKeys(attributes: unknown, keys: readonly string[]): string[] {
 const ARRANGEMENT_KEY =
   /^(free|free_only|pick_?up\w*|can_pick_up|collect\w*|deliver\w*|postage|posting|ship\w*|price\w*|cost\w*|budget\w*|rate\w*|payment\w*|pay|swap\w*|trade\w*|in_exchange|exchange\w*|when|date|dates|day|days|time|start\w*|end\w*|until|available\w*|availability|duration\w*|return\w*|order_closes|deadline|urgen\w*|arrangement|seller|buyer|negotiable|location|place|area|suburb|contact\w*|phone|email|slots|spots)$/;
 
+/**
+ * Keys that say HOW WORN the thing is, under whatever name the assistant chose
+ * (1 October 2026). They are the condition, not which thing it is: `usage:
+ * "barely used"` counted as an identifying fact under the any-key rule above,
+ * and "good, and nothing else" is exactly what `condition` is kept out of the
+ * count to stop. So they never count towards the facts, and on something
+ * offered they answer the condition question as `condition` does.
+ */
+const CONDITION_LIKE_KEY = /^(condition\w*|wear|wear_and_tear|usage|use|used|how_used|times_used)$/;
+
+/** Is the condition stated, under its own key or one that means the same? */
+function conditionStated(attributes: unknown): boolean {
+  if (!attributes || typeof attributes !== 'object') return false;
+  return Object.keys(attributes as Record<string, unknown>).some(
+    (k) => (k === CONDITION_KEY || CONDITION_LIKE_KEY.test(k)) && stated(attributes, k),
+  );
+}
+
 /** Every key on the posting that says something about WHICH thing it is. */
 function identifyingFacts(attributes: unknown): string[] {
   if (!attributes || typeof attributes !== 'object') return [];
@@ -179,6 +197,7 @@ function identifyingFacts(attributes: unknown): string[] {
     (k) =>
       stated(attributes, k) &&
       k !== CONDITION_KEY &&
+      !CONDITION_LIKE_KEY.test(k) &&
       (IDENTIFYING_KEYS.includes(k) || !ARRANGEMENT_KEY.test(k)),
   );
 }
@@ -286,7 +305,7 @@ export function detailShortfall(card: {
 
   if (top === 'goods') {
     const identifying = identifyingFacts(card.attributes);
-    const hasCondition = stated(card.attributes, CONDITION_KEY);
+    const hasCondition = conditionStated(card.attributes);
     const consumable = isConsumable(card);
     // A product in the ordinary sense: something with a maker, handed over.
     const product = !consumable && !isLending(card);
@@ -435,6 +454,38 @@ export const DETAIL_RECOGNISE_HUMAN_ACTION =
  */
 export const DETAIL_UNKNOWN_UNMATCHED =
   'detail_unknown takes a posting as it stands only on a second try, once the questions have actually been put to your human. This one reads as a first try, because it carried no `reference` from a refusal. Ask them, then send it again with detail_unknown and the `reference` below.';
+
+/**
+ * THE FLOOR UNDER EVERY SECOND ATTEMPT (1 October 2026).
+ *
+ * A second attempt under the reference is taken as it stands, with
+ * detail_unknown or without it: nothing is asked twice. In a ladder rehearsal
+ * that let through a posting that said nothing about the thing at all. The
+ * human had said only that it was barely used and that they would lend it; the
+ * assistant posted "ladder, barely used" with nothing under `attributes` but
+ * the arrangement, was handed the questions, and sent the same posting back
+ * with the reference three and a half seconds later. Nobody had been asked
+ * anything.
+ *
+ * What a person may genuinely not know is the finer detail: the maker, the
+ * model, which one exactly. What sort of thing it is, they always know,
+ * whether they have it in hand or are looking for one. So a second attempt at
+ * a goods posting is taken as it stands only where it states at least one fact
+ * about the thing itself, under any key but the arrangement's, and NOT counting
+ * the condition: "barely used" says how worn it is, not what it is. A second
+ * attempt with none is handed the questions again, with the line below.
+ *
+ * Services and social postings are untouched: their words are in `kind`.
+ */
+export function saysWhatSort(card: { category?: unknown; attributes?: unknown }): boolean {
+  const top = String(card.category ?? '').split('.')[0];
+  if (top !== 'goods') return true;
+  return identifyingFacts(card.attributes).length >= 1;
+}
+
+/** What an assistant is told when its second attempt still says nothing about the thing. */
+export const DETAIL_TOO_THIN_TO_EXCUSE =
+  'This came back still saying nothing about what the thing is, so it is not up. How worn it is is not what it is. Ask your human the questions below, then post again with their answers in `attributes` and the same `reference`.';
 
 // ---------------------------------------------------------------------------
 // THE ESCAPE HATCH, AND WHY IT TURNS ON A SECOND ATTEMPT.

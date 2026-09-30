@@ -46,10 +46,12 @@ import {
   DETAIL_HUMAN_ACTION,
   DETAIL_CONTEXT_HUMAN_ACTION,
   CONTEXT_KEYS,
+  DETAIL_TOO_THIN_TO_EXCUSE,
   DETAIL_UNKNOWN_UNMATCHED,
   IDENTIFYING_KEYS,
   MAX_QUESTIONS,
   detailShortfall,
+  saysWhatSort,
 } from '../../src/domain/postingDetail.js';
 import { OsbError, SCHEMA_VERSION } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
@@ -298,6 +300,16 @@ describe('what counts as enough to describe the thing to a stranger', () => {
 // What the edge-case probe on dev posted (26 September 2026), read by the rule.
 // ---------------------------------------------------------------------------
 describe('the things people actually post', () => {
+  it('reads a condition under another name as the condition, never as which one it is', () => {
+    // 1 October 2026: usage "barely used" counted as a fact about which thing it was.
+    const worn = detailShortfall({ category: 'goods.tools', type: 'offering', kind: 'drill', attributes: { usage: 'barely used', brand: 'acme' } })!;
+    expect(worn).toBeDefined();
+    expect(worn.questions.some((q) => /condition/.test(q))).toBe(false);
+    expect(
+      detailShortfall({ category: 'goods.tools', type: 'offering', kind: 'drill', attributes: { usage: 'barely used', brand: 'acme', model: 'x1' } }),
+    ).toBeUndefined();
+  });
+
   it('lets rich attributes through under whatever keys the assistant chose', () => {
     const passes: Parameters<typeof detailShortfall>[0][] = [
       // A black adjustable office chair in good condition.
@@ -572,12 +584,65 @@ describe('the refusal an assistant is handed', () => {
   it('takes the posting as it stands on a second attempt with the reference', async () => {
     const asked = (await refusal(listing({ attributes: {} })))!;
     expect(asked.code).toBe('NEEDS_DETAIL');
-    const r: any = await publishIntent(cfg, ACCOUNT, listing({ attributes: {} }), {
+    // They knew what sort it was and nothing finer (see the floor below).
+    const r: any = await publishIntent(cfg, ACCOUNT, listing({ attributes: { type: 'hardtail' } }), {
       detailUnknown: true,
       reference: asked.reference,
     });
     // And it goes up under the number it was asked about, never a second one.
     expect(r.intent_id).toBe(asked.reference);
+  });
+
+  // 1 October 2026: a ladder rehearsal. The posting said nothing about the
+  // thing but how worn it was and that it was a loan, came back with the
+  // questions, and was sent straight back under the reference seconds later.
+  describe('the floor under a second attempt: it says what sort of thing it is', () => {
+    const thin = (attributes: Record<string, unknown>) =>
+      listing({ category: 'goods.tools', kind: 'thing, barely used', attributes });
+
+    it('hands the questions back where the second attempt still says nothing about the thing', async () => {
+      const asked = (await refusal(thin({ arrangement: 'free loan' })))!;
+      expect(asked.code).toBe('NEEDS_DETAIL');
+      for (const detailUnknown of [true, false]) {
+        const again = (await refusal(thin({ arrangement: 'free loan' }), { detailUnknown, reference: asked.reference }))!;
+        expect(again.code).toBe('NEEDS_DETAIL');
+        expect(again.human_action).toBe(DETAIL_TOO_THIN_TO_EXCUSE);
+        expect(again.questions!.length).toBeGreaterThan(0);
+        // The same attempt, so the same number.
+        expect(again.reference).toBe(asked.reference);
+      }
+    });
+
+    it('does not count how worn it is as what it is, under any name for it', async () => {
+      const asked = (await refusal(thin({})))!;
+      for (const worn of [{ condition: 'barely used' }, { usage: 'barely used' }, { wear: 'light' }]) {
+        const again = (await refusal(thin(worn), { detailUnknown: true, reference: asked.reference }))!;
+        expect(again.code).toBe('NEEDS_DETAIL');
+        expect(again.human_action).toBe(DETAIL_TOO_THIN_TO_EXCUSE);
+      }
+    });
+
+    it('takes it as it stands once it says what sort, and nothing finer is known', async () => {
+      const asked = (await refusal(thin({})))!;
+      const r: any = await publishIntent(cfg, ACCOUNT, thin({ type: 'folding', condition: 'barely used' }), {
+        detailUnknown: true,
+        reference: asked.reference,
+      });
+      expect(r.intent_id).toBe(asked.reference);
+    });
+
+    it('holds a want to the same floor, and leaves services alone', async () => {
+      const want = listing({ type: 'looking_for', category: 'goods.tools', kind: 'thing to borrow', attributes: { arrangement: 'borrow' } });
+      const asked = (await refusal(want))!;
+      expect(asked.code).toBe('NEEDS_DETAIL');
+      expect((await refusal(want, { detailUnknown: true, reference: asked.reference }))!.human_action).toBe(DETAIL_TOO_THIN_TO_EXCUSE);
+      expect(saysWhatSort({ category: 'services.tutoring', attributes: {} })).toBe(true);
+    });
+
+    it('says it in the house register, inside the cap', () => {
+      expect(lintHumanCopy(DETAIL_TOO_THIN_TO_EXCUSE)).toEqual([]);
+      expect(DETAIL_TOO_THIN_TO_EXCUSE.length).toBeLessThanOrEqual(300);
+    });
   });
 
   // 26 September 2026: a Spanish want answered the questions under Spanish
@@ -657,7 +722,7 @@ describe('the refusal an assistant is handed', () => {
     const r: any = await publishIntent(
       cfg,
       ACCOUNT,
-      listing({ attributes: {}, kind: 'Fanatec ClubSport V3 brake performance spring' }),
+      listing({ attributes: { fits: 'ClubSport V3 pedals' }, kind: 'Fanatec ClubSport V3 brake performance spring' }),
       { detailUnknown: true, reference: p.reference },
     );
     expect(r.intent_id).toBe(p.reference);

@@ -316,7 +316,7 @@ describe('the house register holds over every piece of the new copy', () => {
 describe('nothing is taken down or filed away unasked', () => {
   it('says so on both tools that do it', () => {
     expect(TOOLS.find((t) => t.name === 'respond')!.description).toContain('archive (ONLY on their yes)');
-    expect(TOOLS.find((t) => t.name === 'withdraw_intent')!.description).toContain('ONLY ON THEIR WORD');
+    expect(TOOLS.find((t) => t.name === 'withdraw_intent')!.description).toContain('ONLY WHEN THEY ASK YOU TO, or say yes when you ask');
   });
 });
 
