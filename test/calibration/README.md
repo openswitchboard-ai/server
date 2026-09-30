@@ -7,28 +7,23 @@ production embedding model, read-only.
 ## Run it
 
 ```
-AWS_PROFILE=openswitchboard AWS_REGION=us-east-1 npm run calibrate-tiers
+OSB_CALIBRATION_PAIRS=/path/to/pairs.json AWS_PROFILE=<profile> AWS_REGION=us-east-1 npm run calibrate-tiers
 ```
 
-The first run embeds every posting (about 260 texts, around 80 seconds) and
-caches the vectors in `.cache.json`, keyed by model id and projection text. The
+The first run embeds every posting and caches the vectors in `.cache.json`, keyed by model id and projection text. The
 cache is gitignored. Later runs need no AWS unless a posting changes. Nothing
 touches a database or anything deployed.
 
 ## Files
 
-- `pairs.json`: 158 labelled pairs (40 sure, 41 possible, 77 nothing; 82 marked
-  `obscure`). The fourteen `g` pairs were added on 27 September 2026 for THE
-  WANT IS COVERED (matchTiers.ts): a generic want against a specific have of
-  exactly that thing (sure), the other direction (possible), and the tempting
-  negatives beside them (a bike rack, a mountain bike, a helmet, a wheelset,
-  a 54cm frame for a 56cm want, a 16 inch kids bike for a 20 inch one, a
-  guitar case). The tier lines themselves were fitted on the first 144. Each has a want and a have `{category, kind, attributes}` written
-  the way a careful assistant would post them. Categories are real
-  `taxonomy.v2.json` nodes. A few are invented leaves an assistant might make
-  up (`goods.hobby.model-rocketry`, `goods.motoring.parts.tractor`,
-  `goods.clothing.watches.parts`), and a few are bare `goods` for when the door
-  was unsure. `why` gives the reason for the label.
+- `pairs.json` (NOT in this repository): the labelled pairs are evaluation
+  data. `run.mts` reads them from `OSB_CALIBRATION_PAIRS` (a path to the file),
+  or from `server/test/calibration/pairs.json` under `OSB_INTERNAL_DIR`, or
+  from a sibling checkout at `../internal`. Without one it says so and exits
+  cleanly. To run it on your own deployment, write your own: a JSON array of
+  `{id, label: "sure"|"possible"|"nothing", obscure?, why, want, have}`, where
+  `want` and `have` are `{category, kind, attributes}` written the way a
+  careful assistant would post them.
 - `signals.ts`: the word agreement signal. The header comment explains the
   weights: identifiers 3, content words 1, generic nouns and bare sizes 0.25,
   stopwords 0. The score is a weighted Dice.
@@ -70,25 +65,10 @@ touches a database or anything deployed.
   many false "may or may not be" looks is one real one worth), not a
   statistical one.
 
-## What this set does NOT cover
+## What a labelled set like this does not cover
 
-- **Real postings.** Every pair was written by one agent in one session. Real
-  assistants word things differently, leave attributes out, and file things
-  in odd places. Treat the lines as a first cut and re-check them on the
-  rehearsal data before trusting them. The same goes for any lines in
-  `matchTiers.ts`.
-- **Base rates.** The NOTHING pairs are almost all hard negatives (same brand,
-  same noun, part vs whole). Most pairs a live search looks at are nowhere
-  near each other. So the false-POSSIBLE rate here (about 40%) is far above
-  what users would see per candidate. What users would see depends on how
-  many candidates search brings back per posting (`CROSS_SHELF_TOP_N`).
-- **Geo, price, urgency, mutes and reputation bumps.** All pairs sit in one
-  place with no price.
-- **Thin postings** with no `kind` and no attributes. Only a few are here.
-- **Services and social**, beyond a handful of pairs. The set is mostly goods,
-  because that is where obscure items live.
-- **Languages other than English**, misspellings, and units in other systems.
-- **Many wants to one have.** Every pair is judged on its own.
-- **The labels.** They are one person's judgement. The line between SURE and
-  POSSIBLE for "the same thing, one side vague" is a call, and some pairs
-  would split a room.
+Pairs written by hand are not real postings: real assistants word things
+differently, leave attributes out, and file things in odd places. A set of
+mostly hard negatives also overstates the false-POSSIBLE rate a user would
+see. Treat lines fitted this way as a first cut and re-check them on real
+traffic before trusting them.

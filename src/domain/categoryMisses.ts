@@ -4,7 +4,7 @@
  * IT IS A GROWTH LIST NOW, NOT A COMPLAINTS BOOK. Until 17 September 2026 a
  * row here was a refusal: a card naming a node the catalogue did not open was
  * turned away, and the string it named was written down on the way past. Since
- * the catalogue became a deny list (docs/taxonomy-question.md) that posting
+ * the catalogue became a deny list (17 September 2026) that posting
  * goes UP — the top level was open, nothing on the path was reserved, and the
  * agent said in plain words what the thing is — and the row is written after
  * it does. Same table, same digest, opposite feeling: every line is something

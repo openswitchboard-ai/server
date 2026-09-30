@@ -1,5 +1,5 @@
 /**
- * THE CATALOGUE BECOMES A DENY LIST (docs/taxonomy-question.md, and step 3 of
+ * THE CATALOGUE BECOMES A DENY LIST (step 3 of
  * docs/trust-and-safety.md).
  *
  * Three things had to be true at once for this to be safe, and this file is

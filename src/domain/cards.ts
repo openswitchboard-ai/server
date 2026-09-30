@@ -276,7 +276,7 @@ export interface CardRow {
 
 /**
  * The category gate, identical on every deployment. The catalogue is a DENY
- * LIST (docs/taxonomy-question.md, denylist.ts categoryGate): a want or a have
+ * LIST (denylist.ts categoryGate): a want or a have
  * goes up unless somebody deliberately closed the door on it, which means a
  * reserved family or a top level the taxonomy has no name for. A leaf nobody
  * has written down is not a closed door, so it goes up.

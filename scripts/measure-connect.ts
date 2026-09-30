@@ -1,5 +1,5 @@
 /**
- * Measure the connect payload the way docs/manual-inventory.md measured it:
+ * Measure the connect payload:
  * the connect text, the tool descriptions, and the input schemas as they are
  * serialised into a `tools/list` response.
  *

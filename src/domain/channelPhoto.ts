@@ -64,8 +64,7 @@
  * it, the bytes still never pass through this process, the same two humans are
  * the only ones who can ever open it, and it deletes itself. The manual (versions
  * 49 and 50), the sender's page, the description the collecting agent reads and
- * the link text now say the same thing; docs/manual-inventory.md and
- * docs/release-readiness.md still describe the older sentence.
+ * the link text now say the same thing.
  *
  * WHAT IS CHECKED. A caption, and the filename that rides along with the
  * upload, are WORDS — so they go through carriesMoneyFigure exactly as a

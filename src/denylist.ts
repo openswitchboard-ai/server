@@ -165,7 +165,7 @@ export function taxonomyKnows(category: string): boolean {
 }
 
 /**
- * THE CATALOGUE IS A DENY LIST (docs/taxonomy-question.md).
+ * THE CATALOGUE IS A DENY LIST (since 17 September 2026).
  *
  * `categoryStatus` above answers a question about the taxonomy: is this a node
  * it holds, and does it hold it open. That is still the right question for

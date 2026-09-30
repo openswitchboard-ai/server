@@ -45,10 +45,11 @@
  * chainsaw, a bezel insert beside the watch): see isPartOrAccessoryOf on
  * PairFacts for where a pair judge would plug in.
  *
- * THE LINES ARE PROVISIONAL. The numbers below were fitted on the labelled
- * calibration set in test/calibration (pairs.json, 144 pairs written by one
- * agent in one session; run with `npm run calibrate-tiers`, and read
- * test/calibration/README.md for what the set does not cover). They live here
+ * THE LINES ARE PROVISIONAL. The numbers below were fitted on a labelled
+ * calibration set of hand-written pairs (the method is test/calibration; the
+ * set itself is evaluation data kept outside this repository; run with
+ * `npm run calibrate-tiers`, and read test/calibration/README.md for what
+ * such a set does not cover). They live here
  * and only here so that script can import them, and they must be re-tuned on
  * real runs before anyone trusts them further. The POSSIBLE line on shared
  * words is a product decision still pending with the founder.

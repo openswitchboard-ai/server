@@ -92,7 +92,7 @@
  *   judged on what it actually said.
  *
  *   THE SAME RULE, NOW FOR THE CATEGORY (unknown leaves). The catalogue is a
- *   deny list since 17 September 2026 (docs/taxonomy-question.md): a leaf
+ *   deny list since 17 September 2026: a leaf
  *   nobody has written down goes up, filed where the agent filed it. Nothing
  *   about "goods.vintage-synth-parts" is in the tree, so the tree cannot say
  *   how close it sits to anything — and closeness is measured from the nearest

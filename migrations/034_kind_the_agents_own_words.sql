@@ -1,5 +1,5 @@
 -- `kind`: the AI's own words for the thing
--- (docs/taxonomy-question.md, and step 3 of docs/trust-and-safety.md)
+-- (step 3 of docs/trust-and-safety.md)
 --
 -- The catalogue is a deny list now. A leaf it has never heard of goes up, so
 -- long as the top level is open and nothing on the path is reserved, and what

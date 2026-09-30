@@ -1,7 +1,13 @@
 /**
  * Tier-line calibration: `npm run calibrate-tiers`.
  *
- * Embeds every posting in pairs.json once with the production embedding call
+ * The labelled pairs are evaluation data and are not in this repository. They
+ * are read from OSB_CALIBRATION_PAIRS (a path to a pairs.json), or else from
+ * server/test/calibration/pairs.json inside OSB_INTERNAL_DIR, or else from a
+ * sibling checkout of the private data repository at ../internal. Without
+ * one, it says so and exits cleanly. See README.md for the file's shape.
+ *
+ * Embeds every posting in the pairs file once with the production embedding call
  * (embeddings.embedText: Titan v2, 1024 dims, normalised) over the production
  * projection (matchRules.projectionText), caching vectors in .cache.json keyed
  * by model id + projection text. Then, per pair, computes cosine, category
@@ -42,7 +48,23 @@ interface Row {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const pairs: Pair[] = JSON.parse(readFileSync(join(here, 'pairs.json'), 'utf8'));
+const pairsPath =
+  process.env.OSB_CALIBRATION_PAIRS ??
+  join(
+    process.env.OSB_INTERNAL_DIR ?? join(here, '..', '..', '..', 'internal'),
+    'server',
+    'test',
+    'calibration',
+    'pairs.json',
+  );
+if (!existsSync(pairsPath)) {
+  console.error(
+    `No calibration pairs at ${pairsPath}. They are evaluation data and not in this ` +
+      'repository: set OSB_CALIBRATION_PAIRS to your own pairs.json (see test/calibration/README.md). Skipping.',
+  );
+  process.exit(0);
+}
+const pairs: Pair[] = JSON.parse(readFileSync(pairsPath, 'utf8'));
 const cachePath = join(here, '.cache.json');
 const modelId = process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0';
 const cfg = { bedrockEmbedModelId: modelId } as Parameters<typeof embedText>[0];
