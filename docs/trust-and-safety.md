@@ -59,6 +59,7 @@ person that the switchboard has not looked at and cannot account for.*
 | Prohibited, by meaning | Weapons, drugs, prescription meds, live animals (lost and found pets going home excepted, on their own shelf and with no money), wildlife, sexual services, anything illegal, regardless of category name | Model classifier against the deny list's reason codes; the path glob stays as the cheap first pass | Postings, amendments |
 | PII | Names, emails, phones, street addresses, handles, coordinates | Existing model screen | Postings |
 | Money figures | Digits, symbols, spelled amounts, price phrasing | Existing `moneyInWords` | Messages |
+| Contact details in the words | An address (street number, name, street type; PO box) or a phone number (leading + or 0, 1300/1800, the 3-3-4 shape, eight spelled digits). Times, dates, prices, quantities, sizes, model numbers and a suburb on its own pass | `checks/contactDetails.ts` over `domain/contactInWords.ts`; deterministic, in-house, no model and nothing sent to any outside service. A refusal points at the send-contact page and keeps nothing of the words | Messages, offer notes (captions on the photo page) |
 | Injection | Text aimed at an AI reader | Existing model screen | Postings |
 | Stolen / recalled markers | Existing | Existing model screen | Postings |
 | Sexual content | Nudity and sexual imagery of any kind, and violence, hate symbols and drugs alongside it | Rekognition `DetectModerationLabels` on the uploaded object at the send press, before the other side is told it exists, `MinConfidence` 50. Refused on any of these top-level labels, in both the old and the current taxonomy names: Explicit, Explicit Nudity, Non-Explicit Nudity of Intimate parts and Kissing, Suggestive, Sexual Activity, Swimwear or Underwear, Violence, Visually Disturbing, Graphic Violence Or Gore, Hate Symbols, Drugs & Tobacco, Drugs, Tobacco. Alcohol, Gambling and Rude Gestures are deliberately not refused: a bottle of wine is a thing somebody may lawfully be handing over. A refusal keeps the reason code alone; an error is a hold, never a pass. WHAT HAPPENS TO THE BYTES DEPENDS ON THE FAMILY. A refusal on violence, hate or drugs deletes the object, as before. A refusal on any of the SEXUAL labels does not: the object is copied to `conversation-photos/quarantine/<introduction>/<name>` in the same bucket, the original is deleted, and a `photo_quarantine` row is written (migration 038) — held ninety days, status `held`. The reason is s 474.25 of the Criminal Code (Cth): a host that becomes aware of child abuse material must refer it to the Australian Federal Police, and Rekognition says "Explicit", never "a child". Deleting on sight destroys the referrable thing, fastest in exactly the cases where that is worst. A copy that fails leaves the original where it is and logs `{event:'photo-quarantine-failed', match_id}` — nothing is ever deleted that could not first be copied. The operator gets one line, `{event:'photo-quarantined', quarantine_id, match_id}`, with no key and no label; the sender's assistant reads the same plain sentence either way and nothing about quarantine reaches any user. A person decides with `scripts/safety/quarantine.mts`, which displays and fetches no image: `--cleared` deletes the object, `--referred` marks it and keeps it forever. The daily sweep takes only `cleared` rows past expiry; a `held` row past ninety days is logged as overdue and left alone, and a `referred` row is never swept | Photos |
@@ -396,11 +397,35 @@ launch. Requests are counted by kind and what was produced, nothing
 identifying, and the counts are aggregated and delayed, subject to legal
 secrecy obligations.
 
+## Sealed contact details (1 October 2026)
+
+Addresses and phone numbers are the one thing the switchboard carries without
+being able to read. The sender types them on their own page; their browser
+seals one copy per browser key the recipient has registered (ECDH P-256,
+HKDF-SHA-256, AES-256-GCM, introduction and key id as associated data,
+plaintext padded to 256 bytes). The private keys are non-extractable and live
+in each browser's IndexedDB. The send door (`contact_send`) accepts scrambled
+copies and nothing else; the suspension check runs and the ledger records the
+send with no body. The recipient's page takes the copy for its own key, and
+every copy is deleted in the same transaction. Unopened copies go at 7 days.
+An introduction closed by a report or a decline opens nothing, so a reporter's
+details never reach the person they reported.
+
+What this does not do: the scrambling page is served by this server, so a
+server changed to lie could serve a page that reads the details as they are
+typed. Anyone holding a person's signed-in session could register a browser
+key of their own. An assistant driving the person's own signed-in browser sees
+what the person sees. What it removes is every readable copy: none in the
+database, the logs, the ledger, a backup or either assistant, so none to leak
+or be asked for later. For a lawful request the answer is that a send happened,
+who to whom and when.
+
 ## Plaintext, and being honest about it
 
 The switchboard **does** see the words at send time. It has to: it writes the
 sentences, screens the content and refuses the money figures. It is not
-end-to-end encrypted and has never claimed to be. What is true, and what the
+end-to-end encrypted and has never claimed to be, with one exception:
+addresses and phone numbers, above. What is true, and what the
 privacy page should say plainly:
 
 - Everything in transit is under TLS (ACM certificate on the load balancer).

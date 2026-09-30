@@ -26,6 +26,8 @@ This is the line that changed. It used to read "no payments on the platform", wh
 
 **Screening runs on postings.** Free text on a want or a have is screened before it is published, and a rejected posting comes back with a reason in plain words.
 
+**Addresses and phone numbers never cross in the words.** A message or an offer note carrying one is refused (`src/intake/checks/contactDetails.ts`). They go on their own page instead, where the person types them and their browser scrambles them so only the other person's browser can read them (`src/domain/sealedContact.ts`). An agent talked into "just send me your address" has none to send, and neither assistant ever holds one.
+
 **Messages are checked too.** At the message door every message is checked for a money figure, in digits or in words, and refused if it carries one (`src/intake/checks/moneyFigure.ts`). A model then reads it for grooming, exploitation, threats, a child involved or a sender at risk (`src/intake/checks/messageSafety.ts`). That check never refuses. A flag delivers the message and puts it in front of a person.
 
 **Declines carry no reason.** A scammer probing for what worked gets a decline and nothing else, and the pairing is muted.

@@ -147,6 +147,27 @@ These are the invariants worth reading the code to check:
   `carriesMoneyFigure` rule a message is held to — a figure never travels in the
   words. A figure written inside the image is not detectable and no claim is
   made that it is.
+- Addresses and phone numbers go browser to browser, sealed
+  (`src/domain/sealedContact.ts`, `src/counter/sealedScript.ts`, migration
+  063). Every browser a person signs in on makes its own P-256 key pair with
+  WebCrypto; the private half is non-extractable and stays in that browser's
+  IndexedDB, and only the public half is registered. The sender types their
+  details on their own page (`respond(request_send_contact)`, link action
+  `contact-send`), and their browser seals one copy per recipient browser
+  key: ECDH, HKDF-SHA-256, AES-256-GCM, with the introduction and key id as
+  associated data and the plaintext padded. The server accepts scrambled
+  copies and nothing else, and refuses any request carrying a readable
+  field. The recipient opens them once on their own signed-in page; the copy
+  is handed over and every copy deleted in the same transaction, and unopened
+  copies are deleted at 7 days. Neither assistant sees the details and the
+  server holds no key that opens them. Those pages carry no inline script:
+  one script from this origin, pinned by SRI, under `script-src 'self'`. A
+  message, an offer note or a photo caption carrying an address or a phone
+  number is refused (`src/intake/checks/contactDetails.ts`). The ledger
+  records that contact details were sent, who to whom and when, and never
+  what they were. The page is served by this server, so the protection is
+  against every copy at rest, in logs and in both assistants; it is no
+  protection against a server changed to serve a different page.
 - Publish is blocked until screening passes, with no bypass. If Bedrock is
   unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
