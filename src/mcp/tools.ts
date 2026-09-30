@@ -641,7 +641,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'withdraw_intent',
-    description: "Take one of your human's wants or haves down, on their word: sold, filled, no longer wanted. Nobody new is introduced to it and the introductions that never reached a conversation are filed away. A conversation already open stays open — the two people may still be arranging a handover in it — and closing that is the separate archive step, once they are done. Answers introductions_archived and conversations_kept.",
+    description: "Take one of your human's wants or haves down, ONLY ON THEIR WORD to take it down: sold, filled, no longer wanted. A deal agreed or a pickup arranged is not that word; ask them first. Nobody new is introduced to it and the introductions that never reached a conversation are filed away. A conversation already open stays open — the two people may still be arranging a handover in it — and closing that is the separate archive step, once they are done. Answers introductions_archived and conversations_kept.",
     inputSchema: {
       type: 'object',
       properties: { intent_id: { type: 'string', format: 'uuid' } },
