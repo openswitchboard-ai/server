@@ -461,8 +461,46 @@ export class OsbError extends Error {
     };
     // Every code, and every field, is in the published error document since
     // schema 0.17.0, so every payload is checked against it.
-    this.payload = assertOutbound('error', payload);
+    this.payload = checkErrorPayload(payload as ProtocolError);
   }
+}
+
+/**
+ * Whether a refusal that fails the error document is thrown (tests and dev)
+ * or logged and sent anyway (prod).
+ *
+ * A refusal is the switchboard working. If its payload drifts from the
+ * published document (a sentence a little long, a field the document does not
+ * name yet), throwing here would turn that refusal into a flat internal_error
+ * for every assistant that hit it. So prod logs the drift at error level and
+ * sends the refusal as built; tests and dev throw, so the drift is caught
+ * before it ships.
+ */
+export function strictErrorChecks(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' ||
+    process.env.VITEST !== undefined ||
+    process.env.OSB_ENV === 'dev'
+  );
+}
+
+function checkErrorPayload(payload: ProtocolError): ProtocolError {
+  const r = validateOutbound('error', payload);
+  if (r.valid) return payload;
+  if (strictErrorChecks()) {
+    throw new Error(`outbound payload failed error validation: ${r.reasons.join('; ')}`);
+  }
+  // The path and the rule only: never a value, so no words of anybody's
+  // travel into the service's logs.
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      tag: 'schema-drift',
+      code: payload.code,
+      paths: r.reasons.map((reason) => reason.split(' ').slice(0, 2).join(' ')),
+    }),
+  );
+  return payload;
 }
 
 /**
