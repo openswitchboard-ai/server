@@ -282,12 +282,9 @@ describe("an agent's opt_in never records: it fetches the link, every time", () 
     expect(err.payload.human_action).toContain('https://my.test/a/');
     // A refusal that hands over a link hands over the press to wait on too.
     expect(err.payload.press_id).toMatch(/^[0-9a-f-]{36}$/);
-    // The error itself is a conformant protocol error. press_id is set aside
-    // for the check: the published error document closes itself to unknown
-    // properties and this field is ahead of it (see protocol.ts), so the rest
-    // of the payload is what conformance is asserted on.
-    const { press_id: _waitable, ...conformant } = err.payload;
-    expect(validateOutbound('error', conformant).valid).toBe(true);
+    // The error itself is a conformant protocol error, press_id and all
+    // (the error document carries press_id since schema 0.17.0).
+    expect(validateOutbound('error', err.payload).valid).toBe(true);
     expect(err.payload.human_action.length).toBeLessThanOrEqual(300);
   });
 

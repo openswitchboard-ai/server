@@ -330,64 +330,37 @@ export type ErrorCode =
   | 'LOCATION_AMBIGUOUS'
   // A posting's place was not written in full: town, state and country
   // (26 September 2026, geo/normalise.ts). One fixed sentence, no candidates,
-  // because the switchboard no longer guesses which town was meant. Ahead of
-  // the pinned error document.
+  // because the switchboard no longer guesses which town was meant.
   | 'LOCATION_NOT_FULL'
   // Nothing in, nothing out: this account has been stopped by the operator
-  // (docs/trust-and-safety.md). Ahead of the pinned error document — see
-  // AHEAD_OF_SCHEMA below.
+  // (docs/trust-and-safety.md).
   | 'SUSPENDED'
   // This side of a conversation has spent the window its human's last press
   // granted it (domain/conversationWindow.ts). Nothing is lost and collecting
-  // still works; one press starts a fresh window. Also ahead of the pinned
-  // error document.
+  // still works; one press starts a fresh window.
   | 'CONVERSATION_PAUSED'
   // The posting does not say enough for a stranger to know what the thing is,
   // so it comes back unposted with the questions to put to the human
-  // (domain/postingDetail.ts). Ahead of the pinned error document, because the
-  // questions ride on the payload.
+  // (domain/postingDetail.ts). The questions ride on the payload.
   | 'NEEDS_DETAIL'
   // The posting carries a money figure, and this is the first time it has been
   // sent inside the window, so it comes back once for the assistant to say
-  // that figure to its human (domain/postingFigure.ts). Ahead of the pinned
-  // error document as well: the figures ride on the payload.
+  // that figure to its human (domain/postingFigure.ts). The figures ride on
+  // the payload.
   | 'CONFIRM_FIGURE'
   // The catalogue has never heard of the path that was sent, and nothing near
   // it is close enough to file the posting under without guessing
-  // (domain/categoryBackfill.ts). Ahead of the document as well: its
-  // `candidates` are shelves rather than places.
+  // (domain/categoryBackfill.ts). Its `candidates` are shelves rather than
+  // places.
   | 'SHELF_UNCLEAR'
   // The human recognised none of those shelves, so the answer carries a link to
   // a page on their own approval site where they search every shelf and pick
-  // one (domain/shelfPick.ts). Ahead of the document too: its press_id rides
-  // on the payload.
+  // one (domain/shelfPick.ts). Its press_id rides on the payload.
   | 'SHELF_PICK'
   // A best-offer sale was posted with an asking price on it, which is the one
   // place a seller's floor can turn into something the other side is shown
-  // (domain/cards.ts). Ahead of the pinned error document, like the rest of
-  // the posting-door answers.
+  // (domain/cards.ts).
   | 'FLOOR_IS_PRIVATE';
-
-/**
- * Codes this server ships that the pinned error document has not caught up
- * with. Their payloads are BUILT rather than validated: the field set is
- * exactly the one the document already admits, and the only thing it would
- * fail on is the code's own spelling.
- *
- * The alternative — waiting for a schema release before an operator can stop
- * an account — is not one this repository is willing to offer. The list is
- * meant to be short and to empty itself as the schema catches up.
- */
-const AHEAD_OF_SCHEMA: readonly ErrorCode[] = [
-  'SUSPENDED',
-  'CONVERSATION_PAUSED',
-  'NEEDS_DETAIL',
-  'CONFIRM_FIGURE',
-  'SHELF_UNCLEAR',
-  'SHELF_PICK',
-  'FLOOR_IS_PRIVATE',
-  'LOCATION_NOT_FULL',
-];
 
 /** One place a shared name could have meant, on LOCATION_AMBIGUOUS. */
 export interface ErrorCandidate {
@@ -435,12 +408,7 @@ export interface ProtocolError {
   questions?: string[];
   /** On CONFIRM_FIGURE: the figures to say back, at most four. */
   figures?: ErrorFigure[];
-  /**
-   * The press an agent may wait on, when this refusal carries a link. Added
-   * after the schema check rather than inside it: the published error document
-   * closes itself to unknown properties, and this field is ahead of it. It is
-   * additive and optional, so an agent holding the older schema ignores it.
-   */
+  /** The press an agent may wait on, when this refusal carries a link. */
   press_id?: string;
   /**
    * THE POSTING ATTEMPT'S OWN NUMBER, on every refusal a posting attempt gets.
@@ -453,10 +421,6 @@ export interface ProtocolError {
    *
    * MACHINERY, and never said to a human — the same rule the manual already
    * carries for a posting's id, which is the same number.
-   *
-   * Added after the schema check, like press_id above and for the same reason:
-   * the published error document closes itself to unknown properties. Additive
-   * and optional, so an agent holding the older schema ignores it.
    */
   reference?: string;
   docs_url: string;
@@ -491,15 +455,13 @@ export class OsbError extends Error {
       ...(opts.candidates?.length ? { candidates: opts.candidates.slice(0, 5) } : {}),
       ...(opts.questions?.length ? { questions: opts.questions.slice(0, 4) } : {}),
       ...(opts.figures?.length ? { figures: opts.figures.slice(0, 4) } : {}),
+      ...(opts.press_id ? { press_id: opts.press_id } : {}),
+      ...(opts.reference ? { reference: opts.reference } : {}),
       docs_url: `https://openswitchboard.ai/docs/errors#${code}`,
     };
-    this.payload = AHEAD_OF_SCHEMA.includes(code)
-      ? (payload as ProtocolError)
-      : assertOutbound('error', payload);
-    // After the check, deliberately: see the note on ProtocolError.press_id.
-    if (opts.press_id) this.payload.press_id = opts.press_id;
-    // And the attempt's number, for the same reason and on the same terms.
-    if (opts.reference) this.payload.reference = opts.reference;
+    // Every code, and every field, is in the published error document since
+    // schema 0.17.0, so every payload is checked against it.
+    this.payload = assertOutbound('error', payload);
   }
 }
 

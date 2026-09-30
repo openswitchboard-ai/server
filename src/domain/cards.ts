@@ -172,8 +172,9 @@ function logSnap(event: string, fields: Record<string, unknown>): void {
  * shelf page instead (SHELF_PICK, domain/shelfPick.ts), so the answer is sent
  * back as its own word and the switchboard hands over the page.
  */
-function shelfUnclearAction(): string {
-  return `The catalogue has nothing written down for that, and the shelves nearest it disagree. Ask your human which of these is closest to what the thing is, then post it again with that category. If they say none of these, post it again with category ${SHELF_NONE_OPTION} and you are handed a page where they search every shelf. Put only the question to them: how the posting is filed and sent again is yours to handle quietly.`;
+// Kept under the 300 characters the error schema allows for human_action.
+export function shelfUnclearAction(): string {
+  return `The shelves nearest that disagree, so nothing is filed. Ask your human which of these is closest, then post again with that category. If none fits, post it again with category ${SHELF_NONE_OPTION} for a page where they search every shelf. Put only the question to them; the filing is yours to handle.`;
 }
 
 // shelfInWords, the shelf the way a person would say it, lives beside the
