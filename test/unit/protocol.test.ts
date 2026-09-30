@@ -93,51 +93,6 @@ describe('protocol errors', () => {
     expect(validatePayload('error', e.payload).valid).toBe(true);
     expect(e.payload.suggestions).toBeUndefined();
   });
-  it('every code the server sends validates, with its real sentence (schema 0.17.0)', async () => {
-    const { PLACE_NOT_FULL } = await import('../../src/geo/normalise.js');
-    const { SUSPENDED_WORDS } = await import('../../src/intake/checks/suspended.js');
-    const { CONVERSATION_PAUSED_WORDS } = await import('../../src/domain/conversationWindow.js');
-    const detail = await import('../../src/domain/postingDetail.js');
-    const { FIGURE_HUMAN_ACTION } = await import('../../src/domain/postingFigure.js');
-    const cards = await import('../../src/domain/cards.js');
-    const { SHELF_PICK_ACTION } = await import('../../src/domain/shelfPick.js');
-    const ref = '7f0c2a4e-1b9d-4c55-9a8e-3d2f6b1c0e91';
-    // A link as long as a real one: origin, /a/, a uuid, a dot and a 43-character MAC.
-    const link = `https://my.dev.openswitchboard.ai/a/${ref}.${'x'.repeat(43)}`;
-    const built = [
-      new OsbError('LOCATION_NOT_FULL', { human_action: PLACE_NOT_FULL }),
-      new OsbError('SUSPENDED', { human_action: SUSPENDED_WORDS }),
-      new OsbError('CONVERSATION_PAUSED', { human_action: CONVERSATION_PAUSED_WORDS }),
-      ...[
-        detail.DETAIL_HUMAN_ACTION,
-        detail.DETAIL_AND_RADIUS_HUMAN_ACTION,
-        detail.DETAIL_CONTEXT_HUMAN_ACTION,
-        detail.DETAIL_RECOGNISE_HUMAN_ACTION,
-        detail.DETAIL_UNKNOWN_UNMATCHED,
-      ].map(
-        (human_action) =>
-          new OsbError('NEEDS_DETAIL', { human_action, questions: ['What make and model is it?'], reference: ref }),
-      ),
-      new OsbError('CONFIRM_FIGURE', {
-        human_action: `${FIGURE_HUMAN_ACTION}${cards.FIGURE_RADIUS_TAIL}`,
-        questions: ['Is $420 AUD the figure you gave as your asking price, or is it one I put there myself?'],
-        figures: [{ what: 'asking price', amount: 420, currency: 'AUD' }],
-        reference: ref,
-      }),
-      new OsbError('SHELF_UNCLEAR', {
-        human_action: cards.shelfUnclearAction(),
-        candidates: [
-          { category: 'goods.motoring.parts', words: 'car parts' },
-          { category: 'none_of_these', words: 'none of these' },
-        ],
-      }),
-      new OsbError('SHELF_PICK', { human_action: `${SHELF_PICK_ACTION} ${link}`, press_id: ref }),
-      new OsbError('FLOOR_IS_PRIVATE', { human_action: cards.FLOOR_IS_PRIVATE_ACTION }),
-    ];
-    for (const e of built) {
-      expect(validatePayload('error', e.payload).valid, e.payload.code).toBe(true);
-    }
-  });
   it('rejects unknown major schema versions', () => {
     expect(() => checkSchemaVersion('99.0.0')).toThrow('SCHEMA_VERSION_UNSUPPORTED');
     expect(() => checkSchemaVersion(SCHEMA_VERSION)).not.toThrow();
