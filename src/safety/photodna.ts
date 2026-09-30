@@ -1,36 +1,24 @@
 /**
- * KNOWN ABUSE IMAGES, AND THE TWO HALVES OF FINDING ONE
- * (src/intake/checks/photoHashMatch.ts; docs/trust-and-safety.md,
- * "A known-image match").
+ * KNOWN ABUSE IMAGES (src/intake/checks/photoHashMatch.ts;
+ * docs/trust-and-safety.md, "A known-image match").
  *
  * OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
+ * The PhotoDNA licence covers this deployment only; a fork needs its own
+ * licence from Microsoft, and without one the known-image check is off.
  *
- * Rekognition answers a question about what a picture appears to be. This
- * answers a different question entirely: whether this exact picture is one
- * that has already been found, identified and hashed by the organisations
- * that do that work. It is the only check on this switchboard that can say
- * something true about a child rather than about a category, and it is the
- * reason the photo door has a second machine on it at all.
+ * NOTHING OF THE SDK IS IN THIS REPOSITORY, and nothing about it either. The
+ * licensed files, and a manifest that names them, carries their expected
+ * SHA-256 digests, the SDK version, the service endpoint and the service's
+ * test value, all arrive together in the SDK directory (vendor/photodna by
+ * default, PHOTODNA_SDK_DIR otherwise) from the private place a deployment
+ * gets them.
  *
- * THE TWO HALVES.
- *
- *   HASH    happens here, on this task, from the bytes. The SDK, a licensed
- *           module, turns an image into one or two hashes. No image and no hash
- *           leaves this function except to the service below.
- *   MATCH   is Microsoft's own, over HTTPS. It is told hashes and nothing
- *           else: no image, no key, no account, no conversation.
- *
- * THE SDK IS NOT IN THIS REPOSITORY AND CANNOT BE. It is Microsoft
- * confidential under the PhotoDNA licence. vendor/photodna/README.md says
- * what belongs there and where a deployment gets it; a fork has to obtain its
- * own licence from Microsoft. The digests below are Microsoft's published
- * SHA-256 values for version <sdk-version>, and a file that does not match one of
- * them is not loaded: a swapped binary turns the check off rather than hashing
- * people's photographs with something nobody licensed.
- *
- * AND NOTHING HERE DESCRIBES HOW ANY OF IT WORKS. Not in this file, not in the
- * public docs. What the hash is made of and how well it holds up are
- * Microsoft's to say, and saying them would help exactly the wrong person.
+ * TWO LINKS, BOTH CHECKED ON EVERY LOAD. The manifest's own SHA-256 is pinned
+ * here (PHOTODNA_MANIFEST_SHA256), so whoever can write the private store
+ * cannot swap the manifest and the files together; then each file has to
+ * match the digest the manifest gives it. A mismatch anywhere, or a missing
+ * or unreadable manifest, is the same as missing files: the check is off, or
+ * holds photos where a secret says it is meant to be on (photoDnaState).
  *
  * WHAT IS NEVER LOGGED: the subscription key, and the hashes. A hash is a
  * handle on a specific picture, and a log line is the one place in this system
@@ -45,21 +33,117 @@ import { GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { secretsManager } from '../aws.js';
 import type { Config } from '../config.js';
 
-/** The SDK version these digests belong to, and the one the deploy carries. */
-export const PHOTODNA_SDK_VERSION = '<sdk-version>';
+/** The manifest's name inside the SDK directory. It is never in git. */
+export const PHOTODNA_MANIFEST = 'manifest.json';
 
 /**
- * Microsoft's own published SHA-256 for each file we load, from the checksum
- * list that ships with the SDK. Embedding them is expressly allowed; the files
- * themselves are not. Both are checked at load, every boot.
+ * The SHA-256 of this deployment's manifest.json, byte for byte. It says
+ * nothing about the licensed files; it ties the manifest to this source. A new
+ * SDK version means a new manifest and a new value here, in the same change.
+ * A fork with its own licence sets PHOTODNA_MANIFEST_SHA256 in its task's
+ * environment (config.photoDnaManifestSha256) instead of editing this.
  */
-export const PHOTODNA_SDK_DIGESTS: Readonly<Record<string, string>> = {
-  'photoDnaEdgeHash.js': '<sdk-file-sha256>',
-  'photoDnaEdgeHash.wasm': '<sdk-file-sha256>',
-};
+export const PHOTODNA_MANIFEST_SHA256 =
+  '7a7bc2b14809aaf53dd17ab8bd57a0813f4c0ce5df28552adb6b138f5a084bc6';
 
-/** The cloud service the hashes go to. */
-export const PHOTODNA_ENDPOINT = '<photodna-endpoint>';
+/**
+ * What the manifest carries. Every value in it is the licensed
+ * deployment's, not this repository's; a fork with its own licence writes its
+ * own.
+ */
+export interface PhotoDnaManifest {
+  /** The SDK version, said once at boot. */
+  version: string;
+  /** The script and the web-assembly module, each by file name and SHA-256. */
+  glue: { file: string; sha256: string };
+  wasm: { file: string; sha256: string };
+  /** The name of the SDK's hashing function, as the script declares it. */
+  entry: string;
+  /** Where hashes are sent, and the representation the service is told. */
+  endpoint: string;
+  dataRepresentation: string;
+  /** A value the service publishes for proving a round trip. Optional: only
+   *  the probe script and the live integration test read it. */
+  testHash?: string;
+}
+
+const PLAIN_FILE = /^[A-Za-z0-9._-]+$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * Read and check a manifest. It THROWS on anything that is not exactly the
+ * shape above, so a bad manifest is a failed load and never a guess: a file
+ * name with a path in it, a digest that is not a digest, or an entry name that
+ * is not a bare identifier (it is evaluated in the SDK's context).
+ */
+export function parsePhotoDnaManifest(text: string): PhotoDnaManifest {
+  const m = JSON.parse(text) as Record<string, any>;
+  const file = (f: any, what: string) => {
+    if (!f || typeof f.file !== 'string' || !PLAIN_FILE.test(f.file) || f.file === PHOTODNA_MANIFEST) {
+      throw new Error(`manifest ${what}.file is not a plain file name`);
+    }
+    if (typeof f.sha256 !== 'string' || !SHA256.test(f.sha256)) {
+      throw new Error(`manifest ${what}.sha256 is not a SHA-256`);
+    }
+    return { file: f.file as string, sha256: f.sha256 as string };
+  };
+  if (!m || typeof m !== 'object') throw new Error('manifest is not an object');
+  if (typeof m.version !== 'string' || !m.version) throw new Error('manifest version is missing');
+  if (typeof m.entry !== 'string' || !IDENTIFIER.test(m.entry)) {
+    throw new Error('manifest entry is not an identifier');
+  }
+  if (typeof m.endpoint !== 'string' || !/^https:\/\//.test(m.endpoint)) {
+    throw new Error('manifest endpoint is not an https URL');
+  }
+  if (typeof m.dataRepresentation !== 'string' || !m.dataRepresentation) {
+    throw new Error('manifest dataRepresentation is missing');
+  }
+  if (m.testHash !== undefined && typeof m.testHash !== 'string') {
+    throw new Error('manifest testHash is not a string');
+  }
+  return {
+    version: m.version,
+    glue: file(m.glue, 'glue'),
+    wasm: file(m.wasm, 'wasm'),
+    entry: m.entry,
+    endpoint: m.endpoint,
+    dataRepresentation: m.dataRepresentation,
+    ...(m.testHash !== undefined ? { testHash: m.testHash } : {}),
+  };
+}
+
+let manifestCache: { dir: string; want: string; manifest: PhotoDnaManifest } | undefined;
+
+/**
+ * The manifest in this SDK directory, proved against the pinned digest and
+ * then read, and kept once it has read cleanly. A failure is not kept: the
+ * next caller looks again. `expectSha256` defaults to the pinned value.
+ */
+export async function readPhotoDnaManifest(
+  dir: string,
+  expectSha256: string = PHOTODNA_MANIFEST_SHA256,
+): Promise<PhotoDnaManifest> {
+  if (manifestCache?.dir === dir && manifestCache.want === expectSha256) {
+    return manifestCache.manifest;
+  }
+  const bytes = await readFile(join(dir, PHOTODNA_MANIFEST));
+  const got = createHash('sha256').update(bytes).digest('hex');
+  if (got !== expectSha256) {
+    throw Object.assign(
+      new Error(`${PHOTODNA_MANIFEST} is not the manifest this build expects (sha256 ${got})`),
+      { code: 'MANIFEST_DIGEST' },
+    );
+  }
+  const manifest = parsePhotoDnaManifest(bytes.toString('utf8'));
+  manifestCache = { dir, want: expectSha256, manifest };
+  return manifest;
+}
+
+/** The digest a config expects of its manifest. */
+function manifestDigest(cfg: Config | undefined): string {
+  return cfg?.photoDnaManifestSha256 || PHOTODNA_MANIFEST_SHA256;
+}
 
 /** How many hashes the service takes in one request. */
 export const PHOTODNA_MAX_HASHES = 5;
@@ -73,21 +157,9 @@ export const PHOTODNA_TIMEOUT_MS = 10_000;
 
 /**
  * The longer side of the image as it is hashed. A phone photograph is several
- * times this, and scaling down first is what the SDK's own browser entry point
- * does: it costs a large allocation per picture otherwise, and the hash is not
- * a per-pixel thing.
+ * times this; scaling down first saves a large allocation per picture.
  */
 export const MAX_HASH_DIMENSION = 2048;
-
-/**
- * Microsoft's published test hash. It matches a source named "Test" and
- * nothing else, so it is the one way to prove the whole round trip — key,
- * endpoint, request shape, response shape — without any real image existing
- * anywhere near it. scripts/safety/photodna-probe.mts and the live integration
- * test both use it.
- */
-export const PHOTODNA_TEST_HASH =
-  '<photodna-test-hash>';
 
 /** Ids and counts, the same rule every other line in this service follows. */
 function photoDnaLog(event: string, fields: Record<string, string | number> = {}): void {
@@ -95,13 +167,9 @@ function photoDnaLog(event: string, fields: Record<string, string | number> = {}
 }
 
 // ---------------------------------------------------------------------------
-// HALF ONE: the hash, from the bytes, on this task.
+// Hashing.
 
-/**
- * One image's hashes, as the SDK returns them: a base64 string per hash, and
- * where in the picture each one came from. The rectangles are not used and not
- * kept — they are here because the SDK answers with them.
- */
+/** One image's hashes, as the SDK returns them. Only the hash is used. */
 interface SdkHash {
   PhotoDna: string;
   x: number;
@@ -143,62 +211,71 @@ let loadFailedAt: number | undefined;
 /** How long a failed load stands before the next photo tries again. */
 export const PHOTODNA_LOAD_RETRY_MS = 60_000;
 
-/** Where the two files are. Relative paths hang off the process's directory,
- *  which in the image is /app, next to dist and migrations. */
+/** Where the SDK files and their manifest are. Relative paths hang off the
+ *  process's directory, which in the image is /app, next to dist. */
 function sdkDir(cfg: Config | undefined): string {
   return cfg?.photoDnaSdkDir ?? 'vendor/photodna';
 }
 
 /**
- * Read one file and prove it is the one Microsoft published. A digest that
+ * Read one file and prove it is the one the manifest names. A digest that
  * does not match is not a thing to warn about and use anyway: it is either a
- * different version, in which case the constants above are stale and somebody
- * has to look, or it is not the file at all.
+ * different version, in which case the manifest is stale and somebody has to
+ * look, or it is not the file at all.
  */
-async function readVerified(dir: string, name: string): Promise<Buffer> {
-  const bytes = await readFile(join(dir, name));
+async function readVerified(dir: string, f: { file: string; sha256: string }): Promise<Buffer> {
+  const bytes = await readFile(join(dir, f.file));
   const got = createHash('sha256').update(bytes).digest('hex');
-  const want = PHOTODNA_SDK_DIGESTS[name];
-  if (got !== want) {
-    throw new Error(`${name} is not the file this build expects (sha256 ${got})`);
+  if (got !== f.sha256) {
+    throw Object.assign(
+      new Error(`${f.file} is not the file the manifest expects (sha256 ${got})`),
+      { code: 'SDK_DIGEST' },
+    );
   }
   return bytes;
 }
 
 /**
- * Bring the web-assembly module up in this process.
- *
- * The glue Microsoft ships is a browser script: it declares its own `Module`
- * object, reaches for `document`, and instantiates the web assembly
- * synchronously from `Module.wasmBinary` — which a browser would have preloaded
- * and Node has not. So it runs in a small vm context where `Module` is an
- * accessor property holding OUR object, already carrying the bytes: the
- * script's own `var Module = {...}` lands in the setter, its one property is
- * merged in, and instantiation finds the binary where it expects it. `document`
- * is a two-field stand-in, which is all the script actually reads from it.
- *
- * NOTHING OF THE SDK IS COPIED OR REWRITTEN. The script is loaded as it was
- * shipped, its own function does the hashing and its own code reads the result
- * buffer back. This file supplies a Node-shaped room for it to run in and
- * nothing else, which is also why none of the layout or sizing constants the
- * SDK uses appear anywhere in this repository.
+ * Both links, without loading anything: the manifest against its pinned
+ * digest, then each file against the manifest. THROWS on the first thing that
+ * is wrong. The image build runs this (scripts/safety/photodna-verify.mts) so
+ * that a deployment carrying the SDK without a good manifest fails at build
+ * time rather than holding every photo at run time.
+ */
+export async function verifyPhotoDnaSdk(
+  dir: string,
+  expectSha256: string = PHOTODNA_MANIFEST_SHA256,
+): Promise<PhotoDnaManifest> {
+  const manifest = await readPhotoDnaManifest(dir, expectSha256);
+  await readVerified(dir, manifest.glue);
+  await readVerified(dir, manifest.wasm);
+  return manifest;
+}
+
+/**
+ * Bring the licensed module up in this process, in a small vm context shaped
+ * the way the SDK's script expects. Nothing of the SDK is copied or rewritten:
+ * the script is loaded as it was shipped and its own function does the
+ * hashing.
  */
 async function load(cfg: Config | undefined): Promise<Loaded | null> {
   const dir = sdkDir(cfg);
-  if (loaded && loadedFrom === dir) return loaded;
+  const from = `${dir}\n${manifestDigest(cfg)}`;
+  if (loaded && loadedFrom === from) return loaded;
   if (
     loaded === null &&
-    loadedFrom === dir &&
+    loadedFrom === from &&
     loadFailedAt !== undefined &&
     Date.now() - loadFailedAt < PHOTODNA_LOAD_RETRY_MS
   ) {
     return null;
   }
-  loadedFrom = dir;
+  loadedFrom = from;
   try {
+    const manifest = await readPhotoDnaManifest(dir, manifestDigest(cfg));
     const [glue, wasm] = await Promise.all([
-      readVerified(dir, 'photoDnaEdgeHash.js').then((b) => b.toString('utf8')),
-      readVerified(dir, 'photoDnaEdgeHash.wasm'),
+      readVerified(dir, manifest.glue).then((b) => b.toString('utf8')),
+      readVerified(dir, manifest.wasm),
     ]);
     const emscripten: Record<string, unknown> = { wasmBinary: wasm };
     const ctx: Record<string, unknown> = {
@@ -208,9 +285,6 @@ async function load(cfg: Config | undefined): Promise<Loaded | null> {
       // Reached through globalThis because this project's lib does not declare
       // the name, not because there is anything unusual about it.
       WebAssembly: (globalThis as any).WebAssembly,
-      // The glue asks a browser which script tag it came from. It only wants a
-      // URL to resolve the .wasm against, and it never gets that far here
-      // because the bytes are already in hand.
       document: { currentScript: { src: '' } },
     };
     vm.createContext(ctx);
@@ -221,14 +295,16 @@ async function load(cfg: Config | undefined): Promise<Loaded | null> {
         if (v && v !== emscripten) Object.assign(emscripten, v);
       },
     });
-    vm.runInContext(glue, ctx, { filename: 'photoDnaEdgeHash.js' });
+    vm.runInContext(glue, ctx, { filename: manifest.glue.file });
+    // The entry name was checked to be a bare identifier when the manifest
+    // was read, so this is a lookup and nothing more.
     const hash = vm.runInContext(
-      '(params, pixels) => CreateChrysalisHash(params, pixels)',
+      `(params, pixels) => ${manifest.entry}(params, pixels)`,
       ctx,
     ) as RawHasher;
     loaded = { hash };
     loadFailedAt = undefined;
-    photoDnaLog('photodna-ready', { version: PHOTODNA_SDK_VERSION });
+    photoDnaLog('photodna-ready', { version: manifest.version });
   } catch (e: any) {
     // The error's class and code, and never its message: a message on this
     // path can carry a path, and one day something that reads a key. Said
@@ -250,8 +326,7 @@ async function load(cfg: Config | undefined): Promise<Loaded | null> {
  * Decoding happens here with sharp, because the SDK wants raw pixels and this
  * service receives a JPEG, a PNG or a WebP. `rotate()` with no argument
  * applies the orientation the file declares, so a photograph taken sideways
- * hashes as the picture a person would see rather than as its rotation; the
- * resize is the same ceiling the SDK's own browser path uses.
+ * hashes as the picture a person would see rather than as its rotation.
  *
  * It THROWS on anything that went wrong, including the SDK's own negative
  * results. The caller turns that into a hold, because a hash that was not
@@ -286,7 +361,7 @@ export async function edgeHashes(bytes: Uint8Array, cfg?: Config): Promise<strin
 }
 
 // ---------------------------------------------------------------------------
-// HALF TWO: the match, at Microsoft.
+// Matching.
 
 export interface MatchOutcome {
   /** True when any hash in the request matched anything at all. */
@@ -299,7 +374,7 @@ export interface MatchOutcome {
 
 /** The one request body shape the service takes. */
 export interface MatchHashRequestItem {
-  DataRepresentation: 'PreHashV2';
+  DataRepresentation: string;
   Value: string;
 }
 
@@ -318,8 +393,9 @@ export function initPhotoDna(cfg: Config): void {
   state = { cfg };
 }
 
-/** For the suite: forget the loaded module and the cached key. */
+/** For the suite: forget the loaded module, the manifest and the cached key. */
 export function resetPhotoDnaForTests(): void {
+  manifestCache = undefined;
   loaded = undefined;
   loadedFrom = undefined;
   loadFailedAt = undefined;
@@ -357,11 +433,14 @@ export async function matchHashes(hashes: string[], cfg?: Config): Promise<Match
   const conf = cfg ?? current;
   if (!conf) throw new Error('photodna is not configured');
   const key = await subscriptionKey(conf);
+  // The endpoint and the representation come from the manifest that ships
+  // with the SDK. No manifest, no call: the caller holds on the throw.
+  const manifest = await readPhotoDnaManifest(sdkDir(conf), manifestDigest(conf));
   const body: MatchHashRequestItem[] = hashes
     .slice(0, PHOTODNA_MAX_HASHES)
-    .map((Value) => ({ DataRepresentation: 'PreHashV2', Value }));
+    .map((Value) => ({ DataRepresentation: manifest.dataRepresentation, Value }));
 
-  const res = await fetch(conf.photoDnaEndpoint ?? PHOTODNA_ENDPOINT, {
+  const res = await fetch(conf.photoDnaEndpoint || manifest.endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -382,22 +461,13 @@ export async function matchHashes(hashes: string[], cfg?: Config): Promise<Match
 export const PHOTODNA_STATUS_OK = 3000;
 
 /**
- * The service's answer, reduced to the three things this switchboard acts on.
+ * The service's answer, reduced to the three things this switchboard acts on:
+ * whether anything matched, which lists said so, and the tracking id.
  *
- * The shape, observed against the published test hash on 18 September 2026:
- *
- *   { TrackingId, MatchResults: [ { Status: { Code, Description, Exception },
- *     ContentId, IsMatch, MatchDetails: { AdvancedInfo, MatchFlags: [ {
- *     AdvancedInfo, Source, Violations, MatchDistance } ] }, TrackingId } ] }
- *
- * One entry in MatchResults per hash sent. A PER-RESULT STATUS THAT IS NOT OK
- * IS AN ERROR, not a no-match: the request carried two hashes of one picture
- * and half an answer about it is not an answer. The caller holds on a throw,
- * which is the right end of that.
- *
- * It is read defensively for the rest: this is somebody else's API, the field
- * names are theirs to change, and code that could not read the response has to
- * hold rather than pass.
+ * A PER-RESULT STATUS THAT IS NOT OK IS AN ERROR, not a no-match: half an
+ * answer about a picture is not an answer, and the caller holds on a throw.
+ * It is read defensively for the rest: this is somebody else's API, and code
+ * that could not read the response has to hold rather than pass.
  */
 export function readMatchResponse(payload: unknown): MatchOutcome {
   const body = payload as Record<string, any> | undefined;
@@ -416,9 +486,8 @@ export function readMatchResponse(payload: unknown): MatchOutcome {
     const flags: any[] = Array.isArray(r?.MatchDetails?.MatchFlags)
       ? r.MatchDetails.MatchFlags
       : [];
-    // The name of the list that holds the picture. Nothing else out of the
-    // flag: the distance and the violation codes are Microsoft's business and
-    // this switchboard acts the same way whatever they say.
+    // The name of the list that holds the picture, and nothing else: this
+    // switchboard acts the same way whatever the rest of the flag says.
     for (const f of flags) if (f?.Source) sources.add(String(f.Source));
   }
   if (sources.size) match = true;
@@ -435,12 +504,9 @@ export function readMatchResponse(payload: unknown): MatchOutcome {
 // Whether this deployment has it at all.
 
 /**
- * Both halves have to be there: the files, and a secret to call the service
- * with. Either one missing is the same answer, because half of this check is
- * no check.
- *
- * It is async because finding out means reading two files. The result is
- * settled after the first call.
+ * Both have to be there: the SDK (its files and manifest), and a secret to
+ * call the service with. Either one missing is the same answer, because half
+ * of this check is no check.
  */
 export async function photoDnaAvailable(cfg?: Config): Promise<boolean> {
   return (await photoDnaState(cfg)) === 'ready';
@@ -452,9 +518,9 @@ export async function photoDnaAvailable(cfg?: Config): Promise<boolean> {
  *   off          no secret configured: this deployment has no hash matching
  *                at all (a dev checkout without the licensed files). Photos
  *                pass this check, as they always have there.
- *   ready        the files loaded and a secret is configured.
+ *   ready        the manifest and files loaded and a secret is configured.
  *   unavailable  a secret IS configured — this deployment is meant to match —
- *                and the files did not load. Photos HOLD until they do; the
+ *                and the manifest or the files did not load. Photos HOLD until they do; the
  *                load is tried again after PHOTODNA_LOAD_RETRY_MS.
  */
 export type PhotoDnaReadiness = 'off' | 'ready' | 'unavailable';
@@ -479,7 +545,7 @@ export async function warnIfPhotoDnaDisabled(
   const secret = !!cfg.photoDnaSecretArn;
   if (files && secret) return false;
   const missing = [
-    ...(files ? [] : [`the SDK files in ${sdkDir(cfg)}`]),
+    ...(files ? [] : [`the SDK files and manifest in ${sdkDir(cfg)}`]),
     ...(secret ? [] : ['PHOTODNA_SECRET_ARN']),
   ].join(' and ');
   log(

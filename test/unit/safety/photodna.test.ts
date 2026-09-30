@@ -4,25 +4,24 @@
  *
  * What is asserted here:
  *
- *  - THE LOADER REFUSES A FILE THAT IS NOT THE PUBLISHED ONE. A byte changed
- *    in either file and the module does not come up: it reports itself off
- *    rather than hashing people's photographs with something nobody licensed.
- *  - THE HASHES ARE REAL ONES, on an image this test makes for itself — and
- *    this whole block SKIPS ITSELF where the licensed files are absent, which
- *    is every checkout of this repository and every CI run. It looks for them
- *    in vendor/photodna and NOWHERE ELSE: never in a downloads directory,
- *    never anywhere outside the tree.
- *  - THE REQUEST IS THE ONE THE SERVICE TAKES: the header name, the body
- *    shape, five hashes at most, and a key that is in the header and in
- *    nothing else.
- *  - THE RESPONSE IS READ AS THE SERVICE ACTUALLY ANSWERS IT, in both
- *    directions, against the shape observed on 18 September 2026. A per-result
- *    status that is not OK throws, because half an answer about a picture is
- *    not an answer.
+ *  - THE LOADER TAKES ITS FILE NAMES, DIGESTS AND ENDPOINT FROM A MANIFEST
+ *    that ships with the SDK, never from this repository. Every test here that
+ *    needs one writes a FAKE manifest and fake files into a temporary
+ *    directory: no Microsoft data is needed or read.
+ *  - THE LOADER REFUSES A FILE THAT IS NOT THE ONE THE MANIFEST NAMES, and a
+ *    missing or broken manifest is exactly the same as missing files.
+ *  - THE REAL HASHING BLOCK SKIPS ITSELF where the licensed files and their
+ *    manifest are absent, which is every checkout of this repository and every
+ *    CI run. It looks for them in vendor/photodna and NOWHERE ELSE.
+ *  - THE REQUEST carries the manifest's endpoint and representation, five
+ *    hashes at most, and a key that is in the header and in nothing else.
+ *  - THE RESPONSE: a per-result status that is not OK throws, because half an
+ *    answer about a picture is not an answer.
  *  - MIGRATION 045 CREATES EVERY COLUMN THE CODE READS AND WRITES. A column
  *    the code reads and the migration never created is a green suite and a
  *    broken deployment.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -30,16 +29,17 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_HASH_DIMENSION,
-  PHOTODNA_ENDPOINT,
+  PHOTODNA_MANIFEST,
+  PHOTODNA_MANIFEST_SHA256,
   PHOTODNA_MAX_HASHES,
-  PHOTODNA_SDK_DIGESTS,
   PHOTODNA_STATUS_OK,
-  PHOTODNA_TEST_HASH,
   PHOTODNA_TIMEOUT_MS,
   edgeHashes,
   matchHashes,
+  parsePhotoDnaManifest,
   photoDnaAvailable,
   readMatchResponse,
+  readPhotoDnaManifest,
   resetPhotoDnaForTests,
   warnIfPhotoDnaDisabled,
 } from '../../../src/safety/photodna.js';
@@ -49,23 +49,72 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repo = join(__dirname, '..', '..', '..');
 
 /**
- * Where the licensed files live when somebody has put them there, and the only
- * place this suite will ever look. They are Microsoft confidential and are not
- * in this repository; a checkout without them runs everything else here and
- * skips the hashing block.
+ * Where the licensed files and their manifest live when somebody has put them
+ * there, and the only place the real-SDK block will ever look. They are
+ * Microsoft confidential and are not in this repository; a checkout without
+ * them runs everything else here and skips that block.
  */
 const SDK_DIR = join(repo, 'vendor', 'photodna');
-const SDK_PRESENT = Object.keys(PHOTODNA_SDK_DIGESTS).every((n) =>
-  existsSync(join(SDK_DIR, n)),
-);
+function realSdkPresent(): boolean {
+  try {
+    const m = parsePhotoDnaManifest(readFileSync(join(SDK_DIR, PHOTODNA_MANIFEST), 'utf8'));
+    return existsSync(join(SDK_DIR, m.glue.file)) && existsSync(join(SDK_DIR, m.wasm.file));
+  } catch {
+    return false;
+  }
+}
+const SDK_PRESENT = realSdkPresent();
 
-const cfgWith = (over: Partial<Config> = {}): Config =>
-  ({
-    photoDnaSdkDir: SDK_DIR,
-    photoDnaSecretArn: 'arn:aws:secretsmanager:us-east-1:1:secret:osb/dev/photodna',
-    photoDnaEndpoint: PHOTODNA_ENDPOINT,
+const sha256 = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
+
+/**
+ * A stand-in SDK: a script that declares one function answering a fixed
+ * hash, a few bytes that stand for the module, and a manifest naming both by
+ * their real digests. Nothing here is Microsoft's.
+ */
+const FAKE_GLUE = `function FakeEntry(params, pixels) {
+  return { result: 0, resultText: 'ok', count: 1,
+    data: [{ PhotoDna: 'RkFLRQ==', x: 0, y: 0, w: params.width, h: params.height }] };
+}`;
+const FAKE_WASM = Buffer.from('not a real module');
+const FAKE_ENDPOINT = 'https://photodna.invalid/match';
+function fakeSdk(over: Record<string, unknown> = {}): string {
+  const dir = mkdtempSync(join(tmpdir(), 'osb-photodna-fake-'));
+  writeFileSync(join(dir, 'fake-glue.js'), FAKE_GLUE);
+  writeFileSync(join(dir, 'fake-module.bin'), FAKE_WASM);
+  const manifest = {
+    version: '0.0.0-test',
+    glue: { file: 'fake-glue.js', sha256: sha256(FAKE_GLUE) },
+    wasm: { file: 'fake-module.bin', sha256: sha256(FAKE_WASM) },
+    entry: 'FakeEntry',
+    endpoint: FAKE_ENDPOINT,
+    dataRepresentation: 'FakeRepresentation',
     ...over,
-  }) as unknown as Config;
+  };
+  writeFileSync(join(dir, PHOTODNA_MANIFEST), JSON.stringify(manifest));
+  return dir;
+}
+
+/** The digest of whatever manifest sits in `dir` now, as a fork would pin it. */
+function digestOf(dir: string): string | undefined {
+  const p = join(dir, PHOTODNA_MANIFEST);
+  return existsSync(p) ? sha256(readFileSync(p)) : undefined;
+}
+
+/**
+ * A config over a fresh stand-in SDK, pinned to that SDK's own manifest the
+ * way PHOTODNA_MANIFEST_SHA256 pins a deployment's. Name
+ * `photoDnaManifestSha256` to pin something else.
+ */
+const cfgWith = (over: Partial<Config> = {}): Config => {
+  const dir = over.photoDnaSdkDir ?? fakeSdk();
+  return {
+    photoDnaSdkDir: dir,
+    photoDnaManifestSha256: 'photoDnaManifestSha256' in over ? over.photoDnaManifestSha256 : digestOf(dir),
+    photoDnaSecretArn: 'arn:aws:secretsmanager:us-east-1:1:secret:osb/dev/photodna',
+    ...over,
+  } as unknown as Config;
+};
 
 beforeEach(() => {
   resetPhotoDnaForTests();
@@ -76,27 +125,91 @@ afterEach(() => {
   resetPhotoDnaForTests();
 });
 
-describe('the files have to be the ones Microsoft published', () => {
-  it('names a SHA-256 for each file it loads', () => {
-    expect(Object.keys(PHOTODNA_SDK_DIGESTS).sort()).toEqual([
-      'photoDnaEdgeHash.js',
-      'photoDnaEdgeHash.wasm',
-    ]);
-    for (const digest of Object.values(PHOTODNA_SDK_DIGESTS)) {
-      expect(digest).toMatch(/^[0-9a-f]{64}$/);
-    }
+describe('the files have to be the ones the manifest names', () => {
+  it('reads a manifest, and refuses one that is not the right shape', () => {
+    const dir = fakeSdk();
+    const m = parsePhotoDnaManifest(readFileSync(join(dir, PHOTODNA_MANIFEST), 'utf8'));
+    expect(m.glue.file).toBe('fake-glue.js');
+    expect(m.glue.sha256).toMatch(/^[0-9a-f]{64}$/);
+    const good = JSON.parse(readFileSync(join(dir, PHOTODNA_MANIFEST), 'utf8'));
+    const bad = (over: Record<string, unknown>) =>
+      () => parsePhotoDnaManifest(JSON.stringify({ ...good, ...over }));
+    expect(bad({ glue: { file: '../elsewhere.js', sha256: good.glue.sha256 } })).toThrow(/plain file name/);
+    expect(bad({ wasm: { file: 'x.bin', sha256: 'abc' } })).toThrow(/SHA-256/);
+    expect(bad({ entry: 'process.exit(1)' })).toThrow(/identifier/);
+    expect(bad({ endpoint: 'http://plain.invalid/' })).toThrow(/https/);
+    expect(bad({ dataRepresentation: '' })).toThrow(/dataRepresentation/);
+    expect(() => parsePhotoDnaManifest('not json')).toThrow();
   });
 
-  it('will not load a file whose digest is not the published one', async () => {
-    // Two files with the right NAMES and the wrong contents. Nothing of the
-    // SDK is involved, and nothing is read from outside the tree.
-    const dir = mkdtempSync(join(tmpdir(), 'osb-photodna-'));
-    for (const name of Object.keys(PHOTODNA_SDK_DIGESTS)) {
-      writeFileSync(join(dir, name), 'not the file Microsoft published');
-    }
+  it('loads a stand-in SDK the manifest names, and hashes with it', async () => {
+    const cfg = cfgWith();
+    expect(await photoDnaAvailable(cfg)).toBe(true);
+    const { default: sharp } = await import('sharp');
+    const png = await sharp({
+      create: { width: 40, height: 30, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .png()
+      .toBuffer();
+    expect(await edgeHashes(png, cfg)).toEqual(['RkFLRQ==']);
+  });
+
+  it('will not load a manifest whose own digest is not the pinned one', async () => {
+    const dir = fakeSdk();
+    const pinned = digestOf(dir);
+    // Somebody with write access to the store swaps the manifest and a file
+    // together: the file matches the new manifest, the manifest does not match
+    // the pin.
+    writeFileSync(join(dir, 'fake-glue.js'), FAKE_GLUE + '\n// swapped');
+    const m = JSON.parse(readFileSync(join(dir, PHOTODNA_MANIFEST), 'utf8'));
+    m.glue.sha256 = sha256(FAKE_GLUE + '\n// swapped');
+    writeFileSync(join(dir, PHOTODNA_MANIFEST), JSON.stringify(m));
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((l: string) => void logs.push(String(l)));
+    const cfg = cfgWith({ photoDnaSdkDir: dir, photoDnaManifestSha256: pinned });
+    expect(await photoDnaAvailable(cfg)).toBe(false);
+    expect(logs.some((l) => l.includes('MANIFEST_DIGEST'))).toBe(true);
+    await expect(readPhotoDnaManifest(dir, pinned!)).rejects.toThrow(/not the manifest/);
+  });
+
+  it('pins a SHA-256 for the deployment\'s manifest, and uses it unless told otherwise', async () => {
+    expect(PHOTODNA_MANIFEST_SHA256).toMatch(/^[0-9a-f]{64}$/);
+    // A stand-in manifest is not this deployment's, so without its own pin it
+    // does not load.
+    const cfg = cfgWith({ photoDnaManifestSha256: undefined });
+    expect(await photoDnaAvailable(cfg)).toBe(false);
+  });
+
+  it('will not load a file whose digest is not the one the manifest names', async () => {
+    // The right NAMES and the wrong contents.
+    const dir = fakeSdk();
+    writeFileSync(join(dir, 'fake-glue.js'), 'not the file the manifest names');
     const cfg = cfgWith({ photoDnaSdkDir: dir });
     expect(await photoDnaAvailable(cfg)).toBe(false);
     await expect(edgeHashes(new Uint8Array([1, 2, 3]), cfg)).rejects.toThrow(/not loaded/);
+  });
+
+  it('with no manifest, behaves exactly as with no SDK at all', async () => {
+    const { photoDnaState } = await import('../../../src/safety/photodna.js');
+    const dir = mkdtempSync(join(tmpdir(), 'osb-photodna-nomanifest-'));
+    // The files are there; the manifest that names them is not.
+    writeFileSync(join(dir, 'fake-glue.js'), FAKE_GLUE);
+    writeFileSync(join(dir, 'fake-module.bin'), FAKE_WASM);
+    expect(await photoDnaState(cfgWith({ photoDnaSdkDir: dir }))).toBe('unavailable');
+    expect(await photoDnaState(cfgWith({ photoDnaSdkDir: dir, photoDnaSecretArn: undefined }))).toBe(
+      'off',
+    );
+    const said: string[] = [];
+    await warnIfPhotoDnaDisabled(cfgWith({ photoDnaSdkDir: dir }), (m) => void said.push(m));
+    expect(said[0]).toContain('HELD');
+  });
+
+  it('with a broken manifest, holds rather than guessing', async () => {
+    const { photoDnaState } = await import('../../../src/safety/photodna.js');
+    const dir = fakeSdk();
+    writeFileSync(join(dir, PHOTODNA_MANIFEST), '{"version":');
+    expect(await photoDnaState(cfgWith({ photoDnaSdkDir: dir }))).toBe('unavailable');
+    await expect(readPhotoDnaManifest(dir)).rejects.toThrow();
   });
 
   it('is off, and says which half is missing, with no files and no secret', async () => {
@@ -167,9 +280,14 @@ describe('the files have to be the ones Microsoft published', () => {
 });
 
 // The licensed files are absent in CI and in any fresh checkout. This block
-// runs only where somebody has put them in vendor/photodna themselves.
-describe.skipIf(!SDK_PRESENT)('hashing a picture this test drew', () => {
-  it('answers one or two base64 hashes of the length the SDK returns', async () => {
+// runs only where somebody has put them, and their manifest, in
+// vendor/photodna themselves.
+describe.skipIf(!SDK_PRESENT)('hashing a picture this test drew, with the real SDK', () => {
+  // Pinned to the value in the source, as a deployment is.
+  const realCfg = () =>
+    cfgWith({ photoDnaSdkDir: SDK_DIR, photoDnaManifestSha256: PHOTODNA_MANIFEST_SHA256 });
+
+  it('answers one or two base64 hashes', async () => {
     const { default: sharp } = await import('sharp');
     // A flat rectangle has no edges to hash, so there is a shape on it. Drawn
     // here, from nothing: no sample image from the SDK is in this repository
@@ -186,23 +304,24 @@ describe.skipIf(!SDK_PRESENT)('hashing a picture this test drew', () => {
       .png()
       .toBuffer();
 
-    const hashes = await edgeHashes(png, cfgWith());
-    // The SDK returns one hash or two.
+    const hashes = await edgeHashes(png, realCfg());
     expect(hashes.length).toBeGreaterThanOrEqual(1);
     expect(hashes.length).toBeLessThanOrEqual(2);
+    const manifest = await readPhotoDnaManifest(SDK_DIR);
     for (const h of hashes) {
       expect(h).toMatch(/^[A-Za-z0-9+/]+=*$/);
-      // The same length the service's own published test hash is.
-      expect(h).toHaveLength(PHOTODNA_TEST_HASH.length);
+      // The same length as the service's own test value, where the manifest
+      // carries one.
+      if (manifest.testHash) expect(h).toHaveLength(manifest.testHash.length);
     }
   });
 
   it('reports itself available with the files and a secret', async () => {
-    expect(await photoDnaAvailable(cfgWith())).toBe(true);
+    expect(await photoDnaAvailable(realCfg())).toBe(true);
   });
 
   it('refuses something that is not an image at all', async () => {
-    await expect(edgeHashes(new Uint8Array([1, 2, 3, 4]), cfgWith())).rejects.toThrow();
+    await expect(edgeHashes(new Uint8Array([1, 2, 3, 4]), realCfg())).rejects.toThrow();
   });
 });
 
@@ -216,7 +335,7 @@ describe('what the service is sent', () => {
     } as never);
   });
 
-  it('names the header, the representation and the endpoint, and nothing else', async () => {
+  it('names the header, and the manifest\'s representation and endpoint, and nothing else', async () => {
     let seen: { url: string; init: any } | undefined;
     vi.stubGlobal('fetch', async (url: string, init: any) => {
       seen = { url: String(url), init };
@@ -228,13 +347,13 @@ describe('what the service is sent', () => {
     });
 
     await matchHashes(['aaa', 'bbb'], cfgWith());
-    expect(seen!.url).toBe('<photodna-endpoint>');
+    expect(seen!.url).toBe(FAKE_ENDPOINT);
     expect(seen!.init.method).toBe('POST');
     expect(seen!.init.headers['Ocp-Apim-Subscription-Key']).toBe('not-a-real-key-0000');
     expect(seen!.init.headers['Content-Type']).toBe('application/json');
     expect(JSON.parse(seen!.init.body)).toEqual([
-      { DataRepresentation: 'PreHashV2', Value: 'aaa' },
-      { DataRepresentation: 'PreHashV2', Value: 'bbb' },
+      { DataRepresentation: 'FakeRepresentation', Value: 'aaa' },
+      { DataRepresentation: 'FakeRepresentation', Value: 'bbb' },
     ]);
     // A timeout on every call: a photo the sender is waiting on cannot hang.
     expect(seen!.init.signal).toBeTruthy();
@@ -256,6 +375,17 @@ describe('what the service is sent', () => {
     await expect(matchHashes(['aaa'], cfgWith())).rejects.toThrow('photodna match answered 403');
   });
 
+  it('throws rather than calling when there is no manifest to say where', async () => {
+    let called = false;
+    vi.stubGlobal('fetch', async () => {
+      called = true;
+      return {} as any;
+    });
+    const empty = mkdtempSync(join(tmpdir(), 'osb-photodna-empty-'));
+    await expect(matchHashes(['aaa'], cfgWith({ photoDnaSdkDir: empty }))).rejects.toThrow();
+    expect(called).toBe(false);
+  });
+
   it('throws rather than calling when the deployment has no secret', async () => {
     let called = false;
     vi.stubGlobal('fetch', async () => {
@@ -268,17 +398,13 @@ describe('what the service is sent', () => {
     expect(called).toBe(false);
   });
 
-  it('scales a picture down before hashing it, at the SDK\'s own ceiling', () => {
+  it('scales a picture down before hashing it', () => {
     expect(MAX_HASH_DIMENSION).toBe(2048);
   });
 });
 
 describe('what the service answers', () => {
-  /**
-   * The shape observed against Microsoft's published test hash on 18 September
-   * 2026, with the key material taken out. It is written down here so that a
-   * change at the other end fails a test rather than a refusal.
-   */
+  /** A matched answer, in the shape the reader expects. */
   const MATCHED = {
     TrackingId: 'EUS_aaa_bbb_ccc',
     MatchResults: [
@@ -289,12 +415,7 @@ describe('what the service answers', () => {
         MatchDetails: {
           AdvancedInfo: [],
           MatchFlags: [
-            {
-              AdvancedInfo: [{ Key: 'MatchId', Value: '7469692' }],
-              Source: 'Test',
-              Violations: ['A1'],
-              MatchDistance: 182,
-            },
+            { Source: 'Test' },
           ],
         },
         XPartnerCustomerId: null,

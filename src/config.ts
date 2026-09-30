@@ -1,8 +1,4 @@
 /** Environment-driven configuration. Fails fast when a required value is missing. */
-// The one real PhotoDNA endpoint, from the module that talks to it. That
-// module takes nothing but a type from this one, so the two do not form a
-// runtime cycle.
-import { PHOTODNA_ENDPOINT } from './safety/photodna.js';
 import { JEV_ENDPOINT, JEV_MODEL } from './shadow/jev.js';
 
 function required(name: string): string {
@@ -177,13 +173,16 @@ export interface Config {
    *  still goes through every other check before it is delivered. Prod stays
    *  unset until prod has a secret of its own. */
   photoDnaSecretArn?: string;
-  /** Where the licensed PhotoDNA files sit, relative to the process. They are
-   *  never in git (vendor/photodna/README.md); a deployment that does not have
-   *  them runs with the check off. */
+  /** Where the licensed PhotoDNA files and their manifest sit, relative to
+   *  the process. They are never in git (vendor/photodna/README.md); a
+   *  deployment that does not have them runs with the check off. */
   photoDnaSdkDir: string;
-  /** Where the hashes are sent. A parameter only so the suite can point it at
-   *  a stand-in; there is one real value and it is the default. */
-  photoDnaEndpoint: string;
+  /** The SHA-256 the SDK's manifest.json must have. Unset = the value pinned
+   *  in src/safety/photodna.ts. For a fork with its own licence. */
+  photoDnaManifestSha256?: string;
+  /** An override for where the hashes are sent, so the suite can point it at
+   *  a stand-in. Unset = the endpoint in the SDK's manifest. */
+  photoDnaEndpoint?: string;
   /** Secrets Manager secret holding {apiKey} for TypeSafe AI's System One
    *  model (src/shadow/jev.ts). Unset = Jev is never asked. In dev it turns
    *  on the shadow trials (answers written down, nothing changes) and, with
@@ -285,7 +284,8 @@ export function loadConfig(): Config {
     safetyPublicKey: safetyPublicKeyFrom(process.env.SAFETY_PUBLIC_KEY),
     photoDnaSecretArn: process.env.PHOTODNA_SECRET_ARN || undefined,
     photoDnaSdkDir: process.env.PHOTODNA_SDK_DIR || 'vendor/photodna',
-    photoDnaEndpoint: process.env.PHOTODNA_ENDPOINT || PHOTODNA_ENDPOINT,
+    photoDnaManifestSha256: process.env.PHOTODNA_MANIFEST_SHA256 || undefined,
+    photoDnaEndpoint: process.env.PHOTODNA_ENDPOINT || undefined,
     jevSecretArn: process.env.JEV_SECRET_ARN || undefined,
     jevEndpoint: process.env.JEV_ENDPOINT || JEV_ENDPOINT,
     jevModel: process.env.JEV_MODEL || JEV_MODEL,
