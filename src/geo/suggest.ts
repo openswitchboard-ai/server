@@ -85,7 +85,7 @@ function closeSpelling(a: string, b: string): boolean {
  *
  * A place's own name always counts. An alternate spelling counts only when it
  * is plainly a spelling of that same name and no settlement owns it outright —
- * which keeps Columbus, Ohio out of the list of Franklins while still finding
+ * which keeps Columbus, Ohio out of the list for a suburb name it merely carries while still finding
  * the places whose own name in the source data is a transliteration nobody
  * types: "Zuerich" under Zurich, "Arhus" under Aarhus, "Krakow" under Cracow.
  * A different word for the same place — Bombay, Peking — is past the list, and
@@ -152,13 +152,13 @@ function byPrefix(prefix: string): number[] {
 const SPACED_HINT_WORDS = 3;
 
 /**
- * The hits for a name a person has qualified as they typed it: "Franklin,
- * ACT", "Franklin ACT", "Franklin, ACT, Australia".
+ * The hits for a name a person has qualified as they typed it: "Lyons,
+ * ACT", "Lyons ACT", "Lyons, ACT, Australia".
  *
  * The rehearsal turned this up beside the ordering defect: the posting door
  * accepts every one of those forms, and the box that is meant to help a person
  * reach one of them answered nothing at all, because the index is keyed on a
- * settlement's own name and "franklin act" is nobody's name. So when the plain
+ * settlement's own name and "lyons act" is nobody's name. So when the plain
  * prefix finds nothing, the tail is read as a hint the way `resolvePlace`
  * reads it — commas first, and failing that the last word or three. The head
  * is still only a prefix, because the person is still typing.

@@ -252,7 +252,7 @@ function hintMatches(rowIdx: number, hint: string): boolean {
 
 /**
  * Whether a row answers to a hint, for the one caller outside this file that
- * needs it: the suggestion list, resolving "Franklin, ACT" as it is typed.
+ * needs it: the suggestion list, resolving "Lyons, ACT" as it is typed.
  * The hint must already be normalised through `normaliseKey`.
  */
 export function rowHasHint(rowIdx: number, hint: string): boolean {
@@ -304,7 +304,7 @@ function exactOnly(segment: string): boolean {
  *
  * A place whose own name is the key always beats a place that merely carries
  * it as an alternate spelling. The dump hangs every label anyone ever used on
- * a populated place, so "Franklin" — the name of dozens of real towns — was
+ * a populated place, so a suburb name shared by dozens of real towns was
  * also carried by Columbus, Ohio, which is bigger than all of them put
  * together and won on population alone. A person typing the name of their
  * suburb and landing on a city on another continent is worse than landing
@@ -313,8 +313,8 @@ function exactOnly(segment: string): boolean {
  * Two kinds of alternate spelling survive that. One where nothing owns the
  * name outright: nothing is called "Cracow", so Krakow keeps it. And one where
  * the place's own name still says the word — "New York" is carried by New York
- * City, which is what a person typing it means, while "Franklin" was carried
- * by Columbus, whose own name has nothing of it in it.
+ * City, which is what a person typing it means, while that suburb name was
+ * carried by Columbus, whose own name has nothing of it in it.
  */
 function nameSaysIt(name: string, key: string): boolean {
   return (
@@ -484,8 +484,8 @@ export interface PlaceHint {
 // town ten, then eight, times every namesake answered on its own), then by
 // the human's own country where it held exactly one, and only otherwise put to
 // the human as a list — a list that once offered a person in Hobart four
-// American Hobarts, and before that offered a person in Franklin, ACT five
-// American Franklins. Every one of those layers was a rule about what people
+// American Hobarts, and before that offered a person in a Canberra suburb
+// five American towns of the same name. Every one of those layers was a rule about what people
 // probably mean, and each fix for the last surprise made the next one. The
 // founder's decision was to stop guessing altogether: an assistant writing
 // for a human who lives somewhere knows, or can ask, the town, the state and
@@ -635,14 +635,14 @@ export function resolveFullPlace(input: string): FullPlaceAnswer {
  * the posting path is not.
  *
  * The area box is a person typing their own suburb, often picked from the
- * suggestion list ("Franklin, Tasmania") and sometimes typed bare ("Hobart").
+ * suggestion list ("Lyons, Northern Territory") and sometimes typed bare ("Hobart").
  * What it settles to is handed to their own assistant as area_resolved, to
  * copy onto what it posts for them — and the assistant says that area out loud
  * when it confirms a posting, so the person who typed it is the one who hears
  * it. So the area settles where exactly one town answers to what they wrote,
  * or where exactly one of the towns that do is in the country their own clock
  * says they are in: "Hobart" on a Tasmanian clock is Hobart, Tasmania. Nothing
- * is settled by size, and a name their own country holds two of ("Franklin",
+ * is settled by size, and a name their own country holds two of ("Lyons",
  * in Australia) is left unsettled, so their assistant asks them for the town,
  * the state and the country.
  */
@@ -745,7 +745,7 @@ export function resolvePlace(input: string): Place | undefined {
   if (wholeHit !== undefined) return toPlace(wholeHit);
 
   // Last: a hint written without a comma. People type "Newtown NSW" and
-  // "Franklin ACT" the way they say them, and the switchboard used to answer
+  // "Lyons ACT" the way they say them, and the switchboard used to answer
   // nothing at all while "Newtown, NSW" resolved fine. Only reached once every
   // other reading has failed, so a name that is simply two words ("New York",
   // "Surry Hills") is never taken apart, and the trailing words have to

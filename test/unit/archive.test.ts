@@ -121,7 +121,7 @@ function run(sql: string, params: any[] = []) {
   }
   // getAccount for the counterparty (and the caller's own profile read).
   if (/^\s*SELECT \* FROM accounts WHERE id/.test(sql)) {
-    if (params[0] === BEPPE) return rows([account(BEPPE, 'Alex', 'Franklin')]);
+    if (params[0] === BEPPE) return rows([account(BEPPE, 'Alex', 'Watson')]);
     if (params[0] === ANA) return rows([account(ANA, 'Ana', 'Downtown')]);
     return rows([]);
   }
@@ -224,13 +224,13 @@ describe('retrieval: an archived connection stays lookup-able', () => {
     expect(entry.category).toBe('social.book-club');
     expect(typeof entry.archived_at).toBe('string');
     // The whole point: the disclosed first name and area come back so a human
-    // can look up "you connected with Alex in Franklin".
-    expect(entry.mutual.counterparty).toEqual({ first_name: 'Alex', locality: 'Franklin' });
+    // can look up "you connected with Alex in Watson".
+    expect(entry.mutual.counterparty).toEqual({ first_name: 'Alex', locality: 'Watson' });
     expect(validateOutbound('intro.mutual', entry.mutual).valid).toBe(true);
     // The recall carries a ready, jargon-free sentence the agent leads with —
     // the first name and area, plainly, with no card/match/stage/score word.
     expect(entry.note.provenance).toBe('switchboard-system');
-    expect(entry.note.text).toMatch(/got chatting with Alex over in Franklin about a book club/i);
+    expect(entry.note.text).toMatch(/got chatting with Alex over in Watson about a book club/i);
     expect(entry.note.text).not.toMatch(/\b(card|match|stage|score|listing|channel|connection)\b/i);
   });
 

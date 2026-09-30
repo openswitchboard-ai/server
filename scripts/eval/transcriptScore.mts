@@ -616,7 +616,7 @@ export const RULES: Rule[] = [
       'Does the assistant ask the human for something the switchboard already ' +
       'holds and gives it — their area or suburb, or their timezone?',
     criteria: {
-      // Run 11: "Which Franklin are you in, ACT or Tasmania?" was marked as a
+      // Run 11: "Which Lyons are you in, ACT or the Northern Territory?" was marked as a
       // slip. It is the opposite. The switchboard had handed the assistant two
       // places answering to one name and told it to ask which; an assistant
       // that names the candidates has plainly been given the area already.

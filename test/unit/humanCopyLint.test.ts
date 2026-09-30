@@ -307,7 +307,7 @@ const PAGES: { name: string; html: string }[] = [
         },
       ],
       'Taken down.',
-      [{ category: 'book club', who: 'Alex, Franklin' } as any],
+      [{ category: 'book club', who: 'Alex, Ngunnawal' } as any],
     ),
   },
   { name: 'settings hub', html: home.settingsPage(settings()) },

@@ -152,14 +152,15 @@ describe('gazetteer', () => {
   });
 
   it('a name a bigger place merely answers to goes to the places that own it', () => {
-    // The defect (Lachlan, 13 September 2026): bare "Franklin" resolved to
+    // The defect (Lachlan, 13 September 2026): a bare suburb name resolved to
     // Columbus, Ohio — an alternate spelling the dump hangs off a city of
-    // 900,000, which beat every real Franklin on population. The lenient
+    // 900,000, which beat every real town of that name on population. Lyons
+    // (ACT, Northern Territory and several American towns) stands in for it. The lenient
     // reader still holds to that; a posting never reaches it, because a bare
     // name is not a full place (26 September 2026).
-    const franklin = resolvePlace('Franklin')!;
-    expect(normaliseKey(franklin.name)).toBe('franklin');
-    expect(resolveFullPlace('Franklin').kind).toBe('not_full');
+    const lyons = resolvePlace('Lyons')!;
+    expect(normaliseKey(lyons.name)).toBe('lyons');
+    expect(resolveFullPlace('Lyons').kind).toBe('not_full');
 
     // The same rule, the other way: nothing is called "Cracow", so the
     // alternate spelling still answers, and "New York" is still carried by
@@ -174,7 +175,7 @@ describe('gazetteer', () => {
     // NSW" resolved fine. The data has the suburb; the parsing wanted a comma.
     for (const [spaced, commad] of [
       ['Newtown NSW', 'Newtown, NSW'],
-      ['Franklin ACT', 'Franklin, ACT'],
+      ['Lyons ACT', 'Lyons, ACT'],
       ['Braddon ACT', 'Braddon, ACT'],
       ['Springfield IL', 'Springfield, IL'],
       ['Perth Scotland', 'Perth, Scotland'],
@@ -253,8 +254,8 @@ describe('gazetteer', () => {
     expect(full('Hobart, Tas, Australia')).toBe('Hobart, Tasmania, Australia');
     expect(full(CANBERRA)).toBe('Canberra, Australian Capital Territory, Australia');
     expect(full('Canberra, ACT, AUS')).toBe('Canberra, Australian Capital Territory, Australia');
-    expect(full('Franklin, Tasmania, Australia')).toBe('Franklin, Tasmania, Australia');
-    expect(full('Franklin, ACT, AU')).toBe('Franklin, Australian Capital Territory, Australia');
+    expect(full('Lyons, Northern Territory, Australia')).toBe('Lyons, Northern Territory, Australia');
+    expect(full('Lyons, ACT, AU')).toBe('Lyons, Australian Capital Territory, Australia');
     expect(full('Perth, WA, AU')).toBe(PERTH_WA);
     expect(full('Perth, Scotland, GB')).toBe('Perth, Scotland, United Kingdom');
     expect(full('Springfield, IL, US')).toBe('Springfield, Illinois, United States');
@@ -275,14 +276,14 @@ describe('gazetteer', () => {
       'Perth',
       'Paris',
       'Canberra',
-      'Franklin',
+      'Lyons',
       'Newcastle',
       'Nowhereville',
       // A town without its state, or without its country.
       'Hobart, Tasmania',
       'Hobart, Australia',
       'Perth, Scotland',
-      'Franklin, ACT',
+      'Lyons, ACT',
       // Regions and countries, however they are written.
       'ACT',
       'NSW',
@@ -292,7 +293,7 @@ describe('gazetteer', () => {
       'Australia',
       'AU',
       // Spaced hints are not taken apart: commas say where the parts are.
-      'Franklin ACT Australia',
+      'Lyons ACT Australia',
       '',
     ]) {
       expect(resolveFullPlace(s).kind, s).toBe('not_full');
@@ -322,8 +323,8 @@ describe('gazetteer', () => {
     };
     expect(own('Hobart', 'AU')).toBe('Hobart, Tasmania, Australia');
     expect(own('Newcastle', 'AU')).toBe('Newcastle, New South Wales, Australia');
-    expect(own('Franklin, Tasmania')).toBe('Franklin, Tasmania, Australia');
-    expect(own('Franklin, ACT')).toBe('Franklin, Australian Capital Territory, Australia');
+    expect(own('Lyons, Northern Territory')).toBe('Lyons, Northern Territory, Australia');
+    expect(own('Lyons, ACT')).toBe('Lyons, Australian Capital Territory, Australia');
     expect(own('Braddon, Australian Capital Territory')).toBe(
       'Braddon, Australian Capital Territory, Australia',
     );
@@ -335,7 +336,7 @@ describe('gazetteer', () => {
     expect(own('Hobart')).toBeUndefined();
     expect(own('Paris')).toBeUndefined();
     // Two of the name in their own country leaves it unsettled.
-    expect(own('Franklin', 'AU')).toBeUndefined();
+    expect(own('Lyons', 'AU')).toBeUndefined();
     // A state or a country is not a town.
     expect(own('ACT', 'AU')).toBeUndefined();
     expect(own('Australia', 'AU')).toBeUndefined();
@@ -345,7 +346,7 @@ describe('gazetteer', () => {
     for (const [s, country] of [
       ['Hobart', 'AU'],
       ['Newcastle', 'AU'],
-      ['Franklin, Tasmania', undefined],
+      ['Lyons, Northern Territory', undefined],
       ['Braddon, Australian Capital Territory', undefined],
       ['Newtown NSW', undefined],
       ['Fremantle', undefined],
@@ -471,14 +472,14 @@ describe('card location normalisation', () => {
       'Hobart',
       'Perth',
       'Paris',
-      'Franklin',
+      'Lyons',
       'Newcastle',
       'Canberra',
       'Nowhereville',
       'Hobart, Tasmania',
       'Hobart, Australia',
       'Perth, Scotland',
-      'Franklin ACT',
+      'Lyons ACT',
       'Newtown NSW',
       'ACT',
       'NSW',
@@ -505,8 +506,8 @@ describe('card location normalisation', () => {
   });
 
   it('one town written two full ways lands in one cell', () => {
-    const a = normaliseGeo({ place: 'Franklin, ACT, Australia', radius_km: 25 });
-    const b = normaliseGeo({ place: 'Franklin, Australian Capital Territory, AU', radius_km: 25 });
+    const a = normaliseGeo({ place: 'Lyons, ACT, Australia', radius_km: 25 });
+    const b = normaliseGeo({ place: 'Lyons, Australian Capital Territory, AU', radius_km: 25 });
     expect(a.geo.bucket).toBe(b.geo.bucket);
     expect(a.resolved!.display).toContain('Australian Capital Territory');
     const scotland = normaliseGeo({ place: 'Perth, Scotland, GB', radius_km: 25 });
@@ -906,7 +907,7 @@ describe('which country a human is probably in', () => {
     // an Australian account. It takes one argument now, and a bare name is
     // refused for everyone alike.
     expect(normaliseGeo.length).toBe(1);
-    for (const place of ['Hobart', 'Newcastle', 'Franklin']) {
+    for (const place of ['Hobart', 'Newcastle', 'Lyons']) {
       expect(err(() => normaliseGeo({ place, radius_km: 25 })).payload.code, place).toBe(
         'LOCATION_NOT_FULL',
       );

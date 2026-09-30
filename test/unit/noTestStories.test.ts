@@ -82,7 +82,7 @@ function served(): [string, string][] {
   out.push(['connect: own human', `${OWN_HUMAN_HEADING}\n${OWN_HUMAN_PREAMBLE}`]);
   out.push([
     'connect: own human block',
-    ownHumanBlockText({ area: { area: 'Franklin', area_resolved: 'Franklin, Tasmania, Australia' } as never, timezone: 'Australia/Hobart' }),
+    ownHumanBlockText({ area: { area: 'Lyons', area_resolved: 'Lyons, Northern Territory, Australia' } as never, timezone: 'Australia/Darwin' }),
   ]);
   return out;
 }

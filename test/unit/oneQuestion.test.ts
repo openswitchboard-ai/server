@@ -479,7 +479,7 @@ beforeEach(async () => {
     collectClosedAt: null,
     onboardedAt: new Date('2026-01-01'),
     firstName: 'Lachlan',
-    locality: 'Franklin',
+    locality: 'Weston',
     savedHearsVia: [],
     savedArrangement: undefined,
     elevatedUntil: null,
@@ -1241,13 +1241,13 @@ describe('the onboarding question, once', () => {
     const r = await inject('POST', '/hello', {
       hears_via: 'assistant',
       first_name: 'Lachlan',
-      locality: 'Franklin',
+      locality: 'Weston',
     });
     expect(r.statusCode).toBe(303);
     expect(r.headers.location).toBe('/');
     expect(world.savedHearsVia).toEqual(['assistant']);
     expect(world.firstName).toBe('Lachlan');
-    expect(world.locality).toBe('Franklin');
+    expect(world.locality).toBe('Weston');
     expect(world.onboardedAt).not.toBeNull();
     // And it never asks again.
     expect((await inject('GET', '/hello')).statusCode).toBe(303);

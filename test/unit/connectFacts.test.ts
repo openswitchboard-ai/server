@@ -43,15 +43,15 @@ const NO_SETTLEMENT = {} as unknown as Config;
 const ACCOUNT = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const NOW = new Date('2026-09-13T00:14:00Z');
 
-const FRANKLIN = {
-  area: 'Franklin, ACT',
-  area_resolved: 'Franklin, Australian Capital Territory, Australia',
-  note: { text: areaNote('Franklin, Australian Capital Territory, Australia'), provenance: 'switchboard-system' as const },
+const LYONS = {
+  area: 'Lyons, ACT',
+  area_resolved: 'Lyons, Australian Capital Territory, Australia',
+  note: { text: areaNote('Lyons, Australian Capital Territory, Australia'), provenance: 'switchboard-system' as const },
 };
 
 /** The block as the domain would compose it, with both facts known. */
 function bothKnown(): string {
-  return ownHumanBlockText({ area: FRANKLIN, timezone: 'Australia/Sydney' }, NOW);
+  return ownHumanBlockText({ area: LYONS, timezone: 'Australia/Sydney' }, NOW);
 }
 
 // The same banned nouns manual.test.ts holds the manual to: every word the
@@ -72,11 +72,11 @@ describe('the block of what the switchboard already knows about this human', () 
   it('says the area, as they typed it and written out, and what to do with it', () => {
     const block = bothKnown();
     expect(block).toContain(OWN_HUMAN_HEADING);
-    expect(block).toContain('Your human is in Franklin, Australian Capital Territory, Australia');
+    expect(block).toContain('Your human is in Lyons, Australian Capital Territory, Australia');
     expect(block).toMatch(/use that as the area on anything you post for them/i);
     expect(block).toMatch(/tell them which area you used/i);
     // What they typed is kept, so the agent can say it back in their words.
-    expect(block).toContain('which they wrote as "Franklin, ACT"');
+    expect(block).toContain('which they wrote as "Lyons, ACT"');
   });
 
   it('says the clock, in their zone, and what to do with it', () => {
@@ -88,8 +88,8 @@ describe('the block of what the switchboard already knows about this human', () 
   });
 
   it('leaves out the half that is not on file, and never says "unknown"', () => {
-    const areaOnly = ownHumanBlockText({ area: FRANKLIN }, NOW);
-    expect(areaOnly).toContain('Your human is in Franklin');
+    const areaOnly = ownHumanBlockText({ area: LYONS }, NOW);
+    expect(areaOnly).toContain('Your human is in Lyons');
     expect(areaOnly).not.toMatch(/clock reads/i);
 
     const clockOnly = ownHumanBlockText({ timezone: 'Australia/Sydney' }, NOW);
@@ -138,7 +138,7 @@ describe('reading those facts at connect', () => {
     run: (mod: typeof import('../../src/mcp/connectFacts.js'), spies: any) => Promise<void>,
   ) {
     vi.resetModules();
-    const readOwnArea = vi.fn(impl.readOwnArea ?? (async () => FRANKLIN));
+    const readOwnArea = vi.fn(impl.readOwnArea ?? (async () => LYONS));
     const getTimezone = vi.fn(impl.getTimezone ?? (async () => 'Australia/Sydney'));
     vi.doMock('../../src/domain/profile.js', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
@@ -160,9 +160,9 @@ describe('reading those facts at connect', () => {
   it('reads the area under a purpose that names the connect manual', async () => {
     await withMocks({}, async (mod, spies) => {
       const block = await mod.ownHumanBlock(ACCOUNT, { now: NOW });
-      expect(block).toContain('Your human is in Franklin');
-      // And with the country behind their clock, so a shared name — Franklin,
-      // of all names — is read back to them with their own country's places
+      expect(block).toContain('Your human is in Lyons');
+      // And with the country behind their clock, so a shared name — Lyons,
+      // which the Northern Territory has too — is read back to them with their own country's places
       // first (src/geo/homeCountry.ts).
       expect(spies.readOwnArea).toHaveBeenCalledWith(ACCOUNT, OWN_AREA_CONNECT_PURPOSE, {
         country: 'AU',

@@ -179,7 +179,7 @@ function anaRow(over: Partial<Account> = {}): Account {
     email_hash_v2: eh.v2,
     email_enc: Buffer.from(`enc:${EMAIL}`),
     first_name_enc: Buffer.from('enc:Ana'),
-    locality_enc: Buffer.from('enc:Franklin'),
+    locality_enc: Buffer.from('enc:Kaleen'),
     data_key_enc: Buffer.from('wrapped'),
     pin_hash: pinHash,
     timezone: 'Australia/Hobart',

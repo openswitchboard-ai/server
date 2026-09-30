@@ -156,11 +156,12 @@ describe('the suggestions themselves', () => {
   });
 
   it('never offers a place that merely carries the name as a label', () => {
-    // The Franklin defect, in the list this time: Columbus, Ohio answers to
-    // "Franklin" in the source data and would have sat at the top of it.
-    const franklin = suggestAreas('frankl').map((s) => s.value);
-    expect(franklin.length).toBeGreaterThan(0);
-    for (const v of franklin) expect(v.toLowerCase(), v).toContain('frankl');
+    // The alternate-spelling defect, in the list this time: Columbus, Ohio
+    // answered to a Canberra suburb's name in the source data and would have
+    // sat at the top of it. Lyons stands in for any name many towns share.
+    const lyons = suggestAreas('lyons').map((s) => s.value);
+    expect(lyons.length).toBeGreaterThan(0);
+    for (const v of lyons) expect(v.toLowerCase(), v).toContain('lyons');
     // And a short label — the airport codes the dump hangs off cities — is
     // never a way in: "ACT" finds places called Acton, never Waco.
     for (const v of suggestAreas('act').map((s) => s.value)) {
@@ -169,21 +170,23 @@ describe('the suggestions themselves', () => {
   });
 
   it("puts the human's own country first when one is known", () => {
-    // The rehearsal (19 September 2026): a person in Franklin, ACT typed
+    // The rehearsal (19 September 2026): a person in a Canberra suburb typed
     // their own suburb and was offered American towns of the same name. The
     // list is still the same list — their country is simply read first.
-    const plain = suggestAreas('frankl').map((s) => s.value);
-    expect(plain.every((v) => !v.startsWith('Franklin, Australian'))).toBe(true);
+    const plain = suggestAreas('lyons').map((s) => s.value);
+    // Without a hint, American towns of the name are read first.
+    expect(plain[0]).toBe('Lyons, Illinois');
+    expect(plain.indexOf('Lyons, Australian Capital Territory')).toBeGreaterThan(0);
 
-    const mine = suggestAreas('frankl', undefined, { country: 'AU' }).map((s) => s.value);
-    expect(mine[0]).toBe('Franklin, Australian Capital Territory');
-    expect(mine[1]).toBe('Franklin, Tasmania');
+    const mine = suggestAreas('lyons', undefined, { country: 'AU' }).map((s) => s.value);
+    expect(mine[0]).toBe('Lyons, Australian Capital Territory');
+    expect(mine[1]).toBe('Lyons, Northern Territory');
     expect(mine.length).toBe(plain.length);
     // Everything else keeps the order it had, behind them.
-    expect(mine.slice(2)).toEqual(plain.slice(0, mine.length - 2));
-    // A hint for a country with no Franklin in it changes nothing at all.
+    expect(mine.slice(2)).toEqual(plain.filter((v) => !mine.slice(0, 2).includes(v)));
+    // A hint for a country with no Lyons in it changes nothing at all.
     for (const cc of ['JP', 'FR']) {
-      expect(suggestAreas('frankl', undefined, { country: cc }).map((s) => s.value), cc).toEqual(
+      expect(suggestAreas('lyons', undefined, { country: cc }).map((s) => s.value), cc).toEqual(
         plain,
       );
     }
@@ -191,12 +194,12 @@ describe('the suggestions themselves', () => {
 
   it('finds a place a person has qualified as they typed it', () => {
     // The second half of the same rehearsal: the posting door accepts
-    // "Franklin, ACT, Australia", and the box meant to help someone reach that
+    // "Lyons, ACT, Australia", and the box meant to help someone reach that
     // string answered nothing — the index is keyed on a settlement's own name,
-    // and "franklin act" is nobody's name.
-    for (const typed of ['Franklin ACT', 'Franklin, ACT', 'Franklin, ACT, Australia']) {
+    // and "lyons act" is nobody's name.
+    for (const typed of ['Lyons ACT', 'Lyons, ACT', 'Lyons, ACT, Australia']) {
       expect(suggestAreas(typed).map((s) => s.value), typed).toEqual([
-        'Franklin, Australian Capital Territory',
+        'Lyons, Australian Capital Territory',
       ]);
     }
     expect(suggestAreas('Newtown NSW').map((s) => s.value)).toEqual([
@@ -209,7 +212,7 @@ describe('the suggestions themselves', () => {
     expect(suggestAreas('New South').every((s) => s.value.toLowerCase().includes('new south')))
       .toBe(true);
     // And an invented qualifier still finds nothing rather than something.
-    expect(suggestAreas('Franklin, Nowhereland')).toEqual([]);
+    expect(suggestAreas('Lyons, Nowhereland')).toEqual([]);
     expect(suggestAreas('Nowhereville NSW')).toEqual([]);
   });
 

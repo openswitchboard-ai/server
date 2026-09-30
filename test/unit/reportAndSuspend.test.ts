@@ -290,7 +290,7 @@ function fakePool() {
             hears_via: 'assistant',
             onboarded_at: new Date('2026-01-01'),
             first_name_enc: Buffer.from('enc:Ana'),
-            locality_enc: Buffer.from('enc:Franklin'),
+            locality_enc: Buffer.from('enc:Kaleen'),
           },
         ]);
       }

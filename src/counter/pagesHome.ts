@@ -634,7 +634,7 @@ export interface LedgerCardView {
 export interface PastConnectionView {
   /** Leaf label of the category, e.g. "book club". */
   category: string;
-  /** "Alex, Franklin" where the two reached stage-3 disclosure; absent otherwise. */
+  /** "Alex, Watson" where the two reached stage-3 disclosure; absent otherwise. */
   who?: string;
   /** When it was filed away, e.g. "2026-09-03". */
   archivedOn?: string;

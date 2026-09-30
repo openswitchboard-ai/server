@@ -1258,7 +1258,7 @@ export async function buildMutual(
 ) {
   // Open matches disclose at stage 3; an archived match keeps disclosing the
   // same stage-3 record so the connection stays retrievable after it is filed
-  // away ("you connected with Alex in Franklin about Italian"). Declined and
+  // away ("you connected with Alex in Holt about Italian"). Declined and
   // closed matches disclose nothing.
   if (m.state !== 'open' && m.state !== 'archived') throw new OsbError('NOT_UNLOCKED_YET');
   // HARD GATE: stage-3 data is NEVER returned without BOTH humans' recorded

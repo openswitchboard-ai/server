@@ -1389,7 +1389,7 @@ function cannedAssistant(side: Side, heard: string): string {
   if (side.id === 'seller') {
     return `I have put it up, and ${REACH.seller === 'country' ? 'set it to reach anywhere in Australia since it would go in a parcel' : 'kept it within 25 km of you since it is collected in person'}. Someone has come forward. I can share your first name and your suburb with them: https://my-dev.openswitchboard.ai/a/drylink — that page asks whether to share them. I will wait on it now.`;
   }
-  return 'I have put up what you are after, within 25 km of you. Someone has come forward. I can share your first name and your suburb, Franklin, with them: https://my-dev.openswitchboard.ai/a/drylink — I will wait on that now. They will see your reply next time they are with their assistant.';
+  return 'I have put up what you are after, within 25 km of you. Someone has come forward. I can share your first name and your suburb, Chifley, with them: https://my-dev.openswitchboard.ai/a/drylink — I will wait on that now. They will see your reply next time they are with their assistant.';
 }
 
 function cannedTools(side: Side, heard: string): string[] {

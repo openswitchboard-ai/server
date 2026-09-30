@@ -119,7 +119,7 @@ const view = {
   killSwitchOn: false,
   ceremony: { hasPin: true, hasPasskey: true, elevated: false },
   cardCounts: { total: 3, published: 3, pending: 0 },
-  sharedProfile: 'Lachlan, Franklin',
+  sharedProfile: 'Lachlan, Kambah',
   arrangementSummary: 'how often to check — every 2 hours (and 3 more)',
   timezone: 'Australia/Sydney',
   matchBoxes: [

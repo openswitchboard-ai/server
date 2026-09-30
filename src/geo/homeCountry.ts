@@ -2,8 +2,8 @@
  * Which country a human's clock says they are in.
  *
  * The defect that started this (rehearsal, 19 September 2026): a human in
- * Franklin, ACT typed "Franklin" and the switchboard offered five Franklins,
- * every one of them in the United States. For a week the country read here
+ * a Canberra suburb typed its bare name and the switchboard offered five
+ * towns of that name, every one of them in the United States. For a week the country read here
  * reordered that list, then settled a shared name outright where the human's
  * country held exactly one place of it.
  *

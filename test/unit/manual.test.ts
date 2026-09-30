@@ -1317,8 +1317,8 @@ describe('version 39: the area comes to you, and what travels is said plainly', 
     const { readOwnArea, areaNote, resolvedAreaName } = await import('../../src/domain/profile.js');
     expect(typeof readOwnArea).toBe('function');
     // The sentence the sweep hands over says the same thing the entry teaches.
-    expect(areaNote('Franklin, ACT')).toMatch(/use that as the area on anything you post/i);
-    expect(areaNote('Franklin, ACT')).toMatch(/tell them which area you used/i);
+    expect(areaNote('Dickson, ACT')).toMatch(/use that as the area on anything you post/i);
+    expect(areaNote('Dickson, ACT')).toMatch(/tell them which area you used/i);
     // And the written-out form only appears where one place answers to it.
     expect(resolvedAreaName('Australia')).toBeUndefined();
   });

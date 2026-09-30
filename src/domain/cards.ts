@@ -825,7 +825,7 @@ async function runPublish(
   // where the human would have said "anywhere in Australia". So a thing that
   // is being offered comes back with that one question until somebody has
   // answered it. It was asked of things on offer only until a later run, where
-  // the BUYER's assistant did the same: a want went up within 8 km of Franklin,
+  // the BUYER's assistant did the same: a want went up within 8 km of Bruce,
   // the seller was twenty kilometres away and posting country-wide, the two
   // postings read 0.86 alike, and the buyer's own radius kept them apart. So
   // it is asked of every goods posting, in the words that fit its side. A
