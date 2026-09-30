@@ -319,3 +319,13 @@ describe('nothing is taken down or filed away unasked', () => {
     expect(TOOLS.find((t) => t.name === 'withdraw_intent')!.description).toContain('ONLY ON THEIR WORD');
   });
 });
+
+// Manual v79: the section an assistant reads at the wrap-up asked for the
+// offer to file away and never for how it went, and a rehearsal assistant
+// that read it twice never asked (30 September 2026).
+describe('the wrap-up asks how it went', () => {
+  it('in the section an assistant reads when it is over', () => {
+    expect(manualSection('wrapping_up')!.text).toContain('how was that: good, fine or bad?');
+    expect(manualSection('wrapping_up')!.text).toContain('respond(verdict)');
+  });
+});

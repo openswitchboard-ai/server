@@ -386,6 +386,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Filing an introduction away is the same: only on your human\'s yes. "All done, thanks" is the moment to ask how it went and offer, once, to file it away, and file it on their yes.',
   },
+  {
+    version: 79,
+    note:
+      'The wrapping-up section now asks how it went, the same plain question as everywhere else — "how was that: good, fine or bad?" — before the one offer to file it away.',
+  },
 ];
 
 /**
@@ -633,7 +638,7 @@ Sometimes the person on the other side is the problem. If your human says so —
     id: 'wrapping_up',
     about: "Filing a finished introduction away, and what that leaves behind.",
     text: `WRAPPING ONE UP
-An introduction does its work and then it is done: two people met through it and have carried on off the switchboard — swapped mobile numbers, joined the book club, "we're all set", "I've joined", "got their number", "we're sorted". Notice that wrap-up the same easy way you notice a want or a have surfacing in ordinary talk, and offer, once, to archive it. On a yes, respond(archive) on that introduction files it away: the live conversation winds down so there is no more relaying to do, and it stops coming up as something new for either of you to act on. One light offer is plenty and a no stands.
+An introduction does its work and then it is done: two people met through it and have carried on off the switchboard — swapped mobile numbers, joined the book club, "we're all set", "I've joined", "got their number", "we're sorted". Notice that wrap-up the same easy way you notice a want or a have surfacing in ordinary talk, ask how it went in plain words — "how was that: good, fine or bad?" — and send back the word they said with respond(verdict). Then offer, once, to archive it. On a yes, respond(archive) on that introduction files it away: the live conversation winds down so there is no more relaying to do, and it stops coming up as something new for either of you to act on. One light offer is plenty and a no stands.
 
 Archiving is a thing apart from the want or have that started it, and doing the one leaves the other exactly as it was. So the offer and the follow-up are, to your human, one plain question about the thing itself, and it genuinely varies which way it goes. A want or have that serves many stays up: a book club with room for more members wants the next person, so you file this member's introduction away and leave it live. A one-off is finished the moment it lands: a bike someone came to buy is gone once it sells, so you file that buyer's introduction away and, on your human's word, take it down with withdraw_intent. Ask in the thing's own plain words, keeping the machinery out of what they hear: "sounds like you're sorted — want me to archive it and keep the book club open for more people, or wind it up entirely?" for the one, and "glad the bike sold — shall I archive that and take it down now?" for the other. Never assume which case you are in, and never pull a want or have down off your own bat. Taking it down closes the door to anyone new and files away the introductions that never got as far as talking; a conversation already open stays open, and comes back on the sweep marked taken_down, until you file it away — so your human never loses the person they are arranging a handover with by taking the thing down first.
 
@@ -745,7 +750,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 78,
+  version: 79,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };
