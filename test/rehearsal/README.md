@@ -73,7 +73,7 @@ so the only MCP server is the one the run writes, and `--setting-sources ''`.
 | `--runs <N>` | at most N runs (default 6) |
 | `--until-green <K>` | stop once K clean runs have happened in a row (default 5; `10` is the stronger figure) |
 | `--cast a,b[;c,d]` | which clients, as one or more pairings cycled run over run. Default `nagatha,bilby;claude,nagatha`. Sides alternate within a pairing |
-| `--errand <name>` | which scenario file to rehearse (`scenarios/<name>.ts` in the data folder; default `spring`). A scenario says the shape of its errand — whether money changes hands (`MONEY`), how far each posting should reach (`REACH`), what must be asked before posting (`ASK_BEFORE_POSTING`) — and where there is no money the figures stage becomes the two settling the arrangement (`AGREE_WORDS`), with any offer on the table the finding. See `Scenario` in `data.ts` |
+| `--errand <name>` | which scenario file to rehearse (`scenarios/<name>.ts` in the data folder; default `spring`). A scenario says the shape of its errand — whether money changes hands (`MONEY`), how far each posting should reach (`REACH`), what must be asked before posting (`ASK_BEFORE_POSTING`) — and where there is no money the figures stage becomes the two settling the arrangement (`AGREE_WORDS`), with any offer on the table the finding; `WRAP_WORDS` is what each says when it is all over. See `Scenario` in `data.ts` |
 | `--scenario main\|report` | `report` runs stages 1–3 and then the report, on its own, because a report closes the conversation |
 | `--keep-going` | do not stop at the first failed check |
 | `--dry` | canned replies, a stubbed human, no network, no AWS |

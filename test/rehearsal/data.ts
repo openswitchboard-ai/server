@@ -90,6 +90,14 @@ export interface Scenario {
    * in the stage a sale spends on its figure. Asked of the looking side first.
    */
   AGREE_WORDS?: { buyer: string; seller: string };
+  /**
+   * What each person says to open the wrap-up, meaning the whole thing is
+   * over. Default "we're all sorted, thanks", which after a sale can only mean
+   * done; after a lend it reads as "the arrangement is sorted" while the
+   * thing is still to be picked up, so an errand whose end is a later event
+   * says that event.
+   */
+  WRAP_WORDS?: { seller: string; buyer: string };
 }
 
 export type Reach = 'country' | 'radius';

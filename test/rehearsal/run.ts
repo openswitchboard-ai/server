@@ -1222,7 +1222,8 @@ async function oneRun(
     for (const id of ['seller', 'buyer'] as SideId[]) {
       const side = sides[id];
       const from = turns.length;
-      await drive(side, "we're all sorted, thanks", 6);
+      const wrapWords = scenario!.WRAP_WORDS?.[id] ?? "we're all sorted, thanks";
+      await drive(side, wrapWords, 6);
       // FIVE ROUNDS, FROM THREE. The seller's assistant asked "how'd it go
       // overall: good, fine, or bad?" in the last of three rounds, the stage
       // ended before its human could answer, and the posting it would then
@@ -1239,7 +1240,7 @@ async function oneRun(
         ],
         saidTurns,
         'The human has just told the assistant the deal is all done. These are the assistant\u2019s replies since.',
-        "we're all sorted, thanks",
+        wrapWords,
       );
       record(checkAskedHowItWent(id, said, wrapMeaning));
       record(checkOfferedToFile(id, said, wrapMeaning));
@@ -1383,7 +1384,7 @@ function cannedAssistant(side: Side, heard: string): string {
   if (/photo/.test(h)) {
     return 'Here is the page to send it from: https://my-dev.openswitchboard.ai/a/drylink — it asks you to pick a picture and press Send. I will wait here.';
   }
-  if (/sorted/.test(h)) {
+  if (/sorted|all done/.test(h)) {
     return 'Glad that worked out. How did that go — shall I mark it as a good outcome? And shall I archive it and take the spring down now?';
   }
   if (side.id === 'seller') {
