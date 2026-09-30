@@ -109,8 +109,8 @@ export class Harness {
    * of the geohash namespace and out of the gazetteer, so a card in it stays
    * unplaced and meets ONLY another card carrying the same string — each
    * scenario an island, immune to other runs' leftovers and to the live
-   * matcher pairing our cards with strangers'. Prefix ≤3 chars so it also
-   * matches scripts/withdraw-fixture-cards.ts's fixture-bucket regex.
+   * matcher pairing our cards with strangers'. Prefix ≤3 chars, the same
+   * short fixture-bucket shape the other suites use.
    */
   bucket(prefix = 'sm'): string {
     return `${prefix}_${this.runId}${randomBytes(1).toString('hex')}`;

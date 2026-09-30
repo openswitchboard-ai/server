@@ -8,9 +8,9 @@
  *
  * This is a READ, so it does not go through the ops queue the way scripts/
  * ops.ts does — there is nothing to enqueue and nothing to do asynchronously.
- * It reads the env's database directly over the RDS Data API, exactly as
- * scripts/withdraw-fixture-cards.ts does, resolving the cluster and secret ARNs
- * from the same SSM parameters the deployment publishes.
+ * It reads the env's database directly over the RDS Data API, resolving the
+ * cluster and secret ARNs from the same SSM parameters the deployment
+ * publishes.
  *
  * Run:
  *   AWS_PROFILE=openswitchboard npx tsx scripts/category-misses.ts

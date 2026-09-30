@@ -53,7 +53,7 @@ interface ScenarioReport {
 async function cleanLeftovers(): Promise<void> {
   // Withdraw PUBLISHED sim cards from prior runs, by the opaque fixture-bucket
   // shape the harness uses ('sm_ab12'). Older-than guard keeps a live run's own
-  // cards safe. Mirrors scripts/withdraw-fixture-cards.ts but scoped to sim.
+  // cards safe. Scoped to sim.
   const olderThan = process.env.SIM_CLEAN_OLDER_THAN ?? '10 minutes';
   if (!/^\d+ (minute|hour|day)s?$/.test(olderThan)) {
     throw new Error(`SIM_CLEAN_OLDER_THAN must look like "10 minutes", got ${olderThan}`);
