@@ -154,6 +154,7 @@ const MATCH_REF_ACTIONS = new Set([
   'offer-send',
   'conversation-renew',
   'report',
+  'contact-send',
 ]);
 
 export interface WaitingInputs {
@@ -290,6 +291,10 @@ export function groupWaitingByMatch(
       case 'conversation-renew':
         g.steps.push(waitingStep(l.created_at, 'Keeping the conversation going needs your go-ahead'));
         addAction(g, { href, label: 'Keep talking' });
+        break;
+      case 'contact-send':
+        g.steps.push(waitingStep(l.created_at, 'A page to send your contact details is ready'));
+        addAction(g, { href, label: 'Send your contact details' });
         break;
       case 'report':
         g.steps.push(waitingStep(l.created_at, 'Your report is ready to finish'));

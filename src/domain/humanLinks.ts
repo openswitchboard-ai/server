@@ -445,6 +445,68 @@ export async function reportLink(
 }
 
 // ---------------------------------------------------------------------------
+// (i) Send contact details. The one road an address or a phone number takes
+// (domain/sealedContact.ts), and the whole of an agent's part in it.
+//
+// An agent never holds the details and never asks for them. It fetches this,
+// hands it over, and the person types their details on their own page, where
+// their browser scrambles them to the other person's browser. The words doors
+// refuse them (intake/checks/contactDetails.ts), so this is the only way they
+// cross at all.
+//
+// Refused at mint time before names have crossed (a person's address before
+// their first name would be backwards), and while the other side has no
+// browser ready to receive, so an agent learns why while it is still talking
+// to its human rather than handing over a page that cannot send.
+// ---------------------------------------------------------------------------
+
+/** What an agent is told when the other side has no browser ready yet. */
+export const CONTACT_NOT_READY =
+  'Their side is not ready to receive contact details yet. It gets ready the next time they open their main page on the switchboard. Ask them in a message to open it once, then fetch this page again.';
+
+export async function sendContactLink(
+  cfg: Config,
+  accountId: string,
+  matchId: string,
+): Promise<HumanLink> {
+  const m = await getMatch(matchId);
+  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
+  sideOf(m, accountId);
+  if (m.state !== 'open') {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: 'This one is no longer open.' });
+  }
+  if (m.stage < 3) {
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'Contact details come after first names. Once you have both shared your first names, fetch this page again.',
+    });
+  }
+  const counterparty = m.account_want === accountId ? m.account_have : m.account_want;
+  const { contactKeysFor } = await import('./sealedContact.js');
+  if (!(await contactKeysFor(counterparty)).length) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: CONTACT_NOT_READY });
+  }
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'contact-send',
+    refId: matchId,
+    counterpartyAccount: counterparty,
+  });
+  const page = url(cfg, token);
+  return {
+    say: saySentence(
+      'you to type your address or phone number yourself, on your own device, and it sends them scrambled so only their browser can read them. I never see them, so type them there and never to me',
+      page,
+    ),
+    link: page,
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does:
+      'Opens one page where your human types their own address or phone number, or both, and presses Send. Their browser scrambles the details so only the other person\'s browser can read them: you never see them, the switchboard never reads them, and you must never ask your human to type them to you or read them out. The other person can open them once, within seven days.',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // (h) Keep the conversation going. The renewal of one side's own window
 // (domain/conversationWindow.ts): consent to talk runs out, and this is how it
 // is given again.
@@ -659,6 +721,7 @@ const PAGE_ASKS: Record<string, string> = {
   'negotiation-auto': 'whether to hand you the wheel on this one',
   report: 'them to report this to the switchboard',
   'shelf-pick': 'them to pick which shelf this belongs on',
+  'contact-send': 'them to type their address or phone number themselves and send it, sealed, to the other side',
 };
 
 export const PRESS_SENTENCES = {
@@ -750,6 +813,8 @@ export function fetchAgainFor(row: {
       return { tool: 'respond', action: 'request_auto_negotiate', intent_id: row.ref_id };
     case 'shelf-pick':
       return { tool: 'publish_intent' };
+    case 'contact-send':
+      return { tool: 'respond', action: 'request_send_contact', intro_id: row.ref_id };
     default:
       return undefined;
   }

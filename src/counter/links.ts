@@ -43,7 +43,13 @@ export type ApprovalAction =
    *  has (domain/shelfPick.ts). Bound to one shelf question in flight at mint
    *  time. Like the photo page it has a page of its own and asks for no
    *  credential: a shelf discloses nothing and spends nothing. */
-  | 'shelf-pick';
+  | 'shelf-pick'
+  /** Send this human's address or phone number to the other side, sealed in
+   *  their own browser so no assistant and no server ever reads it
+   *  (domain/sealedContact.ts). Bound to one introduction at mint time. Like
+   *  the photo page it has a page of its own, because the person types before
+   *  they press, and it is never burnt on the view. */
+  | 'contact-send';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
@@ -271,6 +277,7 @@ export const OPENABLE_ACTIONS: ApprovalAction[] = [
   'conversation-renew',
   'report',
   'shelf-pick',
+  'contact-send',
 ];
 
 export interface OpenLink {
@@ -302,7 +309,7 @@ export async function openLinksFor(accountId: string): Promise<OpenLink[]> {
             COALESCE(m.id, om.id) AS match_id
        FROM approval_links a
        LEFT JOIN matches m ON m.id = a.ref_id
-             AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report')
+             AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report','contact-send')
        LEFT JOIN offers o ON a.action = 'offer-accept' AND o.id = a.ref_id
        LEFT JOIN matches om ON om.id = o.match_id
        LEFT JOIN cards c ON a.action = 'negotiation-auto' AND c.id = a.ref_id

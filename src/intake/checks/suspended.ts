@@ -35,7 +35,7 @@ export const SUSPENDED_WORDS =
 
 export const suspended: Check = {
   name: 'suspended',
-  doors: ['posting', 'amendment', 'message', 'photo', 'offer_words', 'shared_identity', 'report'],
+  doors: ['posting', 'amendment', 'message', 'photo', 'offer_words', 'shared_identity', 'report', 'contact_send'],
   async run(item): Promise<CheckResult> {
     const refuse = (): CheckResult => ({
       name: 'suspended',

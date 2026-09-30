@@ -31,6 +31,7 @@
 import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 import { PHOTO_SCRUB_JS } from './photoScrub.js';
 import { isMoneyAction } from './credentials.js';
+import { sealedScriptTag } from './sealedScript.js';
 
 export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) =>
@@ -372,7 +373,20 @@ const SUBMIT_ONCE_SCRIPT = `<script>
 })();
 </script>`;
 
-export function layout(title: string, body: string, opts: { head?: string } = {}): string {
+export function layout(
+  title: string,
+  body: string,
+  opts: {
+    head?: string;
+    /**
+     * A page that types or shows an address or a phone number (sealed contact
+     * details). It carries none of the inline scripts below, because its
+     * policy allows no inline script at all (app.ts, osbSealedPage): the only
+     * script on it is the one it names itself, from this origin, with SRI.
+     */
+    sealed?: boolean;
+  } = {},
+): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
@@ -390,7 +404,7 @@ ${body}
 </main>
 <footer>openswitchboard.ai</footer>
 </div>
-${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}</body></html>`;
+${opts.sealed ? '' : `${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}`}</body></html>`;
 }
 
 export const errBox = (msg?: string) =>
@@ -1175,6 +1189,9 @@ export interface OneQuestionView {
    *  about what happened. Optional to fill in — a report with nothing typed in
    *  it still stands, because the thing that matters is that somebody said so. */
   collectReason?: { label: string; hint: string; value: string; maxLength: number };
+  /** This person's key slot: the page makes this browser's receiving key for
+   *  sealed contact details if it has none (counter/sealedScript.ts). */
+  keySlot?: string;
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
@@ -1224,7 +1241,7 @@ ${detail}
 </form>
 ${ceremonyAlt(c, 'oneQuestion', { name: 'decision', value: 'yes' })}
 ${foot ? `<p class="small muted">${foot}</p>` : ''}
-${ceremonyScript(c)}`);
+${ceremonyScript(c)}${v.keySlot ? sealedKeysTag(v.keySlot) : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1462,6 +1479,141 @@ pf.addEventListener('change', async () => {
   }
 });
 </script>`);
+}
+
+// ---------------------------------------------------------------------------
+// SEALED CONTACT DETAILS (domain/sealedContact.ts, counter/sealedScript.ts).
+//
+// Two pages, and neither has a form that can send anything readable. The boxes
+// on the send page carry no `name`, the form is `method="dialog"`, and it stays
+// hidden until the script has shown it: with scripts off there is nothing to
+// fill in, and a press sends nothing. The script scrambles the details in this
+// browser and posts only the scrambled copies.
+//
+// Both pages are layout(..., { sealed: true }): no inline script, and the
+// response carries the stricter policy (app.ts). The one script is ours, from
+// this origin, pinned by its SRI hash.
+// ---------------------------------------------------------------------------
+
+/** The line that says what happens to the details, the same on both pages. */
+export const SEALED_HOW_LINE = (who: string) =>
+  `They go from this page to ${who}'s own browser, scrambled so only that browser can read them. Neither assistant sees them, and we can't read them.`;
+
+/** The warning before anything is shown, in the words an API key page uses. */
+export const SEALED_ONCE_LINE =
+  "This works once. Write it down or save it somewhere safe now — once you leave this page it's gone.";
+
+export interface ContactSendView {
+  token: string;
+  /** Their first name, or "the other person". */
+  who: string;
+  matchId: string;
+  /** This person's own key slot in the browser (domain/sealedContact.ts keySlot). */
+  slot: string;
+  /** The recipient's browser keys, public halves only. */
+  keys: { key_id: string; public_key: string }[];
+  ttlDays: number;
+  hasPin: boolean;
+  hasPasskey: boolean;
+  elevated: boolean;
+}
+
+export function contactSendPage(v: ContactSendView): string {
+  const pinBox = !v.elevated && v.hasPin;
+  const passkeyOnly = !v.elevated && !v.hasPin && v.hasPasskey;
+  const passkeyAlt = !v.elevated && v.hasPin && v.hasPasskey;
+  const takes = v.elevated
+    ? ''
+    : v.hasPin && v.hasPasskey
+      ? 'This takes your PIN or your passkey.'
+      : v.hasPin
+        ? 'This takes your PIN.'
+        : 'This takes your passkey.';
+  const title = `Send your contact details to ${v.who}?`;
+  return layout(
+    title,
+    `
+<h1>${esc(title)}</h1>
+<p class="lead">Type them here yourself. ${esc(SEALED_HOW_LINE(v.who))}</p>
+<noscript><p class="small muted">This page needs scripts switched on. It scrambles your details on this device before they leave it.</p></noscript>
+<p class="small muted" id="snoscript" hidden>This browser cannot scramble them. Open the link in an up-to-date browser.</p>
+<div id="serr" role="alert"></div>
+<div id="sealed" data-mode="send" data-slot="${esc(v.slot)}" data-match="${esc(v.matchId)}"
+     data-action="/a/${esc(encodeURIComponent(v.token))}/contact" data-passkey-only="${passkeyOnly ? '1' : '0'}"
+     data-keys="${esc(JSON.stringify(v.keys))}"></div>
+<form id="sealedForm" method="dialog" hidden>
+  <label for="c_address">Your address</label>
+  <textarea id="c_address" rows="3" maxlength="500" autocomplete="street-address"></textarea>
+  <label for="c_phone">Your phone number</label>
+  <input id="c_phone" type="tel" maxlength="40" autocomplete="tel">
+  <p class="field-help">Fill in one or both. Send only what you want ${esc(v.who)} to have.</p>
+  <div class="consent-box">
+    <label><input type="checkbox" id="c_remember"> Remember on this device</label>
+    <p class="field-help">Keeps them scrambled in this browser only, so the boxes are filled in next time. Untick it and send to forget them.</p>
+  </div>
+  ${
+    pinBox
+      ? `<label for="c_pin">Confirm with your PIN</label>
+  <input id="c_pin" type="text" class="pinbox" inputmode="numeric" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore pattern="[0-9]{6,12}" maxlength="12" required>`
+      : ''
+  }
+  <div class="actions">
+  <button type="submit" class="approve" id="c_send">Send to ${esc(v.who)}</button>
+  <a class="btn secondary" href="/">Not now</a>
+  </div>
+  ${passkeyAlt ? '<button type="button" class="secondary" id="c_passkey">Use your passkey instead</button>' : ''}
+</form>
+<p class="small muted">${esc(v.who)} can open them once, within ${v.ttlDays} days. This link works once.${takes ? ` ${esc(takes)}` : ''}</p>
+${sealedScriptTag()}`,
+    { sealed: true },
+  );
+}
+
+export interface ContactReceiveView {
+  id: string;
+  who: string;
+  matchId: string;
+  slot: string;
+  /** The keys this send has a copy for. */
+  keyIds: string[];
+}
+
+export function contactReceivePage(v: ContactReceiveView): string {
+  const title = `${v.who} has sent you their contact details`;
+  return layout(
+    title,
+    `
+<h1>${esc(title)}.</h1>
+<p class="lead">${esc(SEALED_ONCE_LINE)}</p>
+<noscript><p class="small muted">This page needs scripts switched on. Your browser unscrambles the details itself.</p></noscript>
+<p class="small muted" id="snoscript" hidden>This browser cannot unscramble them. Open the link in an up-to-date browser.</p>
+<div id="serr" role="alert"></div>
+<div id="sealed" data-mode="receive" data-id="${esc(v.id)}" data-slot="${esc(v.slot)}"
+     data-match="${esc(v.matchId)}" data-keyids="${esc(JSON.stringify(v.keyIds))}"></div>
+<div id="r_ready" hidden>
+  <p>They were scrambled so only your browser can read them. Neither assistant has seen them.</p>
+  <button type="button" class="approve" id="r_reveal">Show them now</button>
+</div>
+<div id="r_shown" hidden>
+  <h2>Their details</h2>
+  <p class="lead sealed-shown" id="r_address" hidden></p>
+  <p class="lead sealed-shown" id="r_phone" hidden></p>
+  <button type="button" class="secondary" id="r_copy" hidden>Copy</button>
+  <p class="small muted">Our scrambled copy is deleted. This is the only time they show here.</p>
+</div>
+<div id="r_nokey" hidden>
+  <p>This browser can't open them. They were scrambled for the browsers you had signed in on before they were sent.</p>
+  <p>If you use the switchboard on another device, open this link there. Otherwise ask ${esc(v.who)} to send them again. This browser is ready now.</p>
+</div>
+<style>.sealed-shown { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; }</style>
+${sealedScriptTag()}`,
+    { sealed: true },
+  );
+}
+
+/** The key-maker on its own, for a signed-in page that shows nothing sealed. */
+export function sealedKeysTag(slot: string): string {
+  return `<div id="sealed" data-mode="keys" data-slot="${esc(slot)}" hidden></div>${sealedScriptTag()}`;
 }
 
 /**

@@ -10,6 +10,7 @@ import { getPool } from '../db.js';
 import { createAccount } from '../domain/accounts.js';
 import { expireDueCards } from '../domain/cards.js';
 import { sweepExpiredChannelMessages } from '../domain/channel.js';
+import { sweepSealedContacts } from '../domain/sealedContact.js';
 import { sweepConversationPhotos } from '../domain/channelPhoto.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
 import { backfillCardGeo } from '../geo/backfill.js';
@@ -175,6 +176,17 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     if (pics.photos > 0) log('ttl-expiry: photo sweep', pics);
                   } catch (e: any) {
                     log('ttl-expiry: photo sweep failed', { error: e?.message });
+                  }
+                  // And sealed contact details, on the same tick: scrambled
+                  // copies nobody opened go at their seven days, and the rows
+                  // saying a send happened go a day after. Counts only, and
+                  // the key to read a copy is not on this machine
+                  // (domain/sealedContact.ts).
+                  try {
+                    const sc = await sweepSealedContacts();
+                    if (sc.copies > 0 || sc.sends > 0) log('ttl-expiry: sealed contact sweep', sc);
+                  } catch (e: any) {
+                    log('ttl-expiry: sealed contact sweep failed', { error: e?.message });
                   }
                   // And the ledger, on the same tick: an entry past its thirty
                   // days goes, unless lawful process asked us to hold it. Counts

@@ -26,7 +26,15 @@ export type Door =
    * rule of its own: see REFUSAL_FREE_DOORS in pipe.ts. A report is never
    * refused for how it was written.
    */
-  | 'report';
+  | 'report'
+  /**
+   * Sealed contact details going from one person's browser to the other's
+   * (domain/sealedContact.ts). There are no words at this door: the details
+   * are scrambled before they leave the sender's device. It exists so the
+   * suspension check stands in front of the send, and so the ledger records
+   * THAT contact details went, who to whom and when, and never what they were.
+   */
+  | 'contact_send';
 
 /**
  * What arrived, normalised. `text` is free words the sender wrote; `fields`

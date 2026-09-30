@@ -136,6 +136,9 @@ import { consumeEmailToken, verifyEmailToken } from '../email/tokens.js';
 import { isEmailQueueFull } from '../email/send.js';
 import { emailHashes } from '../domain/accounts.js';
 import * as links from './links.js';
+import * as sealed from '../domain/sealedContact.js';
+import { SEALED_JS, SEALED_JS_PATH } from './sealedScript.js';
+import { runIntake } from '../intake/pipe.js';
 import {
   boxTitle,
   dropInLine,
@@ -467,6 +470,18 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
         .header('etag', `"${tag}-${bytes.length}"`)
         .send(bytes);
 
+    // The sealed-contact script (counter/sealedScript.ts). Served from this
+    // origin and pinned on every page that uses it by its SRI hash; the page
+    // asks for it with the script's own version in the query, so a deploy is
+    // a new URL and a cached copy never fails the hash.
+    counter.get(SEALED_JS_PATH, async (_req, reply) =>
+      reply
+        .code(200)
+        .type('application/javascript; charset=utf-8')
+        .header('cache-control', 'public, max-age=86400')
+        .send(SEALED_JS),
+    );
+
     counter.get('/assets/patch.png', async (_req, reply) =>
       servePng(reply, PATCH_HEADER_PNG, 'patch'),
     );
@@ -737,6 +752,16 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
             category: categoryLeafLabel(m.category),
             count: m.count,
           })),
+          keySlot: sealed.keySlot(s.accountId),
+          contactsWaiting: await Promise.all(
+            (await sealed.contactsWaitingFor(s.accountId)).map(async (c) => ({
+              href: `/c/${c.id}`,
+              who:
+                (await ops.disclosedFirstName(s.accountId!, c.sender_account, { match_id: c.match_id }, 'dashboard-view')) ??
+                'the other person',
+              category: c.category,
+            })),
+          ),
           agreed: agreed.filter((a) => keep(a.match_id)).map((a) => ({
             matchId: a.match_id,
             category: categoryLeafLabel(a.category),
@@ -2251,6 +2276,244 @@ in on this device and lets you approve what is waiting.</p>
       };
     };
 
+    // ------------------------------------------------------------------
+    // SEALED CONTACT DETAILS (domain/sealedContact.ts). Three pages' worth of
+    // routes: a browser registering its key, the send page's one press, and
+    // the recipient's page. Not one of them ever receives an address or a
+    // phone number in readable form, and assertSealedBody refuses any request
+    // that tries to carry one, before the body is used for anything else.
+    // Nothing here logs a body.
+    // ------------------------------------------------------------------
+
+    /** A sealed page: no inline script, the stricter policy, never cached. */
+    const sealedHtml = (reply: FastifyReply, body: string, code = 200) => {
+      (reply as any).osbSealedPage = true;
+      return reply.code(code).header('cache-control', 'no-store').type('text/html').send(body);
+    };
+
+    /** The words for each refusal the send door can give, for the page. */
+    const SEALED_REFUSAL_WORDS: Record<string, string> = {
+      plaintext_refused: 'That did not go. This page only sends details your browser has scrambled.',
+      unknown_key: 'Their side changed devices while this page was open. Open the link again and send.',
+      bad_envelope: 'That did not go through. Open the link again and send.',
+      bad_request: 'That did not go through. Try again.',
+      bad_key: 'This browser could not get ready. Try another browser.',
+    };
+
+    const contactSendView = async (
+      accountId: string,
+      row: ApprovalLinkRow,
+      token: string,
+      s: Session,
+    ): Promise<pages.ContactSendView | { error: string }> => {
+      const m = await getMatch(row.ref_id);
+      if (!m || m.state !== 'open') return { error: 'This one is no longer open.' };
+      try {
+        sideOf(m, accountId);
+      } catch {
+        return { error: 'This is not yours to send on.' };
+      }
+      if (m.stage < 3) return { error: 'Contact details come after you have both shared your first names.' };
+      const other = m.account_want === accountId ? m.account_have : m.account_want;
+      const keys = await sealed.contactKeysFor(other);
+      if (!keys.length) {
+        return {
+          error:
+            'Their side is not ready to receive contact details yet. It gets ready the next time they open their main page. Ask your assistant to try again later.',
+        };
+      }
+      const name = await ops.disclosedFirstName(accountId, other, { match_id: row.ref_id }, 'contact-send-page');
+      return {
+        token,
+        who: name ?? 'the other person',
+        matchId: row.ref_id,
+        slot: sealed.keySlot(accountId),
+        keys,
+        ttlDays: sealed.SEALED_TTL_DAYS,
+        ...(await ceremonyFor(accountId, sess.isElevated(s))),
+      };
+    };
+
+    /** A browser's own key, registered against the person signed in. */
+    counter.post('/contact-keys', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      try {
+        const r = await sealed.registerContactKey(s.accountId!, (req.body as any)?.public_key);
+        return reply.header('cache-control', 'no-store').send(r);
+      } catch (e: any) {
+        if (e instanceof sealed.SealedRefusal) return reply.code(400).send({ error: e.code });
+        throw e;
+      }
+    });
+
+    /** The send page's one press: scrambled copies in, nothing readable. */
+    counter.post('/a/:token/contact', async (req, reply) => {
+      reply.header('cache-control', 'no-store');
+      const token = String((req.params as any).token ?? '');
+      const check = await verifyLinkToken(token);
+      if (!check.ok || check.row?.action !== 'contact-send') {
+        const said =
+          check.reason === 'used'
+            ? 'This link has already been used. Ask your assistant for a fresh one.'
+            : check.reason === 'expired'
+              ? 'This link has run out. Ask your assistant for a fresh one.'
+              : 'That page is no longer live. Ask your assistant for a fresh one.';
+        return reply.code(410).send({ error: 'link_dead', error_description: said });
+      }
+      const row = check.row as ApprovalLinkRow;
+      const s = await sess.loadSession(req);
+      if (!s?.accountId || s.accountId !== row.account_id) {
+        return reply
+          .code(401)
+          .send({ error: 'not_signed_in', error_description: 'Sign in as yourself, then open the link again.' });
+      }
+      if (await isSuspended(s.accountId)) {
+        return reply.code(403).send({ error: 'suspended', error_description: 'This account is stopped.' });
+      }
+      const v = await contactSendView(s.accountId, row, token, s as Session);
+      if ('error' in v) return reply.code(409).send({ error: 'not_open', error_description: v.error });
+      // THE DOOR THAT REFUSES PLAINTEXT, before the body is used for anything.
+      let body: { envelopes: sealed.Envelope[]; pin: string };
+      try {
+        body = sealed.assertSealedBody(
+          req.body,
+          v.keys.map((k) => k.key_id),
+        );
+      } catch (e: any) {
+        if (e instanceof sealed.SealedRefusal) {
+          return reply.code(400).send({
+            error: e.code,
+            error_description: SEALED_REFUSAL_WORDS[e.code] ?? SEALED_REFUSAL_WORDS.bad_request,
+          });
+        }
+        throw e;
+      }
+      // The same credential sharing a first name takes (the window rule).
+      if (!(await ceremony(s as Session, reply, body.pin))) return;
+      // The suspension check, and the ledger's record that this went: who to
+      // whom, on which introduction, when. There are no words at this door.
+      const verdict = await runIntake(cfg, {
+        door: 'contact_send',
+        sender_account: s.accountId,
+        recipient_account: row.counterparty_account,
+        match_id: row.ref_id,
+      });
+      if (verdict.outcome === 'refuse') {
+        return reply.code(403).send({ error: 'refused', error_description: verdict.plain_words ?? 'That did not go.' });
+      }
+      // The consent log records the press, and never what was sent.
+      const { writeConsentEvent } = await import('../crypto.js');
+      await writeConsentEvent({
+        event: 'contact-send',
+        match_id: row.ref_id,
+        account_id: s.accountId,
+        recipient_account: row.counterparty_account,
+        copies: body.envelopes.length,
+        recorded_via: 'counter',
+      });
+      if (!(await consumeLink(row.id))) {
+        return reply
+          .code(410)
+          .send({ error: 'link_dead', error_description: 'This link has already been used. Ask your assistant for a fresh one.' });
+      }
+      await sealed.storeSealed({
+        matchId: row.ref_id,
+        senderAccount: s.accountId,
+        recipientAccount: row.counterparty_account,
+        envelopes: body.envelopes,
+      });
+      await links.recordLinkDecision(row.id, 'approved');
+      return reply.send({
+        ok: true,
+        title: 'Sent',
+        lines: [
+          `${v.who[0].toUpperCase()}${v.who.slice(1)} can open them once, in their own browser, within ${sealed.SEALED_TTL_DAYS} days. Nobody else can read them.`,
+          'Your assistant carries on from here. Close this tab whenever you like.',
+        ],
+      });
+    });
+
+    /** The words on the recipient's page when there is nothing left to show. */
+    const sealedGoneWords = (state: sealed.SealedState, who: string): [string, string] => {
+      switch (state) {
+        case 'opened':
+          return ['Already opened', `These were shown once and are gone now. If you need them again, ask ${who} to send them again.`];
+        case 'expired':
+          return ['Run out', `These were not opened within ${sealed.SEALED_TTL_DAYS} days, so they are gone. Ask ${who} to send them again.`];
+        case 'replaced':
+          return ['Sent again', `${who} sent newer details. Ask your assistant for the latest page.`];
+        default:
+          return ['Nothing here', `There is nothing left to open. Ask ${who} to send them again.`];
+      }
+    };
+
+    counter.get('/c/:id', async (req, reply) => {
+      const id = String((req.params as any).id);
+      const signedIn = await sess.loadSession(req);
+      if (!signedIn?.accountId) {
+        sess.rememberReturnPath(reply, `/c/${id}`);
+        return html(reply, pages.signInToSeePage(), 401);
+      }
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const row = await sealed.sealedForRecipient(s.accountId!, id);
+      if (!row) {
+        return html(
+          reply,
+          pages.messagePage(
+            'Not found',
+            '<p>There is nothing here for this account. If your assistant gave you this link, check you are signed in as yourself.</p>',
+          ),
+          404,
+        );
+      }
+      const name =
+        (await ops.disclosedFirstName(s.accountId!, row.sender_account, { match_id: row.match_id }, 'contact-receive-page')) ??
+        'the other person';
+      const state = sealed.sealedState(row);
+      if (state !== 'waiting') {
+        const [title, text] = sealedGoneWords(state, name);
+        return html(reply, pages.messagePage(title, `<p>${pages.esc(text)}</p>`));
+      }
+      return sealedHtml(
+        reply,
+        pages.contactReceivePage({
+          id,
+          who: `${name[0].toUpperCase()}${name.slice(1)}`,
+          matchId: row.match_id,
+          slot: sealed.keySlot(s.accountId!),
+          keyIds: row.key_ids,
+        }),
+      );
+    });
+
+    /** The one read: the copy for this browser, and every copy deleted. */
+    counter.post('/c/:id/open', async (req, reply) => {
+      reply.header('cache-control', 'no-store');
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const id = String((req.params as any).id);
+      const keyId = String((req.body as any)?.key_id ?? '');
+      const r = await sealed.openSealed(s.accountId!, id, keyId);
+      if (r.ok) return reply.send({ envelope: r.envelope, match_id: r.match_id });
+      const words: Record<string, string> = {
+        not_found: 'There is nothing here to open.',
+        opened: 'These have already been opened, and they only open once. Ask them to send them again if you need them.',
+        expired: 'These have run out. Ask them to send them again.',
+        no_key: "This browser can't open them. Ask them to send them again.",
+      };
+      return reply.code(r.reason === 'not_found' ? 404 : 410).send({ error: r.reason, error_description: words[r.reason] });
+    });
+
+    /** Opened on a browser holding none of the keys: the sender is told. */
+    counter.post('/c/:id/missed', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      await sealed.markMissed(s.accountId!, String((req.params as any).id));
+      return reply.header('cache-control', 'no-store').send({ ok: true });
+    });
+
     /** The presign, from the photo page's own script. The link is the
      *  authority for WHICH conversation; the session is the authority for who
      *  is asking. Neither the bytes nor the image ever reach this process. */
@@ -2374,6 +2637,15 @@ in on this device and lets you approve what is waiting.</p>
         }
         return html(reply, pages.shelfPickPage(v.view));
       }
+      if (row.action === 'contact-send') {
+        // NOT consumed on the view, like the photo page: the person types
+        // before they press, and the press is what spends the link.
+        const v = await contactSendView(s.accountId, row, token, s as Session);
+        if ('error' in v) {
+          return html(reply, pages.donePage('Nothing to send', `<p>${pages.esc(v.error)}</p>`));
+        }
+        return sealedHtml(reply, pages.contactSendPage(v));
+      }
       if (row.action === 'conversation-photo') {
         // NOT consumed on the view: the link has to survive the person going
         // to their camera roll and back.
@@ -2389,6 +2661,7 @@ in on this device and lets you approve what is waiting.</p>
           return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
         }
         q.elevated = creds.elevationFor(row.action, sess.isElevated(s));
+        q.keySlot = sealed.keySlot(s.accountId);
         return html(reply, pages.oneQuestionPage(q));
       }
       // The one left is a payment approval. It burns on the PRESS, the way the
@@ -2777,6 +3050,7 @@ in on this device and lets you approve what is waiting.</p>
       );
       if ('error' in q) return html(reply, doneFor('session', 'Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
       q.elevated = creds.elevationFor(action, sess.isElevated(s));
+      q.keySlot = sealed.keySlot(s.accountId!);
       return html(reply, pages.oneQuestionPage(q));
     };
 

@@ -98,6 +98,7 @@ export function compactCandidate(e: any): boolean {
   if (e.next !== 'ready_to_talk' && e.next !== 'deal_agreed') return false;
   if (!e.conversation || e.conversation.messages_waiting !== 0) return false;
   if (e.offer || e.settlement || e.mutual_blocked || e.line || e.price_note || e.best_offers) return false;
+  if (e.contact_details) return false;
   if (Array.isArray(e.offers) && e.offers.some((l: any) => LIVE_OFFER.has(l?.state))) return false;
   return true;
 }

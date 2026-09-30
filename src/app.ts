@@ -136,6 +136,23 @@ export function buildApp(cfg: Config): FastifyInstance {
     // The photo and evidence uploads go straight from the browser to S3.
     "connect-src 'self' https://*.amazonaws.com",
   ].join('; ');
+  // THE SEALED CONTACT PAGES (1 October 2026; counter/sealedScript.ts). The
+  // two pages where a person types or reads an address or a phone number get
+  // no inline script at all: the only script that may run is the one this
+  // origin serves, which the page pins with an SRI hash. They talk to this
+  // origin alone, so nothing typed there has anywhere else to go.
+  const SEALED_CSP = [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "img-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "font-src 'self'",
+    "connect-src 'self'",
+  ].join('; ');
   const STRICT_CSP = "default-src 'none'; frame-ancestors 'none'";
   // The operator metrics page is the one HTML page on the MCP host. It has a
   // stylesheet of its own inline and nothing else at all — no scripts, no
@@ -167,7 +184,11 @@ export function buildApp(cfg: Config): FastifyInstance {
     // never reached the assistant. The handler names that one origin (see
     // formActionSource in counter/routes.ts), and only that page gets it.
     const extra = (reply as any).osbFormActionExtra as string | undefined;
-    const counterCsp = extra ? COUNTER_CSP.replace("form-action 'self'", `form-action 'self' ${extra}`) : COUNTER_CSP;
+    const counterCsp = (reply as any).osbSealedPage
+      ? SEALED_CSP
+      : extra
+        ? COUNTER_CSP.replace("form-action 'self'", `form-action 'self' ${extra}`)
+        : COUNTER_CSP;
     reply.header(
       'content-security-policy',
       strict ? (pathOf(req.url).startsWith('/ops') ? OPS_CSP : STRICT_CSP) : counterCsp,

@@ -319,6 +319,8 @@ export function openRequestLabel(action: string, thing?: string): string {
       return `Report the person${on}`;
     case 'shelf-pick':
       return 'Pick where your posting goes';
+    case 'contact-send':
+      return `Send your contact details${on}`;
     default:
       return 'Something is waiting for you';
   }
@@ -361,6 +363,13 @@ export interface DashboardView {
   /** Matches where a human accepted an offer. The switchboard is finished
    *  with these, and both sides are told so in the same words. */
   agreed?: DashboardAgreedItem[];
+  /** Contact details sent to this person, sealed, each waiting on its page
+   *  (domain/sealedContact.ts). Who sent them and what about; never the
+   *  details, which this server cannot read. */
+  contactsWaiting?: { href: string; who: string; category: string }[];
+  /** This person's key slot in the browser: the page makes and registers this
+   *  browser's receiving key if it has none yet (counter/sealedScript.ts). */
+  keySlot?: string;
 }
 
 export interface DashboardMessagesItem {
@@ -511,7 +520,19 @@ ${a.amount ? `<div class="figure">${esc(a.amount)}</div>` : ''}`;
 <p class="small"><a href="/ledger">See which</a></p></div>`
     : '';
 
+  // 2d. Contact details someone has sent, sealed. The page opens them once,
+  //     so the line says to have somewhere to write them down.
+  const contacts = (v.contactsWaiting ?? [])
+    .map(
+      (c) => `<a class="todo urgent" href="${esc(c.href)}">
+<div class="what">${esc(upperFirst(c.who))} has sent you their contact details on your ${esc(categoryPhrase(c.category))} match.</div>
+<p class="small">They open once, so have somewhere to write them down.</p>
+<div class="go">Open them</div></a>`,
+    )
+    .join('');
+
   const nothingWaiting =
+    !contacts &&
     !boxes &&
     !v.pendingApprovals.length &&
     !renewals &&
@@ -543,6 +564,7 @@ var n=0,t=setInterval(function(){if(++n>40){clearInterval(t);return;}if(!documen
 ${emailBanner}
 <h2>Decisions</h2>
 ${nothingWaiting ? `<div class="empty">Nothing to decide right now.</div>` : ''}
+${contacts}
 ${boxes}
 ${approvals}
 ${agreed}
@@ -553,7 +575,7 @@ ${inProgressHtml}
 ${nav}
 ${kill}
 <form method="POST" action="/logout"><button class="secondary" type="submit">Sign out</button></form>
-${cpages.ceremonyScript(c)}`);
+${cpages.ceremonyScript(c)}${v.keySlot ? cpages.sealedKeysTag(v.keySlot) : ''}`);
 }
 
 /** Under a want or have screening turned away, after screening's reason. */

@@ -9,6 +9,7 @@
  * for carrying a figure, a photo refused because the page could not clean it —
  * are the same answers, word for word. The suite is the proof.
  */
+import { contactDetails } from './checks/contactDetails.js';
 import { denyListPath } from './checks/denyListPath.js';
 import { messageSafety } from './checks/messageSafety.js';
 import { modelScreen } from './checks/modelScreen.js';
@@ -35,6 +36,9 @@ export const CHECKS: Check[] = [
   denyListPath,
   modelScreen,
   moneyFigure,
+  // Deterministic like the figure rule and beside it: an address or a phone
+  // number in a message goes back before any model is paid to read it.
+  contactDetails,
   photoMetadata,
   // Before the moderation call, and not to save the money. A known-image match
   // is an identification rather than an opinion, and it must not depend on a

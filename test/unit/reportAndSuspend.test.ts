@@ -753,6 +753,7 @@ describe('the suspension check stands at every door', () => {
     'offer_words',
     'shared_identity',
     'report',
+    'contact_send',
   ];
 
   it('is the first check at each of them', () => {

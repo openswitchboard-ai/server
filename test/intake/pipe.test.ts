@@ -135,8 +135,17 @@ describe('only the checks that stand at this door run', () => {
     expect(checksForDoor('message', CHECKS).map((c) => c.name)).toEqual([
       'suspended',
       'moneyFigure',
+      'contactDetails',
       'messageSafety',
     ]);
+    // An address or a phone number goes back at the offer-words door too, and
+    // the sealed send has nothing at its door but the suspension check.
+    expect(checksForDoor('offer_words', CHECKS).map((c) => c.name)).toEqual([
+      'suspended',
+      'contactDetails',
+      'messageSafety',
+    ]);
+    expect(checksForDoor('contact_send', CHECKS).map((c) => c.name)).toEqual(['suspended']);
     // The metadata gate answers at presign; the two machines that look at the
     // picture answer at the send press. All three stand at the photo door, in
     // that order — and the hash match comes BEFORE the moderation call,
@@ -158,6 +167,7 @@ describe('only the checks that stand at this door run', () => {
       'offer_words',
       'shared_identity',
       'report',
+      'contact_send',
     ] as const) {
       expect(checksForDoor(door, CHECKS)[0]?.name, door).toBe('suspended');
     }

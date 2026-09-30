@@ -527,6 +527,20 @@ describe('the wordings themselves, one sentence at a time', () => {
       /check with you whenever they like/,
       /emails them when somebody comes forward/,
     ],
+    // Added 1 October 2026 with sealed contact details: the refusal of an
+    // address or phone number in the words, and the page waiting for one.
+    [
+      'contact_in_words',
+      /bring them anything that comes back/,
+      /Confirm with your human how often/,
+      /never say you will come back on your own/,
+    ],
+    [
+      'contact_waiting',
+      /bring them anything else that comes/,
+      /Confirm with your human how often/,
+      /never say you will come back on your own/,
+    ],
     [
       'manual_lane',
       /your human has agreed you look every hour/,

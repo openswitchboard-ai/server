@@ -121,6 +121,7 @@
  *   the consent log (WORM) .. KEEP, and the deletion is written to it.
  *   the decrypt audit (WORM)  KEEP.
  */
+import { ACCOUNT_DELETION_SQL as SEALED_CONTACT_DELETION_SQL } from './sealedContact.js';
 import { getPool } from '../db.js';
 import { encryptField, writeConsentEvent } from '../crypto.js';
 import { emailHashes, getAccount } from './accounts.js';
@@ -361,6 +362,9 @@ export async function deleteAccount(
     await q('DELETE FROM shelf_attempts WHERE account_id = $1');
     await q('DELETE FROM category_misses WHERE account_id = $1');
     await q('DELETE FROM match_mutes WHERE account_id = $1');
+    // Sealed contact details: this account's browser keys, and every scrambled
+    // copy it sent or was sent (domain/sealedContact.ts).
+    for (const sql of SEALED_CONTACT_DELETION_SQL) await q(sql);
 
     // The address, wherever it sits as a hash.
     if (hashes) {

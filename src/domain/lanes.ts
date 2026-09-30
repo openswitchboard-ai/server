@@ -63,6 +63,8 @@ export interface Ctx {
   thing?: string;
   /** What a sentence has already said, where a head is assembled upstream. */
   added?: string;
+  /** The other person, by first name where both have shared one. */
+  who?: string;
   /** Filled in by `say` from the saved rhythm. */
   cadence?: string;
   /**
@@ -364,6 +366,30 @@ export const SENTENCES = {
     head: 'Glad that one went well.',
     thing: 'more like it',
     emails: 'when somebody comes forward',
+  }),
+
+  /**
+   * SEALED CONTACT DETAILS, BOTH ENDS (1 October 2026; domain/sealedContact.ts).
+   *
+   * Words carrying an address or a phone number are turned back at the message
+   * and offer doors, and this is what the sender's agent is told: the page is
+   * the road, and the human types there. What comes after is a wait on the
+   * other side, so the tail is the ordinary one for this agent's lane.
+   */
+  contact_in_words: waitingOn({
+    about: 'Words carrying an address or a phone number were turned back; the send-contact page is the road.',
+    budget: 620,
+    head: 'This one has not gone. It carries an address or a phone number, and those never go in a message. Fetch respond(request_send_contact) and hand your human the page: they type their details there, and neither assistant sees them. Send your words again without them.',
+    thing: 'anything that comes back',
+  }),
+
+  /** The other side has sent this human their contact details, sealed. */
+  contact_waiting: waitingOn({
+    about: 'The other person has sent this human their contact details, sealed, and a page waits for them.',
+    budget: 620,
+    head: (c: Ctx) =>
+      `${c.who ?? 'The other person'} has sent your human their contact details, sealed so only your human can open them. Give them the page as it is: it opens once, in their own browser, within seven days. Tell them to write the details down when they open it. Never ask them to read the details out or type them to you.`,
+    thing: 'anything else that comes',
   }),
 
   /**

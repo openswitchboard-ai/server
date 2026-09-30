@@ -304,7 +304,10 @@ export async function proposeOffer(
       if (intake.reason_code === 'SUSPENDED') {
         throw new OsbError('SUSPENDED', { human_action: intake.plain_words });
       }
-      throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
+      const { refusalWords } = await import('./channel.js');
+      throw new OsbError('CONSENT_REQUIRED', {
+        human_action: await refusalWords(accountId, intake.reason_code, intake.plain_words),
+      });
     }
   }
   const message = note.value

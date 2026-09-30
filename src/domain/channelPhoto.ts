@@ -94,6 +94,7 @@ import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel } from '../crypto.js';
 import { OsbError } from '../protocol.js';
 import { FIGURE_IN_WORDS_ACTION, carriesMoneyFigure } from './moneyInWords.js';
+import { CONTACT_IN_CAPTION_LINE, carriesContactDetails } from './contactInWords.js';
 import { MESSAGE_TTL_DAYS, ensureChannelKey, loadOpenChannel } from './channel.js';
 import { runIntake } from '../intake/pipe.js';
 import type { Config } from '../config.js';
@@ -211,6 +212,12 @@ export function checkCaption(raw: unknown): string | undefined {
   // A FIGURE NEVER TRAVELS IN THE WORDS, and a caption is words.
   if (carriesMoneyFigure(text)) {
     throw new OsbError('CONSENT_REQUIRED', { human_action: FIGURE_IN_WORDS_ACTION });
+  }
+  // AN ADDRESS OR A PHONE NUMBER NEVER TRAVELS IN THE WORDS either, and a
+  // caption is words (domain/contactInWords.ts). The person typed this on
+  // their own page, so the page says it to them in its own line.
+  if (carriesContactDetails(text)) {
+    throw Object.assign(validation(CONTACT_IN_CAPTION_LINE), { contactInWords: true });
   }
   return text;
 }

@@ -55,6 +55,7 @@ import {
 import { categoryPhrase } from './matchRules.js';
 import { readLaneFacts, sayFor } from './lanes.js';
 import { runIntake } from '../intake/pipe.js';
+import { CONTACT_IN_WORDS_REASON } from './contactInWords.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -75,6 +76,23 @@ export const RECEIVE_BATCH = 50;
  */
 function relayLog(event: string, fields: Record<string, string | number>): void {
   console.log(JSON.stringify({ event, ...fields }));
+}
+
+/**
+ * The sentence a refused sender's agent reads. An address or a phone number in
+ * the words is answered in the agent's own lane (domain/lanes.ts,
+ * contact_in_words), because what comes after is a wait; every other refusal
+ * keeps the check's own sentence.
+ */
+export async function refusalWords(
+  accountId: string,
+  reasonCode: string | undefined,
+  plain: string | undefined,
+): Promise<string | undefined> {
+  if (reasonCode !== CONTACT_IN_WORDS_REASON) return plain;
+  const { readLaneFacts, sayFor } = await import('./lanes.js');
+  const { arrangement, hearsVia } = await readLaneFacts(accountId);
+  return sayFor('contact_in_words', arrangement, { hearsVia });
 }
 
 export interface OpenChannel {
@@ -257,7 +275,9 @@ export async function sendMessage(
     if (intake.reason_code === 'SUSPENDED') {
       throw new OsbError('SUSPENDED', { human_action: intake.plain_words });
     }
-    throw new OsbError('CONSENT_REQUIRED', { human_action: intake.plain_words });
+    throw new OsbError('CONSENT_REQUIRED', {
+      human_action: await refusalWords(accountId, intake.reason_code, intake.plain_words),
+    });
   }
   const wrappedKey = await ensureChannelKey(matchId, ch.channelId);
   const bodyEnc = await encryptForChannel(ch.channelId, wrappedKey, text);
