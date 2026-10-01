@@ -737,8 +737,11 @@ async function oneRun(
     const supplyNoAt: Partial<Record<SideId, number>> = {};
     const answerSupply = async (side: Side): Promise<void> => {
       if (DRY || !SUPPLY_ASK.test(side.lastReply)) return;
-      const answer = await side.simulator.reply(side.history, side.lastReply);
-      await drive(side, answer.trim() ? answer : 'no, not right now', 1);
+      // SAID AS THE SHEET SAYS IT, and nothing more. Left to the simulator the
+      // person answered the question and then took up the posting's wording
+      // too, and the stage went somewhere the run never used to go (spring,
+      // dev, 1 October 2026).
+      await drive(side, 'no, not right now', 1);
       supplyNoAt[side.id] = turns.length - 2;
     };
     const sellerCard = await publishFor(sides.seller, [ALEX.opening]);
