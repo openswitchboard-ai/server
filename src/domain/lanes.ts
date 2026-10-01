@@ -543,6 +543,9 @@ export const SUPPLY_QUESTION = "Anything you'd lend, give away or sell while we'
 const supplyAsk = (when: string): string =>
   `Once you have told your human what happens next, ask them this, once, in your own words${when}: "${SUPPLY_QUESTION}" If they say no, drop it. If they name something, post it as a have the usual way.`;
 
+const supplyAskCarried = (when: string): string =>
+  `If you have not asked your human this yet, ask it once, in your own words${when}, after saying what happens next: "${SUPPLY_QUESTION}" If you already did, leave it. If they say no, drop it. If they name something, post it as a have the usual way.`;
+
 export const ASKS = {
   /**
    * Handed over on the answer to an account's FIRST posting, and never again
@@ -558,6 +561,21 @@ export const ASKS = {
     autonomous: {
       agreed: supplyAsk(', now or the next time they are with you'),
       not_yet: supplyAsk(', now or the next time they are with you'),
+    },
+  } as Sentence,
+  /**
+   * The same question, carried on the account's posting answers for a few
+   * minutes after the hand-over (domain/cards.ts supplyAskCarried), because an
+   * assistant that makes another call before it speaks can lose the first
+   * answer (rehearsal, 1 October 2026). Worded so it is never asked twice.
+   */
+  supply_ask_carried: {
+    about: 'The supply question again, for a few minutes after the first posting, unless already asked.',
+    budget: 320,
+    prompted: supplyAskCarried(''),
+    autonomous: {
+      agreed: supplyAskCarried(', now or the next time they are with you'),
+      not_yet: supplyAskCarried(', now or the next time they are with you'),
     },
   } as Sentence,
 } satisfies Record<string, Sentence>;

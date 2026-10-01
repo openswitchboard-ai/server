@@ -9,6 +9,8 @@
  * What is asserted here:
  *   - it rides the answer to the account's first posting, want or have;
  *   - it is never handed over twice, in sequence or at once;
+ *   - for a few minutes after, it is carried on the account's posting
+ *     answers (publish, amend, refine), worded so it is not asked twice;
  *   - it is never handed over on a refusal, which is not up yet;
  *   - an account the migration marked, or one that was already posting, is
  *     never asked;
@@ -33,7 +35,7 @@ vi.mock('../../src/domain/quotas.js', async (importOriginal) => {
 import { readFileSync } from 'node:fs';
 
 import * as db from '../../src/db.js';
-import { publishIntent } from '../../src/domain/cards.js';
+import { publishIntent, supplyAskCarried, SUPPLY_ASK_CARRY_MINUTES } from '../../src/domain/cards.js';
 import { ASKS, SUPPLY_QUESTION, sayAsk } from '../../src/domain/lanes.js';
 import { MANUAL, MANUAL_CHANGELOG } from '../../src/mcp/instructions.js';
 import { manualSection } from '../../src/mcp/instructions.js';
@@ -59,6 +61,8 @@ interface World {
   supplyAskAt: Date | null;
   /** Every posting on the account, in the order the rows were written. */
   cards: string[];
+  /** When the account's earliest posting went up; null for none, or long ago. */
+  firstPostedAt: Date | null;
   arrangement: Record<string, unknown> | null;
   /**
    * Whether the earliest-posting test sees postings written by a request
@@ -79,6 +83,7 @@ function fakePool() {
       if (/INSERT INTO cards/.test(sql)) {
         const id = `cccccccc-0000-4000-8000-${String(world.nextId++).padStart(12, '0')}`;
         world.cards.push(id);
+        world.firstPostedAt ??= world.cards.length === 1 ? new Date() : null;
         return { rows: [{ id }], rowCount: 1 };
       }
       if (handOverSql(sql)) {
@@ -89,6 +94,17 @@ function fakePool() {
           return { rows: [{ id: ACCOUNT }], rowCount: 1 };
         }
         return { rows: [], rowCount: 0 };
+      }
+      if (/SELECT true AS carry/.test(sql)) {
+        const [accountId, minutes] = params;
+        const since = Date.now() - minutes * 60_000;
+        const carry =
+          accountId === ACCOUNT &&
+          world.supplyAskAt !== null &&
+          world.supplyAskAt.getTime() > since &&
+          world.firstPostedAt !== null &&
+          world.firstPostedAt.getTime() > since;
+        return { rows: carry ? [{ carry: true }] : [], rowCount: carry ? 1 : 0 };
       }
       if (/SELECT arrangement FROM accounts/.test(sql)) {
         return { rows: [{ arrangement: world.arrangement }], rowCount: 1 };
@@ -121,10 +137,27 @@ const listing = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  world = { sql: [], supplyAskAt: null, cards: [], arrangement: null, seeOthers: true, nextId: 1 };
+  world = {
+    sql: [],
+    supplyAskAt: null,
+    cards: [],
+    firstPostedAt: null,
+    arrangement: null,
+    seeOthers: true,
+    nextId: 1,
+  };
   vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
+
+/** The hand-over and the first posting, moved back past the carry window. */
+const minutesPass = () => {
+  const then = new Date(Date.now() - (SUPPLY_ASK_CARRY_MINUTES + 1) * 60_000);
+  if (world.supplyAskAt) world.supplyAskAt = then;
+  if (world.firstPostedAt) world.firstPostedAt = then;
+};
+const handed = (r: any) => r.supply_ask_note?.text === sayAsk('supply_ask', 'prompted', {});
+const carried = (r: any) => r.supply_ask_note?.text === sayAsk('supply_ask_carried', 'prompted', {});
 
 const refusal = async (fn: () => Promise<unknown>) => {
   try {
@@ -165,6 +198,7 @@ describe('the first posting carries the question', () => {
 
   it('adds the one field and leaves every other field on the answer as it was', async () => {
     const first: any = await publishIntent(cfg, ACCOUNT, listing());
+    minutesPass();
     const second: any = await publishIntent(cfg, ACCOUNT, listing());
     expect(Object.keys(first).filter((k) => k !== 'supply_ask_note').sort()).toEqual(
       Object.keys(second).sort(),
@@ -188,10 +222,11 @@ describe('the first posting carries the question', () => {
 
 // ---------------------------------------------------------------------------
 describe('never twice', () => {
-  it('is absent from the second posting', async () => {
+  it('is absent from a second posting once the carry window has passed', async () => {
     const first: any = await publishIntent(cfg, ACCOUNT, listing());
+    minutesPass();
     const second: any = await publishIntent(cfg, ACCOUNT, listing({ kind: 'road bike' }));
-    expect(first.supply_ask_note).toBeDefined();
+    expect(handed(first)).toBe(true);
     expect(second.supply_ask_note).toBeUndefined();
   });
 
@@ -200,7 +235,10 @@ describe('never twice', () => {
       publishIntent(cfg, ACCOUNT, listing()),
       publishIntent(cfg, ACCOUNT, listing({ type: 'looking_for', kind: 'road bike' })),
     ]);
-    expect(both.filter((r) => r.supply_ask_note)).toHaveLength(1);
+    expect(both.filter(handed)).toHaveLength(1);
+    // The other one is still inside the window, so it carries the
+    // already-asked wording and never the first.
+    expect(both.filter(carried)).toHaveLength(1);
   });
 
   it('lands on exactly one even where each request sees only its own posting', async () => {
@@ -210,7 +248,8 @@ describe('never twice', () => {
     const all: any[] = await Promise.all(
       [1, 2, 3, 4].map((n) => publishIntent(cfg, ACCOUNT, listing({ kind: `bike ${n}` }))),
     );
-    expect(all.filter((r) => r.supply_ask_note)).toHaveLength(1);
+    expect(all.filter(handed)).toHaveLength(1);
+    expect(all.filter(carried)).toHaveLength(3);
   });
 
   it('is absent where the question has already been handed over, or the migration marked it', async () => {
@@ -238,6 +277,65 @@ describe('never twice', () => {
     const r: any = await publishIntent(cfg, ACCOUNT, listing());
     expect(r.state).toBe('PENDING_SCREENING');
     expect(r.supply_ask_note).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('carried for a few minutes after (rehearsal, 1 October 2026)', () => {
+  it('rides a second posting straight after, worded so it is not asked twice', async () => {
+    const first: any = await publishIntent(cfg, ACCOUNT, listing());
+    const second: any = await publishIntent(cfg, ACCOUNT, listing({ kind: 'road bike' }));
+    expect(handed(first)).toBe(true);
+    expect(carried(second)).toBe(true);
+    expect(second.supply_ask_note.text).toContain(SUPPLY_QUESTION);
+    expect(second.supply_ask_note.text).toMatch(/^If you have not asked your human this yet/);
+    expect(second.supply_ask_note.text).toContain('If you already did, leave it.');
+  });
+
+  it('is what refine and amend reach for, in the agent\'s own lane', async () => {
+    world.arrangement = { runs_on_its_own: true, check_every_minutes: 60 };
+    await publishIntent(cfg, ACCOUNT, listing());
+    const r = await supplyAskCarried(ACCOUNT, world.arrangement);
+    expect(r.supply_ask_note?.text).toBe(
+      sayAsk('supply_ask_carried', 'autonomous', { runs_on_its_own: true, check_every_minutes: 60 }),
+    );
+  });
+
+  it('stops once the window has passed', async () => {
+    await publishIntent(cfg, ACCOUNT, listing());
+    minutesPass();
+    expect(await supplyAskCarried(ACCOUNT, {})).toEqual({});
+  });
+
+  it('never reaches an account the migration marked, whose postings are old', async () => {
+    // Marked at deploy time, so inside the window, but its first posting is not.
+    world.supplyAskAt = new Date();
+    world.cards.push('cccccccc-0000-4000-8000-ffffffffffff');
+    world.firstPostedAt = new Date('2026-09-01T00:00:00Z');
+    expect(await supplyAskCarried(ACCOUNT, {})).toEqual({});
+    const r: any = await publishIntent(cfg, ACCOUNT, listing());
+    expect(r.supply_ask_note).toBeUndefined();
+  });
+
+  it('never reaches an account that was not handed the question', async () => {
+    expect(await supplyAskCarried(ACCOUNT, {})).toEqual({});
+  });
+
+  it('asks the window and the first posting of Postgres in one read', async () => {
+    await supplyAskCarried(ACCOUNT, {});
+    const read = world.sql.find((q) => /SELECT true AS carry/.test(q.text))!;
+    expect(read.text).toContain('supply_ask_at > now() - make_interval(mins => $2)');
+    expect(read.text).toContain('(SELECT min(created_at) FROM cards WHERE account_id = $1) > now() - make_interval(mins => $2)');
+    expect(read.params).toEqual([ACCOUNT, SUPPLY_ASK_CARRY_MINUTES]);
+  });
+
+  it('costs the answer nothing where the read fails', async () => {
+    const pool = fakePool();
+    pool.query = async () => {
+      throw new Error('the database is not there');
+    };
+    vi.spyOn(db, 'getPool').mockReturnValue(pool);
+    expect(await supplyAskCarried(ACCOUNT, {})).toEqual({});
   });
 });
 
@@ -278,6 +376,23 @@ describe('the wording', () => {
       expect(text).toContain('If they say no, drop it.');
       expect(text).toMatch(/post it as a have the usual way/);
       expect(text).toMatch(/^Once you have told your human what happens next/);
+    }
+  });
+
+  const carriedWordings = () => [
+    sayAsk('supply_ask_carried', 'prompted', {}),
+    sayAsk('supply_ask_carried', 'autonomous', { runs_on_its_own: true }),
+    sayAsk('supply_ask_carried', 'autonomous', { runs_on_its_own: true, check_every_minutes: 60 }),
+  ];
+
+  it('carries the same question, and lets one already asked stand', () => {
+    for (const text of carriedWordings()) {
+      expect(text).toContain(`"${SUPPLY_QUESTION}"`);
+      expect(text).toMatch(/\bonce\b/);
+      expect(text).toContain('If you already did, leave it.');
+      expect(text).toContain('If they say no, drop it.');
+      expect(lintHumanCopy(text)).toEqual([]);
+      expect(text.length).toBeLessThanOrEqual(ASKS.supply_ask_carried.budget);
     }
   });
 

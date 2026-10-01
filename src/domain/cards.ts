@@ -90,8 +90,10 @@ export interface PublishResult {
   /** The sentence to say once it is up (see WHAT_HAPPENS_NEXT_NOTE). */
   what_happens_next_note?: { text: string; provenance: 'switchboard-system' };
   /**
-   * A question to put to the human, on the answer to an account's first
-   * posting and on no other answer, ever (see supplyAskFor).
+   * A question to put to the human, handed over on the answer to an account's
+   * first posting, and carried on its posting answers for a few minutes after
+   * in case the assistant made another call before it spoke (see
+   * supplyAskFor, supplyAskCarried).
    */
   supply_ask_note?: { text: string; provenance: 'switchboard-system' };
 }
@@ -196,10 +198,53 @@ async function supplyAskFor(
         RETURNING id`,
       [accountId, cardId],
     );
-    if (r.rows?.[0]?.id !== accountId) return {};
+    if (r.rows?.[0]?.id !== accountId) return supplyAskCarried(accountId, a);
     return {
       supply_ask_note: {
         text: sayAsk('supply_ask', laneFor(a), a),
+        provenance: 'switchboard-system' as const,
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** How long after the hand-over the question keeps riding posting answers. */
+export const SUPPLY_ASK_CARRY_MINUTES = 10;
+
+/**
+ * THE QUESTION CARRIED, for the few minutes after it was handed over.
+ *
+ * Rehearsal on dev, 1 October 2026 (spring series, run 4): the first posting
+ * went up with the question on its answer, the assistant made one more call
+ * (refine_intent) before it spoke, and its reply to the human was built from
+ * that last answer. The question was never asked. So for a short while after
+ * the hand-over, every posting answer for the account (publish, amend,
+ * refine) carries it again, worded so that an assistant which already asked
+ * leaves it alone.
+ *
+ * Only for an account whose first posting went up inside the same window, so
+ * the accounts migration 065 marked (at deploy time, with older postings) are
+ * never asked by this path. Best-effort, like the hand-over itself.
+ */
+export async function supplyAskCarried(
+  accountId: string,
+  a: Arrangement,
+): Promise<Pick<PublishResult, 'supply_ask_note'>> {
+  try {
+    const r = await getPool().query(
+      `SELECT true AS carry FROM accounts
+        WHERE id = $1
+          AND supply_ask_at > now() - make_interval(mins => $2)
+          AND (SELECT min(created_at) FROM cards WHERE account_id = $1)
+              > now() - make_interval(mins => $2)`,
+      [accountId, SUPPLY_ASK_CARRY_MINUTES],
+    );
+    if (r.rows?.[0]?.carry !== true) return {};
+    return {
+      supply_ask_note: {
+        text: sayAsk('supply_ask_carried', laneFor(a), a),
         provenance: 'switchboard-system' as const,
       },
     };
@@ -1817,6 +1862,7 @@ export async function amendIntent(
     category: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: await whatHappensNextFor(accountId),
+    ...(await supplyAskCarried(accountId, (await readLaneFacts(accountId)).arrangement)),
   };
 }
 

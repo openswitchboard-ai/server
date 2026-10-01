@@ -30,7 +30,7 @@
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
-import { getCard } from './cards.js';
+import { getCard, supplyAskCarried } from './cards.js';
 import { OsbError } from '../protocol.js';
 import { type Arrangement } from './arrangement.js';
 import { readLaneFacts, sayFor } from './lanes.js';
@@ -97,6 +97,8 @@ export interface RefineResult {
   also_called: string[];
   not_these: string[];
   say_note: { text: string; provenance: 'switchboard-system' };
+  /** The supply question, carried for a few minutes after a first posting (cards.ts supplyAskCarried). */
+  supply_ask_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
@@ -206,5 +208,6 @@ export async function refineIntent(
       text: refinedSentence(also.phrases, nots.phrases, facts.arrangement, facts.hearsVia),
       provenance: 'switchboard-system' as const,
     },
+    ...(await supplyAskCarried(accountId, facts.arrangement)),
   };
 }
