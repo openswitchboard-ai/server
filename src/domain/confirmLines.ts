@@ -334,7 +334,14 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
   }
   const checked = validateConfirmLine(raw);
   if (!checked.ok) throw Object.assign(new Error(checked.error), { validation: ['line'] });
-  if (carriesMoneyFigure(checked.value)) {
+  // A DISTANCE OR A COUNT WRITTEN WITH A COMMA IS NOT A SUM OF MONEY. The
+  // figure check was written for the note beside an offer, where any large
+  // number is a second price, and it reads "20,000" as one. A line is a claim
+  // about a thing, and "has done under 20,000 km" is exactly the kind worth
+  // having in writing. So the separators come out before the check: a bare
+  // number then passes, and anything marked as money (a currency sign, the
+  // word for one) is still refused.
+  if (carriesMoneyFigure(checked.value.replace(/(\d),(?=\d{3}(?!\d))/g, '$1'))) {
     throw new OsbError('CONSENT_REQUIRED', { human_action: LINE_HAS_FIGURE });
   }
   const max = maxLinesFor(cfg);

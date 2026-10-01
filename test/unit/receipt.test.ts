@@ -653,7 +653,9 @@ describe('nothing private is in the record', () => {
     await accept();
     for (const who of [ANA, BEPPE]) {
       const m = mailTo(who)!;
-      const all = m.subject + m.text + m.html;
+      // The record's own code is taken out first: sixty-four hex digits will
+      // now and then spell any three of them by chance.
+      const all = (m.subject + m.text + m.html).replace(/\b[0-9a-f]{64}\b/g, '');
       // The seller's asking figure (shown at the details step, and still left
       // out: the only figure in a record is the one that was agreed).
       expect(all).not.toContain('620');
@@ -875,7 +877,10 @@ describe('best offer: the record is for the accepted pair only', () => {
     expect(world.offers.find((o) => o.id === LOSING_OFFER).state).toBe('declined');
     expect(mails().map((x) => x.to).sort()).toEqual([addressOf(ANA), addressOf(BEPPE)].sort());
     for (const m of mails()) {
-      expect(m.text).not.toContain('400');
+      // The losing figure as a figure. A bare '400' can turn up by chance in
+      // the record's own code, which is sixty-four hex digits.
+      expect(m.text).not.toContain('$400');
+      expect(m.text).not.toMatch(/\b400 AUD\b/);
       expect(m.text).not.toContain('Carla');
     }
   });

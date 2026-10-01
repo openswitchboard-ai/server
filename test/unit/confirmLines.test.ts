@@ -407,12 +407,16 @@ describe('asking a line', () => {
   });
 
   it('refuses a sum of money in the words', async () => {
-    for (const bad of ['Includes the $50 lock', 'Worth four hundred dollars new']) {
+    for (const bad of ['Includes the $50 lock', 'Worth four hundred dollars new', 'Cost $1,200 new']) {
       expect(await refusal(lines.askLine(cfg, ANA, MATCH, bad)), bad).toBe(lines.LINE_HAS_FIGURE);
     }
     // A size or a count is not a figure, and travels.
     await lines.askLine(cfg, ANA, MATCH, 'Has 29 inch wheels and two spare tubes');
     expect(world.lines).toHaveLength(1);
+    // Nor is a distance or a count written with a comma.
+    await lines.askLine(cfg, ANA, MATCH, 'Has done under 20,000 km');
+    await lines.askLine(cfg, ANA, MATCH, 'Has 1,200 hours on it');
+    expect(world.lines).toHaveLength(3);
   });
 
   it('takes as many as the limit and no more, and the limit is the deployment’s', async () => {
