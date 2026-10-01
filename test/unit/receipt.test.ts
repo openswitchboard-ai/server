@@ -653,9 +653,11 @@ describe('nothing private is in the record', () => {
     await accept();
     for (const who of [ANA, BEPPE]) {
       const m = mailTo(who)!;
-      // The record's own code is taken out first: sixty-four hex digits will
-      // now and then spell any three of them by chance.
-      const all = (m.subject + m.text + m.html).replace(/\b[0-9a-f]{64}\b/g, '');
+      // The record's own code and the footer's signed links are taken out
+      // first: random digits will now and then spell any three by chance.
+      const all = (m.subject + m.text + m.html)
+        .replace(/\b[0-9a-f]{64}\b/g, '')
+        .replace(/https?:\/\/[^\s"<]+/g, '');
       // The seller's asking figure (shown at the details step, and still left
       // out: the only figure in a record is the one that was agreed).
       expect(all).not.toContain('620');
