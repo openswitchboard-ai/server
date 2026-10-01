@@ -56,7 +56,7 @@ import {
   type PostingGate,
 } from './postingRef.js';
 import { type Arrangement } from './arrangement.js';
-import { laneFor, readLaneFacts, sayFor, sayNote, type Lane } from './lanes.js';
+import { laneFor, readLaneFacts, sayAsk, sayFor, sayNote, type Lane } from './lanes.js';
 import type { HearsVia } from './accounts.js';
 import { categoryLabelPath, theirOwnThing } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
@@ -89,6 +89,11 @@ export interface PublishResult {
   filed_under_note?: { text: string; provenance: 'switchboard-system' };
   /** The sentence to say once it is up (see WHAT_HAPPENS_NEXT_NOTE). */
   what_happens_next_note?: { text: string; provenance: 'switchboard-system' };
+  /**
+   * A question to put to the human, on the answer to an account's first
+   * posting and on no other answer, ever (see supplyAskFor).
+   */
+  supply_ask_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
@@ -141,6 +146,66 @@ async function whatHappensNextFor(accountId: string): Promise<{
 }> {
   const facts = await readLaneFacts(accountId);
   return whatHappensNextNote(facts.arrangement, facts.hearsVia);
+}
+
+/**
+ * THE ONE QUESTION EVERY NEW ACCOUNT IS ASKED (founder, 1 October 2026).
+ *
+ * "Anything you'd lend, give away or sell while we're here?" — asked once per
+ * account, at the earliest moment it is right to ask: the answer to its first
+ * posting, when the human is already putting something up and has just heard
+ * what happens next. Every new person is a chance at another have.
+ *
+ * ONCE, AND ONLY ONCE, EVEN UNDER CONCURRENCY. The handing-over is the UPDATE
+ * itself: `supply_ask_at` goes from null to now in one statement, and only the
+ * request whose statement made that change carries the question. Two first
+ * postings sent at once cannot both see it null.
+ *
+ * AND ONLY ON THE FIRST POSTING. The statement also requires this posting to
+ * be the account's earliest row in cards, so an account that was already
+ * posting before the column existed is never asked late. Ordered by
+ * (created_at, id) rather than "no other row exists" so that two first
+ * postings racing each other still leave exactly one of them first, and the
+ * question lands on that one or, where it already landed, on neither.
+ * Migration 065 marks accounts with more than one posting as past the moment;
+ * one with a single posting is past it too, by this rule.
+ *
+ * Only a posting that went up reaches here: a refusal (NEEDS_DETAIL,
+ * CONFIRM_FIGURE, a shelf question, a quota) throws before the row is
+ * written or before this runs, so nothing is spent on an attempt.
+ *
+ * Best-effort, like every courtesy on this answer: a failed statement means no
+ * question, and the posting is up all the same.
+ */
+async function supplyAskFor(
+  accountId: string,
+  cardId: string,
+  a: Arrangement,
+): Promise<Pick<PublishResult, 'supply_ask_note'>> {
+  try {
+    const r = await getPool().query(
+      `UPDATE accounts SET supply_ask_at = now()
+        WHERE id = $1
+          AND supply_ask_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM cards earlier
+              JOIN cards posted ON posted.id = $2
+             WHERE earlier.account_id = $1
+               AND earlier.id <> $2
+               AND (earlier.created_at, earlier.id) < (posted.created_at, posted.id))
+        RETURNING id`,
+      [accountId, cardId],
+    );
+    if (r.rows?.[0]?.id !== accountId) return {};
+    return {
+      supply_ask_note: {
+        text: sayAsk('supply_ask', laneFor(a), a),
+        provenance: 'switchboard-system' as const,
+      },
+    };
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -1231,6 +1296,8 @@ async function runPublish(
       MessageBody: JSON.stringify({ kind: 'screen-card', card_id: id, content_version: contentVersion }),
     }),
   );
+  // One read of the account row for both sentences that turn on the lane.
+  const facts = await readLaneFacts(accountId);
   return {
     intent_id: id,
     state: 'PENDING_SCREENING',
@@ -1246,7 +1313,8 @@ async function runPublish(
     filed_under: shelfInWords(filed.category),
     category: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
-    what_happens_next_note: await whatHappensNextFor(accountId),
+    what_happens_next_note: whatHappensNextNote(facts.arrangement, facts.hearsVia),
+    ...(await supplyAskFor(accountId, id, facts.arrangement)),
   };
 }
 

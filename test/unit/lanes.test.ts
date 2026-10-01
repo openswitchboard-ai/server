@@ -26,12 +26,15 @@ import * as db from '../../src/db.js';
 import { arrangementOrNothing, type Arrangement } from '../../src/domain/arrangement.js';
 import type { HearsVia } from '../../src/domain/accounts.js';
 import {
+  ASKS,
+  ASK_IDS,
   NOTES,
   NOTE_IDS,
   SENTENCES,
   SENTENCE_IDS,
   laneFor,
   say,
+  sayAsk,
   sayFor,
   sayNote,
   type Lane,
@@ -432,6 +435,30 @@ describe('nothing outside the table promises to come back', () => {
       if (!phrase.test(said)) loose.push(`${i + 1} ${line.trim()}`);
     }
     expect(loose, 'a promise phrase nothing serves').toEqual([]);
+  });
+
+  it('and a question handed over for the human promises nothing in any lane', () => {
+    // ASKS: the third kind of wording in the table. A question asked once and
+    // let go of has no later in it, so no lane may carry a promise here.
+    for (const id of ASK_IDS) {
+      for (const h of HEARS) {
+        const ctx = h ? { hearsVia: h } : {};
+        for (const [name, text] of [
+          ['prompted', sayAsk(id, 'prompted', NOTHING, ctx)],
+          ['autonomous, nothing agreed', sayAsk(id, 'autonomous', NOT_YET, ctx)],
+          ['autonomous, rhythm agreed', sayAsk(id, 'autonomous', AGREED, ctx)],
+        ] as const) {
+          const where = `${id} — ${name} (${h ?? 'nothing read'})`;
+          for (const p of PROMISES) expect(text, where).not.toMatch(p);
+          expect(text, where).not.toMatch(CLAIMS_POST);
+          expect(text, where).not.toMatch(/you will bring them|I will|I'll/i);
+          expect(lintHumanCopy(text), where).toEqual([]);
+          expect(text.length, where).toBeLessThanOrEqual(ASKS[id].budget);
+          expect(text, where).not.toMatch(/\bmatch(es|ed|ing)?\b|\bscore\b|\bcard\b/i);
+        }
+      }
+      expect(ASKS[id].claimsEmail, id).toBeUndefined();
+    }
   });
 });
 

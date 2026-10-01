@@ -518,6 +518,62 @@ export function sayNote(id: NoteId, lane: Lane, a: Arrangement, ctx: Ctx = {}): 
   });
 }
 
+// ---------------------------------------------------------------------------
+// THE QUESTIONS THE SWITCHBOARD HANDS AN AGENT TO PUT TO ITS HUMAN
+// (1 October 2026).
+//
+// SENTENCES above tell the agent what it may promise; NOTES are said to the
+// human as they stand. These are the third kind: a question for the agent to
+// ASK its human, once, and then let go of. They live here because what can be
+// asked turns on the lane too. A prompted agent is speaking with its human
+// whenever it acts, so it asks there and then. An autonomous one may be
+// working while its human is away, so it is told it may ask the next time
+// they are together. Neither wording promises anything, and none of them
+// claims the post, so `hearsVia` changes nothing here; the rhythm changes
+// nothing either, so the two autonomous cases read the same.
+//
+// The house rule that comes with them is general and lives in the manual
+// (talking_to_your_human): ask a handed question once, meaning unchanged, and
+// take no for an answer.
+// ---------------------------------------------------------------------------
+
+/** The supply question itself, word for word as the founder wrote it. */
+export const SUPPLY_QUESTION = "Anything you'd lend, give away or sell while we're here?";
+
+const supplyAsk = (when: string): string =>
+  `Once you have told your human what happens next, ask them this, once, in your own words${when}: "${SUPPLY_QUESTION}" If they say no, drop it. If they name something, post it as a have the usual way.`;
+
+export const ASKS = {
+  /**
+   * Handed over on the answer to an account's FIRST posting, and never again
+   * (domain/cards.ts supplyAskFor, migration 065). Every new person is asked
+   * once whether they have something to offer, at the one moment they are
+   * already putting something up. A have as the first posting is still asked:
+   * somebody offering one thing often has another.
+   */
+  supply_ask: {
+    about: 'Once per account, after its first posting: whether they have anything to offer.',
+    budget: 320,
+    prompted: supplyAsk(''),
+    autonomous: {
+      agreed: supplyAsk(', now or the next time they are with you'),
+      not_yet: supplyAsk(', now or the next time they are with you'),
+    },
+  } as Sentence,
+} satisfies Record<string, Sentence>;
+
+export type AskId = keyof typeof ASKS;
+
+export const ASK_IDS = Object.keys(ASKS) as AskId[];
+
+/** The question for this id, in this lane. The rhythm makes no difference. */
+export function sayAsk(id: AskId, lane: Lane, a: Arrangement, ctx: Ctx = {}): string {
+  const s = ASKS[id];
+  if (lane === 'prompted') return render(s.prompted, ctx);
+  if (a.check_every_minutes === undefined) return render(s.autonomous.not_yet, ctx);
+  return render(s.autonomous.agreed, ctx);
+}
+
 /**
  * THE TWO FACTS A WAITING SENTENCE NEEDS, read once for the whole answer.
  *
