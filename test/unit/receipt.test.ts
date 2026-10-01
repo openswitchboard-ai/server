@@ -51,7 +51,11 @@ import { initCounterKeys } from '../../src/counter/keys.js';
 import * as offers from '../../src/domain/offers.js';
 import * as home from '../../src/counter/pagesHome.js';
 import { hearsViaNote } from '../../src/domain/accounts.js';
-import { DEAL_AGREED_WHAT_TO_DO } from '../../src/domain/matches.js';
+import {
+  DEAL_AGREED_RECORD_SENT,
+  DEAL_AGREED_WHAT_TO_DO,
+  dealAgreedWhatToDo,
+} from '../../src/domain/matches.js';
 import { MANUAL_BODY, MANUAL_CHANGELOG } from '../../src/mcp/instructions.js';
 import {
   buildReceipt,
@@ -110,6 +114,10 @@ interface World {
   screened: boolean;
   offers: any[];
   sends: { template: string; status: string; to?: string }[];
+  /** The seller's posting has run out. */
+  expired?: boolean;
+  /** The database will not answer for the posting: a genuine failure. */
+  cardsDown?: boolean;
 }
 let world: World;
 
@@ -168,6 +176,16 @@ const PROFILES: Record<string, { first: string; suburb: string }> = {
   [BEPPE]: { first: 'Beppe', suburb: 'Holt' },
   [CARLA]: { first: 'Carla', suburb: 'Kingston' },
 };
+
+/**
+ * Accepting an offer runs inside one short transaction on a connection of its
+ * own (domain/confirmLines.ts, withIntroductionLocked), so the stand-in pool
+ * hands out a connection that answers exactly as the pool does.
+ */
+const withConnect = (p: any) => ({
+  ...p,
+  connect: async () => ({ query: p.query, release: () => {} }),
+});
 
 function fakePool() {
   return {
@@ -228,15 +246,26 @@ function fakePool() {
       }
       if (/^\s*SELECT \* FROM matches WHERE id/.test(sql)) return rows([theMatch()]);
       if (/SELECT \* FROM cards WHERE id/.test(sql)) {
-        return rows(params[0] === CARD_H ? [theHaveCard()] : [{ id: CARD_W, account_id: ANA, type: 'WANT' }]);
+        if (world.cardsDown) throw new Error('database down');
+        return rows(params[0] === CARD_H ? [{ ...theHaveCard(), ...(world.expired ? { lifecycle_state: 'EXPIRED' } : {}) }] : [{ id: CARD_W, account_id: ANA, type: 'WANT' }]);
       }
       if (/SELECT \* FROM offers WHERE id/.test(sql)) {
         return rows(world.offers.filter((o) => o.id === params[0]));
       }
       if (/UPDATE offers SET state='accepted-by-human'/.test(sql)) {
         const o = world.offers.find((x) => x.id === params[0]);
-        if (o) o.state = 'accepted-by-human';
+        if (o) {
+          o.state = 'accepted-by-human';
+          o.receipt_sha256 = params[1] ?? null;
+        }
         return rows(o ? [o] : []);
+      }
+      if (/SELECT receipt_sha256 FROM offers/.test(sql)) {
+        return rows(
+          world.offers
+            .filter((o) => o.match_id === params[0] && o.state === 'accepted-by-human')
+            .map((o) => ({ receipt_sha256: o.receipt_sha256 ?? null })),
+        );
       }
       return rows([]);
     },
@@ -282,7 +311,7 @@ beforeEach(() => {
     offers: [anOffer()],
     sends: [],
   };
-  vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
+  vi.spyOn(db, 'getPool').mockReturnValue(withConnect(fakePool()));
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   sesSend.mockReset().mockResolvedValue({ MessageId: 'ses-1' });
   vi.mocked(writeConsentEvent).mockClear();
@@ -652,9 +681,43 @@ describe('nothing private is in the record', () => {
 
 // ---------------------------------------------------------------------------
 describe('the acceptance stands whatever happens to the record', () => {
+  // A RECORD IS BUILT WHENEVER AN OFFER IS ACCEPTED (2 October 2026). A posting
+  // the details step would refuse right now used to mean no record at all.
+  // It now means a thinner one: the thing by its shelf, no "as the seller
+  // posted it" line, and everything else as it stands.
+  for (const [why, set] of [
+    ['has no screened words to show', () => (world.screened = false)],
+    ['has run out', () => (world.expired = true)],
+  ] as const) {
+    it(`still builds a record, thinner, when the seller's posting ${why}`, async () => {
+      set();
+      const o: any = await accept();
+      expect(o.state).toBe('accepted-by-human');
+      const block = receiptBlockIn(mailTo(ANA)!.text)!;
+      expect(block).toMatch(/^Agreed: /);
+      expect(block).toContain('What: mountain bike');
+      expect(block).not.toContain('As the seller posted it');
+      // Nothing is read off the live columns to fill the gap.
+      expect(block).not.toContain('Trek');
+      expect(block).not.toContain('Medium frame');
+      expect(block).toContain('Amount agreed: $415 AUD');
+      expect(block).toContain('Offered by the buyer. Accepted by the seller.');
+      expect(block).toContain('Note the buyer sent with the offer: "Can pick up Saturday morning"');
+      // Both people get it, and the fingerprint is in the locked record AND
+      // on the offer row.
+      expect(world.sends.map((s) => s.template)).toEqual(['receipt', 'receipt']);
+      expect(acceptEvent().receipt_sha256).toBe(sha256(block));
+      expect(world.offers[0].receipt_sha256).toBe(sha256(block));
+      expect((await offers.acceptedDeal(MATCH)).recordSent).toBe(true);
+    });
+  }
+
   it('records the press without a fingerprint when the record cannot be built', async () => {
-    world.screened = false;
+    world.cardsDown = true;
     const o: any = await accept();
+    // No fingerprint anywhere: none on the row, and so no record sentence.
+    expect(world.offers[0].receipt_sha256).toBeNull();
+    expect(await offers.acceptedDeal(MATCH)).toEqual({ agreed: true, recordSent: false });
     expect(o.state).toBe('accepted-by-human');
     const e = acceptEvent();
     expect(e).toMatchObject({ event: 'offer-accepted-by-human', offer_id: OFFER });
@@ -743,7 +806,7 @@ describe('everyone gets the full record', () => {
   });
 
   it('the fallback notice, where no record could be built, still keeps to the notice rule', async () => {
-    world.screened = false;
+    world.cardsDown = true;
     world.hearsVia[ANA] = 'assistant';
     await accept();
     expect(mails()).toHaveLength(0);
@@ -833,11 +896,17 @@ describe('the agent-facing sentences are true about the record', () => {
   });
 
   it('the deal-agreed wrap-up says the record has been sent and to keep it', () => {
-    expect(DEAL_AGREED_WHAT_TO_DO).toContain(
+    const withRecord = dealAgreedWhatToDo(true);
+    expect(withRecord).toContain(
       'The same record of what was agreed has been sent to both people by email: tell your human to keep theirs.',
     );
-    expect(DEAL_AGREED_WHAT_TO_DO).not.toMatch(/has arrived|they have received|\$\d/);
-    expect(lintEmailCopy(DEAL_AGREED_WHAT_TO_DO)).toEqual([]);
+    expect(withRecord).not.toMatch(/has arrived|they have received|\$\d/);
+    expect(lintEmailCopy(withRecord)).toEqual([]);
+    // TRUE EVERY TIME: where the accepted offer carries no fingerprint, the
+    // wrap-up says nothing about a record at all.
+    expect(dealAgreedWhatToDo(false)).toBe(DEAL_AGREED_WHAT_TO_DO);
+    expect(DEAL_AGREED_WHAT_TO_DO).not.toMatch(/record/i);
+    expect(withRecord.replace(` ${DEAL_AGREED_RECORD_SENT}`, '')).toBe(DEAL_AGREED_WHAT_TO_DO);
   });
 
   it('the manual body and its newest changelog entry say the general rule', () => {
@@ -845,7 +914,7 @@ describe('the agent-facing sentences are true about the record', () => {
       'The record of a deal is emailed to both people either way: tell them to keep it.',
     );
     expect(MANUAL_BODY).not.toContain('every one of those emails is a notice');
-    const last = MANUAL_CHANGELOG[MANUAL_CHANGELOG.length - 1];
+    const last = MANUAL_CHANGELOG.find((c) => c.version === 84)!;
     expect(last.note).toContain('never tell a human to expect no email about a deal');
     expect(last.note).toContain('Tell your human to keep it');
     expect(lintEmailCopy(last.note)).toEqual([]);

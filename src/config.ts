@@ -232,6 +232,11 @@ export interface Config {
    *  (default 100) and PUBLIC_TOTALS_INTROS_MIN (default 25); neither may go
    *  below the k floor of 10. Absent on a hand-built config is the defaults. */
   publicTotals?: { postingsMin: number; introsMin: number };
+  /** How many written lines the buying side may have standing on one
+   *  introduction for the seller's human to confirm (domain/confirmLines.ts).
+   *  MAX_CONFIRM_LINES, default 10. Absent on a hand-built config is the
+   *  default. */
+  maxConfirmLines?: number;
 }
 
 export function loadConfig(): Config {
@@ -315,6 +320,7 @@ export function loadConfig(): Config {
     jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
     jevShelf: jevShelfFrom(process.env.JEV_SHELF, envName),
     sealedContact: sealedContactFrom(process.env.SEALED_CONTACT, envName),
+    maxConfirmLines: inRange(process.env.MAX_CONFIRM_LINES, 10, 1, 50, 'MAX_CONFIRM_LINES'),
     publicTotals: {
       // The floor of 10 is the k floor (domain/pulse.ts K_ANON): no public
       // number is ever smaller than it.

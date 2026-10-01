@@ -1054,8 +1054,30 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  * people's own, so the switchboard's last two questions are the ones it asks
  * when they say it is done.
  */
-export const DEAL_AGREED_WHAT_TO_DO =
-  'The deal is agreed and the handover is theirs to arrange. The same record of what was agreed has been sent to both people by email: tell your human to keep theirs. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
+const DEAL_AGREED_LEAD = 'The deal is agreed and the handover is theirs to arrange.';
+const DEAL_AGREED_THEN =
+  'When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
+
+/** The wrap-up with nothing in it about a record. */
+export const DEAL_AGREED_WHAT_TO_DO = `${DEAL_AGREED_LEAD} ${DEAL_AGREED_THEN}`;
+
+/** The one sentence about the record, said only where a record was built. */
+export const DEAL_AGREED_RECORD_SENT =
+  'The same record of what was agreed has been sent to both people by email: tell your human to keep theirs.';
+
+/**
+ * THE WRAP-UP IS TRUE EVERY TIME (2 October 2026). The sentence about the
+ * record used to be part of the wrap-up whatever had happened, so on the rare
+ * acceptance whose record could not be built an assistant told its human to
+ * keep an email that was never sent. The accepted offer now carries the
+ * record's fingerprint (migration 066, set in the statement that accepts it),
+ * and the sentence is said only where it is there.
+ */
+export function dealAgreedWhatToDo(recordSent: boolean): string {
+  return recordSent
+    ? `${DEAL_AGREED_LEAD} ${DEAL_AGREED_RECORD_SENT} ${DEAL_AGREED_THEN}`
+    : DEAL_AGREED_WHAT_TO_DO;
+}
 
 /**
  * THE SAME TWO QUESTIONS WHERE NO FIGURE WAS EVER AGREED (1 October 2026).
@@ -1462,6 +1484,17 @@ export async function getStagePayload(
         new Error(`step must be 'signal', 'details' or 'names' (talking is open_conversation)`),
         { validation: ['step'] },
       );
+  }
+}
+
+/** Whether the accepted figure on this introduction carries a record's
+ *  fingerprint. A read that fails says no: the sentence is left out. */
+async function recordWasSent(matchId: string): Promise<boolean> {
+  try {
+    const { acceptedDeal } = await import('./offers.js');
+    return (await acceptedDeal(matchId)).recordSent;
+  } catch {
+    return false;
   }
 }
 
@@ -1990,6 +2023,23 @@ export async function checkMatches(
         entry.next = 'deal_agreed';
       }
     }
+    // THE WRITTEN LINES on this introduction (domain/confirmLines.ts), beside
+    // the figures and on the same terms: the words wear the other side's
+    // label, and the sentence about them is the switchboard's own. Nothing at
+    // all is added where no line was ever asked. A read that fails costs the
+    // lines this once and nothing else on the sweep.
+    let linesLead: string | undefined;
+    try {
+      const { linesForAgent } = await import('./confirmLines.js');
+      const lines = await linesForAgent(accountId, m);
+      if (lines) {
+        entry.confirmations = lines.confirmations;
+        entry.confirmations_note = lines.note;
+        linesLead = lines.lead;
+      }
+    } catch {
+      linesLead = undefined;
+    }
     if (m.stage >= 2) entry.attributes = await buildAttributes(m, accountId, { unscreened: 'empty' });
     if (m.stage >= 3) {
       try {
@@ -2080,10 +2130,16 @@ export async function checkMatches(
         // called nothing that turn, so nothing we said reached it at that
         // moment; this is the last answer it read before the human wraps up,
         // and it is the one place the two questions can be waiting for it.
-        entry.what_to_do = `${DEAL_AGREED_WHAT_TO_DO} ${
+        entry.what_to_do = `${dealAgreedWhatToDo(await recordWasSent(m.id))} ${
           settlementsConfigured(cfg) ? DEAL_AGREED_PAYMENT_ON : DEAL_AGREED_PAYMENT_OFF
         }`;
         break;
+    }
+    // NO DOOR ANSWERS "NOTHING" WHILE SOMETHING WAITS. A line waiting on this
+    // human, or one of theirs that was not confirmed, rides the lead sentence
+    // as one short sentence more; the lines themselves are beside it.
+    if (linesLead && entry.note?.text && entry.next !== 'deal_agreed') {
+      entry.note = sbNote(`${entry.note.text} ${linesLead}`);
     }
     out.push(entry);
   }

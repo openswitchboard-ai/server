@@ -40,7 +40,7 @@
  * so, and the agent guidance tells an agent to relay a message the moment it
  * collects one.
  */
-import { DEAL_AGREED_WHAT_TO_DO, WRAP_UP_WHAT_TO_DO } from './matches.js';
+import { WRAP_UP_WHAT_TO_DO, dealAgreedWhatToDo } from './matches.js';
 import { getPool } from '../db.js';
 import { decryptForChannel, encryptForChannel, generateChannelKey } from '../crypto.js';
 import {
@@ -648,7 +648,7 @@ export async function sweepExpiredChannelMessages(): Promise<{
 /**
  * THE WRAP-UP, WHEREVER THE ASSISTANT LOOKS (29 September 2026). Once a figure
  * is accepted, the sweep entry says what to do when the human says it is done
- * (DEAL_AGREED_WHAT_TO_DO). But an assistant usually answers "we're all
+ * (dealAgreedWhatToDo). But an assistant usually answers "we're all
  * sorted" from memory, and the last thing it read was a message it sent or
  * collected, so two rehearsals in three the buyer's assistant said "nice find"
  * and never asked how it went. The same instruction now rides on those answers
@@ -656,11 +656,11 @@ export async function sweepExpiredChannelMessages(): Promise<{
  */
 async function wrapUpFor(matchId: string): Promise<{ what_to_do?: string }> {
   try {
-    const r = await getPool().query(
-      `SELECT 1 FROM offers WHERE match_id = $1 AND state = 'accepted-by-human' LIMIT 1`,
-      [matchId],
-    );
-    if (r.rowCount) return { what_to_do: DEAL_AGREED_WHAT_TO_DO };
+    // The record sentence rides only where the accepted figure carries a
+    // record's fingerprint (matches.ts, dealAgreedWhatToDo).
+    const { acceptedDeal } = await import('./offers.js');
+    const deal = await acceptedDeal(matchId);
+    if (deal.agreed) return { what_to_do: dealAgreedWhatToDo(deal.recordSent) };
     // No figure agreed: the same questions once either posting is taken down
     // (WRAP_UP_WHAT_TO_DO in domain/matches.ts).
     const down = await getPool().query(

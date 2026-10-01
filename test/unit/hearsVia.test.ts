@@ -60,6 +60,7 @@ import * as db from '../../src/db.js';
 import * as accounts from '../../src/domain/accounts.js';
 import * as arrangement from '../../src/domain/arrangement.js';
 import { say } from '../../src/domain/lanes.js';
+import * as receiptModule from '../../src/domain/receipt.js';
 import * as offers from '../../src/domain/offers.js';
 import {
   NUDGE_COALESCE_MINUTES,
@@ -122,6 +123,16 @@ const theMatch = () => ({
   state: 'open',
   channel_id: CHANNEL,
   opened_at: new Date('2026-09-09T00:00:00Z'),
+});
+
+/**
+ * Accepting an offer runs inside one short transaction on a connection of its
+ * own (domain/confirmLines.ts, withIntroductionLocked), so the stand-in pool
+ * hands out a connection that answers exactly as the pool does.
+ */
+const withConnect = (p: any) => ({
+  ...p,
+  connect: async () => ({ query: p.query, release: () => {} }),
 });
 
 function fakePool() {
@@ -245,7 +256,7 @@ beforeEach(() => {
     notify: new Map(),
     clockSkewMs: 0,
   };
-  vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
+  vi.spyOn(db, 'getPool').mockReturnValue(withConnect(fakePool()));
   vi.spyOn(sqs, 'send').mockReset().mockResolvedValue({} as any);
   vi.mocked(writeConsentEvent).mockClear();
   vi.mocked(sendOfferOnTheTableEmail).mockClear();
@@ -493,11 +504,14 @@ describe('a figure a human types on their page reaches the other human', () => {
 
 // ---------------------------------------------------------------------------
 // Since 2 October 2026 an acceptance sends BOTH people the record of what was
-// agreed (receipt.test.ts). This world's postings carry no screened words, so
-// no record can be built here and the acceptance takes the fallback road: the
-// old notice, to the person whose figure it was. That road is what is held.
+// agreed (receipt.test.ts), and a record is built even where the posting has
+// no screened words to show. The fallback road is what is left for a genuine
+// failure: the record cannot be built at all, and the person whose figure it
+// was gets the old notice. That road is what is held here, so the record's
+// builder is made to fail.
 describe('an acceptance reaches the person whose figure it was', () => {
   beforeEach(async () => {
+    vi.spyOn(receiptModule, 'buildReceipt').mockRejectedValue(new Error('database down'));
     await offers.proposeOffer(
       cfg,
       ANA,

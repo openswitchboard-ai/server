@@ -78,10 +78,23 @@ export function isMoneyAction(action: string): boolean {
  */
 export const ACCOUNT_DELETE_ACTION = 'account-delete';
 
-/** Every press that ignores the window: the money presses, and deletion. */
+/**
+ * CONFIRMING IN WRITING TAKES A FRESH CEREMONY TOO (2 October 2026).
+ *
+ * A seller ticking what the buyer asked them to confirm puts their word on
+ * the record of a deal (domain/confirmLines.ts). On the pages that send or
+ * take a figure the money press already covers it; on the page of its own it
+ * is held to the same rule, so a session left open cannot put somebody's
+ * word on a record for them.
+ */
+export const LINES_CONFIRM_ACTION = 'lines-confirm';
+
+/** Every press that ignores the window: the money presses, deletion, and
+ *  confirming in writing. */
 export const FRESH_CEREMONY_ACTIONS: ReadonlySet<string> = new Set([
   ...MONEY_ACTIONS,
   ACCOUNT_DELETE_ACTION,
+  LINES_CONFIRM_ACTION,
 ]);
 
 export function isFreshCeremonyAction(action: string): boolean {

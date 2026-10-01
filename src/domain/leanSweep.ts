@@ -99,6 +99,14 @@ export function compactCandidate(e: any): boolean {
   if (!e.conversation || e.conversation.messages_waiting !== 0) return false;
   if (e.offer || e.settlement || e.mutual_blocked || e.line || e.price_note || e.best_offers) return false;
   if (e.contact_details) return false;
+  // A written line still waiting on an answer, or answered no, is something
+  // for a human to deal with (domain/confirmLines.ts).
+  if (
+    Array.isArray(e.confirmations) &&
+    e.confirmations.some((l: any) => l?.state === 'asked' || l?.state === 'declined')
+  ) {
+    return false;
+  }
   if (Array.isArray(e.offers) && e.offers.some((l: any) => LIVE_OFFER.has(l?.state))) return false;
   return true;
 }

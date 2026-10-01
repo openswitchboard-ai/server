@@ -1211,6 +1211,62 @@ export interface OneQuestionView {
    *  about what happened. Optional to fill in — a report with nothing typed in
    *  it still stands, because the thing that matters is that somebody said so. */
   collectReason?: { label: string; hint: string; value: string; maxLength: number };
+  /** The press ignores the window without moving money: confirming in
+   *  writing on the page of its own (credentials.ts LINES_CONFIRM_ACTION). */
+  fresh?: boolean;
+  /** WRITTEN LINES on this introduction (domain/confirmLines.ts). */
+  lines?: OneQuestionLines;
+}
+
+/**
+ * The written lines a one-question page carries.
+ *
+ * 'answer' is the seller's page: every line still to be answered is a box,
+ * unticked unless this is a redraw after a refused PIN, with the buyer's
+ * words shown as the buyer's. The ones already confirmed are listed plainly
+ * above them. One hidden field names every line that has a box, so the press
+ * says which lines this page showed and a line asked a moment later is never
+ * taken as answered no.
+ *
+ * 'read' is the buyer's page: the lines the seller has confirmed, listed, so
+ * what the page shows at the press is what the record will say.
+ *
+ * Every line is somebody's free text. It is escaped, set inside quotation
+ * marks, and labelled as theirs; none of it is ever the switchboard's voice.
+ */
+export interface OneQuestionLines {
+  mode: 'answer' | 'read';
+  heading: string;
+  intro: string;
+  /** The label in front of each line's words: whose they are. */
+  label: string;
+  /** In 'answer' mode: the label in front of one already confirmed. */
+  doneLabel?: string;
+  items: { id: string; words: string; state: 'asked' | 'confirmed' | 'declined'; ticked?: boolean }[];
+}
+
+function linesBlock(l: OneQuestionLines | undefined): string {
+  if (!l || !l.items.length) return '';
+  const said = (label: string, words: string) => `${esc(label)} “${esc(words)}”`;
+  if (l.mode === 'read') {
+    return `<h2>${esc(l.heading)}</h2>
+<p class="small">${esc(l.intro)}</p>
+${l.items.map((i) => `<p class="small">${said(l.label, i.words)}</p>`).join('\n')}`;
+  }
+  const done = l.items.filter((i) => i.state === 'confirmed');
+  const open = l.items.filter((i) => i.state !== 'confirmed');
+  return `<h2>${esc(l.heading)}</h2>
+<p class="small">${esc(l.intro)}</p>
+${done.map((i) => `<p class="small muted">${said(l.doneLabel ?? l.label, i.words)}</p>`).join('\n')}
+<input type="hidden" name="lines_shown" value="${esc(open.map((i) => i.id).join(','))}">
+${open
+  .map(
+    (i) => `<div class="consent-box">
+    <label><input type="checkbox" name="line_${esc(i.id)}" value="yes"${i.ticked ? ' checked' : ''}>
+    ${said(l.label, i.words)}</label>
+  </div>`,
+  )
+  .join('\n')}`;
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
@@ -1220,7 +1276,9 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
     ? { hasPin: false, hasPasskey: false, elevated: true }
     : v.money
       ? moneyCeremony(v)
-      : { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated };
+      : v.fresh
+        ? freshCeremony(v)
+        : { hasPin: v.hasPin, hasPasskey: v.hasPasskey, elevated: v.elevated };
   const collect = v.collectProfile
     ? `<h2>What should we share?</h2>
        <p class="small">The other side sees a first name and a suburb. That is the whole of it.
@@ -1252,6 +1310,7 @@ ${detail}
   ${hidden}
   ${collect}
   ${reason}
+  ${linesBlock(v.lines)}
   ${v.needsPin ? ceremonyField(c, 'q') : ''}
   <div class="actions">
   ${ceremonySubmit(c, { formId: 'oneQuestion', label: v.yesLabel, className: 'approve', name: 'decision', value: 'yes' })}

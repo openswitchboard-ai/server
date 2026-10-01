@@ -321,6 +321,8 @@ export function openRequestLabel(action: string, thing?: string): string {
       return 'Pick where your posting goes';
     case 'contact-send':
       return `Send your contact details${on}`;
+    case 'lines-confirm':
+      return `Confirm what the buyer asked${on}`;
     default:
       return 'Something is waiting for you';
   }
@@ -976,7 +978,14 @@ export interface MatchOffersView {
   story?: MatchStep[];
   /** The account's IANA zone for those times, where one is set. */
   timezone?: string | null;
+  /** True where this person is the seller and the buyer has asked them to
+   *  confirm something in writing that is still unconfirmed. */
+  linesToConfirm?: boolean;
 }
+
+/** The line on the match page that leads to the seller's boxes. */
+export const LINES_TO_CONFIRM_LINE = 'The buyer has asked you to confirm something in writing.';
+export const LINES_TO_CONFIRM_LINK = 'See what they asked';
 
 /**
  * How was that one? The quietest thing on the page, at the very foot of it.
@@ -1110,6 +1119,11 @@ ${foldedDetail('Change your number', form)}`
 ${v.theirs ? `<p class="muted">${esc(v.theirs)}</p>` : ''}
 ${errBox(error)}
 ${notice ? `<div class="note">${esc(notice)}</div>` : ''}
+${
+  v.linesToConfirm
+    ? `<p class="note">${esc(LINES_TO_CONFIRM_LINE)} <a href="/approvals/confirm/${esc(v.matchId)}">${esc(LINES_TO_CONFIRM_LINK)}</a></p>`
+    : ''
+}
 ${reply}
 ${v.story?.length ? `<h2>What has happened</h2>
 ${timelineHtml(v.story, { timezone: v.timezone })}` : ''}

@@ -49,7 +49,13 @@ export type ApprovalAction =
    *  (domain/sealedContact.ts). Bound to one introduction at mint time. Like
    *  the photo page it has a page of its own, because the person types before
    *  they press, and it is never burnt on the view. */
-  | 'contact-send';
+  | 'contact-send'
+  /** Confirm in writing what the buying side asked about, on a page of its
+   *  own for when the seller has no figure to send or take
+   *  (domain/confirmLines.ts). Bound to one introduction at mint time. It is
+   *  the one-question page with boxes on it, and it takes the PIN or the
+   *  passkey at the press as a money press does. */
+  | 'lines-confirm';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
@@ -89,6 +95,9 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   // and it takes the same credential the rest of them take: the press is the
   // whole of the consent it grants, so it has to be the human's own.
   'conversation-renew',
+  // Confirming written lines, from 2 October 2026: the same page with a box
+  // to tick beside each line, and the press is the seller's own.
+  'lines-confirm',
 ];
 
 export function isOneQuestionAction(a: string): a is ApprovalAction {
@@ -250,7 +259,13 @@ export async function consumeLink(id: string): Promise<boolean> {
   return !!r.rowCount;
 }
 
-export async function recordLinkDecision(id: string, decision: 'approved' | 'declined'): Promise<void> {
+export async function recordLinkDecision(
+  id: string,
+  // 'not-agreed': a press that landed and saved what it said, on which
+  // nothing was agreed (a seller's Accept with a written line left
+  // unconfirmed; domain/confirmLines.ts).
+  decision: 'approved' | 'declined' | 'not-agreed',
+): Promise<void> {
   await getPool().query('UPDATE approval_links SET decision = $2 WHERE id = $1', [id, decision]);
 }
 
@@ -278,6 +293,7 @@ export const OPENABLE_ACTIONS: ApprovalAction[] = [
   'report',
   'shelf-pick',
   'contact-send',
+  'lines-confirm',
 ];
 
 export interface OpenLink {
@@ -309,7 +325,7 @@ export async function openLinksFor(accountId: string): Promise<OpenLink[]> {
             COALESCE(m.id, om.id) AS match_id
        FROM approval_links a
        LEFT JOIN matches m ON m.id = a.ref_id
-             AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report','contact-send')
+             AND a.action IN ('conversation-photo','stage3-disclosure','offer-send','conversation-renew','report','contact-send','lines-confirm')
        LEFT JOIN offers o ON a.action = 'offer-accept' AND o.id = a.ref_id
        LEFT JOIN matches om ON om.id = o.match_id
        LEFT JOIN cards c ON a.action = 'negotiation-auto' AND c.id = a.ref_id

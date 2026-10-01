@@ -91,6 +91,11 @@
  *   offers .................. KEEP (money and negotiation record). Pending
  *                             ones this account made are withdrawn; the
  *                             message words erased unless held.
+ *   confirm_lines ........... KEEP rows, as offers are kept (the record of
+ *                             what was asked and answered on a deal). Lines
+ *                             this account asked that nobody has answered
+ *                             are taken off; the words this account wrote
+ *                             erased unless held.
  *   offer_drafts ............ ERASE.
  *   settlements,
  *   settlement_evidence,
@@ -122,6 +127,10 @@
  *   the decrypt audit (WORM)  KEEP.
  */
 import { ACCOUNT_DELETION_SQL as SEALED_CONTACT_DELETION_SQL } from './sealedContact.js';
+import {
+  ACCOUNT_DELETION_ERASE_SQL as LINES_ERASE_SQL,
+  ACCOUNT_DELETION_WITHDRAW_SQL as LINES_WITHDRAW_SQL,
+} from './confirmLines.js';
 import { getPool } from '../db.js';
 import { encryptField, writeConsentEvent } from '../crypto.js';
 import { emailHashes, getAccount } from './accounts.js';
@@ -382,6 +391,10 @@ export async function deleteAccount(
         WHERE proposer_account = $1 AND state IN ('proposed', 'awaiting-human')`,
     );
 
+    // Written lines, the same way: the ones this account asked that nobody
+    // has answered are taken off. Their words come off below.
+    await q(LINES_WITHDRAW_SQL);
+
     // Engine and eval rows that quote the postings.
     await q(
       `DELETE FROM near_misses
@@ -409,6 +422,7 @@ export async function deleteAccount(
             AND NOT (match_id = ANY($2::uuid[]))`,
         [accountId, heldMatches],
       );
+      await q(LINES_ERASE_SQL, [accountId, heldMatches]);
       // The words, figures and place of every posting, except those on an
       // introduction under a hold.
       await q(

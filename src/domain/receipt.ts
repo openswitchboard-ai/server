@@ -12,8 +12,8 @@
  *
  *   1. A short block of plain facts is built, THE SAME BLOCK FOR BOTH PEOPLE:
  *      when, the thing as the seller posted it, the amount, the note that rode
- *      with the offer, and who the two are in as much as each has already been
- *      told about the other.
+ *      with the offer, the written lines the seller confirmed, and who the two
+ *      are in as much as each has already been told about the other.
  *   2. The block is fingerprinted: SHA-256 over its canonical form.
  *   3. The fingerprint goes in the locked record beside the press, and the
  *      block goes to both people by email. The switchboard keeps the
@@ -32,6 +32,18 @@
  * already pressed the names step on this introduction, checked against the
  * recorded presses themselves, the same hard gate buildMutual uses.
  *
+ * THE LINES THE SELLER CONFIRMED (domain/confirmLines.ts) are in the block,
+ * one per line, in the order they were asked. Only confirmed ones: a line
+ * that was declined, taken off or never answered is not on the record.
+ *
+ * A RECORD IS BUILT WHENEVER AN OFFER IS ACCEPTED. Where the details step
+ * would refuse the buyer right now (the posting has run out, or has no
+ * screened words to show), the block is thinner and no less a record: the
+ * thing is named by its shelf, the "as the seller posted it" line is left
+ * out, and everything else stands. Nothing is read off the live columns to
+ * fill the gap. Only a genuine failure, a database that will not answer,
+ * leaves an acceptance without one.
+ *
  * THE CANONICAL FORM, which is the whole of what makes the fingerprint
  * reproducible: UTF-8, Unicode NFC, one fact per line, LF between lines, no
  * whitespace at the end of any line, and no newline after the last line. The
@@ -49,6 +61,7 @@ import { offerAmountInWords } from '../email/templates.js';
 import { getAccount } from './accounts.js';
 import { categoryLeafLabel, categoryPhrase } from './matchRules.js';
 import type { MatchRow } from './matches.js';
+import { OsbError } from '../protocol.js';
 
 /** One person as the record names them: both halves, or the record uses roles. */
 export interface ReceiptPerson {
@@ -70,6 +83,9 @@ export interface ReceiptFacts {
   offeredBy: 'buyer' | 'seller';
   /** The note that rode with the accepted offer, in its writer's own words. */
   note?: string;
+  /** The lines the buyer asked and the seller's human confirmed with their
+   *  own press, in the order asked. The buyer's words. */
+  confirmed?: string[];
   /** Present only where both have already shared a first name and a suburb. */
   people?: { buyer: ReceiptPerson; seller: ReceiptPerson };
 }
@@ -150,6 +166,12 @@ export function receiptBlock(f: ReceiptFacts): string {
   const note = oneLine(f.note);
   // Their own words, inside quotation marks, said to be theirs.
   if (note) lines.push(`Note the ${f.offeredBy} sent with the offer: "${note}"`);
+  // One line each, in the order asked. The words are the buyer's and the
+  // confirming was the seller's, and the line says both.
+  for (const raw of f.confirmed ?? []) {
+    const line = oneLine(raw);
+    if (line) lines.push(`Asked by the buyer, confirmed by the seller: "${line}"`);
+  }
   if (f.people) {
     lines.push(`Buyer: ${oneLine(f.people.buyer.firstName)}, ${oneLine(f.people.buyer.locality)}`);
     lines.push(`Seller: ${oneLine(f.people.seller.firstName)}, ${oneLine(f.people.seller.locality)}`);
@@ -217,20 +239,33 @@ async function peopleIfShared(
  * Build the record for one accepted offer.
  *
  * THROWS where no honest record can be made: a swap (nobody is buying and
- * there is no figure), or a posting whose details the buyer could not be shown
- * right now (buildAttributes refuses, and so does this). The caller treats a
+ * there is no figure), or a genuine failure underneath. The caller treats a
  * throw as "no record this time" and records the acceptance without one.
+ *
+ * A posting whose details the buyer could not be shown right now is NOT a
+ * throw: the details step's own refusal is caught, and the block is built
+ * without the seller's words (see the top of this file).
  */
 export async function buildReceipt(
   m: MatchRow,
   o: { amount: string | number; ccy: string; proposer_account: string; message?: unknown },
   at: Date = new Date(),
+  extra: { confirmed?: string[] } = {},
 ): Promise<Receipt> {
   if (m.swap) throw new Error('receipt: a swap has no figure and no record of one');
   // The seller's posting AS THE BUYER IS ALREADY SHOWN IT: the details step,
-  // asked for the buyer. Every gate on that step is a gate on this.
+  // asked for the buyer. Every gate on that step is a gate on what this may
+  // say about the posting, so where the step refuses, the record says nothing
+  // of the posting beyond its shelf. A refusal is one of the protocol's own
+  // answers; anything else that goes wrong is a failure and is thrown.
   const { buildAttributes } = await import('./matches.js');
-  const shown: any = await buildAttributes(m, m.account_want);
+  let shown: any;
+  try {
+    shown = await buildAttributes(m, m.account_want);
+  } catch (e) {
+    if (!(e instanceof OsbError)) throw e;
+    shown = undefined;
+  }
   // The seller's own words for the thing are the first of their notes on that
   // payload (matchStory.ts reads it the same way for the page).
   const theirWords = Array.isArray(shown?.notes)
@@ -247,6 +282,7 @@ export async function buildReceipt(
   const { offerMessageText } = await import('./offers.js');
   const note = offerMessageText(o.message) ?? undefined;
   const people = await peopleIfShared(m);
+  const confirmed = (extra.confirmed ?? []).map(oneLine).filter(Boolean);
   return receiptFrom({
     at,
     thing,
@@ -255,6 +291,7 @@ export async function buildReceipt(
     ccy: o.ccy,
     offeredBy: o.proposer_account === m.account_want ? 'buyer' : 'seller',
     ...(note ? { note } : {}),
+    ...(confirmed.length ? { confirmed } : {}),
     ...(people ? { people } : {}),
   });
 }

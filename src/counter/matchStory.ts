@@ -147,6 +147,10 @@ ${actions ? `<div class="mb-actions">${actions}</div>` : ''}
 // Grouping what is waiting by the match it belongs to.
 // ---------------------------------------------------------------------------
 
+/** A seller with something to confirm in writing: the step and its button. */
+export const CONFIRM_WAITING_STEP = 'The buyer has asked you to confirm something in writing';
+export const CONFIRM_WAITING_LABEL = 'See what they asked';
+
 /** The link actions whose ref is the match itself. */
 const MATCH_REF_ACTIONS = new Set([
   'conversation-photo',
@@ -155,6 +159,7 @@ const MATCH_REF_ACTIONS = new Set([
   'conversation-renew',
   'report',
   'contact-send',
+  'lines-confirm',
 ]);
 
 export interface WaitingInputs {
@@ -173,6 +178,10 @@ export interface WaitingInputs {
   /** This person's own offers still open, so a send link for the same figure
    *  reads as the note it now is. */
   ownOpenOffers?: { match_id: string; amount: string | number; ccy: string }[];
+  /** Introductions on which the buyer has asked this person, the seller, to
+   *  confirm something in writing that they have not answered yet
+   *  (domain/confirmLines.ts). */
+  confirmations?: { match_id: string; asked_at?: Date }[];
 }
 
 export interface WaitingForMatch {
@@ -300,6 +309,15 @@ export function groupWaitingByMatch(
         g.steps.push(waitingStep(l.created_at, 'Your report is ready to finish'));
         addAction(g, { href, label: 'Finish your report' });
         break;
+      case 'lines-confirm':
+        // The step and the button come from the lines themselves, below, so
+        // the page says it once whichever road reached it first. A link whose
+        // lines are not in that read still gets its button.
+        if (!(w.confirmations ?? []).some((c) => String(c.match_id) === matchId)) {
+          g.steps.push(waitingStep(l.created_at, CONFIRM_WAITING_STEP));
+          addAction(g, { href, label: CONFIRM_WAITING_LABEL });
+        }
+        break;
       default:
         addAction(g, { href, label: 'Open it' });
     }
@@ -313,6 +331,12 @@ export function groupWaitingByMatch(
     if (!g.actions.some((a) => a.label === 'Share your name')) {
       addAction(g, { href: `/approvals/match/${d.match_id}`, label: 'Share your name' });
     }
+  }
+
+  for (const c of w.confirmations ?? []) {
+    const g = slot(String(c.match_id));
+    g.steps.push(waitingStep(c.asked_at, CONFIRM_WAITING_STEP));
+    addAction(g, { href: `/approvals/confirm/${c.match_id}`, label: CONFIRM_WAITING_LABEL });
   }
 
   for (const st of w.settlements) {
@@ -364,6 +388,7 @@ export function dropInLine<W extends WaitingInputs>(w: W, inLine: Set<string>): 
     disclosures: w.disclosures.filter((d) => keep(d.match_id)),
     settlements: w.settlements.filter((st) => keep(st.match_id)),
     messages: w.messages.filter((m) => keep(m.match_id)),
+    ...(w.confirmations ? { confirmations: w.confirmations.filter((c) => keep(c.match_id)) } : {}),
     ...(w.ownOpenOffers ? { ownOpenOffers: w.ownOpenOffers.filter((o) => keep(o.match_id)) } : {}),
   };
 }

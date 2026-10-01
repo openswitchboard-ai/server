@@ -26,6 +26,16 @@ import { runIntake } from '../intake/pipe.js';
 import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.js';
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import {
+  BUYER_BLOCKED_WORDS,
+  SELLER_NOT_AGREED_WORDS,
+  applyLinePress,
+  confirmedWords,
+  standingLines,
+  unconfirmed,
+  withIntroductionLocked,
+  type LinePress,
+} from './confirmLines.js';
+import {
   MAX_OFFERS_PER_MATCH_PER_DAY,
   OFFER_RATE_GUARD_SQL,
   checkOfferRate,
@@ -956,30 +966,40 @@ export async function acceptOfferByHuman(
   humanAccountId: string,
   recordedVia: AcceptRecordedVia,
   cfg?: Config,
+  opts: {
+    /** What the page this was pressed on said about the written lines on it
+     *  (domain/confirmLines.ts). Read only where the person pressing is the
+     *  seller; anybody else's is ignored. */
+    lines?: LinePress;
+  } = {},
 ) {
   if (!isAcceptRecordedVia(recordedVia)) {
     throw new Error(
       'acceptOfferByHuman: an accept is only recorded from the human\'s own press (recorded_via must be \'counter\')',
     );
   }
-  const o = await loadOffer(offerId);
   // Humans hold every gate. A live offer is theirs to accept from their own
   // page whether or not their agent has brought it to them yet — the parking
   // step (send_to_human) is the agent's advice arriving, never a lock on the
   // human's yes. Anything past live is a "not yet" to explain, never a 500.
-  if (o.state !== 'awaiting-human' && o.state !== 'proposed') {
-    throw new OsbError('NOT_UNLOCKED_YET', {
-      human_action: `This offer is no longer open to accept (it is ${o.state}).`,
-    });
-  }
+  //
   // AND ITS OWN CLOCK. An offer carries an expiry, send_to_human has always
   // honoured it, and the two accept paths never looked at it — so a figure
   // whose time was up could still be taken, weeks later, by a human on their
   // own page. The state column never moves on its own; the date is the only
   // thing that says an offer has run out.
-  if (offerHasExpired(o)) {
-    throw new OsbError('NOT_UNLOCKED_YET', { human_action: OFFER_EXPIRED_WORDS });
-  }
+  const stillOpen = (row: OfferRow) => {
+    if (row.state !== 'awaiting-human' && row.state !== 'proposed') {
+      throw new OsbError('NOT_UNLOCKED_YET', {
+        human_action: `This offer is no longer open to accept (it is ${row.state}).`,
+      });
+    }
+    if (offerHasExpired(row)) {
+      throw new OsbError('NOT_UNLOCKED_YET', { human_action: OFFER_EXPIRED_WORDS });
+    }
+  };
+  const o = await loadOffer(offerId);
+  stillOpen(o);
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('introduction missing');
   const side = sideOf(m, humanAccountId);
@@ -993,29 +1013,69 @@ export async function acceptOfferByHuman(
   // human's own want or have was contested. It is gone (migration 030): a
   // human's yes is never blocked by how many other people are about.
   //
-  // THE RECORD OF WHAT WAS AGREED (domain/receipt.ts). Built before the press
-  // is written down, so its fingerprint can sit in the locked log beside the
-  // press. Best-effort, exactly as the mail is: a record that cannot be built
-  // is no reason to refuse a human's yes, and the event is then written
-  // without the field.
-  const receipt = await receiptOrNothing(m, o);
-  await writeConsentEvent({
-    event: 'offer-accepted-by-human',
-    offer_id: offerId,
-    match_id: o.match_id,
-    account_id: humanAccountId,
-    recorded_via: recordedVia,
-    ...(receipt ? { receipt_sha256: receipt.sha256 } : {}),
-  });
-  await getPool().query(
-    `INSERT INTO consent_tokens (match_id, account_id, kind, recorded_via)
+  // THE RULE ABOUT WRITTEN LINES, AND WHY IT IS IN HERE (2 October 2026).
+  // An offer is accepted only with every line the buyer asked confirmed by
+  // the seller's human (domain/confirmLines.ts). That is a real gate, so it is
+  // held in the accept itself and nowhere a caller could forget it, and it is
+  // held UNDER THE INTRODUCTION'S LOCK: asking a line, taking one off,
+  // answering one and this acceptance all take the same lock first, and every
+  // read below is a fresh statement after it. So there is no moment between
+  // "every line is confirmed" and "the offer is accepted" for a line to be
+  // asked or an answer to change in. The lock is keyed on this one
+  // introduction, so on a best offer taking one buyer's number is held up by
+  // that buyer's lines and by nobody else's.
+  //
+  // Where the gate refuses, the transaction still COMMITS: the seller's
+  // answers from this press are saved, and the refusal is thrown after.
+  const outcome = await withIntroductionLocked(m.id, async (client) => {
+    // The offer again, now that nothing else can move it: two presses on one
+    // figure, or a press racing a withdrawal, are settled here.
+    const again = await client.query('SELECT * FROM offers WHERE id = $1', [offerId]);
+    const current: OfferRow = again.rows[0] ?? o;
+    stillOpen(current);
+    // The seller's boxes, where this press came off a page that had any.
+    await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
+    const lines = await standingLines(m.id, client);
+    if (unconfirmed(lines).length) {
+      return {
+        refused: new OsbError('NOT_UNLOCKED_YET', {
+          human_action:
+            humanAccountId === m.account_have ? SELLER_NOT_AGREED_WORDS : BUYER_BLOCKED_WORDS,
+        }),
+      };
+    }
+    // THE RECORD OF WHAT WAS AGREED (domain/receipt.ts). Built before the
+    // press is written down, so its fingerprint can sit in the locked log
+    // beside the press and on the offer itself. Best-effort, exactly as the
+    // mail is: a record that cannot be built is no reason to refuse a human's
+    // yes, and the event is then written without the field.
+    const receipt = await receiptOrNothing(m, current, confirmedWords(lines));
+    await writeConsentEvent({
+      event: 'offer-accepted-by-human',
+      offer_id: offerId,
+      match_id: o.match_id,
+      account_id: humanAccountId,
+      recorded_via: recordedVia,
+      ...(receipt ? { receipt_sha256: receipt.sha256 } : {}),
+    });
+    await client.query(
+      `INSERT INTO consent_tokens (match_id, account_id, kind, recorded_via)
      VALUES ($1,$2,'offer-accept',$3) ON CONFLICT (match_id, account_id, kind) DO NOTHING`,
-    [o.match_id, humanAccountId, recordedVia],
-  );
-  const r = await getPool().query(
-    `UPDATE offers SET state='accepted-by-human', updated_at=now() WHERE id=$1 RETURNING *`,
-    [offerId],
-  );
+      [o.match_id, humanAccountId, recordedVia],
+    );
+    // The fingerprint goes on the row in the statement that accepts it, so
+    // "this deal has a record" is a fact about the offer and never a guess
+    // (domain/matches.ts, dealAgreedWhatToDo).
+    const r = await client.query(
+      `UPDATE offers SET state='accepted-by-human', receipt_sha256=$2, updated_at=now() WHERE id=$1 RETURNING *`,
+      [offerId, receipt?.sha256 ?? null],
+    );
+    return { accepted: r.rows[0] as OfferRow, receipt };
+  });
+  if ('refused' in outcome) {
+    throw Object.assign(outcome.refused as OsbError, { linesNotConfirmed: true });
+  }
+  const { accepted, receipt } = outcome;
   // Best offer: taking one is choosing, so the rest are declined in the same
   // breath and their people are told, plainly, that it went elsewhere.
   await declineTheRest(offerId, o.match_id);
@@ -1024,20 +1084,40 @@ export async function acceptOfferByHuman(
   // could be built, the person whose figure this was is still owed the news,
   // and gets it the way they always did.
   if (cfg) {
-    if (receipt) await sendReceiptToBoth(cfg, m, r.rows[0], receipt);
-    else await notifyProposerOfAcceptance(cfg, r.rows[0]);
+    if (receipt) await sendReceiptToBoth(cfg, m, accepted, receipt);
+    else await notifyProposerOfAcceptance(cfg, accepted);
   }
-  return serializeOffer(r.rows[0]);
+  return serializeOffer(accepted);
+}
+
+/**
+ * Is there an accepted figure on this introduction, and does it carry the
+ * fingerprint of a record? The wrap-up reads this, so it says a record has
+ * been sent only where one was built (domain/matches.ts, dealAgreedWhatToDo).
+ */
+export async function acceptedDeal(
+  matchId: string,
+): Promise<{ agreed: boolean; recordSent: boolean }> {
+  const r = await getPool().query(
+    `SELECT receipt_sha256 FROM offers WHERE match_id = $1 AND state = 'accepted-by-human' LIMIT 1`,
+    [matchId],
+  );
+  const row = r.rows[0];
+  return { agreed: !!row, recordSent: !!row?.receipt_sha256 };
 }
 
 /**
  * The record for this acceptance, or nothing. Never throws: whatever goes
  * wrong in building it, the acceptance is recorded and stands.
  */
-async function receiptOrNothing(m: MatchRow, o: OfferRow): Promise<Receipt | undefined> {
+async function receiptOrNothing(
+  m: MatchRow,
+  o: OfferRow,
+  confirmed: string[] = [],
+): Promise<Receipt | undefined> {
   try {
     const { buildReceipt } = await import('./receipt.js');
-    return await buildReceipt(m, o);
+    return await buildReceipt(m, o, new Date(), { confirmed });
   } catch (err) {
     console.warn('receipt could not be built; the acceptance is recorded without one', err);
     return undefined;

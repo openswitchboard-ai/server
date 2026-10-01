@@ -216,6 +216,7 @@ describe('every rule the old one string carried is still reachable', () => {
  */
 const DESCRIPTION_CAP = 1400;
 const CHECK_IN_CAP = 1800;
+const RESPOND_CAP = 1800;
 
 /** The rule each tool must carry, because each one was broken without it. */
 const MUST_SAY: [string, RegExp][] = [
@@ -244,8 +245,18 @@ describe('the tool descriptions carry the rules and stay inside the budget', () 
       // the switchboard at all. A client that never reads the connect page has
       // nowhere else to learn that (run 11: an assistant asked to find a used
       // part searched four marketplaces and never thought of this one).
+      // respond carries two more rules than it used to (2 October 2026): what
+      // asking for a line in writing does, and that nobody but the seller's
+      // human confirms one. They are on the tool because a client that drops
+      // the connect page has nowhere else to learn them.
       const cap =
-        tool.name === 'check_in' ? CHECK_IN_CAP : tool.name === 'publish_intent' ? 1900 : DESCRIPTION_CAP;
+        tool.name === 'check_in'
+          ? CHECK_IN_CAP
+          : tool.name === 'publish_intent'
+            ? 1900
+            : tool.name === 'respond'
+              ? RESPOND_CAP
+              : DESCRIPTION_CAP;
       expect(tool.description.length, tool.name).toBeLessThanOrEqual(cap);
     }
   });

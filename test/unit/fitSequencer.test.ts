@@ -146,6 +146,16 @@ const gatherOpen = () =>
   world.gatherUntil > new Date() &&
   !world.gatherClosedAt;
 
+/**
+ * Accepting an offer runs inside one short transaction on a connection of its
+ * own (domain/confirmLines.ts, withIntroductionLocked), so the stand-in pool
+ * hands out a connection that answers exactly as the pool does.
+ */
+const withConnect = (p: any) => ({
+  ...p,
+  connect: async () => ({ query: p.query, release: () => {} }),
+});
+
 function fakePool() {
   const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
   return {
@@ -518,7 +528,7 @@ beforeEach(() => {
     away: {},
     summoned: [],
   };
-  vi.spyOn(db, 'getPool').mockReturnValue(fakePool());
+  vi.spyOn(db, 'getPool').mockReturnValue(withConnect(fakePool()));
 });
 
 // ---------------------------------------------------------------------------
