@@ -4949,7 +4949,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         pages.messagePage(
           'Unsubscribed',
           `<p>“When someone comes forward” and “Round-ups and reminders” emails are off.
-Sign-in codes, approvals and security notices keep sending.
+Sign-in codes, approvals, security notices and a record of any deal you agree keep sending.
 Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         ),
       );

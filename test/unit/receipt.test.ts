@@ -19,7 +19,9 @@
  *    email address, and no field name or id;
  *  - a record that cannot be built, or a mail that cannot be sent, leaves the
  *    acceptance recorded;
- *  - a reader with blind mode on gets the bare notice and none of it;
+ *  - everyone gets it: a reader with blind mode on and a reader whose
+ *    assistant brings the news both receive the full block and the same
+ *    fingerprint, and the pages where they choose how to hear say so;
  *  - the template passes the human-copy lint, and somebody else's words inside
  *    the block cannot stop the mail going.
  */
@@ -47,6 +49,7 @@ import { decryptFields, writeConsentEvent } from '../../src/crypto.js';
 import * as db from '../../src/db.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import * as offers from '../../src/domain/offers.js';
+import * as home from '../../src/counter/pagesHome.js';
 import {
   buildReceipt,
   canonicalReceipt,
@@ -687,40 +690,110 @@ describe('the acceptance stands whatever happens to the record', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('a reader with blind mode on gets the bare notice and none of it', () => {
-  it('sends the blind one the fixed notice, and the other one the record', async () => {
-    world.blind[ANA] = true;
-    await accept();
-    const blind = mailTo(ANA)!;
-    expect(blind.subject).toBe(NEWS_NOTICE_SUBJECT);
-    const all = blind.subject + blind.text + blind.html;
-    for (const detail of ['415', 'Trek', 'bike', 'Medium', 'Saturday', 'record starts', 'Beppe']) {
-      expect(all, detail).not.toContain(detail);
-    }
-    // No fingerprint either: nothing in the mail at all.
-    expect(all).not.toContain(acceptEvent().receipt_sha256);
-    expect(all).toContain('Ask your assistant.');
-    // The other person's record is whole, and the locked record matches it.
-    const block = receiptBlockIn(mailTo(BEPPE)!.text)!;
+// EVERYONE GETS THE RECORD (decided 2 October 2026). Blind mode is a setting
+// about how much a notice says, and hears_via is about who brings the news.
+// Neither is a reason to leave somebody without the evidence of what they
+// agreed, so neither is read on this road.
+describe('everyone gets the full record', () => {
+  const fullRecordFor = (who: string) => {
+    const m = mailTo(who)!;
+    expect(m, who).toBeDefined();
+    expect(m.subject).toBe('Deal agreed: your record');
+    const block = receiptBlockIn(m.text)!;
+    expect(block).toContain('What: Trek Marlin 5 mountain bike');
+    expect(block).toContain('Amount agreed: $415 AUD');
     expect(sha256(block)).toBe(acceptEvent().receipt_sha256);
-    expect(world.sends.map((s) => s.template).sort()).toEqual(['deal-agreed', 'receipt']);
-  });
+    expect(m.text).toContain(acceptEvent().receipt_sha256);
+    expect(m.html).toContain(acceptEvent().receipt_sha256);
+    return block;
+  };
 
-  it('a blind reader whose assistant brings the news is sent nothing', async () => {
+  it('a reader with blind mode on gets the whole block and the same fingerprint', async () => {
     world.blind[ANA] = true;
-    world.hearsVia[ANA] = 'assistant';
     await accept();
-    expect(mailTo(ANA)).toBeUndefined();
-    expect(mailTo(BEPPE)).toBeDefined();
-    expect(world.sends.find((s) => s.template === 'deal-agreed')?.status).toBe('suppressed');
+    expect(fullRecordFor(ANA)).toBe(fullRecordFor(BEPPE));
+    expect(world.sends.map((s) => s.template)).toEqual(['receipt', 'receipt']);
+    expect(mailTo(ANA)!.subject).not.toBe(NEWS_NOTICE_SUBJECT);
   });
 
   it('a blind acceptor is treated the same as a blind proposer', async () => {
     world.blind[BEPPE] = true;
     await accept();
-    expect(mailTo(BEPPE)!.subject).toBe(NEWS_NOTICE_SUBJECT);
-    expect(mailTo(BEPPE)!.text).not.toContain('415');
-    expect(receiptBlockIn(mailTo(ANA)!.text)).toBeTruthy();
+    expect(fullRecordFor(BEPPE)).toBe(fullRecordFor(ANA));
+  });
+
+  it('a reader whose assistant brings the news gets the whole block and the same fingerprint', async () => {
+    world.hearsVia[ANA] = 'assistant';
+    await accept();
+    expect(fullRecordFor(ANA)).toBe(fullRecordFor(BEPPE));
+    expect(world.sends.map((s) => s.status)).not.toContain('suppressed');
+  });
+
+  it('blind and hearing through an assistant, both at once, on both sides: still the record', async () => {
+    for (const who of [ANA, BEPPE]) {
+      world.blind[who] = true;
+      world.hearsVia[who] = 'assistant';
+    }
+    await accept();
+    expect(fullRecordFor(ANA)).toBe(fullRecordFor(BEPPE));
+    expect(mails()).toHaveLength(2);
+  });
+
+  it('the fallback notice, where no record could be built, still keeps to the notice rule', async () => {
+    world.screened = false;
+    world.hearsVia[ANA] = 'assistant';
+    await accept();
+    expect(mails()).toHaveLength(0);
+    expect(world.sends).toEqual([{ template: 'deal-agreed', status: 'suppressed' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// People are told this where they choose how to hear from the switchboard.
+describe('the pages say the record is still emailed', () => {
+  it('the onboarding choice says it in one plain line under the options', () => {
+    const html = home.helloPage({ hearsVia: 'assistant', firstName: '', locality: '' });
+    expect(home.ALWAYS_EMAILED_LINE).toBe(
+      'Whichever you pick, you are still emailed sign-in codes, security notices and a record of any deal you agree.',
+    );
+    expect(html).toContain(home.ALWAYS_EMAILED_LINE);
+    expect(html.indexOf(home.ALWAYS_EMAILED_LINE)).toBeGreaterThan(html.indexOf('value="email"'));
+    expect(lintHumanCopy(html)).toEqual([]);
+  });
+
+  it('the settings page has the record in its list of what always sends, once', () => {
+    for (const hearsVia of ['email', 'assistant'] as const) {
+      const html = home.settingsPage({
+        freqMatches: 'immediate',
+        freqDigests: 'weekly',
+        complaintSuppressed: false,
+        emailUnreachable: false,
+        hearsVia,
+      } as any);
+      expect(html).toContain(home.ALWAYS_SEND_LINE);
+      expect(html.split('a record of any deal you agree')).toHaveLength(2);
+      expect(lintHumanCopy(html)).toEqual([]);
+    }
+  });
+
+  it('the spam-hold box and the unsubscribe page list it too', () => {
+    const held = home.settingsPage({
+      freqMatches: 'immediate',
+      freqDigests: 'weekly',
+      complaintSuppressed: true,
+      emailUnreachable: false,
+      hearsVia: 'email',
+    } as any);
+    expect(held.replace(/\s+/g, ' ')).toContain(
+      'except sign-in codes, approvals, security notices and a record of any deal you agree is on hold',
+    );
+    const unsub = home.unsubPage('tok').replace(/\s+/g, ' ');
+    expect(unsub).toContain('security notices and a record of any deal you agree keep sending');
+    expect(lintHumanCopy(unsub)).toEqual([]);
+  });
+
+  it('none of the lines uses an asterisk', () => {
+    expect(home.ALWAYS_EMAILED_LINE + home.ALWAYS_SEND_LINE).not.toContain('*');
   });
 });
 

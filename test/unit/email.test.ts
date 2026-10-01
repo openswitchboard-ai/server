@@ -576,8 +576,9 @@ describe('email templates: render suite', () => {
 // notice email carries NO link and NO button, says what happened in one
 // sentence, and ends "Ask your assistant."
 //
-// Three exemptions, and only three: the verification code, the security
-// notices, and the kill-switch mail. The two footer controls (unsubscribe and
+// Four kinds of mail are not notices, and only four: the verification code,
+// the security notices, the account messages (kill switch, account deleted)
+// and the record of a deal. The two footer controls (unsubscribe and
 // email settings) are on every mail, because any sender has to carry them.
 // ---------------------------------------------------------------------------
 
@@ -588,7 +589,7 @@ describe('the email rule: a notice carries no link and no button', () => {
   const byName = (): Record<string, EmailContent> =>
     Object.fromEntries(allTemplates().map((t) => [t.name, t.content]));
 
-  /** Every rendered template that is not one of the three exemptions. */
+  /** Every rendered template that is not one of the four exemptions. */
   const notices = () =>
     allTemplates().filter(
       (t) =>
@@ -825,7 +826,7 @@ describe('the email rule: a notice carries no link and no button', () => {
     }
   });
 
-  it('the three exemptions keep their links', () => {
+  it('the exemptions that carry a link keep their links', () => {
     const all = byName();
     for (const name of ['verification-register', 'kill-switch-on', 'security-agent-key-created']) {
       expect(hasButton(all[name].html), name).toBe(true);

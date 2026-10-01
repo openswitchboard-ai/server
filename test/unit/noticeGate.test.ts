@@ -5,10 +5,10 @@
  * recipient's hears_via is 'email', and it carries NO link and NO button. It
  * says what happened in one sentence and ends "Ask your assistant."
  *
- * Three exemptions, and only three: the verification code (it is how someone
- * signs in), the security notices, and the kill-switch mail. Those go out
- * whatever hears_via says, because they are about the account rather than
- * about the network.
+ * Four kinds of mail are not notices, and only four: the verification code
+ * (it is how someone signs in), the security notices, the account messages
+ * (the kill-switch mail and the one a deleted account is sent), and the record
+ * of a deal, which both people keep. Those go out whatever hears_via says.
  *
  * Both halves live in email/send.ts rather than at each call site, so a new
  * template cannot quietly opt itself out of either. That is what this suite
@@ -120,7 +120,7 @@ describe('a notice goes only to someone who hears by email', () => {
   });
 });
 
-describe('the three exemptions send whatever hears_via says', () => {
+describe('the four exemptions send whatever hears_via says', () => {
   it('each one goes out to an always-on account, and may carry a link', async () => {
     hearsVia = 'assistant';
     for (const template of EXEMPT_TEMPLATES) {

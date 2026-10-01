@@ -1046,8 +1046,9 @@ async function receiptOrNothing(m: MatchRow, o: OfferRow): Promise<Receipt | und
 
 /**
  * The same record to the two people on this introduction: the one who
- * accepted and the one whose figure it was. One mail each, each on its own
- * try, so one address that will not take mail costs the other person nothing.
+ * accepted and the one whose figure it was. Everyone gets it, however they
+ * hear about the switchboard and whatever their blind-mode setting says
+ * (counter/email.ts, sendReceiptEmail). One mail each, each on its own try, so one address that will not take mail costs the other person nothing.
  * Best-effort throughout: the acceptance is recorded and stands whatever
  * happens here, and the fingerprint is already in the locked log.
  */
@@ -1068,9 +1069,6 @@ async function sendReceiptToBoth(
           offerId: o.id,
           block: receipt.block,
           fingerprint: receipt.sha256,
-          amount: Number(o.amount),
-          ccy: o.ccy,
-          side: accountId === m.account_want ? 'want' : 'have',
         });
       } catch (err) {
         console.warn('receipt email failed; the acceptance stands', err);

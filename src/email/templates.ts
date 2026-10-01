@@ -31,20 +31,22 @@
  * being told something, and the thing they do about it is speak to their
  * assistant.
  *
- * THREE EXEMPTIONS, and only three. A verification code (it is how someone
- * signs in, so the link and the code both belong). A security notice (a new
- * agent, a new key, a changed PIN: the revoke gate keeps its button, the other
- * two carry the guidance as plain text). The kill-switch mail. Those send
- * whatever hears_via says, because they are about the account rather than
- * about the network.
+ * FOUR KINDS OF MAIL ARE NOT NOTICES, and only four. A verification code (it
+ * is how someone signs in, so the link and the code both belong). A security
+ * notice (a new agent, a new key, a changed PIN: the revoke gate keeps its
+ * button, the other two carry the guidance as plain text). The account
+ * messages (the kill-switch mail, and the one mail a deleted account is sent).
+ * And the record of a deal. Those send whatever hears_via says. The first
+ * three are about the account rather than about the network.
  *
- * AND THE RECORD OF A DEAL (2 October 2026). When a human accepts an offer,
- * both people are sent the same block of facts and its fingerprint
- * (domain/receipt.ts, renderReceipt below). It is the one mail whose whole
- * purpose is to be kept and shown to somebody else later, so it cannot be the
- * bare notice and it cannot depend on how a person hears about things. It
- * sends whatever hears_via says and carries no link and no button. A reader
- * with blind mode on still gets the bare 'deal-agreed' notice in its place.
+ * THE RECORD OF A DEAL is the fourth (decided 2 October 2026). When a human
+ * accepts an offer, both people are sent the same block of facts and its
+ * fingerprint (domain/receipt.ts, renderReceipt below). It is the one mail
+ * whose whole purpose is to be kept and shown to somebody else later, so it
+ * cannot be the bare notice and it cannot depend on how a person hears about
+ * things. EVERYONE gets it: an account whose assistant brings the news, and
+ * an account with blind mode on, are sent the full record like anyone else.
+ * It carries no link and no button.
  *
  * The footer keeps the unsubscribe link (RFC 8058 one-click) and the
  * email-settings link, which are required of any sender; nothing else.
@@ -132,8 +134,9 @@ export const NOTICE_TEMPLATES = new Set<string>([
   'settlement-split',
 ]);
 
-/** The three exemptions, by send-log name: they go out whatever hears_via
- *  says, and they may carry a link. */
+/** The four kinds of mail that are not notices, by send-log name: sign-in
+ *  codes, security notices, the account messages and the record of a deal.
+ *  They go out whatever hears_via says, and they may carry a link. */
 export const EXEMPT_TEMPLATES = new Set<string>([
   'verification',
   'kill-switch-on',
@@ -1024,7 +1027,7 @@ export function renderSecurityNotice(
     'contact-opened':
       'Contact details sent to you were just opened on one of your browsers. If you did not open them, remove the browsers you do not recognise on your security page.',
   }[v.event];
-  // A security notice is one of the three exemptions: it goes out whatever
+  // A security notice is one of the four exemptions: it goes out whatever
   // hears_via says, because it is about the account rather than the network.
   // The revoke gate keeps its button — revoking is the thing this mail exists
   // to make possible — and the other two carry the guidance as plain text.

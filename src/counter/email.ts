@@ -245,16 +245,16 @@ export async function sendDealAgreedEmail(
  * The record of a deal, to ONE of the two people. The caller sends it to both
  * (domain/offers.ts), with the same block and the same fingerprint each time.
  *
- * It is not a notice: it goes out however this person hears about the
- * switchboard, because it is theirs to keep and to show (email/templates.ts,
- * the exemptions). De-duped on the offer and the account, so one acceptance
- * raises one record per person however many times its caller runs.
+ * It is not a notice: it is the fourth kind of mail that is not (email/
+ * templates.ts), and it is theirs to keep and to show. EVERYONE GETS IT
+ * (decided 2 October 2026). It goes out when their assistant is the one who
+ * brings them the news, and it goes out whole when the account has blind mode
+ * on: a setting about how much a notice says is no reason to leave somebody
+ * without the evidence of what they agreed. So blind mode is not read here at
+ * all; the account context is asked only for the footer links.
  *
- * BLIND MODE. A reader who asked for emails with nothing in them gets nothing
- * in this one either: the bare 'deal-agreed' notice goes in its place, on the
- * notice rule's own terms, and the block and the fingerprint stay out of their
- * inbox. `side` and the figure are only for that notice's renderer, which
- * drops them when blind.
+ * De-duped on the offer and the account, so one acceptance raises one record
+ * per person however many times its caller runs.
  *
  * Every line of the block is handed to the pipeline as verbatim: they are the
  * record, parts of them are other people's own words, and the voice lint is
@@ -264,29 +264,9 @@ export async function sendReceiptEmail(
   cfg: Config,
   to: string,
   accountId: string,
-  input: {
-    offerId: string;
-    block: string;
-    fingerprint: string;
-    amount: number;
-    ccy: string;
-    side: 'want' | 'have';
-  },
+  input: { offerId: string; block: string; fingerprint: string },
 ): Promise<SendOutcome> {
   const ctx = await emailAccountContext(cfg, accountId);
-  if (ctx.blind) {
-    return sendEmail(cfg, {
-      to,
-      accountId,
-      template: 'deal-agreed',
-      kind: 'transactional',
-      dedupeKey: `deal-agreed:${input.offerId}:${accountId}`,
-      content: renderDealAgreed(
-        { amount: input.amount, ccy: input.ccy, blind: true, side: input.side },
-        ctx.links,
-      ),
-    });
-  }
   return sendEmail(cfg, {
     to,
     accountId,

@@ -15,10 +15,10 @@
  *    It is a rule about the switchboard's own sentences; a passage a caller
  *    marks as a person's own words (`verbatim`) is left out of it.
  *  - THE NOTICE RULE (2026-09-11, see the top of templates.ts): everything
- *    that is not a verification code, a security notice, the kill-switch
- *    mail or the record of a deal is a NOTICE. A notice carries no link and no button beyond the two
- *    footer controls, and it goes out only when the recipient's hears_via is
- *    'email'. Both halves are enforced here rather than at each call site, so
+ *    that is not one of the four exemptions (a verification code, a security
+ *    notice, an account message, the record of a deal) is a NOTICE. A notice
+ *    carries no link and no button beyond the two footer controls, and it
+ *    goes out only when the recipient's hears_via is 'email'. Both halves are enforced here rather than at each call site, so
  *    a new template cannot quietly opt itself out.
  *  - HEADERS: SES configuration set (bounce/complaint events), proper From,
  *    reply-to, RFC 8058 one-click List-Unsubscribe (mailto + URL) whenever
@@ -270,10 +270,10 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   assertEmailCopyClean(withoutVerbatim(input.content.html, input.verbatim), context);
 
   // THE NOTICE RULE (see the top of templates.ts). Everything that is not one
-  // of the exemptions (the three about the account, and the record of a deal)
-  // is a notice, and a notice carries no link and no
-  // button beyond the two footer controls, and goes only to someone whose
-  // assistant is not the one bringing them the news.
+  // of the four exemptions (sign-in codes, security notices, the account
+  // messages, the record of a deal) is a notice, and a notice carries no link
+  // and no button beyond the two footer controls, and goes only to someone
+  // whose assistant is not the one bringing them the news.
   const isNotice = !EXEMPT_TEMPLATES.has(input.template);
   if (isNotice) {
     assertNoticeClean(

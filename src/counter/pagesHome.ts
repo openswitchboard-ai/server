@@ -1202,6 +1202,22 @@ export const HELLO_CADENCES: { value: string; label: string }[] = [
 /** The rhythm a new always-on account starts on when nobody says otherwise. */
 export const HELLO_CADENCE_DEFAULT = '720';
 
+/**
+ * WHAT IS EMAILED WHICHEVER WAY THEY CHOOSE (2 October 2026). The four kinds
+ * of mail that are not notices (email/templates.ts) go to everybody, so each
+ * place that asks how a person hears about things says so once, in a plain
+ * line. Picking "through my assistant" still leaves a person with the mail
+ * that is theirs to keep: a record of a deal they agree comes to them like the
+ * sign-in codes do. The onboarding page says it under the choice; the settings
+ * page already had the list in its Email section, so the record joined it.
+ */
+export const ALWAYS_EMAILED_LINE =
+  'Whichever you pick, you are still emailed sign-in codes, security notices and a record of any deal you agree.';
+
+/** The same list where the page is already talking about email. */
+export const ALWAYS_SEND_LINE =
+  'Sign-in codes, security notices and a record of any deal you agree always send.';
+
 /** The onboarding question's heading, and the settings section's. */
 export const HEARS_VIA_HEADING = 'How do you hear about things?';
 
@@ -1216,6 +1232,7 @@ export function helloPage(v: HelloView, error?: string): string {
 ${errBox(error)}
 <form method="POST" action="/hello">
   ${options}
+  <p class="small muted">${esc(ALWAYS_EMAILED_LINE)}</p>
   <div id="cadence"${v.hearsVia === 'assistant' ? '' : ' hidden'}>
     <label for="check_every_minutes">How often should it check?</label>
     <select id="check_every_minutes" name="check_every_minutes">${cadence}</select>
@@ -1363,7 +1380,8 @@ section.set details > summary { font-family:var(--sans); font-weight:600; font-s
 export function settingsPage(v: EmailSettingsView, notice?: string): string {
   const complaint = v.complaintSuppressed
     ? `<div class="err">You marked one of our emails as spam, so everything
-except sign-in codes, approvals and security notices is on hold.
+except sign-in codes, approvals, security notices and a record of any deal
+you agree is on hold.
 <form method="POST" action="/settings/email-resume">
   <button type="submit" class="secondary">Start emailing me again</button>
 </form></div>`
@@ -1420,7 +1438,7 @@ ${zone}</section>
   <button type="submit" class="secondary">Save</button>
 </form>
 </div>
-<p class="small muted">Sign-in codes and security notices always send.</p>
+<p class="small muted">${esc(ALWAYS_SEND_LINE)}</p>
 </section>
 <script>
 // Choosing "through my assistant" takes the email dials off the page; they
@@ -1655,8 +1673,8 @@ export function unsubPage(token: string): string {
   return layout('Unsubscribe', `
 <h1>Fewer emails.</h1>
 <p class="lead">This switches off two kinds of email: “When someone comes forward”
-and “Round-ups and reminders”. Sign-in codes, approval requests and security notices
-keep sending.</p>
+and “Round-ups and reminders”. Sign-in codes, approval requests, security notices
+and a record of any deal you agree keep sending.</p>
 <form method="POST" action="/email/unsub">
   <input type="hidden" name="t" value="${esc(token)}">
   <button type="submit">Unsubscribe me</button>

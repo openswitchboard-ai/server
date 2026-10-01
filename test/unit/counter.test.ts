@@ -1274,7 +1274,7 @@ describe('how do you want to hear about things?', () => {
     expect(html).toContain('action="/settings/frequency"');
     expect(html).toContain('<label for="freq_matches">When someone comes forward</label>');
     expect(html).toContain('<label for="freq_digests">Round-ups and reminders</label>');
-    expect(html).toContain('Sign-in codes and security notices always send.');
+    expect(html).toContain('Sign-in codes, security notices and a record of any deal you agree always send.');
     expect(html).not.toContain('Match summons');
     expect(html).not.toContain('Blind mode');
     expect(html).not.toContain('action="/settings/blind-mode"');
