@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { projectionText } from '../../src/domain/matchRules.js';
 import { tierFor, type Tier } from '../../src/domain/matchTiers.js';
-import { JEV_JUDGE_TIMEOUT_MS, flooredTier, jevJudgesTier, jevTier, noulsOf, type JevNouls } from '../../src/domain/jevJudge.js';
+import { JEV_JUDGE_TIMEOUT_MS, JEV_NEAR_MISS_SAME_KIND_MIN, flooredTier, jevJudgesTier, jevTier, noulsOf, type JevNouls } from '../../src/domain/jevJudge.js';
 import { postToJev } from '../../src/shadow/jev.js';
 import { jevPairQuestions, jevPairState } from '../../src/shadow/jevTrials.js';
 
@@ -122,7 +122,7 @@ async function worker() {
         row.latencyMs = hit.latencyMs;
         row.jev = jevTier(hit.nouls, p.want, p.have);
         row.before = row.jev;
-        row.after = flooredTier(row.jev, rules.tier);
+        row.after = flooredTier(row.jev, rules.tier, hit.nouls.same_kind);
       }
     }
     rows.push(row);
@@ -171,8 +171,8 @@ console.log(
 );
 if (lat.length) console.log(`Jev latency ms (as recorded when answered): median ${q(0.5)}, p95 ${q(0.95)}, max ${lat[lat.length - 1]}`);
 confusion('RULES ONLY', 'rules');
-confusion('RULES + JEV, BEFORE THE NEAR-MISS FLOOR (live until this change)', 'before');
-confusion('RULES + JEV, WITH THE NEAR-MISS FLOOR', 'after');
+confusion('RULES + JEV, NO NEAR-MISS FLOOR', 'before');
+confusion(`RULES + JEV, WITH THE NEAR-MISS FLOOR (same kind >= ${JEV_NEAR_MISS_SAME_KIND_MIN})`, 'after');
 const newer = rows.filter((r) => /^m/.test(r.id));
 if (newer.length) {
   confusion('m01-m20 (lend, borrow, hire, give away, swap; goods against services): RULES ONLY', 'rules', newer);

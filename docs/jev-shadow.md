@@ -141,17 +141,18 @@ matches. That is a separate path from the shadow, in
 - SURE where same_kind_of_thing >= 0.7 and compatible >= 0.7 and the parts
   guard allows it (where either side is a part, the want must say what it
   fits); POSSIBLE where same_kind_of_thing >= 0.3 and compatible > 0.3;
-  otherwise a NEAR MISS.
-- **The near-miss floor (1 October 2026).** Jev may lift a pair or keep it,
-  but it never erases one. Every pair it is asked about is one the rules
-  placed at NEAR-MISS or above, so where Jev's own answer would be NOTHING
-  the pair is recorded as a near miss instead. A near miss never makes an
-  introduction. The usual case is the same kind of thing with a stated
-  detail that conflicts (same_kind_of_thing high, compatible low), where
-  "something close is here" is the true answer and "nothing" is not. The log
-  line records Jev's own tier, the tier the pair ended with, and whether the
-  floor applied. Calibration: `npm run calibrate-jev`
-  (test/calibration/README.md).
+  otherwise NOTHING, except under the near-miss floor below.
+- **The near-miss floor (1 October 2026).** Every pair Jev is asked about is
+  one the rules placed at NEAR-MISS or above. Where Jev's own answer would be
+  NOTHING but it still scores same_kind_of_thing at or above 0.5
+  (`JEV_NEAR_MISS_SAME_KIND_MIN`), the pair is recorded as a near miss
+  instead: the same kind of thing with a stated detail that conflicts (a
+  ladder to borrow against one too short), where "something close is here"
+  is the true answer and "nothing" is not. Below 0.5 Jev has said it is a
+  different kind of thing (a part against the whole it fits) and its NOTHING
+  stands. A near miss never makes an introduction. The log line records Jev's
+  own tier, the tier the pair ended with, and whether the floor applied.
+  Calibration: `npm run calibrate-jev` (test/calibration/README.md).
 - One call per pair, for the best five candidates of a posting, all at once,
   2 s timeout, no retry. On a timeout, an error, a half answer or the flag
   off, the rules' tier stands. `matches.judged_by` (migration 060) records

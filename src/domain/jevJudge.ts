@@ -22,15 +22,17 @@
  *             guard allows it (matchTiers.partsGuardAllowsSure: where either
  *             side is a part, the want must say what it fits, or it is a maybe);
  *   POSSIBLE  same_kind_of_thing >= 0.3 AND compatible > 0.3;
- *   NEAR-MISS otherwise. THE NEAR-MISS FLOOR (founder, 1 October 2026): Jev
- *             may lift a pair or keep it, but it never erases one. Every pair
- *             it is asked about is one the rules placed at NEAR-MISS or above,
- *             so where its answer would be NOTHING the pair is recorded as a
- *             near miss instead. A near miss never makes an introduction; it
- *             only means the switchboard can say "something close is here"
- *             rather than nothing (answers never say nothing while something
- *             waits). The usual case is same_kind_of_thing high and compatible
- *             low: the same kind of thing with a stated detail that conflicts.
+ *   NOTHING   otherwise, except under THE NEAR-MISS FLOOR (founder,
+ *             1 October 2026): every pair Jev is asked about is one the rules
+ *             placed at NEAR-MISS or above, and where Jev's answer would be
+ *             NOTHING but it still says it is the same kind of thing
+ *             (same_kind_of_thing >= JEV_NEAR_MISS_SAME_KIND_MIN, 0.5), the
+ *             pair is recorded as a near miss instead. That is the same kind of
+ *             thing with a stated detail that conflicts (a ladder to borrow
+ *             against one too short), where "something close is here" is the
+ *             true answer. Below 0.5 Jev has said it is a different kind of
+ *             thing (a part against the whole it fits) and its NOTHING stands.
+ *             A near miss never makes an introduction.
  *
  * WHEN IT DOES NOT. The rules' own answer stands wherever Jev is off, not
  * configured, slow (JEV_JUDGE_TIMEOUT_MS per call, one attempt, no retry),
@@ -110,13 +112,21 @@ export function jevTier(nouls: JevNouls, want: PostingWords, have: PostingWords)
 }
 
 /**
+ * same_kind_of_thing at or above this keeps a near miss where Jev's answer
+ * would be NOTHING (the near-miss floor). Founder, 1 October 2026: at 0.5 the
+ * ladder pair (0.72, compatible 0.28) keeps its near miss and the part against
+ * the whole it fits (a controller against a console, ~0.03) drops out.
+ */
+export const JEV_NEAR_MISS_SAME_KIND_MIN = 0.5;
+
+/**
  * THE NEAR-MISS FLOOR. The tier a pair ends with once Jev has answered: Jev's
  * own tier, except that a NOTHING on a pair the rules placed at NEAR-MISS or
- * above becomes NEAR-MISS. Never higher than Jev said, never lower than a
- * near miss where the rules found one. Pure.
+ * above becomes NEAR-MISS where Jev still says it is the same kind of thing
+ * (same_kind >= JEV_NEAR_MISS_SAME_KIND_MIN). Never higher than Jev said. Pure.
  */
-export function flooredTier(jev: Exclude<Tier, 'near-miss'>, rules: Tier): Tier {
-  if (jev === 'nothing' && rules !== 'nothing') return 'near-miss';
+export function flooredTier(jev: Exclude<Tier, 'near-miss'>, rules: Tier, sameKind: number): Tier {
+  if (jev === 'nothing' && rules !== 'nothing' && sameKind >= JEV_NEAR_MISS_SAME_KIND_MIN) return 'near-miss';
   return jev;
 }
 
@@ -138,7 +148,7 @@ export interface JudgeRequest {
 }
 
 export interface JudgeVerdict {
-  /** The tier the pair ends with: Jev's, floored at a near miss. */
+  /** The tier the pair ends with: Jev's, after the near-miss floor. */
   tier: Tier;
   /** Jev's own answer before the floor, for the log. */
   jevTier: Exclude<Tier, 'near-miss'>;
@@ -202,7 +212,7 @@ export async function judgeWithJev(
           return;
         }
         const own = jevTier(nouls, req.want, req.have);
-        const tier = flooredTier(own, req.rulesTier);
+        const tier = flooredTier(own, req.rulesTier, nouls.same_kind);
         out.set(req.key, {
           tier,
           jevTier: own,

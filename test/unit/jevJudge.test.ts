@@ -39,6 +39,7 @@ import {
   JEV_JUDGE_TIMEOUT_MS,
   JEV_JUDGE_TOP_N,
   jevJudgesTier,
+  JEV_NEAR_MISS_SAME_KIND_MIN,
   flooredTier,
   jevTier,
   judgeWithJev,
@@ -190,31 +191,42 @@ describe('the thresholds', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('THE NEAR-MISS FLOOR: Jev never erases a pair the rules placed at near miss or above', () => {
-  it('a Jev NOTHING on a rules SURE, POSSIBLE or NEAR-MISS is a near miss', () => {
+describe('THE NEAR-MISS FLOOR: a Jev NOTHING on a rules near miss or above, where Jev says same kind >= 0.5', () => {
+  it('the bar is 0.5', () => {
+    expect(JEV_NEAR_MISS_SAME_KIND_MIN).toBe(0.5);
+  });
+
+  it('a Jev NOTHING on a rules SURE, POSSIBLE or NEAR-MISS is a near miss at same kind >= the bar', () => {
     for (const rules of ['sure', 'possible', 'near-miss'] as const) {
-      expect(flooredTier('nothing', rules), rules).toBe('near-miss');
+      expect(flooredTier('nothing', rules, JEV_NEAR_MISS_SAME_KIND_MIN), rules).toBe('near-miss');
+      expect(flooredTier('nothing', rules, 0.9), rules).toBe('near-miss');
+    }
+  });
+
+  it("below the bar Jev's NOTHING stands: a different kind of thing", () => {
+    for (const rules of ['sure', 'possible', 'near-miss'] as const) {
+      expect(flooredTier('nothing', rules, JEV_NEAR_MISS_SAME_KIND_MIN - 0.01), rules).toBe('nothing');
     }
   });
 
   it('never higher than Jev said, and never on a rules NOTHING', () => {
-    expect(flooredTier('sure', 'near-miss')).toBe('sure');
-    expect(flooredTier('possible', 'sure')).toBe('possible');
-    expect(flooredTier('sure', 'possible')).toBe('sure');
-    expect(flooredTier('nothing', 'nothing')).toBe('nothing');
+    expect(flooredTier('sure', 'near-miss', 0.9)).toBe('sure');
+    expect(flooredTier('possible', 'sure', 0.4)).toBe('possible');
+    expect(flooredTier('sure', 'possible', 0.9)).toBe('sure');
+    expect(flooredTier('nothing', 'nothing', 0.9)).toBe('nothing');
   });
 
-  it('same kind high with compatible low is a near miss, not nothing', async () => {
+  it('same kind high with compatible low is a near miss, not nothing (the ladder)', async () => {
     // A borrow want against a lend have with a stated size that conflicts.
     const ask = vi.fn(async () => ok(0.72, 0.28));
     const out = await judgeWithJev([req('ladder', 0.6, { rulesTier: 'near-miss' })], () => {}, { ask, enabled: true });
     expect(out.get('ladder')).toMatchObject({ tier: 'near-miss', jevTier: 'nothing', floored: true });
   });
 
-  it('same kind low on a rules SURE is a near miss, not nothing', async () => {
+  it('same kind low on a rules SURE stays nothing (a part against the whole)', async () => {
     const ask = vi.fn(async () => ok(0.14, 0.5));
     const out = await judgeWithJev([req('kit', 0.9, { rulesTier: 'sure' })], () => {}, { ask, enabled: true });
-    expect(out.get('kit')).toMatchObject({ tier: 'near-miss', jevTier: 'nothing', floored: true });
+    expect(out.get('kit')).toMatchObject({ tier: 'nothing', jevTier: 'nothing', floored: false });
   });
 
   it('an answer Jev lifts is not marked floored', async () => {
@@ -490,15 +502,15 @@ describe('in the matcher', () => {
     expect(log).not.toHaveBeenCalledWith('matcher: jev judged a pair', expect.anything());
   });
 
-  it('FLAG ON: Jev saying it is not the thing turns a rules SURE into a near miss, never into nothing', async () => {
+  it('FLAG ON: Jev saying it is a different kind of thing turns a rules SURE into nothing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(answerBody(0.2, 0.2))));
     initJev(cfgWith({ jevMatching: true }));
     const out = (await runMatchingForCard(cfgWith(), SOURCE, log))!;
     expect(out.matchesCreated).toHaveLength(0);
-    expect(out.nearMisses).toBe(1);
+    expect(out.nearMisses).toBe(0);
     expect(log).toHaveBeenCalledWith(
       'matcher: jev judged a pair',
-      expect.objectContaining({ rules_tier: 'sure', jev_tier: 'nothing', tier: 'near-miss', floored: true }),
+      expect.objectContaining({ rules_tier: 'sure', jev_tier: 'nothing', tier: 'nothing', floored: false }),
     );
   });
 
