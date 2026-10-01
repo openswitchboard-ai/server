@@ -80,6 +80,9 @@ import {
   plainWordsOverlap,
   checkNoInventedFigure,
   checkPhoneDidNotCross,
+  checkSupplyAsked,
+  checkSupplyNotPushed,
+  SUPPLY_ASK,
   checkContactOpened,
   checkContactPageHanded,
   checkContactStayedOffChat,
@@ -725,7 +728,20 @@ async function oneRun(
 
     // The seller first: one opening line, in his own words.
     const sellerTurnsBefore = () => turnsText(turns, { stage: 1, side: 'seller', role: 'assistant' });
+    // THE SUPPLY QUESTION (manual 82). Where the posting's answer handed the
+    // assistant the one question and it asked it, the person answers it — the
+    // sheets say "no, not right now" — so the rest of the run is unchanged.
+    // Where the turn that asked is followed by the answer, what came after is
+    // what the "not pushed" check reads.
+    const supplyNoAt: Partial<Record<SideId, number>> = {};
+    const answerSupply = async (side: Side): Promise<void> => {
+      if (DRY || !SUPPLY_ASK.test(side.lastReply)) return;
+      const answer = await side.simulator.reply(side.history, side.lastReply);
+      await drive(side, answer.trim() ? answer : 'no, not right now', 1);
+      supplyNoAt[side.id] = turns.length - 2;
+    };
     const sellerCard = await publishFor(sides.seller, [ALEX.opening]);
+    await answerSupply(sides.seller);
     const sellerBeforePublish = sellerTurnsBefore();
     const sellerJoined = sellerBeforePublish.join('\n');
     const reachQuestion = (reach: 'country' | 'radius', said: string[]): [MeaningId, boolean] =>
@@ -755,6 +771,7 @@ async function oneRun(
 
     // The buyer: the advice question first, then the want in his own words.
     const buyerCard = await publishFor(sides.buyer, [TONY.opening, TONY_WANT]);
+    await answerSupply(sides.buyer);
     record(checkBuyerPosting(buyerCard));
     record(checkNoInventedFigure('buyer', buyerCard, TONY.figuresTheyMayGive, sides.buyer.statedFigures));
     // The looking side's reach is checked only where the errand says what it
@@ -767,6 +784,29 @@ async function oneRun(
         postingSituation(REACH.buyer, 'buyer'),
       );
       record(checkReach(buyerCard, buyerBeforePublish, buyerReachMeaning, REACH.buyer, 'buyer'));
+    }
+
+    for (const side of [sides.seller, sides.buyer]) {
+      const at = DRY ? undefined : await db.supplyAskAt(side.actor.accountId);
+      const askedThisRun = !!at && db.pgTimeMs(at) >= db.pgTimeMs(sinceIso);
+      const said = turnsText(turns, { stage: 1, side: side.id, role: 'assistant' });
+      const supplyMeaning = askedThisRun
+        ? await meaningOf(
+            [['asked_supply', said.some((t) => SUPPLY_ASK.test(t))]],
+            said,
+            'The human has just had their first posting go up on the switchboard. These are the assistant\u2019s replies in that conversation.',
+          )
+        : {};
+      record(checkSupplyAsked(side.id, askedThisRun, said, supplyMeaning));
+      const noAt = supplyNoAt[side.id];
+      record(
+        checkSupplyNotPushed(
+          side.id,
+          noAt === undefined
+            ? undefined
+            : turnsText(turns.slice(noAt + 1), { stage: 1, side: side.id, role: 'assistant' }),
+        ),
+      );
     }
 
     const shelfAsked = [...turnsText(turns, { stage: 1, role: 'assistant' })].some((t) =>

@@ -262,6 +262,15 @@ export async function reportsOn(matchId: string): Promise<
   }));
 }
 
+/** When this account was asked the supply question (manual 82), if ever. */
+export async function supplyAskAt(accountId: string): Promise<string | undefined> {
+  const rows = await dbExec(
+    'SELECT supply_ask_at::text FROM accounts WHERE id = :a::uuid',
+    [{ name: 'a', value: accountId }],
+  );
+  return rows[0]?.[0] ? String(rows[0][0]) : undefined;
+}
+
 export async function suspensionOf(accountId: string): Promise<string | undefined> {
   const rows = await dbExec(
     'SELECT suspended_at::text FROM accounts WHERE id = :a::uuid',

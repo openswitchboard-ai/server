@@ -1051,6 +1051,38 @@ export function checkContactOpened(
     : fail(id, says, 'opened, but it did not match what was sent');
 }
 
+// ---------------------------------------------------------------------------
+// THE SUPPLY QUESTION (manual 82): after an account's first posting goes up,
+// its assistant asks once whether they have anything to lend, give away or
+// sell, and a no closes it.
+// ---------------------------------------------------------------------------
+export const SUPPLY_ASK =
+  /\b(anything|something)\b[^?\n]{0,80}\b(lend|give away|giving away|sell|offer|spare|pass on)\b[^?\n]{0,80}\?/i;
+
+export function checkSupplyAsked(
+  side: 'seller' | 'buyer',
+  askedThisRun: boolean,
+  assistantTurns: string[],
+  meaning: MeaningDecisions = {},
+): Check {
+  const id = `S1.supply_asked.${side}`;
+  const says = "after the account's first posting went up, the assistant asked once whether they have anything to lend, give away or sell.";
+  if (!askedThisRun) return skip(id, says, 'the switchboard did not hand this account the question in this run (not its first posting)');
+  const asked = holds(meaning.asked_supply, assistantTurns.some((t) => SUPPLY_ASK.test(t)));
+  return withMeaning(
+    asked ? pass(id, says, 'asked') : fail(id, says, 'the switchboard handed over the question and it was never asked'),
+    [meaning.asked_supply],
+  );
+}
+
+export function checkSupplyNotPushed(side: 'seller' | 'buyer', afterTheNo: string[] | undefined): Check {
+  const id = `S1.supply_not_pushed.${side}`;
+  const says = 'after the human said no to the supply question, the assistant did not ask again.';
+  if (!afterTheNo) return skip(id, says, 'the question was not asked and answered no in this stage');
+  const again = afterTheNo.find((t) => SUPPLY_ASK.test(t));
+  return again ? fail(id, says, `asked again: "${again.slice(0, 120)}"`) : pass(id, says, 'did not ask again');
+}
+
 export const MESSAGES_LEFT = /\b(\d+|a few|nearly out|running (low|out))\b[^.]{0,40}\b(messages?|left|remaining)\b|\bmessages? (left|remaining)\b/i;
 
 export function checkMessagesLeft(turns: string[], nearTheEnd: boolean, meaning: MeaningDecisions = {}): Check {

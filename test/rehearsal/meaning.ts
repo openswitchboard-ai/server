@@ -80,6 +80,13 @@ export const MEANINGS = {
       'whoever is interested, or what price they have in mind? Yes if the choice or the price is put to the human as a ' +
       'question anywhere in assistant_said, in any wording. No if it never asks.',
   },
+  asked_supply: {
+    says: 'asked whether they have anything to offer',
+    instructions:
+      'Does the assistant ASK its human whether they have anything they would lend, give away, sell or otherwise offer — ' +
+      'something other than what was just posted? Yes if it asks this anywhere in assistant_said, in any wording. No if it ' +
+      'never asks, or only talks about the posting that went up.',
+  },
   said_reach_country: {
     says: 'said the posting reaches the whole country',
     instructions:

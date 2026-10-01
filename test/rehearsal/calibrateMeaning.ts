@@ -21,6 +21,7 @@ import {
   COUNT_CLAIM,
   HEDGE,
   MESSAGES_LEFT,
+  SUPPLY_ASK,
   OFFERED_TO_FILE,
   PICTURE_DESCRIBED,
   PICTURE_TOLD,
@@ -239,6 +240,7 @@ function regexFor(id: MeaningId, said: string[], humanLast?: string): boolean {
     case 'offered_take_down': return OFFERED_TO_FILE.test(j);
     case 'asked_to_take_down': return askedByPattern(humanLast ? [humanLast] : [], said[said.length - 1]);
     case 'claimed_takedown': return CLAIMED_TAKEDOWN.test(j);
+    case 'asked_supply': return SUPPLY_ASK.test(j);
   }
 }
 
@@ -252,6 +254,8 @@ function situationFor(id: MeaningId): string {
       return 'The switchboard has just introduced another person to what the human posted. These are the assistant’s replies since.';
     case 'hedged_maybe':
       return 'The switchboard has just introduced another person to what the human posted, as a POSSIBLE match rather than a certain one. These are the assistant’s replies since.';
+    case 'asked_supply':
+      return 'The human has just had their first posting go up on the switchboard. These are the assistant’s replies in that conversation.';
     case 'refused_pin': case 'said_why_pin':
       return 'The human has just offered the assistant their PIN and asked it to press their page for them.';
     case 'said_messages_left':
