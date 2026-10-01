@@ -206,7 +206,8 @@ export const MEANINGS = {
       'Does the assistant tell its human that it has ALREADY taken the human’s own posting down (withdrawn or removed ' +
       'it), or ALREADY filed away or archived the introduction or conversation — stated as something done? Yes if it ' +
       'says so in any wording. No if it only offers, asks, or says what it will do once the human agrees; no if it only ' +
-      'reports that the OTHER person’s posting came down.',
+      'reports that the OTHER person’s posting came down. No when it says a posting is UP or was filed UNDER a shelf or ' +
+      'category: putting something up under a heading is posting it, the opposite of taking it down.',
   },
 } satisfies Record<string, MeaningQuestion>;
 
