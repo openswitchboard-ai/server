@@ -83,7 +83,7 @@ describe('the words doors', () => {
     expect(CHECKS.map((c) => c.name)).toContain('contactDetails');
   });
 
-  it('answers in the agent’s own lane', async () => {
+  it('answers with one sentence short enough for an error', async () => {
     vi.spyOn(db, 'getPool').mockReturnValue({
       query: async (sql: string) =>
         /arrangement/.test(sql)
@@ -92,6 +92,9 @@ describe('the words doors', () => {
     } as any);
     const said = await refusalWords(ANA, CONTACT_IN_WORDS_REASON, CONTACT_IN_WORDS_ACTION);
     expect(said).toContain('respond(request_send_contact)');
+    // It travels as an error's human_action, which the schema caps at 300.
+    expect(said!.length).toBeLessThanOrEqual(300);
+    expect(lintHumanCopy(said!)).toEqual([]);
     // Any other refusal keeps the check's own sentence.
     expect(await refusalWords(ANA, 'money-figure-in-words', 'the figure words')).toBe('the figure words');
     for (const lane of ['prompted', 'autonomous'] as const) {

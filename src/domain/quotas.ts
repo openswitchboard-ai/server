@@ -235,7 +235,7 @@ export async function checkReadRate(accountId: string): Promise<void> {
   const retry = Math.max(1, Math.ceil((oldest + 3_600_000 - Date.now()) / 1000));
   throw new OsbError('RATE_LIMITED', {
     retry_after: retry,
-    human_action: `Checking is paced. Come back ${roughWait(retry)} — quietly, with nothing to tell your human and no clock time to pass on.`,
+    human_action: `Checking is paced. Come back ${roughWait(retry)}. This is ordinary pacing: it carries no news for your human and no clock time to pass on.`,
   });
 }
 

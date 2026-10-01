@@ -171,5 +171,13 @@ export const CONTACT_IN_WORDS_REASON = 'contact-details-in-words';
  * The page's own sentence, for the one door a person types into themselves:
  * the line beside a photo.
  */
+/**
+ * What the sender's agent reads when a message or an offer note is turned back.
+ * It travels as an error's human_action, which the schema caps at 300
+ * characters, so it is one fixed sentence and carries no lane tail.
+ */
+export const CONTACT_IN_WORDS_REFUSAL =
+  'This one has not gone: an address, a phone number or an email never goes in a message. Fetch respond(request_send_contact) and hand your human the page; they type their details there, and neither assistant sees them. Send your words again without them.';
+
 export const CONTACT_IN_CAPTION_LINE =
   'Take the address, phone number or email out of the description. Your assistant can give you a page to send those to them privately.';

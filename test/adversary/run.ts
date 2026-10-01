@@ -465,6 +465,10 @@ async function openRealWire(ctx: Ctx, errand: Errand, session: string): Promise<
     st.card,
     'Canberra, ACT, Australia',
     Object.keys(st.card.attributes ?? {}).length ? undefined : { condition: 'used' },
+    // Every goods posting must now say how far it reaches (src/domain/cards.ts,
+    // NEEDS_DETAIL 'reach'); without it the counterparty's card is refused and
+    // the whole run falls back. Pick-up only, the same 25 km the card carries.
+    { reach: 'radius' },
   );
   // The counterparty card is on the same shared board and pairs with real
   // accounts just as readily as hers does.

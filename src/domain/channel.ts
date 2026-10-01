@@ -55,7 +55,7 @@ import {
 import { categoryPhrase } from './matchRules.js';
 import { readLaneFacts, sayFor } from './lanes.js';
 import { runIntake } from '../intake/pipe.js';
-import { CONTACT_IN_WORDS_REASON } from './contactInWords.js';
+import { CONTACT_IN_WORDS_REASON, CONTACT_IN_WORDS_REFUSAL } from './contactInWords.js';
 import { notifyChannelMessageWaiting, rearmChannelNudge } from './channelNotify.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound } from '../protocol.js';
 import type { Config } from '../config.js';
@@ -79,10 +79,10 @@ function relayLog(event: string, fields: Record<string, string | number>): void 
 }
 
 /**
- * The sentence a refused sender's agent reads. An address or a phone number in
- * the words is answered in the agent's own lane (domain/lanes.ts,
- * contact_in_words), because what comes after is a wait; every other refusal
- * keeps the check's own sentence.
+ * The sentence a refused sender's agent reads. An address, a phone number or an
+ * email in the words gets one fixed sentence short enough for an error's
+ * human_action (300 characters); every other refusal keeps the check's own
+ * sentence.
  */
 export async function refusalWords(
   accountId: string,
@@ -90,9 +90,7 @@ export async function refusalWords(
   plain: string | undefined,
 ): Promise<string | undefined> {
   if (reasonCode !== CONTACT_IN_WORDS_REASON) return plain;
-  const { readLaneFacts, sayFor } = await import('./lanes.js');
-  const { arrangement, hearsVia } = await readLaneFacts(accountId);
-  return sayFor('contact_in_words', arrangement, { hearsVia });
+  return CONTACT_IN_WORDS_REFUSAL;
 }
 
 export interface OpenChannel {
