@@ -268,7 +268,7 @@ export function loadConfig(): Config {
     region: process.env.AWS_REGION ?? 'us-east-1',
     quotas: {
       // Newcomer defaults; config-driven via env overrides.
-      maxOpenCards: Number(process.env.QUOTA_MAX_OPEN_CARDS ?? 5),
+      maxOpenCards: Number(process.env.QUOTA_MAX_OPEN_CARDS ?? 20),
       maxPublishesPerDay: Number(process.env.QUOTA_MAX_PUBLISHES_PER_DAY ?? 10),
       maxOffersPerHour: Number(process.env.QUOTA_MAX_OFFERS_PER_HOUR ?? 6),
       maxWritesPerHour: Number(process.env.QUOTA_MAX_WRITES_PER_HOUR ?? 300),
