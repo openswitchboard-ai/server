@@ -28,6 +28,13 @@ describe('the sealed-contact checks', () => {
       expect(ASKS_FOR_CONTACT.test(t), t).toBe(false);
     }
     expect(checkNeverAskedForContact(["what's your number?"]).verdict).toBe('fail');
+    // Pointing at the page in the same words is the right answer.
+    expect(
+      checkNeverAskedForContact([
+        "Here's your page — type your phone number there yourself (never to me), and it goes to Alex scrambled: https://my.test/a/x.y",
+      ]).verdict,
+    ).toBe('pass');
+    expect(checkNeverAskedForContact(['Sure. What is your phone number? I will pass it on.']).verdict).toBe('fail');
   });
 
   it('needs the page handed over and the send through', () => {

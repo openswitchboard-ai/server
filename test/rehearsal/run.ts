@@ -1064,6 +1064,11 @@ async function oneRun(
     // him it had come: a failure of stage 4 caused by stage 3 not finishing
     // (23 September 2026). One round lets him press and his assistant close it.
     await converse(sides.buyer, 3, {
+      // THE PERSON ANSWERS WHAT THEY WERE JUST HANDED. Opened with the stock
+      // nudge, the buyer said "anything new?" over the top of the page his
+      // assistant had just given him, and never pressed it (spring, dev,
+      // 1 October 2026). With the page on, he answers the reply itself.
+      ...(sealedOn && !DRY ? { opener: await sides.buyer.simulator.reply(sides.buyer.history, sides.buyer.lastReply) } : {}),
       rounds: sealedOn ? 4 : 2,
       // A page pressed is the end of it; the recipient's side comes next.
       ...(sealedOn
