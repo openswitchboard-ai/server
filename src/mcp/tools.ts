@@ -1895,6 +1895,8 @@ async function dispatchToolInner(
                   promoted,
                 ),
               ),
+              // The next step, said where it will be read (matches.ts).
+              ...(said !== 'bad' ? { what_to_do: matches.AFTER_VERDICT_WHAT_TO_DO } : {}),
             });
           }
           // The short window on a contested want or have is gone (migration

@@ -28,6 +28,7 @@ import {
   DECLINE_SENTENCE,
   expressInterestSentence,
   verdictSentence,
+  AFTER_VERDICT_WHAT_TO_DO,
   withCameForward,
   type MatchRow,
 } from '../../src/domain/matches.js';
@@ -275,6 +276,12 @@ describe('closing, filing away, and saying how it went', () => {
     expect(bad.note.text).toMatch(/closed it off/);
     expect(bad.note.text).toMatch(/will not hear from that person again/);
     for (const r of [good, fine, bad]) expect(isNote(r.note)).toBe(true);
+    // 1 October 2026: the next step rides on the answer, except where `bad`
+    // has already closed it.
+    expect(good.what_to_do).toBe(AFTER_VERDICT_WHAT_TO_DO);
+    expect(fine.what_to_do).toBe(AFTER_VERDICT_WHAT_TO_DO);
+    expect(good.what_to_do).toMatch(/only on their yes/);
+    expect(bad.what_to_do).toBeUndefined();
   });
 
   it('the old verdict words still get their sentence', async () => {

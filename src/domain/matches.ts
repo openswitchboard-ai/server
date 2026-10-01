@@ -1072,6 +1072,17 @@ export const WRAP_UP_WHAT_TO_DO =
   'One of the two postings has been taken down, so this may be done. When your human says it is — handed over, returned, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to file it away, and whether to take down anything of theirs still up.';
 
 /**
+ * AND THE STEP AFTER THE VERDICT, on the verdict's own answer (1 October
+ * 2026). In a ladder rehearsal an assistant asked how it went, recorded
+ * "good", and then only said "check with me any time": the offer to file it
+ * away never came. The verdict answer is the last thing it read at that
+ * moment, so the next step is there. A `bad` verdict closes the introduction
+ * itself and carries none.
+ */
+export const AFTER_VERDICT_WHAT_TO_DO =
+  'Now offer, once, to file this introduction away, and if their posting was a one-off that is still up, ask whether to take it down. Do either only on their yes.';
+
+/**
  * WHETHER THIS SWITCHBOARD HOLDS MONEY, said at the moment a deal is agreed.
  *
  * The manual describes the protected-payment path and says it only applies
