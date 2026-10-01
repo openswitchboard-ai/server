@@ -224,6 +224,14 @@ export interface Config {
    *  on after a green rehearsal streak that includes the contact step. Absent
    *  on a hand-built config is off. */
   sealedContact?: boolean;
+  /** WHEN THE WEBSITE'S LIVE NUMBERS SHOW (founder, 1 October 2026;
+   *  src/publicApi.ts, /public/totals). Below postingsMin live wants and haves
+   *  the site shows nothing at all; at or above it, the network total; once
+   *  introductions in the last 30 days reach introsMin, that number too. A
+   *  number under its threshold is never served. PUBLIC_TOTALS_POSTINGS_MIN
+   *  (default 100) and PUBLIC_TOTALS_INTROS_MIN (default 25); neither may go
+   *  below the k floor of 10. Absent on a hand-built config is the defaults. */
+  publicTotals?: { postingsMin: number; introsMin: number };
 }
 
 export function loadConfig(): Config {
@@ -307,6 +315,24 @@ export function loadConfig(): Config {
     jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
     jevShelf: jevShelfFrom(process.env.JEV_SHELF, envName),
     sealedContact: sealedContactFrom(process.env.SEALED_CONTACT, envName),
+    publicTotals: {
+      // The floor of 10 is the k floor (domain/pulse.ts K_ANON): no public
+      // number is ever smaller than it.
+      postingsMin: inRange(
+        process.env.PUBLIC_TOTALS_POSTINGS_MIN,
+        100,
+        10,
+        1_000_000,
+        'PUBLIC_TOTALS_POSTINGS_MIN',
+      ),
+      introsMin: inRange(
+        process.env.PUBLIC_TOTALS_INTROS_MIN,
+        25,
+        10,
+        1_000_000,
+        'PUBLIC_TOTALS_INTROS_MIN',
+      ),
+    },
   };
 }
 
