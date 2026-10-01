@@ -59,7 +59,8 @@ export type ShelfGapOutcome =
   | 'human_picked'
   | 'none_of_these'
   | 'picked_from_list'
-  | 'top_level';
+  | 'top_level'
+  | 'jev_picked';
 
 export const SHELF_GAP_OUTCOMES: readonly ShelfGapOutcome[] = [
   'snapped_low_confidence',
@@ -68,6 +69,7 @@ export const SHELF_GAP_OUTCOMES: readonly ShelfGapOutcome[] = [
   'none_of_these',
   'picked_from_list',
   'top_level',
+  'jev_picked',
 ];
 
 /** How many nodes a row keeps from the door's shortlist. */
@@ -117,11 +119,21 @@ export async function recordShelfGap(row: {
   shortlist?: ShortlistEntry[];
   picked?: string | null;
   attempt?: string | null;
+  /** 'jev' where Jev's answer decided it (migration 064, domain/jevShelf.ts). */
+  how?: 'jev' | null;
+  /** Jev's probability for that answer, on 'jev' rows only. */
+  p?: number | null;
 }): Promise<void> {
   try {
+    const p = row.how === 'jev' && typeof row.p === 'number' && Number.isFinite(row.p)
+      ? Math.min(1, Math.max(0, Math.round(row.p * 1000) / 1000))
+      : null;
     await getPool().query(
-      `INSERT INTO shelf_gaps (attempt, as_posted, kind, shortlist, outcome, picked)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+      row.how === 'jev'
+        ? `INSERT INTO shelf_gaps (attempt, as_posted, kind, shortlist, outcome, picked, how, p)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, 'jev', $7)`
+        : `INSERT INTO shelf_gaps (attempt, as_posted, kind, shortlist, outcome, picked)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
       [
         row.attempt ?? null,
         String(row.as_posted ?? '').slice(0, 120),
@@ -129,6 +141,7 @@ export async function recordShelfGap(row: {
         JSON.stringify((row.shortlist ?? []).slice(0, SHELF_GAP_SHORTLIST)),
         row.outcome,
         row.picked ?? null,
+        ...(row.how === 'jev' ? [p] : []),
       ],
     );
   } catch (e: any) {

@@ -166,6 +166,42 @@ on that date: infra provides `osb/prod/jev`, passes its ARN as
 page names TypeSafe as a processor for this. TypeSafe's answer on data
 retention for this account is still pending (see the terms section below).
 
+## Shelf choice at the door (1 October 2026)
+
+A third use, `src/domain/jevShelf.ts`, also separate from the shadow, and it
+changes where a posting is filed:
+
+- Gated by `JEV_SHELF=on|off` (`src/config.ts`): **on in dev, OFF in prod by
+  default**; anything else fails at boot. It needs `JEV_SECRET_ARN` and has
+  its own entry point, `askJevForShelf`. The shadow's category trial (trial A)
+  still runs as before, after publish, on dev only.
+- Only at the publish door (never an amend, never the ops sweep), only for a
+  path the catalogue does not hold open (a known node is filed as posted),
+  after the category refusals, and only where the door would answer
+  SHELF_UNCLEAR, or its best shelf is under a different top level than the
+  one the assistant wrote, or its best two shelves are on different branches
+  within one branch margin (1.0 sd).
+- Jev is offered the door's own plausible shelves (at most five, open only),
+  restricted to the top level the assistant wrote where the door has a
+  plausible shelf there, plus the nearest open shelf on the written line, plus
+  "none of these". Each by its label path in words. It is sent the posting's
+  `kind` and plain attributes through the same cleaning as the pair state
+  (no ids, prices, places, names, `also_called` or `not_these`).
+- A shelf at p >= 0.70 that is one of the options and still open: filed there,
+  and written to `shelf_gaps` as `jev_picked` with `how = 'jev'` and `p`
+  (migration 064). "None of these" at p >= 0.70 where the door would have
+  asked: the searchable shelf page (SHELF_PICK) instead of the list, written
+  as `none_of_these` with `how = 'jev'`. Below 0.70, a 2 s timeout, an error,
+  an answer that is not an option, or the flag off: the door's own answer.
+- Logged: account id, decision, p, latency and why it was asked. Never the
+  posting's words or the shelves.
+- Calibration: `npm run calibrate-shelf` on a labelled set kept in the
+  private repository (header of `test/calibration/jev-shelf.mts`).
+
+**Before it is switched on in prod**, the privacy page must say that TypeSafe
+may also help choose which shelf a posting goes under, and the founder decides
+on the calibration numbers.
+
 ## The rehearsal transcript scorer
 
 `scripts/eval/jev-transcript-score.mts` (`npm run jev-transcript`) is a third,

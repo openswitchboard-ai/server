@@ -41,6 +41,7 @@
     "shelf-gaps": "tsx scripts/ops/shelf-gaps.mts",
     "calibrate-tiers": "tsx test/calibration/run.mts",
     "calibrate-jev": "tsx test/calibration/jev-judge.mts",
+    "calibrate-shelf": "tsx test/calibration/jev-shelf.mts",
     "probe": "tsx test/probe/run.ts"
   },
   "dependencies": {

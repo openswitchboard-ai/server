@@ -211,6 +211,12 @@ export interface Config {
    *  var plus the osb/prod/jev secret (JEV_SECRET_ARN). Anything else set here
    *  is a boot failure. On with no JEV_SECRET_ARN is rules only, said at boot. */
   jevMatching: boolean;
+  /** JEV HELPS CHOOSE THE SHELF AT THE DOOR (founder, 1 October 2026;
+   *  src/domain/jevShelf.ts). JEV_SHELF=on|off; unset is ON in dev and OFF in
+   *  prod. Off in prod until the privacy page says TypeSafe may also help
+   *  choose a shelf. Needs JEV_SECRET_ARN like the judge; anything else set
+   *  here is a boot failure. */
+  jevShelf: boolean;
   /** SEALED CONTACT DETAILS (1 October 2026; domain/sealedContact.ts): the
    *  send-contact page, the receiving keys, and the refusal of an address or a
    *  phone number in the words. SEALED_CONTACT=on|off; unset is ON in dev and
@@ -299,6 +305,7 @@ export function loadConfig(): Config {
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
     leanSweep: leanSweepFrom(process.env.LEAN_SWEEP, envName),
     jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
+    jevShelf: jevShelfFrom(process.env.JEV_SHELF, envName),
     sealedContact: sealedContactFrom(process.env.SEALED_CONTACT, envName),
   };
 }
@@ -354,6 +361,19 @@ export function jevMatchingFrom(raw: string | undefined, envName: string): boole
   if (v === 'on') return true;
   if (v === 'off') return false;
   throw new Error('JEV_MATCHING must be on or off');
+}
+
+/**
+ * JEV_SHELF wins when it says on or off; otherwise dev asks Jev about unsure
+ * shelves and prod does not. Prod stays off by default until the privacy page
+ * covers it. Anything else set there is a boot failure.
+ */
+export function jevShelfFrom(raw: string | undefined, envName: string): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v) return envName === 'dev';
+  if (v === 'on') return true;
+  if (v === 'off') return false;
+  throw new Error('JEV_SHELF must be on or off');
 }
 
 /**

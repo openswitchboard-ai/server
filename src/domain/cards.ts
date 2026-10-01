@@ -20,6 +20,8 @@ import { attributeFields } from '../intake/checks/moneyFigure.js';
 import { canonicaliseAttributes } from './attributeCanon.js';
 import { relatedOpenShelves, suggestCategories, suggestionSentence } from './categorySuggest.js';
 import { SHELF_NONE_OPTION, snapCategory } from './categoryBackfill.js';
+import { chooseShelfWithJev, type JevShelfRequest } from './jevShelf.js';
+import { jevShelfEnabled } from '../shadow/jev.js';
 import {
   closeShelfAttempt,
   markNoneOfThese,
@@ -967,11 +969,50 @@ async function runPublish(
     card = { ...card, category: generalShelf(shelfAttempt.as_posted) };
   }
 
+  // JEV'S SHELF CHOICE (domain/jevShelf.ts), at this door only and only where
+  // JEV_SHELF is on: snapCategory decides when to ask, and what is offered.
   const filed = await snapCategory(cfg, card.category, undefined, {
     fallbackToAncestor: true,
     askWhenUnsure: true,
     posting: { kind, attributes: card.attributes },
+    ...(jevShelfEnabled()
+      ? {
+          chooseShelf: (req: JevShelfRequest) =>
+            chooseShelfWithJev(req, logSnap, { ids: { account_id: accountId } }),
+        }
+      : {}),
   });
+  if (filed.how === 'unclear' && filed.jev?.verdict.decision === 'none') {
+    // Jev is confident none of the shelves fits: the searchable shelf page
+    // rather than a list the human would only answer "none of these" to.
+    const jevNone = filed.jev.verdict;
+    const opened = await openShelfAttempt(accountId, kind, filed.from);
+    let page: Awaited<ReturnType<typeof shelfPickLink>> | undefined;
+    if (opened) {
+      try {
+        page = await shelfPickLink(cfg, accountId, opened.attempt);
+      } catch (e: any) {
+        logSnap('publish: shelf page could not be minted, asking with the list', { error: e?.message });
+      }
+    }
+    if (opened && page) {
+      if (await markNoneOfThese(accountId, opened.attempt)) {
+        await recordShelfGap({
+          attempt: opened.attempt,
+          as_posted: filed.from,
+          kind,
+          outcome: 'none_of_these',
+          shortlist: shortlistForGap(filed.shortlist),
+          how: 'jev',
+          p: jevNone.p,
+        });
+      }
+      throw new OsbError('SHELF_PICK', {
+        human_action: `${SHELF_PICK_ACTION} ${page.link}`,
+        press_id: page.press_id,
+      });
+    }
+  }
   if (filed.how === 'unclear') {
     logSnap('publish: nothing near enough to file this under', {
       account_id: accountId,
@@ -1149,6 +1190,16 @@ async function runPublish(
       });
     }
     await closeShelfAttempt(accountId, answering.attempt);
+  } else if (filed.how === 'jev') {
+    await recordShelfGap({
+      as_posted: filed.from,
+      kind,
+      outcome: 'jev_picked',
+      picked: filed.category,
+      shortlist: shortlistForGap(filed.shortlist),
+      how: 'jev',
+      p: filed.jev?.verdict.decision === 'pick' ? filed.jev.verdict.p : null,
+    });
   } else if (unsureFiling) {
     await recordShelfGap({
       as_posted: filed.from,

@@ -258,6 +258,9 @@ interface JevState {
   /** The BORDERLINE JUDGE (jevJudge.ts). Settled at init: JEV_MATCHING on
    *  and a secret configured, in any environment. */
   matching?: boolean;
+  /** SHELF CHOICE AT THE DOOR (domain/jevShelf.ts). Settled at init: JEV_SHELF
+   *  on and a secret configured, in any environment. */
+  shelf?: boolean;
   key?: string;
   keyFetchedAt?: number;
 }
@@ -275,16 +278,18 @@ export function initJev(cfg: Config, log: (msg: string) => void = () => {}): voi
   const hasArn = !!cfg.jevSecretArn;
   const wantsMatching = cfg.jevMatching === true;
   const matching = wantsMatching && hasArn;
+  const wantsShelf = cfg.jevShelf === true;
+  const shelf = wantsShelf && hasArn;
   if (cfg.envName === 'prod') {
-    state = { cfg, enabled: false, matching };
-    if (hasArn && !wantsMatching) {
+    state = { cfg, enabled: false, matching, shelf };
+    if (hasArn && !wantsMatching && !wantsShelf) {
       log(
         'jev shadow refuses to start in prod: JEV_SECRET_ARN is set on a prod task ' +
           'with JEV_MATCHING off. The shadow is dev-only and stays off here.',
       );
     }
   } else {
-    state = { cfg, enabled: hasArn, matching };
+    state = { cfg, enabled: hasArn, matching, shelf };
     log(
       hasArn
         ? 'jev shadow is on for this deployment: answers are recorded and change nothing'
@@ -299,6 +304,11 @@ export function initJev(cfg: Config, log: (msg: string) => void = () => {}): voi
   } else if (wantsMatching) {
     log('jev matching is on in config but JEV_SECRET_ARN is not set: the rules judge every pair');
   }
+  if (shelf) {
+    log('jev shelf choice is on for this deployment: Jev may choose among the door\'s shelves when the door is unsure');
+  } else if (wantsShelf) {
+    log('jev shelf choice is on in config but JEV_SECRET_ARN is not set: the rules choose every shelf');
+  }
 }
 
 /** True only where the shadow may actually call out. */
@@ -309,6 +319,11 @@ export function jevEnabled(): boolean {
 /** True only where the borderline judge may call out (jevJudge.ts). */
 export function jevMatchingEnabled(): boolean {
   return !!state?.matching;
+}
+
+/** True only where shelf choice at the door may call out (jevShelf.ts). */
+export function jevShelfEnabled(): boolean {
+  return !!state?.shelf;
 }
 
 /** For the suite: forget the decision and the cached key. */
@@ -439,6 +454,37 @@ export async function askJevForMatching(
   const cfg = state?.cfg;
   if (!cfg) return { ok: false, reason: 'not-initialised' };
   if (!jevMatchingEnabled()) return { ok: false, reason: 'disabled' };
+  let key: string;
+  try {
+    key = await apiKey(cfg);
+  } catch {
+    return { ok: false, reason: 'no-key' };
+  }
+  return postToJev({
+    state: subject,
+    questions,
+    apiKey: key,
+    endpoint: cfg.jevEndpoint ?? JEV_ENDPOINT,
+    model: cfg.jevModel ?? JEV_MODEL,
+    timeoutMs: opts.timeoutMs,
+    retry: false,
+  });
+}
+
+/**
+ * Ask Jev WHICH SHELF, at the publish door (src/domain/jevShelf.ts). The second
+ * prod-capable path, with its own flag: JEV_SHELF on and a secret configured.
+ * Settled at boot; nothing a caller passes can turn it on. One attempt, no
+ * retry: a posting is waiting, and the door's own answer is always there.
+ */
+export async function askJevForShelf(
+  subject: unknown,
+  questions: Record<string, JevQuestion>,
+  opts: { timeoutMs: number },
+): Promise<JevResult> {
+  const cfg = state?.cfg;
+  if (!cfg) return { ok: false, reason: 'not-initialised' };
+  if (!jevShelfEnabled()) return { ok: false, reason: 'disabled' };
   let key: string;
   try {
     key = await apiKey(cfg);

@@ -41,6 +41,7 @@ import {
 } from './categorySuggest.js';
 import { categoryLabelPath, nearestKnownAncestor } from './matchRules.js';
 import { embedCard } from './embeddings.js';
+import { JEV_SHELF_OPTIONS, type JevShelfReason, type JevShelfRequest, type JevShelfVerdict } from './jevShelf.js';
 import type { Config } from '../config.js';
 
 /** Cards per pass. One pass is a few hundred small updates plus embeddings. */
@@ -221,6 +222,7 @@ export interface SnapCursor {
 export type SnapHow =
   | 'as-posted' // the catalogue knows this node and holds it open
   | 'suggestion' // the nearest open node, close enough to be trusted
+  | 'jev' // the door was unsure and Jev chose among its shelves (jevShelf.ts)
   | 'ancestor' // nothing was close enough, so the line it was filed on
   | 'unclear' // something was close, nothing was convincing: ask the human
   | 'unmatched'; // nothing was close enough and the caller asked to be left alone
@@ -269,6 +271,12 @@ export interface SnapDecision {
    * wants to know when it did.
    */
   confident?: boolean;
+  /**
+   * Where Jev was asked which shelf (jevShelf.ts): why, and what it said. On
+   * 'jev' it chose the shelf; on 'unclear' with decision 'none' it said none of
+   * the shelves fits, and the door answers with the shelf page.
+   */
+  jev?: { reasons: JevShelfReason[]; verdict: JevShelfVerdict };
 }
 
 /**
@@ -391,6 +399,55 @@ function keepWrittenTopLevel(
 }
 
 /**
+ * WHEN THE DOOR ASKS JEV WHICH SHELF (jevShelf.ts). Pure. Three cases, any of
+ * them enough: the door would ask the human; the best shelf is under another
+ * top level than the one the assistant wrote; or the best two shelves are on
+ * different branches within one branch margin of each other.
+ */
+export function jevShelfReasons(
+  rawBest: Suggestion | undefined,
+  offerable: Suggestion[],
+  from: string,
+  unclear: boolean,
+): JevShelfReason[] {
+  const reasons: JevShelfReason[] = [];
+  if (unclear) reasons.push('unclear');
+  if (!rawBest) return reasons;
+  const written = topOf(nearestKnownAncestor(from));
+  if (written && topOf(rawBest.category) !== written) reasons.push('crosses-top');
+  const first = offerable[0];
+  const other = first && offerable.find((s) => branchOf(s.category) !== branchOf(first.category));
+  if (first && other) {
+    const lead = typeof first.lead === 'number';
+    const of = (s: Suggestion) => (lead ? (s.lead ?? 0) : s.score);
+    const margin = lead ? SHELF_BRANCH_MARGIN_LEAD : SHELF_BRANCH_MARGIN;
+    if (of(first) - of(other) < margin) reasons.push('close-branches');
+  }
+  return reasons;
+}
+
+/**
+ * The shelves Jev is offered: the door's offerable ones, best first, at most
+ * JEV_SHELF_OPTIONS, and the nearest shelf the catalogue knows on the line the
+ * assistant wrote where that is an open shelf below the top level. Open only.
+ *
+ * ON THE TOP LEVEL THE ASSISTANT WROTE, where the door has any plausible shelf
+ * there (the same principle as keepWrittenTopLevel above). Calibrated on
+ * 1 October 2026: offered every top level, Jev moved a hire or a loan of a
+ * thing onto the matching service, which is the crossing eb8fcc1 exists to
+ * stop. Where the written top level has nothing plausible, every top level is
+ * offered as before.
+ */
+export function jevShelfOptions(offerable: Suggestion[], from: string): string[] {
+  const written = topOf(nearestKnownAncestor(from));
+  const own = offerable.filter((s) => topOf(s.category) === written);
+  const out = (own.length ? own : offerable).map((s) => s.category).filter(openNode).slice(0, JEV_SHELF_OPTIONS);
+  const line = nearestKnownAncestor(from);
+  if (line.includes('.') && openNode(line) && !out.includes(line)) out.push(line);
+  return out;
+}
+
+/**
  * The shelves to put to the human: one per branch, best first, and then the
  * honest last option. One per branch because offering four flavours of the
  * same wrong branch is not a choice; the disagreement between branches is the
@@ -450,6 +507,11 @@ export async function snapCategory(
      * never take a posting down for being what it already was.
      */
     askWhenUnsure?: boolean;
+    /**
+     * JEV'S SHELF CHOICE (jevShelf.ts). Only the publish door passes this, and
+     * only where JEV_SHELF is on; it is consulted only with askWhenUnsure.
+     */
+    chooseShelf?: (req: JevShelfRequest) => Promise<JevShelfVerdict>;
   } = {},
 ): Promise<SnapDecision> {
   const from = String(category ?? '');
@@ -470,6 +532,7 @@ export async function snapCategory(
   let runnersUp: string[] = [];
   let ranked: Suggestion[] = [];
   let offerable: Suggestion[] = [];
+  let rawBest: Suggestion | undefined;
   try {
     // Five rather than three: the top answer may be a family somebody closed,
     // and the point of asking is to have an open one left after that.
@@ -485,6 +548,7 @@ export async function snapCategory(
     ranked = result.scored;
     offerable = result.scored.filter((s) => worthOffering(s, result.source, floor, minLead));
     best = preferAncestorLine(offerable, from);
+    rawBest = best;
     const top = keepWrittenTopLevel(best, offerable, from);
     best = top.best;
     // Kept on the written top level: how sure it is, is weighed among the
@@ -502,11 +566,51 @@ export async function snapCategory(
   } catch (e: any) {
     log('snap: suggester unavailable', { category: from, error: e?.message });
   }
-  if (best && opts.askWhenUnsure && !confidentIn(best, ranked)) {
+  const unclear = !!best && !!opts.askWhenUnsure && !confidentIn(best, ranked);
+
+  // JEV'S SHELF CHOICE (jevShelf.ts): where the door is unsure, or the best
+  // answer crosses the top level the assistant wrote, or two branches are
+  // neck and neck, Jev is offered the door's own shelves. A confident pick of
+  // an open shelf files it; a confident "none of these" where the door would
+  // have asked sends the shelf page instead of the list; anything else is the
+  // door's own answer, below, unchanged.
+  let jev: SnapDecision['jev'];
+  if (opts.chooseShelf && opts.askWhenUnsure && best) {
+    const reasons = jevShelfReasons(rawBest, offerable, from, unclear);
+    const options = jevShelfOptions(offerable, from);
+    if (reasons.length && options.length) {
+      let verdict: JevShelfVerdict;
+      try {
+        verdict = await opts.chooseShelf({ options, posting: opts.posting ?? {}, reasons });
+      } catch {
+        verdict = { decision: 'rules', reason: 'error' };
+      }
+      jev = { reasons, verdict };
+      if (verdict.decision === 'pick' && options.includes(verdict.category) && openNode(verdict.category)) {
+        const picked = ranked.find((s) => s.category === verdict.category) ?? offerable.find((s) => s.category === verdict.category);
+        return {
+          category: verdict.category,
+          from,
+          changed: verdict.category !== from,
+          how: 'jev',
+          source,
+          score: picked?.score,
+          lead: picked?.lead,
+          runners_up: runnersUp.filter((c) => c !== verdict.category),
+          shortlist: shortlistOf(ranked),
+          confident: true,
+          jev,
+        };
+      }
+    }
+  }
+
+  if (unclear && best) {
     // Close enough to be worth asking about, scattered enough that picking
     // one would be a guess. The human whose thing it is can settle it in a
     // sentence, so the posting waits and they are asked.
     return {
+      ...(jev ? { jev } : {}),
       category: from,
       from,
       changed: false,
@@ -534,6 +638,7 @@ export async function snapCategory(
       runners_up: runnersUp.filter((c) => c !== best!.category),
       shortlist: shortlistOf(ranked),
       confident: confidentIn(best, ranked),
+      ...(jev ? { jev } : {}),
     };
   }
   if (!opts.fallbackToAncestor) {

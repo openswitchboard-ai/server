@@ -50,6 +50,14 @@ only decide who is introduced. Jev's answers are cached in `.jev-cache.json`
 calls Jev for pairs it has not seen in that form; `--no-call` uses the cache
 alone. The key is read from Secrets Manager and never printed.
 
+## Shelf choice at the door
+
+`npm run calibrate-shelf` (`jev-shelf.mts`) runs the publish door's shelf
+decision over a labelled set of postings (`shelf-set.json` in the private
+repository) with the rules alone and with Jev's shelf choice, and prints the
+founder's bars. It embeds with the production model, so it needs AWS; Jev
+answers are cached in `.jev-shelf-cache.json` (gitignored).
+
 ## What the numbers mean
 
 - **cos**: cosine similarity of the two projection embeddings (Titan v2).
