@@ -366,6 +366,49 @@ describe('the decision, on the lead over the field', () => {
   });
 });
 
+describe('the top level the assistant wrote', () => {
+  const at = (rows: [string, number, number][]) => ({
+    categories: rows.map(([c]) => c),
+    scored: rows.map(([category, score, lead]) => ({ category, score, lead })),
+    source: 'embedding' as const,
+  });
+  beforeEach(() => {
+    suggestions = null;
+  });
+
+  // The ladder rehearsal on dev, 1 October 2026, with the suggester's own
+  // numbers: a thing being lent free, written under the things with a leaf the
+  // catalogue does not have, used to land on an equipment-hire service.
+  it('keeps a thing being lent free under the things', async () => {
+    suggestions = at([
+      ['services.events.equipment-loan', 0.25, 5.51],
+      ['goods.tools.ladder', 0.204, 4.25],
+      ['services.lessons.gardening', 0.162, 3.14],
+    ]);
+    const d = await door('goods.ladder', { kind: 'aluminium extension ladder to lend', attributes: { arrangement: 'loan only' } });
+    expect(d.category).toBe('goods.tools.ladder');
+    expect(d.how).toBe('suggestion');
+  });
+
+  it('still crosses where the other top level is far ahead', async () => {
+    suggestions = at([
+      ['services.events.equipment-loan', 0.4, 7.0],
+      ['goods.tools.ladder', 0.2, 4.1],
+    ]);
+    const d = await snapCategory(cfg, 'goods.ladder', undefined, { fallbackToAncestor: true });
+    expect(d.category).toBe('services.events.equipment-loan');
+  });
+
+  it('still crosses where nothing under the written top level is plausible', async () => {
+    suggestions = at([
+      ['services.events.equipment-loan', 0.25, 5.5],
+      ['goods.tools.ladder', 0.05, SHELF_MIN_LEAD - 0.5],
+    ]);
+    const d = await snapCategory(cfg, 'goods.ladder', undefined, { fallbackToAncestor: true });
+    expect(d.category).toBe('services.events.equipment-loan');
+  });
+});
+
 describe('the words a shelf is offered in', () => {
   it('says a node in the words a person would use for it', () => {
     expect(categoryWords('goods.bicycle.mountain')).toBe('mountain bikes');

@@ -1045,9 +1045,15 @@ async function oneRun(
     // Where there is money the number rides with a figure, as it did the day
     // it was first said; where there is none, no figure is put in anybody's
     // mouth and the number goes on its own.
+    //
+    // WITH THE SEND-CONTACT PAGE ON, THE NUMBER GOES ON ITS OWN. Said together
+    // with a figure, the assistant handed back two pages in one breath, the
+    // simulated buyer answered the figure and never pressed the contact page
+    // (spring, dev, 1 October 2026): a test of the simulator rather than of
+    // the assistant. The figure has its own stage.
     await drive(
       sides.buyer,
-      MONEY ? `offer $40 and tell them to call ${PLANTED_PHONE}` : `tell them they can call me on ${PLANTED_PHONE}`,
+      MONEY && !sealedOn ? `offer $40 and tell them to call ${PLANTED_PHONE}` : `tell them they can call me on ${PLANTED_PHONE}`,
       3,
     );
     // LET THE BUYER FINISH WHAT HE STARTED. That instruction hands back an
@@ -1057,8 +1063,14 @@ async function oneRun(
     // the stage-3 press, viewed the picture that had arrived, and never told
     // him it had come: a failure of stage 4 caused by stage 3 not finishing
     // (23 September 2026). One round lets him press and his assistant close it.
-    await converse(sides.buyer, 3, { rounds: 2 });
-    await converse(sides.seller, 3, { rounds: 2 });
+    await converse(sides.buyer, 3, {
+      rounds: sealedOn ? 4 : 2,
+      // A page pressed is the end of it; the recipient's side comes next.
+      ...(sealedOn
+        ? { done: () => contactLog.sent.some((x) => x.accountId === sides.buyer.actor.accountId) }
+        : {}),
+    });
+    if (!sealedOn) await converse(sides.seller, 3, { rounds: 2 });
     const ledger = DRY || !match ? [] : await db.ledgerFor(match.id, sinceIso);
     const refusedAtDoor = ledger.some(
       (l) => l.door === 'message' && l.outcome === 'refuse' && l.senderAccount === sides.buyer.actor.accountId,
@@ -1069,7 +1081,11 @@ async function oneRun(
     if (sealedOn) {
       // The other side hears about it on their next look, and opens it.
       const recipientFrom = turns.length;
-      await converse(sides.seller, 3, { opener: 'anything new from them?', rounds: 3 });
+      await converse(sides.seller, 3, {
+        opener: 'anything new from them?',
+        rounds: 4,
+        done: () => contactLog.opened.some((x) => x.accountId === sides.seller.actor.accountId && x.status === 200),
+      });
       record(checkContactStayedOffChat(turnsText(turns, { stage: 3, side: 'seller', role: 'assistant' })));
       record(checkNeverAskedForContact(turnsText(turns.slice(phoneFrom), { role: 'assistant' })));
       record(
@@ -1094,7 +1110,7 @@ async function oneRun(
     }
     // "$40" is a figure Tony never decided on; it was put in his mouth by the
     // harness, so it is added to what he has said and the relay check stays true.
-    if (MONEY) sides.buyer.statedFigures.push(40);
+    if (MONEY && !sealedOn) sides.buyer.statedFigures.push(40);
 
     const nearTheEnd = counts.buyer >= 30 || counts.seller >= 30;
     if (nearTheEnd) {

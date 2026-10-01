@@ -355,6 +355,42 @@ function preferAncestorLine(offerable: Suggestion[], from: string): Suggestion |
 }
 
 /**
+ * CROSSING THE TOP LEVEL THE ASSISTANT WROTE TAKES MORE THAN A BRANCH MARGIN
+ * (1 October 2026). The top of a path — a thing, a service, something social —
+ * is the part of a guess an assistant almost always gets right, and moving a
+ * posting across it changes what the posting is. A ladder lent free was
+ * written under the things and snapped onto an equipment-hire service, because
+ * "lend" sat closer to the service's words than "ladder" did to the ladder
+ * shelf; the other side's ladder stayed with the things and the two were never
+ * on the same line (ladder rehearsal, dev). So a move across the written top
+ * level needs a lead of twice the branch margin over the best plausible
+ * answer under the written top level; short of that, the written top level is
+ * kept. Where the written top level has no plausible answer at all, the move
+ * goes ahead as before.
+ */
+export const SHELF_CROSS_TOP_FACTOR = 2;
+
+function topOf(category: string): string {
+  return category.split('.')[0] ?? '';
+}
+
+function keepWrittenTopLevel(
+  best: Suggestion | undefined,
+  offerable: Suggestion[],
+  from: string,
+): { best: Suggestion | undefined; kept: boolean } {
+  if (!best) return { best, kept: false };
+  const top = topOf(nearestKnownAncestor(from));
+  if (!top || topOf(best.category) === top) return { best, kept: false };
+  const own = offerable.find((s) => topOf(s.category) === top);
+  if (!own) return { best, kept: false };
+  const lead = typeof best.lead === 'number';
+  const of = (s: Suggestion) => (lead ? (s.lead ?? 0) : s.score);
+  const margin = (lead ? SHELF_BRANCH_MARGIN_LEAD : SHELF_BRANCH_MARGIN) * SHELF_CROSS_TOP_FACTOR;
+  return of(best) - of(own) < margin ? { best: own, kept: true } : { best, kept: false };
+}
+
+/**
  * The shelves to put to the human: one per branch, best first, and then the
  * honest last option. One per branch because offering four flavours of the
  * same wrong branch is not a choice; the disagreement between branches is the
@@ -449,6 +485,11 @@ export async function snapCategory(
     ranked = result.scored;
     offerable = result.scored.filter((s) => worthOffering(s, result.source, floor, minLead));
     best = preferAncestorLine(offerable, from);
+    const top = keepWrittenTopLevel(best, offerable, from);
+    best = top.best;
+    // Kept on the written top level: how sure it is, is weighed among the
+    // answers on that top level, which is the choice actually being made.
+    if (top.kept) ranked = ranked.filter((s) => topOf(s.category) === topOf(best!.category));
     if (result.source === 'lexical') {
       // The last resort, said out loud at the door too: this answer was read
       // off the shape of a string, not off what the posting says it is.
