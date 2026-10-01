@@ -212,19 +212,18 @@ export async function sendChannelWaitingNudge(
 // an account that has turned match mail off.
 //
 //   step 'written' — a written line is waiting on this person
-//                    (domain/confirmLines.ts): the seller has something to
-//                    answer, or the buyer has a line that was not confirmed.
+//                    (domain/confirmLines.ts): the buyer has asked the
+//                    seller's human to confirm something.
 //
 // The names step happens once on an introduction, so one key per recipient was
 // the whole of its throttle. A written line can happen more than once, and a
 // key that had already been spent on the names step would swallow it. So this
 // step carries an OCCASION that goes into the same key: the caller names the
-// thing the notice is about (the oldest line still unanswered; the first line
-// one press left unconfirmed), and everything that belongs to that one
-// occasion, a burst of lines or a redelivered job, coalesces on it exactly as
-// before. No occasion, no notice.
+// thing the notice is about (the oldest line still waiting to be confirmed),
+// and everything that belongs to that one occasion, a burst of lines or a
+// redelivered job, coalesces on it exactly as before. No occasion, no notice.
 // ---------------------------------------------------------------------------
-const OCCASION = /^(asked|declined):[0-9a-f-]{36}$/;
+const OCCASION = /^asked:[0-9a-f-]{36}$/;
 
 export async function notifyYourMove(
   cfg: Config,

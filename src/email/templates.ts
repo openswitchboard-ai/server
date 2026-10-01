@@ -498,8 +498,7 @@ export function renderChannelWaiting(
 // ---------------------------------------------------------------------------
 //
 // THE 'written' STEP (2 October 2026; domain/confirmLines.ts). The buyer has
-// asked the seller's human to confirm something in writing, or the seller's
-// press left one of the buyer's lines unconfirmed. Either way it is this
+// asked the seller's human to confirm something in writing. It is this
 // person's move, and one whose assistant only wakes when spoken to would
 // otherwise be left waiting in silence. It says nothing of what was asked:
 // the line's words never reach this file.

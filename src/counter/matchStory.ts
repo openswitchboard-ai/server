@@ -179,7 +179,7 @@ export interface WaitingInputs {
    *  reads as the note it now is. */
   ownOpenOffers?: { match_id: string; amount: string | number; ccy: string }[];
   /** Introductions on which the buyer has asked this person, the seller, to
-   *  confirm something in writing that they have not answered yet
+   *  confirm something in writing that they have not confirmed yet
    *  (domain/confirmLines.ts). */
   confirmations?: { match_id: string; asked_at?: Date }[];
 }

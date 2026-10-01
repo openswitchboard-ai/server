@@ -81,7 +81,7 @@ export const ACCOUNT_DELETE_ACTION = 'account-delete';
 /**
  * CONFIRMING IN WRITING TAKES A FRESH CEREMONY TOO (2 October 2026).
  *
- * A seller ticking what the buyer asked them to confirm puts their word on
+ * A seller confirming what the buyer asked puts their word on
  * the record of a deal (domain/confirmLines.ts). On the pages that send or
  * take a figure the money press already covers it; on the page of its own it
  * is held to the same rule, so a session left open cannot put somebody's

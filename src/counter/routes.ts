@@ -1956,26 +1956,25 @@ in on this device and lets you approve what is waiting.</p>
         : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
     ];
 
-    /** A seller pressed Accept with a written line still unconfirmed. */
-    const notAgreedDone = (e: OsbError): [string, string] => [
-      confirmLines.SELLER_NOT_AGREED_TITLE,
-      `<p>${pages.esc(e.payload.human_action ?? confirmLines.SELLER_NOT_AGREED_WORDS)}</p>`,
-    ];
     const CONFIRMED_DONE: [string, string] = [
       confirmLines.CONFIRM_DONE_TITLE,
       `<p>${pages.esc(confirmLines.CONFIRM_DONE_WORDS)}</p>`,
     ];
-    /** A redraw after a refused ceremony keeps what the person had ticked. */
-    const keepTicks = (q: pages.OneQuestionView, b: any) => {
-      if (q.lines?.mode !== 'answer') return;
-      q.lines = {
-        ...q.lines,
-        items: q.lines.items.map((i) => ({
-          ...i,
-          ticked: String(b?.[`line_${i.id}`] ?? '') === 'yes',
-        })),
-      };
-    };
+    /** Not now on a page that listed written lines. Nothing changed: no line,
+     *  and no figure. The page says what happens next. */
+    const NOT_NOW_OVER_LINES: [string, string] = [
+      confirmLines.NOT_NOW_TITLE,
+      `<p>${pages.esc(confirmLines.NOT_NOW_WORDS)}</p>`,
+    ];
+    /**
+     * Does the page as it would be drawn NOW list a line the pressed page did
+     * not? Asked before the ceremony and before any link is burnt, so a line
+     * the buyer added a moment ago costs a second look and nothing else. The
+     * accept itself holds the same rule under the lock (domain/offers.ts).
+     */
+    const linesMovedOn = (q: pages.OneQuestionView, b: any, on: confirmLines.AnsweredOn): boolean =>
+      q.lines?.mode === 'confirm' &&
+      !confirmLines.pressCoversAll(q.lines.items, confirmLines.readLinePress(b, on));
 
     /** Where a done page sends the person: back to the assistant on the link
      *  road, back to the main page on the other. */
@@ -2015,22 +2014,18 @@ in on this device and lets you approve what is waiting.</p>
         // Money asks at the press, whatever the window (credentials.ts).
         money: creds.isMoneyAction(row.action),
       };
-      // THE WRITTEN LINES ON THIS INTRODUCTION, as the seller's boxes
-      // (domain/confirmLines.ts). Nothing where none is waiting, so a page on
-      // an introduction nobody asked a line on is the page it always was.
-      const sellerBoxes = async (
-        matchId: string,
-        intro: string,
-      ): Promise<pages.OneQuestionLines | undefined> => {
-        const all = await confirmLines.linesForPage(matchId);
-        if (!all.some((l) => l.state !== 'confirmed')) return undefined;
+      // THE WRITTEN LINES WAITING ON THIS SELLER (domain/confirmLines.ts),
+      // listed for the press that confirms them. Nothing where none is
+      // waiting, so a page on an introduction nobody asked a line on is the
+      // page it always was.
+      const sellerLines = async (matchId: string): Promise<pages.OneQuestionLines | undefined> => {
+        const waiting = (await confirmLines.linesForPage(matchId)).filter((l) => l.state === 'asked');
+        if (!waiting.length) return undefined;
         return {
-          mode: 'answer',
+          mode: 'confirm',
           heading: confirmLines.SELLER_LINES_HEADING,
-          intro,
-          label: confirmLines.SELLER_LINE_LABEL,
-          doneLabel: confirmLines.SELLER_LINE_DONE_LABEL,
-          items: all,
+          yes: confirmLines.LINE_YES,
+          items: waiting.map((l) => ({ id: l.id, words: l.words })),
         };
       };
       if (row.action === 'lines-confirm') {
@@ -2042,14 +2037,15 @@ in on this device and lets you approve what is waiting.</p>
         } catch {
           return { error: 'This match is not yours.' };
         }
-        const boxes = side === 'have' ? await sellerBoxes(m.id, confirmLines.SELLER_LINES_ALONE) : undefined;
+        const boxes = side === 'have' ? await sellerLines(m.id) : undefined;
         if (!boxes) return { error: confirmLines.CONFIRM_NOTHING_WAITING };
         const thing = firstUp(await readersOwnPhrase(m, accountId));
         return {
           ...base,
           question: `Confirm what the buyer asked${thing ? ` about your ${thing}` : ''}?`,
           lines: boxes,
-          yesLabel: confirmLines.CONFIRM_PAGE_YES,
+          noLabel: confirmLines.LINES_NOT_NOW_LABEL,
+          yesLabel: confirmLines.confirmButtonLabel('lines-confirm'),
           needsPin: true,
           fresh: true,
         };
@@ -2081,10 +2077,9 @@ in on this device and lets you approve what is waiting.</p>
             needsPin: true,
           };
         }
-        // A seller sending a figure answers what the buyer asked them to
-        // confirm on the same page, with the same press.
-        const boxes =
-          side === 'have' ? await sellerBoxes(m.id, confirmLines.SELLER_LINES_ON_SEND) : undefined;
+        // A seller sending a figure confirms what the buyer asked on the
+        // same page, with the same press, and the button says so.
+        const boxes = side === 'have' ? await sellerLines(m.id) : undefined;
         return {
           ...base,
           question:
@@ -2093,7 +2088,11 @@ in on this device and lets you approve what is waiting.</p>
               : `Offer ${figure}${thing ? ` for the ${thing}` : ''}?`,
           detail,
           ...(boxes ? { lines: boxes } : {}),
-          yesLabel: side === 'have' ? `Offer it at ${short}` : `Offer ${short}`,
+          yesLabel: boxes
+            ? confirmLines.confirmButtonLabel('offer-send', short)
+            : side === 'have'
+              ? `Offer it at ${short}`
+              : `Offer ${short}`,
           needsPin: true,
         };
       }
@@ -2139,15 +2138,15 @@ in on this device and lets you approve what is waiting.</p>
         // about the number is said to the assistant.
         detail.push(pages.OFFER_ELSEWHERE_LINE);
         const own = o.swap ? '' : o.account_have === accountId ? 'your' : 'the';
-        // THE WRITTEN LINES. The seller taking the buyer's figure answers
-        // them here, with the press that accepts. The buyer taking the
-        // seller's figure is shown the confirmed ones, so the page shows what
-        // the record will say; and while one is unanswered or was answered no
+        // THE WRITTEN LINES. The seller taking the buyer's figure confirms
+        // them with the press that accepts, and the button says so. The buyer
+        // taking the seller's figure is shown the confirmed ones, so the page
+        // shows what the record will say; and while one is still waiting
         // there is nothing to accept yet, said plainly, with the link left
         // good for when that changes.
         let lines: pages.OneQuestionLines | undefined;
         if (o.account_have === accountId) {
-          lines = await sellerBoxes(o.match_id, confirmLines.SELLER_LINES_ON_ACCEPT);
+          lines = await sellerLines(o.match_id);
         } else {
           const all = await confirmLines.linesForPage(o.match_id);
           if (all.some((l) => l.state !== 'confirmed')) {
@@ -2157,18 +2156,21 @@ in on this device and lets you approve what is waiting.</p>
             lines = {
               mode: 'read',
               heading: confirmLines.BUYER_LINES_HEADING,
-              intro: confirmLines.BUYER_LINES_INTRO,
-              label: confirmLines.BUYER_LINE_LABEL,
-              items: all,
+              yes: confirmLines.LINE_YES,
+              items: all.map((l) => ({ id: l.id, words: l.words })),
             };
           }
         }
+        const sellerConfirms = lines?.mode === 'confirm';
+        const shortFigure = `$${figure.slice(1).split(' ')[0]}`;
         return {
           ...base,
           question: `Accept ${figure}${thing && own ? ` for ${own} ${thing}` : ''}?`,
           detail,
           ...(lines ? { lines } : {}),
-          yesLabel: 'Accept',
+          yesLabel: sellerConfirms
+            ? confirmLines.confirmButtonLabel('offer-accept', shortFigure)
+            : 'Accept',
           needsPin: true,
         };
       }
@@ -3052,8 +3054,12 @@ in on this device and lets you approve what is waiting.</p>
         return html(reply, pages.donePage('Nothing to decide', `<p>${pages.esc(q.error)}</p>`));
       }
       if (decision === 'no') {
+        // Not now spends the link and changes nothing else: no figure is
+        // turned down, taken or sent, and no line is touched. On a page that
+        // listed written lines it says what happens next.
         await consumeLink(row.id);
         await links.recordLinkDecision(row.id, 'declined');
+        if (q.lines?.mode === 'confirm') return html(reply, pages.donePage(...NOT_NOW_OVER_LINES));
         return html(
           reply,
           pages.donePage('Not now', '<p>Nothing changed, and no reason was sent.</p>'),
@@ -3108,7 +3114,10 @@ in on this device and lets you approve what is waiting.</p>
           q.collectProfile = { firstName: String(b.first_name ?? ''), locality: String(b.locality ?? '') };
         }
         if (q.collectReason) q.collectReason = { ...q.collectReason, value: String(b.reason ?? '') };
-        keepTicks(q, b);
+        if (linesMovedOn(q, b, 'lines-confirm')) {
+          q.elevated = creds.elevationFor(row.action, sess.isElevated(s));
+          return html(reply, pages.oneQuestionPage(q, confirmLines.LINES_CHANGED_REDRAW), 409);
+        }
         const okNow = await pressCeremony(
           s as Session,
           reply,
@@ -3144,30 +3153,22 @@ in on this device and lets you approve what is waiting.</p>
           );
         }
         if (row.action === 'offer-accept') {
-          try {
-            await acceptOfferByHuman(row.ref_id, s.accountId!, 'counter', cfg, {
-              lines: confirmLines.readLinePress(b, 'offer-accept'),
-            });
-          } catch (e: any) {
-            // The seller's press landed, their answers are saved, and a line
-            // is still unconfirmed: nothing is agreed, and the page says so.
-            if (e?.linesNotConfirmed && e instanceof OsbError) {
-              await links.recordLinkDecision(row.id, 'not-agreed');
-              return html(reply, doneFor('link', ...notAgreedDone(e)));
-            }
-            throw e;
-          }
+          // The seller's press confirms the lines its page listed and
+          // accepts, in one transaction (domain/offers.ts).
+          await acceptOfferByHuman(row.ref_id, s.accountId!, 'counter', cfg, {
+            lines: confirmLines.readLinePress(b, 'offer-accept'),
+          });
           await links.recordLinkDecision(row.id, 'approved');
           return html(reply, doneFor('link', ...ACCEPTED_DONE));
         }
         if (row.action === 'lines-confirm') {
-          // The page of its own: the boxes, one press, and nothing else moves.
-          await confirmLines.answerLinesByHuman(
+          // The page of its own: one press confirms what it listed, and
+          // nothing else moves.
+          await confirmLines.confirmLinesByHuman(
             row.ref_id,
             s.accountId!,
             'counter',
             confirmLines.readLinePress(b, 'lines-confirm'),
-            cfg,
           );
           await links.recordLinkDecision(row.id, 'approved');
           return html(reply, doneFor('link', ...CONFIRMED_DONE));
@@ -3189,20 +3190,26 @@ in on this device and lets you approve what is waiting.</p>
             // so it is theirs the same way one typed into their own box is.
             { author: 'human' },
           );
-          // The figure is out. The boxes that were on the same page are
-          // answered by the same press, after it: a figure that was refused
-          // leaves everything as it was.
-          const answered = await confirmLines.answerLinesByHuman(
-            row.ref_id,
-            s.accountId!,
-            'counter',
-            confirmLines.readLinePress(b, 'offer-send'),
-            cfg,
-          );
-          const linesSaved =
-            answered.confirmed.length || answered.declined.length
-              ? `<p>${pages.esc(confirmLines.SEND_DONE_LINES_SAVED)}</p>`
-              : '';
+          // The figure is out. The lines listed on the same page are
+          // confirmed by the same press, after it: a figure that was refused
+          // leaves everything as it was. Where the buyer asked for something
+          // more in that very moment, nothing is confirmed and the page says
+          // so; the figure stands, since sending is never held up by a line.
+          let linesSaved = '';
+          try {
+            const done = await confirmLines.confirmLinesByHuman(
+              row.ref_id,
+              s.accountId!,
+              'counter',
+              confirmLines.readLinePress(b, 'offer-send'),
+            );
+            if (done.confirmed.length) {
+              linesSaved = `<p>${pages.esc(confirmLines.SEND_DONE_LINES_CONFIRMED)}</p>`;
+            }
+          } catch (e: any) {
+            if (!(e instanceof OsbError)) throw e;
+            linesSaved = `<p>${pages.esc(confirmLines.SEND_DONE_LINES_NOT_CONFIRMED)}</p>`;
+          }
           await links.recordLinkDecision(row.id, 'approved');
           if ('already_on_table' in placed) {
             return html(
@@ -3368,8 +3375,14 @@ in on this device and lets you approve what is waiting.</p>
       ) {
         return reply.code(400).send({ error: 'bad_request' });
       }
-      // Confirming in writing has no "decline" of its own: leaving a box
-      // unticked and pressing is the answer, and walking away is no answer.
+      // NOT NOW, ON THE MAIN PAGE'S ROAD. On a page that listed written lines
+      // the second button is a press of its own (pages.ts), and it changes
+      // nothing at all: it is never routed to the decline below, so the
+      // figure on the table stays on the table.
+      if (decision === 'no' && (action === 'offer-accept' || action === 'lines-confirm')) {
+        return html(reply, doneFor('session', ...NOT_NOW_OVER_LINES));
+      }
+      // Confirming in writing has no "decline" of its own.
       if (action === 'lines-confirm' && decision !== 'approve') {
         return reply.code(400).send({ error: 'bad_request' });
       }
@@ -3486,30 +3499,25 @@ in on this device and lets you approve what is waiting.</p>
       if (q.collectProfile) {
         q.collectProfile = { firstName: String(b.first_name ?? ''), locality: String(b.locality ?? '') };
       }
-      keepTicks(q, b);
+      if (linesMovedOn(q, b, 'lines-confirm')) {
+        q.elevated = creds.elevationFor(action, sess.isElevated(s));
+        return html(reply, pages.oneQuestionPage(q, confirmLines.LINES_CHANGED_REDRAW), 409);
+      }
       const okNow = await pressCeremony(s, reply, b, action, refuseOnPage(req, reply, q, s, action));
       if (!okNow) return;
       try {
         if (action === 'offer-accept') {
-          try {
-            await acceptOfferByHuman(refId, s.accountId!, 'counter', cfg, {
-              lines: confirmLines.readLinePress(b, 'offer-accept'),
-            });
-          } catch (e: any) {
-            if (e?.linesNotConfirmed && e instanceof OsbError) {
-              return html(reply, doneFor('session', ...notAgreedDone(e)));
-            }
-            throw e;
-          }
+          await acceptOfferByHuman(refId, s.accountId!, 'counter', cfg, {
+            lines: confirmLines.readLinePress(b, 'offer-accept'),
+          });
           return html(reply, doneFor('session', ...ACCEPTED_DONE));
         }
         if (action === 'lines-confirm') {
-          await confirmLines.answerLinesByHuman(
+          await confirmLines.confirmLinesByHuman(
             refId,
             s.accountId!,
             'counter',
             confirmLines.readLinePress(b, 'lines-confirm'),
-            cfg,
           );
           return html(reply, doneFor('session', ...CONFIRMED_DONE));
         }

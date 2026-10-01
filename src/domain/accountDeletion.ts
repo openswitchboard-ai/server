@@ -92,8 +92,8 @@
  *                             ones this account made are withdrawn; the
  *                             message words erased unless held.
  *   confirm_lines ........... KEEP rows, as offers are kept (the record of
- *                             what was asked and answered on a deal). Lines
- *                             this account asked that nobody has answered
+ *                             what was asked and confirmed on a deal). Lines
+ *                             this account asked that are still waiting
  *                             are taken off; the words this account wrote
  *                             erased unless held.
  *   offer_drafts ............ ERASE.
@@ -391,8 +391,8 @@ export async function deleteAccount(
         WHERE proposer_account = $1 AND state IN ('proposed', 'awaiting-human')`,
     );
 
-    // Written lines, the same way: the ones this account asked that nobody
-    // has answered are taken off. Their words come off below.
+    // Written lines, the same way: the ones this account asked that are
+    // still waiting are taken off. Their words come off below.
     await q(LINES_WITHDRAW_SQL);
 
     // Engine and eval rows that quote the postings.

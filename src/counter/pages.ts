@@ -1221,52 +1221,40 @@ export interface OneQuestionView {
 /**
  * The written lines a one-question page carries.
  *
- * 'answer' is the seller's page: every line still to be answered is a box,
- * unticked unless this is a redraw after a refused PIN, with the buyer's
- * words shown as the buyer's. The ones already confirmed are listed plainly
- * above them. One hidden field names every line that has a box, so the press
- * says which lines this page showed and a line asked a moment later is never
- * taken as answered no.
+ * 'confirm' is the seller's page: every line waiting to be confirmed, listed
+ * under one heading, each as the buyer's own words with a plain yes beside
+ * it. It is a statement of what the press will confirm and nothing on it can
+ * be changed: no boxes, and no paragraph of explanation, because the main
+ * button says what it does. One hidden field names every line listed, so a
+ * line asked a moment later is never confirmed by a press that did not show
+ * it. Not now is a button on this page rather than a way off it, so the
+ * press is recorded and the page can say what happens next.
  *
- * 'read' is the buyer's page: the lines the seller has confirmed, listed, so
- * what the page shows at the press is what the record will say.
+ * 'read' is the buyer's page: the lines the seller has confirmed, listed the
+ * same way, so what the page shows at the press is what the record will say.
  *
- * Every line is somebody's free text. It is escaped, set inside quotation
- * marks, and labelled as theirs; none of it is ever the switchboard's voice.
+ * Every line is somebody's free text. It is escaped and set inside quotation
+ * marks; none of it is ever the switchboard's voice.
  */
 export interface OneQuestionLines {
-  mode: 'answer' | 'read';
+  mode: 'confirm' | 'read';
   heading: string;
-  intro: string;
-  /** The label in front of each line's words: whose they are. */
-  label: string;
-  /** In 'answer' mode: the label in front of one already confirmed. */
-  doneLabel?: string;
-  items: { id: string; words: string; state: 'asked' | 'confirmed' | 'declined'; ticked?: boolean }[];
+  /** The word beside each line. */
+  yes: string;
+  items: { id: string; words: string }[];
 }
 
 function linesBlock(l: OneQuestionLines | undefined): string {
   if (!l || !l.items.length) return '';
-  const said = (label: string, words: string) => `${esc(label)} “${esc(words)}”`;
-  if (l.mode === 'read') {
-    return `<h2>${esc(l.heading)}</h2>
-<p class="small">${esc(l.intro)}</p>
-${l.items.map((i) => `<p class="small">${said(l.label, i.words)}</p>`).join('\n')}`;
-  }
-  const done = l.items.filter((i) => i.state === 'confirmed');
-  const open = l.items.filter((i) => i.state !== 'confirmed');
+  const rows = l.items
+    .map((i) => `<div class="kv">“${esc(i.words)}” <strong>${esc(l.yes)}</strong></div>`)
+    .join('\n');
+  const shown =
+    l.mode === 'confirm'
+      ? `\n<input type="hidden" name="lines_shown" value="${esc(l.items.map((i) => i.id).join(','))}">`
+      : '';
   return `<h2>${esc(l.heading)}</h2>
-<p class="small">${esc(l.intro)}</p>
-${done.map((i) => `<p class="small muted">${said(l.doneLabel ?? l.label, i.words)}</p>`).join('\n')}
-<input type="hidden" name="lines_shown" value="${esc(open.map((i) => i.id).join(','))}">
-${open
-  .map(
-    (i) => `<div class="consent-box">
-    <label><input type="checkbox" name="line_${esc(i.id)}" value="yes"${i.ticked ? ' checked' : ''}>
-    ${said(l.label, i.words)}</label>
-  </div>`,
-  )
-  .join('\n')}`;
+${rows}${shown}`;
 }
 
 export function oneQuestionPage(v: OneQuestionView, error?: string): string {
@@ -1314,7 +1302,11 @@ ${detail}
   ${v.needsPin ? ceremonyField(c, 'q') : ''}
   <div class="actions">
   ${ceremonySubmit(c, { formId: 'oneQuestion', label: v.yesLabel, className: 'approve', name: 'decision', value: 'yes' })}
-  <a class="btn secondary" href="/">${esc(v.noLabel)}</a>
+  ${
+    v.lines?.mode === 'confirm'
+      ? `<button type="submit" name="decision" value="no" class="secondary" formnovalidate>${esc(v.noLabel)}</button>`
+      : `<a class="btn secondary" href="/">${esc(v.noLabel)}</a>`
+  }
   </div>
 </form>
 ${ceremonyAlt(c, 'oneQuestion', { name: 'decision', value: 'yes' })}

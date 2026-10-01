@@ -234,15 +234,15 @@ export async function sendNumberLink(
  * WHAT A FIGURE'S PAGE SAYS WHEN IT ALSO CARRIES BOXES (2 October 2026).
  *
  * The buyer may have asked the seller's human to confirm some things in
- * writing (domain/confirmLines.ts). They sit on the seller's page for sending
- * a figure and for taking one, each with a box to tick. The assistant says so
- * in one clause and leaves the lines themselves to the page, which is where
- * the person reads them.
+ * writing (domain/confirmLines.ts). They are listed on the seller's page for
+ * sending a figure and for taking one, and the page's main button confirms
+ * them. The assistant says so in one clause and leaves the lines themselves
+ * to the page, which is where the person reads them.
  */
 const LINES_ON_PAGE_CLAUSE =
-  '. It also lists what the buyer has asked you to confirm in writing, each with a box to tick';
+  '. It also lists what the buyer has asked you to confirm in writing, and the same press confirms them';
 const LINES_ON_PAGE_FOR_AGENT =
-  'The page also lists what the buyer asked them to confirm in writing, each with a box: only they can tick one, and what they leave unticked is saved as unconfirmed.';
+  'The page also lists what the buyer asked them to confirm in writing, and its main button confirms them all: only they can press it. If something asked is not true they press Not now, which changes nothing; ask them what is not right and say so to the other side in the conversation.';
 
 /** Is anything waiting on this introduction for the seller's human to answer? */
 async function sellerHasLinesToAnswer(matchId: string): Promise<boolean> {
@@ -328,15 +328,16 @@ export async function acceptNumberLink(
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN.${boxes ? ` ${LINES_ON_PAGE_FOR_AGENT} Nothing is agreed while one is unconfirmed.` : ''} Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN.${boxes ? ` ${LINES_ON_PAGE_FOR_AGENT}` : ''} Once they press it, your next check_matches shows the result.`,
   };
 }
 
 // ---------------------------------------------------------------------------
 // (c2) Confirm in writing, on a page of its own. For the seller whose human
 // has no figure to send or take right now: the buyer asked after the figures
-// were already out, or before any. The same boxes the figure pages carry, one
-// press, and the press is the seller's own (domain/confirmLines.ts).
+// were already out, or before any. The same list the figure pages carry, one
+// press that confirms them all, and the press is the seller's own
+// (domain/confirmLines.ts).
 //
 // Refused at mint time for the buying side, on an introduction where no money
 // changes hands, and where nothing is waiting to be answered.
@@ -371,14 +372,14 @@ export async function confirmLinesLink(
   const page = url(cfg, token);
   return {
     say: saySentence(
-      'you to confirm in writing what the buyer has asked about, by ticking what is true, and it takes your passkey or PIN',
+      'you to confirm in writing what the buyer has asked about, in one press, and it takes your passkey or PIN',
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page listing what the buyer asked your human to confirm in writing, each with a box to tick. They tick what is true and press once: what they tick goes on the record of a deal as confirmed by them, and what they leave is saved as unconfirmed. You cannot tick or confirm any of it for them. Once they press it, your next check_in shows the result.',
+      'Opens one page listing what the buyer asked your human to confirm in writing. Its main button confirms them all, and they go on the record of a deal as confirmed by your human. You cannot confirm any of it for them. If something asked is not true they press Not now, which changes nothing: ask them what is not right and say so to the other side in the conversation. Once they press, your next check_in shows the result.',
   };
 }
 
@@ -814,7 +815,7 @@ const PAGE_ASKS: Record<string, string> = {
   report: 'them to report this to the switchboard',
   'shelf-pick': 'them to pick which shelf this belongs on',
   'contact-send': 'them to type their address, phone number or email themselves and send it, sealed, to the other side',
-  'lines-confirm': 'them to confirm in writing what the other side asked about, by ticking what is true',
+  'lines-confirm': 'them to confirm in writing what the other side asked about, in one press',
 };
 
 export const PRESS_SENTENCES = {
@@ -935,7 +936,7 @@ interface PressRow {
   counterparty_account: string;
   payload: string | null;
   used_at: Date | string | null;
-  decision: 'approved' | 'declined' | 'not-agreed' | null;
+  decision: 'approved' | 'declined' | null;
   expires_at: Date | string;
   created_at?: Date | string | null;
 }
@@ -948,6 +949,30 @@ interface PressRow {
  * only handed to the agent that is already allowed to hold it.
  */
 const linkFromRow = (cfg: Config, row: PressRow): string => url(cfg, signLink(row));
+
+/**
+ * Was this press on a page that listed written lines for this person to
+ * confirm? True for the seller's page of its own, and for the seller's page
+ * for a figure while something the buyer asked is still waiting. Read off the
+ * rows; a read that fails says no, and the ordinary sentence is said.
+ */
+async function notNowOverLines(accountId: string, row: PressRow): Promise<boolean> {
+  try {
+    if (row.action === 'lines-confirm') return true;
+    if (row.action !== 'offer-accept' && row.action !== 'offer-send') return false;
+    let matchId = row.ref_id;
+    if (row.action === 'offer-accept') {
+      const o = await getPool().query('SELECT match_id FROM offers WHERE id = $1', [row.ref_id]);
+      matchId = o.rows[0]?.match_id;
+    }
+    const m = matchId ? await getMatch(matchId) : undefined;
+    if (!m || m.account_have !== accountId) return false;
+    const { standingLines, unconfirmed } = await import('./confirmLines.js');
+    return unconfirmed(await standingLines(m.id)).length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /** The shelf chosen on a shelf page, read off the question it was minted for. */
 async function shelfPicked(accountId: string, attempt: string): Promise<string | undefined> {
@@ -1013,13 +1038,19 @@ export async function waitForPress(
         };
       }
     }
-    // PRESSED, ANSWERS SAVED, NOTHING AGREED. A seller pressed Accept with
-    // something the buyer asked them to confirm left unconfirmed
-    // (domain/confirmLines.ts). It is neither a yes nor a Not now, so the
-    // answer carries no decision and one true sentence.
-    if (row.used_at && row.decision === 'not-agreed') {
-      const { PRESS_NOT_AGREED_SENTENCE } = await import('./confirmLines.js');
-      return { pressed: true, note: pressNote(PRESS_NOT_AGREED_SENTENCE) };
+    // NOT NOW ON A PAGE THAT LISTED WRITTEN LINES (domain/confirmLines.ts).
+    // A seller for whom something the buyer asked is not true presses Not
+    // now. Nothing was confirmed and nothing is agreed, and what comes next
+    // is a conversation: the assistant asks what was not right and says so
+    // to the other side.
+    if (row.used_at && row.decision === 'declined' && (await notNowOverLines(accountId, row))) {
+      const { PRESS_NOT_NOW_SENTENCE, PRESS_NOT_NOW_WHAT_TO_DO } = await import('./confirmLines.js');
+      return {
+        pressed: true,
+        decision: 'declined',
+        what_to_do: PRESS_NOT_NOW_WHAT_TO_DO,
+        note: pressNote(PRESS_NOT_NOW_SENTENCE),
+      };
     }
     if (row.used_at && (row.decision === 'approved' || row.decision === 'declined')) {
       // Declining ends it, so that sentence promises nothing and needs no

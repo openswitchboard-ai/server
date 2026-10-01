@@ -14,22 +14,25 @@
 --   line          the words, stored the way an offer note is stored: a jsonb
 --                 { text, provenance: 'counterparty-untrusted' }. Nullable, so
 --                 account deletion can take the words off and keep the row.
---   state         asked      nobody has answered it yet
---                 confirmed  the seller's human ticked it and pressed
---                 declined   the seller's human pressed with it left unticked
+--   state         asked      waiting for the seller's human to confirm it
+--                 confirmed  the seller's human pressed the confirming button
+--                            on a page that listed it
 --                 withdrawn  the side that asked took it off
+--                 There is no "declined": confirming is all or nothing, and a
+--                 seller for whom something asked is not true presses Not
+--                 now, which changes nothing.
 --   answered_*    who pressed, when, how the press was recorded, and which
---                 page it was on. A line is only ever answered by a press on
+--                 page it was on. A line is only ever confirmed by a press on
 --                 the human's own page, and the check below makes that the
 --                 database's rule as well as the code's (as 061 did for an
---                 accept): no row can say confirmed or declined without one.
+--                 accept): no row can say confirmed without one.
 CREATE TABLE IF NOT EXISTS confirm_lines (
   id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   match_id     uuid        NOT NULL REFERENCES matches(id),
   asked_by     uuid        NOT NULL REFERENCES accounts(id),
   line         jsonb,
   state        text        NOT NULL DEFAULT 'asked'
-    CHECK (state IN ('asked', 'confirmed', 'declined', 'withdrawn')),
+    CHECK (state IN ('asked', 'confirmed', 'withdrawn')),
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now(),
   answered_at  timestamptz,
@@ -38,14 +41,14 @@ CREATE TABLE IF NOT EXISTS confirm_lines (
   answered_on  text
     CHECK (answered_on IS NULL OR answered_on IN ('offer-accept', 'offer-send', 'lines-confirm')),
   withdrawn_at timestamptz,
-  CONSTRAINT confirm_lines_answer_is_a_press CHECK (
-    state NOT IN ('confirmed', 'declined')
+  CONSTRAINT confirm_lines_confirmed_is_a_press CHECK (
+    state <> 'confirmed'
     OR (answered_at IS NOT NULL AND answered_by IS NOT NULL AND answered_via = 'counter')
   )
 );
 CREATE INDEX IF NOT EXISTS confirm_lines_match_idx ON confirm_lines (match_id, created_at);
 COMMENT ON TABLE confirm_lines IS
-  'Short written lines the buying side asked the seller''s human to confirm on one introduction. Confirmed or declined only by a press on the seller''s own page. Kept with the introduction, as offers are.';
+  'Short written lines the buying side asked the seller''s human to confirm on one introduction. Confirmed only by a press on the seller''s own page. Kept with the introduction, as offers are.';
 
 -- 2. THE FINGERPRINT ON THE OFFER. The SHA-256 of the record that was built
 -- when this offer was accepted, set in the same statement that marks it
@@ -78,11 +81,3 @@ ALTER TABLE approval_links ADD CONSTRAINT approval_links_action_check
     'contact-send',
     'lines-confirm'
   ));
-
--- 4. A THIRD THING A PRESS CAN COME TO. A seller who presses Accept with a
--- line left unticked has pressed, their answers are saved, and nothing is
--- agreed. That is neither 'approved' nor 'declined' (which is Not now), and
--- an assistant holding the line on that press is owed the true answer.
-ALTER TABLE approval_links DROP CONSTRAINT IF EXISTS approval_links_decision_check;
-ALTER TABLE approval_links ADD CONSTRAINT approval_links_decision_check
-  CHECK (decision IN ('approved', 'declined', 'not-agreed'));

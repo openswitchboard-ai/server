@@ -13,20 +13,24 @@
  *               It is free text from a stranger, so it passes every gate an
  *               offer note passes: short, plain text, no way of reaching
  *               anybody, no figure, and the intake pipe.
- *   CONFIRMING  is the SELLER'S HUMAN PRESS and nothing else. The lines sit
- *               on the page the seller already uses to send a figure or take
- *               one, each a box to tick, and on a page of their own. One
- *               press covers the lot: ticked is confirmed, unticked is
- *               declined. No assistant, no agent key and no queue message can
- *               answer one; answerLinesByHuman refuses anything that is not a
- *               press on the human's own page, and the database says the same
+ *   CONFIRMING  is the SELLER'S HUMAN PRESS and nothing else, and it is ALL OR
+ *               NOTHING. The lines are listed on the page the seller already
+ *               uses to send a figure or take one, and on a page of their
+ *               own, and the page's main button says it confirms them. One
+ *               press confirms every line the page showed. There is no
+ *               answering no to a line: a seller for whom something asked is
+ *               not true presses Not now, which changes nothing, and the two
+ *               assistants sort it out in the conversation. No assistant, no
+ *               agent key and no queue message can confirm one;
+ *               confirmLinesByHuman refuses anything that is not a press on
+ *               the human's own page, and the database says the same
  *               (migration 066).
  *   THE RULE    An offer is accepted only with every asked line confirmed
  *               (domain/offers.ts, acceptOfferByHuman). Sending a figure is
  *               never held up. A line that was taken off holds nothing up.
  *   THE RECORD  lists the confirmed lines and no others.
  *
- * ONE LOCK PER INTRODUCTION. Asking, taking off, answering and accepting all
+ * ONE LOCK PER INTRODUCTION. Asking, taking off, confirming and accepting all
  * run inside withIntroductionLocked: a short transaction that first takes an
  * advisory lock keyed on the introduction. Each statement after the lock is a
  * fresh read, so whichever of two presses arrives second sees everything the
@@ -48,9 +52,9 @@ import { runIntake } from '../intake/pipe.js';
 import { OsbError } from '../protocol.js';
 import type { Config } from '../config.js';
 
-export type LineState = 'asked' | 'confirmed' | 'declined' | 'withdrawn';
+export type LineState = 'asked' | 'confirmed' | 'withdrawn';
 
-/** Which page a line was answered on. */
+/** Which page a line was confirmed on. */
 export type AnsweredOn = 'offer-accept' | 'offer-send' | 'lines-confirm';
 
 export interface ConfirmLineRow {
@@ -105,7 +109,7 @@ export const LINE_HAS_FIGURE =
   'This one has not been asked. A line to confirm carries no sum of money: the amount is the offer’s own and is on the record already. Ask it again in plain words with the number left out.';
 
 export const LINE_ASKED_SENTENCE =
-  'That is asked. The seller’s human answers it on their own page, with their own press, and their assistant cannot answer it for them. Your next check_in says whether it was confirmed. Only a confirmed line goes on the record of a deal.';
+  'That is asked. The seller’s human confirms it on their own page, with their own press, and their assistant cannot do it for them. Your next check_in says whether it was confirmed. Only a confirmed line goes on the record of a deal.';
 
 export const LINE_WITHDRAWN_SENTENCE =
   'That line is off. It no longer holds anything up, and it will not be on the record of a deal.';
@@ -114,16 +118,13 @@ export const LINE_ALREADY_WITHDRAWN_SENTENCE = 'That line was already off.';
 
 /** What the seller's assistant is told while something is waiting on its human. */
 export const LINES_NOTE_SELLER_WAITING =
-  'The buyer has asked your human to confirm some things in writing, and they are on your human’s own page. Tell your human so in a sentence and hand them the page: respond(request_confirm), or the page for a figure, which lists them too. You cannot confirm any of them yourself, and nothing can be accepted while one is unanswered.';
+  'The buyer has asked your human to confirm some things in writing, and they are on your human’s own page. Tell your human so in a sentence and hand them the page: respond(request_confirm), or the page for a figure, which lists them too. The page’s main button confirms them all, and you cannot confirm any yourself. If something asked is not true, your human presses Not now: ask them what is not right, and say so to the other side in the conversation. Nothing can be accepted while one is waiting.';
 
-export const LINES_NOTE_SELLER_ANSWERED =
-  'Your human has answered what the buyer asked them to confirm in writing. Only the confirmed lines go on the record of a deal. You cannot change an answer yourself; your human can, on their own page.';
-
-export const LINES_NOTE_BUYER_DECLINED =
-  'The seller’s human did not confirm everything you asked: each line here says which. Tell your human which was not confirmed, and ask whether they want to go ahead without it. Only on their yes, take it off with respond(withdraw_confirmation). Nothing can be accepted while it stands, and only confirmed lines go on the record.';
+export const LINES_NOTE_SELLER_CONFIRMED =
+  'Your human has confirmed in writing everything the buyer asked. Those lines go on the record of a deal.';
 
 export const LINES_NOTE_BUYER_WAITING =
-  'The seller’s human has not yet answered everything you asked them to confirm in writing: each line here says which. Nothing can be accepted until they have. Only confirmed lines go on the record of a deal, and nothing said in conversation does.';
+  'The seller’s human has not yet confirmed everything you asked in writing: each line here says which. Nothing can be accepted until they have. If the other side tells you something you asked is not right, tell your human, and take that line off with respond(withdraw_confirmation) only on their yes. Only confirmed lines go on the record of a deal, and nothing said in conversation does.';
 
 export const LINES_NOTE_BUYER_CONFIRMED =
   'The seller’s human has confirmed in writing everything you asked. Those lines go on the record of the deal; nothing said in conversation does.';
@@ -131,49 +132,63 @@ export const LINES_NOTE_BUYER_CONFIRMED =
 /** The short half that rides on the sweep's lead sentence. */
 export const LINES_LEAD_SELLER =
   'The buyer has also asked you to confirm some things in writing, on your own page.';
-export const LINES_LEAD_BUYER =
-  'Something you asked the seller to confirm in writing was not confirmed.';
+
+/** After a Not now on a page that listed lines: for the human, then the agent. */
+export const PRESS_NOT_NOW_SENTENCE =
+  'You pressed Not now, so nothing was confirmed and nothing is agreed.';
+export const PRESS_NOT_NOW_WHAT_TO_DO =
+  'Ask your human what was not right about what the buyer asked them to confirm, and say so to the other side in the conversation, in your human’s words. Fetch the page again once it is sorted out.';
 
 // What a person reads.
 
 /** The buyer, at their own accept page and at the press. */
 export const BUYER_BLOCKED_WORDS =
-  'The seller has not confirmed everything you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.';
+  'The seller has not yet confirmed what you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.';
 
-/** The seller, after pressing Accept with something still unconfirmed. */
-export const SELLER_NOT_AGREED_TITLE = 'Nothing is agreed';
-export const SELLER_NOT_AGREED_WORDS =
-  'Something the buyer asked you to confirm is still unconfirmed, so nothing is agreed. Your answers are saved, and the buyer is told. To answer again, ask your assistant for a fresh page.';
-
-/** What an assistant holding the line on that press says once it has landed. */
-export const PRESS_NOT_AGREED_SENTENCE =
-  'Your press landed, and nothing is agreed: something that was asked to be confirmed in writing is still unconfirmed. Say the word if you want the page again.';
-
-/** On the seller's pages, above the boxes. */
+/** The heading over the lines on the seller's pages. Nothing sits under it
+ *  but the lines themselves, each with a plain yes beside it. */
 export const SELLER_LINES_HEADING = 'The buyer asked you to confirm';
-export const SELLER_LINES_ON_ACCEPT =
-  'Tick each one that is true. What you tick goes on the record of the deal as confirmed by you. Leave one unticked and nothing is agreed.';
-export const SELLER_LINES_ON_SEND =
-  'Tick each one that is true. What you tick goes on the record of any deal as confirmed by you. One you leave unticked is saved as unconfirmed, and the buyer is told.';
-export const SELLER_LINES_ALONE = SELLER_LINES_ON_SEND;
-/** The label on each box: whose words they are. */
-export const SELLER_LINE_LABEL = 'The buyer’s words:';
-export const SELLER_LINE_DONE_LABEL = 'You have confirmed:';
+/**
+ * THE MAIN BUTTON WHERE A PAGE LISTS LINES, in one place so the three pages
+ * stay in step. The heading sits directly above the lines, so "Confirm" is
+ * read against it: "Confirm and accept $415" where the press also takes the
+ * buyer's figure, "Confirm and send $415" where it also sends the seller's
+ * own, and "Confirm" on the page of its own. `figure` is the short figure the
+ * page already shows.
+ */
+export function confirmButtonLabel(page: AnsweredOn, figure?: string): string {
+  if (page === 'offer-accept') return `Confirm and accept ${figure ?? ''}`.trim();
+  if (page === 'offer-send') return `Confirm and send ${figure ?? ''}`.trim();
+  return 'Confirm';
+}
+export const LINES_NOT_NOW_LABEL = 'Not now';
+/** The word beside each line: what the press will say about it. */
+export const LINE_YES = 'yes';
+
+/** After Not now on a page that listed lines. Nothing changed. */
+export const NOT_NOW_TITLE = 'Not now';
+export const NOT_NOW_WORDS =
+  'Nothing is agreed yet. Tell your assistant what is not right, and it can sort it out with the other side.';
+
+/** The buyer has asked for something more since the page was drawn. */
+export const LINES_CHANGED_REDRAW =
+  'The buyer has asked for something more since you opened this page. It is listed now: read it, then press again.';
+export const LINES_CHANGED_WORDS =
+  'The buyer has asked for something more since this page opened, so nothing was confirmed and nothing is agreed. Open the page again to see it.';
 
 /** On the buyer's accept page. */
 export const BUYER_LINES_HEADING = 'The seller has confirmed in writing';
-export const BUYER_LINES_INTRO =
-  'You asked for these, and the seller confirmed each one. They go on the record of the deal.';
-export const BUYER_LINE_LABEL = 'Your words:';
 
 /** The seller's page of its own. */
-export const CONFIRM_PAGE_YES = 'Confirm what is ticked';
-export const CONFIRM_DONE_TITLE = 'Saved';
+export const CONFIRM_DONE_TITLE = 'Confirmed';
 export const CONFIRM_DONE_WORDS =
-  'Your answers are saved, and the buyer is told. Only what you confirmed goes on the record of a deal.';
+  'You have confirmed what the buyer asked, and they are told. It goes on the record of a deal.';
 export const CONFIRM_NOTHING_WAITING = 'There is nothing waiting to be confirmed on this one.';
-/** Beside "Sent" when a figure went out from a page that also had boxes. */
-export const SEND_DONE_LINES_SAVED = 'Your answers on what the buyer asked are saved too.';
+/** Beside "Sent" when a figure went out from a page that also listed lines. */
+export const SEND_DONE_LINES_CONFIRMED = 'What the buyer asked is confirmed too.';
+/** And where the buyer asked for more in the moment of that press. */
+export const SEND_DONE_LINES_NOT_CONFIRMED =
+  'The buyer asked for something more as you pressed, so nothing was confirmed. Ask your assistant for the page.';
 
 // ---------------------------------------------------------------------------
 // The words of one line.
@@ -223,7 +238,7 @@ export function lineText(line: unknown): string | null {
 /**
  * One short transaction, holding the introduction's own lock for its length.
  * COMMIT on a clean return, ROLLBACK on a throw. Everything that asks, takes
- * off or answers a line runs in here, and so does accepting an offer.
+ * off or confirms a line runs in here, and so does accepting an offer.
  */
 export async function withIntroductionLocked<T>(
   matchId: string,
@@ -264,9 +279,9 @@ export async function standingLines(
   return r.rows as ConfirmLineRow[];
 }
 
-/** The ones that hold an acceptance up: unanswered, or answered no. */
+/** The ones that hold an acceptance up: asked and waiting to be confirmed. */
 export const unconfirmed = (lines: ConfirmLineRow[]): ConfirmLineRow[] =>
-  lines.filter((l) => l.state === 'asked' || l.state === 'declined');
+  lines.filter((l) => l.state === 'asked');
 
 /** The confirmed words, in the order asked, for the record. */
 export const confirmedWords = (lines: ConfirmLineRow[]): string[] =>
@@ -410,7 +425,7 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
 
 /**
  * Take one off. Only the side that asked it, on any line of theirs that still
- * stands, whatever the answer to it was: a buyer who would rather go ahead
+ * stands, confirmed or still waiting: a buyer who would rather go ahead
  * without a line is the only person that costs anything.
  */
 export async function withdrawLine(accountId: string, matchId: string, lineId: string) {
@@ -445,56 +460,61 @@ export async function withdrawLine(accountId: string, matchId: string, lineId: s
 }
 
 // ---------------------------------------------------------------------------
-// Answering. The seller's human, by a press on their own page, and nobody
-// and nothing else.
+// Confirming. The seller's human, by a press on their own page, and nobody
+// and nothing else. All or nothing: the press confirms every line the page
+// listed, and there is no other answer to give.
 // ---------------------------------------------------------------------------
 
-/** Where an answer may be recorded from. The same one place an accept may. */
+/** Where a confirmation may be recorded from. The same one place an accept may. */
 export const ANSWER_RECORDED_VIA = ['counter'] as const;
 export type AnswerRecordedVia = (typeof ANSWER_RECORDED_VIA)[number];
 
-/** What one press said about the boxes on the page it was pressed on. */
+/** What one press of the main button said about the lines on its page. */
 export interface LinePress {
-  /** The lines the page showed a box for. A line asked after the page was
-   *  drawn is in neither list, and stays unanswered. */
+  /** The lines the page listed. A line asked after the page was drawn is not
+   *  among them, and a press that did not list every waiting line is refused
+   *  rather than confirming something nobody was shown. */
   shown: string[];
-  /** The ones that were ticked. */
-  ticked: string[];
   on: AnsweredOn;
 }
 
 export interface PressOutcome {
   confirmed: string[];
-  declined: string[];
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The boxes back out of a posted form. The page prints one hidden field
- * naming every line it showed and one checkbox per line, each with a name of
- * its own, because this service reads a form body as one value per name.
+ * The lines a page listed, back out of the form it posted: one hidden field
+ * naming them. Undefined where the page listed none.
  */
 export function readLinePress(body: any, on: AnsweredOn): LinePress | undefined {
   const shown = String(body?.lines_shown ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter((s) => UUID.test(s));
-  if (!shown.length) return undefined;
-  return { shown, ticked: shown.filter((id) => String(body?.[`line_${id}`] ?? '') === 'yes'), on };
+  return shown.length ? { shown, on } : undefined;
+}
+
+/** Is every one of these waiting lines among the ones the page listed? */
+export function pressCoversAll(waiting: { id: string }[], press: LinePress | undefined): boolean {
+  const shown = new Set(press?.shown ?? []);
+  return waiting.every((l) => shown.has(l.id));
 }
 
 /**
- * Apply one press, INSIDE the introduction's lock (the caller holds it).
+ * Apply one press of the main button, INSIDE the introduction's lock (the
+ * caller holds it).
  *
- * Ticked becomes confirmed, whether it was unanswered or answered no before:
- * a seller may change a no to a yes. Shown and left unticked becomes
- * declined, where it was unanswered. A confirmed line is never touched: the
- * buyer may already be relying on it.
+ * Every waiting line becomes confirmed, provided the page listed every one of
+ * them. Where a line is waiting that the page did not list, the press is
+ * REFUSED and nothing is confirmed: nobody confirms words they were not
+ * shown. The refusal is thrown, so the caller's transaction rolls back with
+ * nothing in it.
  *
- * THE RECORD FIRST, as every consent-bearing act here is written: each answer
- * goes to the locked log before the row changes, naming the introduction and
- * the line and never the words.
+ * THE RECORD FIRST, as every consent-bearing act here is written: each
+ * confirmation goes to the locked log before the row changes, naming the
+ * introduction and the line and never the words.
  */
 export async function applyLinePress(
   client: Queryable,
@@ -505,29 +525,29 @@ export async function applyLinePress(
 ): Promise<PressOutcome> {
   if (!(ANSWER_RECORDED_VIA as readonly string[]).includes(recordedVia)) {
     throw new Error(
-      "confirm lines: an answer is only recorded from the human's own press (recorded_via must be 'counter')",
+      "confirm lines: a confirmation is only recorded from the human's own press (recorded_via must be 'counter')",
     );
   }
-  const none: PressOutcome = { confirmed: [], declined: [] };
-  // Only the seller answers. A press by the buying side carries no answers,
+  const none: PressOutcome = { confirmed: [] };
+  // Only the seller confirms. A press by the buying side confirms nothing,
   // whatever its form said.
-  if (!press || humanAccountId !== m.account_have) return none;
+  if (humanAccountId !== m.account_have) return none;
   const open = await client.query(
     `SELECT id, state FROM confirm_lines
-      WHERE match_id = $1 AND state IN ('asked', 'declined')
+      WHERE match_id = $1 AND state = 'asked'
       ORDER BY created_at ASC, id ASC`,
     [m.id],
   );
-  const shown = new Set(press.shown);
-  const ticked = new Set(press.ticked);
-  const rows = open.rows as { id: string; state: LineState }[];
-  const confirmed = rows.filter((r) => ticked.has(r.id)).map((r) => r.id);
-  const declined = rows
-    .filter((r) => r.state === 'asked' && shown.has(r.id) && !ticked.has(r.id))
-    .map((r) => r.id);
-  if (!confirmed.length && !declined.length) return none;
-  await Promise.all([
-    ...confirmed.map((id) =>
+  const waiting = open.rows as { id: string; state: LineState }[];
+  if (!waiting.length) return none;
+  if (!pressCoversAll(waiting, press)) {
+    throw Object.assign(new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_CHANGED_WORDS }), {
+      linesChanged: true,
+    });
+  }
+  const confirmed = waiting.map((r) => r.id);
+  await Promise.all(
+    confirmed.map((id) =>
       writeConsentEvent({
         event: 'line-confirmed-by-human',
         match_id: m.id,
@@ -536,67 +556,49 @@ export async function applyLinePress(
         recorded_via: recordedVia,
       }),
     ),
-    ...declined.map((id) =>
-      writeConsentEvent({
-        event: 'line-declined-by-human',
-        match_id: m.id,
-        line_id: id,
-        account_id: humanAccountId,
-        recorded_via: recordedVia,
-      }),
-    ),
-  ]);
-  const answer = (state: 'confirmed' | 'declined', ids: string[], from: string) =>
-    ids.length
-      ? client.query(
-          `UPDATE confirm_lines
-              SET state = $2, answered_at = now(), answered_by = $3, answered_via = $4,
-                  answered_on = $5, updated_at = now()
-            WHERE match_id = $1 AND id = ANY($6::uuid[]) AND state IN (${from})`,
-          [m.id, state, humanAccountId, recordedVia, press.on, ids],
-        )
-      : Promise.resolve(undefined);
-  await answer('confirmed', confirmed, `'asked', 'declined'`);
-  await answer('declined', declined, `'asked'`);
-  return { confirmed, declined };
+  );
+  await client.query(
+    `UPDATE confirm_lines
+        SET state = 'confirmed', answered_at = now(), answered_by = $2, answered_via = $3,
+            answered_on = $4, updated_at = now()
+      WHERE match_id = $1 AND id = ANY($5::uuid[]) AND state = 'asked'`,
+    [m.id, humanAccountId, recordedVia, press!.on, confirmed],
+  );
+  return { confirmed };
 }
 
 /**
  * The seller's press where no accept rides on it: the page of its own, and
- * the page that sends a figure. Takes the lock, applies the press, and says
- * what it did.
+ * the page that sends a figure. Takes the lock, confirms what the page
+ * listed, and says what it did.
  */
-export async function answerLinesByHuman(
+export async function confirmLinesByHuman(
   matchId: string,
   humanAccountId: string,
   recordedVia: AnswerRecordedVia,
   press: LinePress | undefined,
-  cfg?: Config,
 ): Promise<PressOutcome> {
   if (!(ANSWER_RECORDED_VIA as readonly string[]).includes(recordedVia)) {
     throw new Error(
-      "confirm lines: an answer is only recorded from the human's own press (recorded_via must be 'counter')",
+      "confirm lines: a confirmation is only recorded from the human's own press (recorded_via must be 'counter')",
     );
   }
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, humanAccountId);
-  if (!press || humanAccountId !== m.account_have) return { confirmed: [], declined: [] };
-  const out = await withIntroductionLocked(m.id, (client) =>
+  if (humanAccountId !== m.account_have) return { confirmed: [] };
+  return withIntroductionLocked(m.id, (client) =>
     applyLinePress(client, m, humanAccountId, recordedVia, press),
   );
-  await notifyBuyerOfDeclined(cfg, m, out);
-  return out;
 }
 
 // ---------------------------------------------------------------------------
 // NOBODY WHO HEARS BY EMAIL IS LEFT WAITING IN SILENCE.
 //
 // A seller whose assistant only wakes when spoken to would never learn the
-// buyer had asked them to confirm something, and such a buyer would never
-// learn a line was left unconfirmed. Both are told the way a passive human is
-// told it is their turn at the names step: the existing your-move notice
-// (email/digestEngine.ts, notifyYourMove), through the ops queue, as
+// buyer had asked them to confirm something. They are told the way a passive
+// human is told it is their turn at the names step: the existing your-move
+// notice (email/digestEngine.ts, notifyYourMove), through the ops queue, as
 // recordStage3OptIn does it. Everything about that notice is unchanged and is
 // what decides whether a mail goes at all: only an account that hears by
 // email, never one that has turned match mail off, never a suppressed
@@ -604,7 +606,7 @@ export async function answerLinesByHuman(
 // carries nothing of what was asked; nothing but ids crosses this function.
 //
 // Best-effort: a notice that cannot be enqueued changes nothing about the
-// line or the press.
+// line.
 // ---------------------------------------------------------------------------
 async function notifyWrittenMove(
   cfg: Config | undefined,
@@ -632,20 +634,6 @@ async function notifyWrittenMove(
   }
 }
 
-/**
- * The buyer is told once per press that left something unconfirmed. A line
- * goes from unanswered to "no" exactly once, so the first such line of a
- * press names that press and no other.
- */
-export async function notifyBuyerOfDeclined(
-  cfg: Config | undefined,
-  m: Pick<MatchRow, 'id' | 'account_want'>,
-  out: PressOutcome,
-): Promise<void> {
-  if (!out.declined.length) return;
-  await notifyWrittenMove(cfg, m.id, m.account_want, `declined:${out.declined[0]}`);
-}
-
 // ---------------------------------------------------------------------------
 // What each side's assistant sees, wherever it sees the offers.
 // ---------------------------------------------------------------------------
@@ -663,15 +651,12 @@ export function linesNoteFor(
   lines: Pick<ConfirmLineRow, 'state'>[],
 ): { text: string; lead?: string } {
   const waiting = lines.some((l) => l.state === 'asked');
-  const declined = lines.some((l) => l.state === 'declined');
   if (side === 'have') {
     return waiting
       ? { text: LINES_NOTE_SELLER_WAITING, lead: LINES_LEAD_SELLER }
-      : { text: LINES_NOTE_SELLER_ANSWERED };
+      : { text: LINES_NOTE_SELLER_CONFIRMED };
   }
-  if (declined) return { text: LINES_NOTE_BUYER_DECLINED, lead: LINES_LEAD_BUYER };
-  if (waiting) return { text: LINES_NOTE_BUYER_WAITING };
-  return { text: LINES_NOTE_BUYER_CONFIRMED };
+  return { text: waiting ? LINES_NOTE_BUYER_WAITING : LINES_NOTE_BUYER_CONFIRMED };
 }
 
 /**
@@ -711,7 +696,7 @@ export async function linesForPage(matchId: string): Promise<PageLine[]> {
     .filter((l) => l.words);
 }
 
-/** The introductions on which something is waiting for this seller to answer. */
+/** The introductions on which something is waiting for this seller to confirm. */
 export async function linesWaitingFor(
   accountId: string,
 ): Promise<{ match_id: string; category: string; count: number; asked_at: Date }[]> {
@@ -731,7 +716,7 @@ export async function linesWaitingFor(
 // ---------------------------------------------------------------------------
 // Account deletion (domain/accountDeletion.ts), matched to what it does to
 // offers: the rows are kept with the introduction, the ones this account
-// asked that nobody has answered are taken off, and the words this account
+// asked that are still waiting are taken off, and the words this account
 // wrote are erased unless the introduction is under a safety hold.
 // ---------------------------------------------------------------------------
 export const ACCOUNT_DELETION_WITHDRAW_SQL = `UPDATE confirm_lines

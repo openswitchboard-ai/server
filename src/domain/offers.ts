@@ -27,10 +27,8 @@ import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import {
   BUYER_BLOCKED_WORDS,
-  SELLER_NOT_AGREED_WORDS,
   applyLinePress,
   confirmedWords,
-  notifyBuyerOfDeclined,
   standingLines,
   unconfirmed,
   withIntroductionLocked,
@@ -1019,32 +1017,33 @@ export async function acceptOfferByHuman(
   // the seller's human (domain/confirmLines.ts). That is a real gate, so it is
   // held in the accept itself and nowhere a caller could forget it, and it is
   // held UNDER THE INTRODUCTION'S LOCK: asking a line, taking one off,
-  // answering one and this acceptance all take the same lock first, and every
+  // confirming and this acceptance all take the same lock first, and every
   // read below is a fresh statement after it. So there is no moment between
   // "every line is confirmed" and "the offer is accepted" for a line to be
-  // asked or an answer to change in. The lock is keyed on this one
-  // introduction, so on a best offer taking one buyer's number is held up by
-  // that buyer's lines and by nobody else's.
+  // asked in. The lock is keyed on this one introduction, so on a best offer
+  // taking one buyer's number is held up by that buyer's lines and by nobody
+  // else's.
   //
-  // Where the gate refuses, the transaction still COMMITS: the seller's
-  // answers from this press are saved, and the refusal is thrown after.
+  // CONFIRMING IS ALL OR NOTHING, AND THE SELLER'S ACCEPT DOES IT. The
+  // seller's press confirms every line its page listed and accepts, in this
+  // one transaction. Where a line is waiting that the page did not list, the
+  // press is refused and the whole of it rolls back: nothing is confirmed
+  // and nothing is accepted. The buyer's press confirms nothing, and is
+  // refused while anything is still waiting.
   const outcome = await withIntroductionLocked(m.id, async (client) => {
     // The offer again, now that nothing else can move it: two presses on one
     // figure, or a press racing a withdrawal, are settled here.
     const again = await client.query('SELECT * FROM offers WHERE id = $1', [offerId]);
     const current: OfferRow = again.rows[0] ?? o;
     stillOpen(current);
-    // The seller's boxes, where this press came off a page that had any.
-    const pressed = await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
+    // The lines the seller's page listed, confirmed by this same press. It
+    // throws where one is waiting that the page never showed.
+    await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
     const lines = await standingLines(m.id, client);
     if (unconfirmed(lines).length) {
-      return {
-        pressed,
-        refused: new OsbError('NOT_UNLOCKED_YET', {
-          human_action:
-            humanAccountId === m.account_have ? SELLER_NOT_AGREED_WORDS : BUYER_BLOCKED_WORDS,
-        }),
-      };
+      throw Object.assign(new OsbError('NOT_UNLOCKED_YET', { human_action: BUYER_BLOCKED_WORDS }), {
+        linesNotConfirmed: true,
+      });
     }
     // THE RECORD OF WHAT WAS AGREED (domain/receipt.ts). Built before the
     // press is written down, so its fingerprint can sit in the locked log
@@ -1074,12 +1073,6 @@ export async function acceptOfferByHuman(
     );
     return { accepted: r.rows[0] as OfferRow, receipt };
   });
-  if ('refused' in outcome) {
-    // The answers are saved. A buyer who hears by email is told it is their
-    // move, once for this press (domain/confirmLines.ts).
-    if (outcome.pressed) await notifyBuyerOfDeclined(cfg, m, outcome.pressed);
-    throw Object.assign(outcome.refused as OsbError, { linesNotConfirmed: true });
-  }
   const { accepted, receipt } = outcome;
   // Best offer: taking one is choosing, so the rest are declined in the same
   // breath and their people are told, plainly, that it went elsewhere.

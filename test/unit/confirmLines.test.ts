@@ -12,14 +12,16 @@
  *    inside the limit, and through every gate an offer note passes (length,
  *    plain text, no way of reaching anybody, no figure, the intake pipe);
  *  - taking one off: only the side that asked, and never after an accept;
- *  - THE RULE: an offer is accepted only with every asked line confirmed. A
- *    seller who leaves one unticked agrees nothing and their answers are
- *    saved; a buyer is refused while one is unanswered or answered no, and is
- *    let through once it is taken off; sending a figure is never held up;
- *  - only a press on the human's own page answers a line: no tool, no agent
+ *  - CONFIRMING IS ALL OR NOTHING: the seller's press confirms every line its
+ *    page listed, and a press whose page did not list a waiting line is
+ *    refused and confirms nothing. There is no answering no to a line;
+ *  - THE RULE: an offer is accepted only with nothing still waiting. A buyer
+ *    is refused while a line is, and is let through once it is confirmed or
+ *    taken off; sending a figure is never held up;
+ *  - only a press on the human's own page confirms a line: no tool, no agent
  *    key and no queue message can;
- *  - every answer is written to the locked log, naming the introduction and
- *    the line and never the words;
+ *  - every confirmation is written to the locked log, naming the introduction
+ *    and the line and never the words;
  *  - the record lists the confirmed lines, in the order asked, inside the
  *    fingerprinted block, and no others;
  *  - on a best offer one buyer's lines hold up that buyer's number alone;
@@ -222,18 +224,13 @@ function fakePool() {
       return rows([]);
     }
     if (/SELECT id, state FROM confirm_lines/.test(sql)) {
-      return rows(
-        world.lines.filter(
-          (l) => l.match_id === params[0] && (l.state === 'asked' || l.state === 'declined'),
-        ),
-      );
+      return rows(world.lines.filter((l) => l.match_id === params[0] && l.state === 'asked'));
     }
-    if (/UPDATE confirm_lines\s+SET state = \$2/.test(sql)) {
-      const [matchId, state, by, via, on, ids] = params;
-      const from = /state IN \('asked', 'declined'\)/.test(sql) ? ['asked', 'declined'] : ['asked'];
+    if (/UPDATE confirm_lines\s+SET state = 'confirmed'/.test(sql)) {
+      const [matchId, by, via, on, ids] = params;
       for (const l of world.lines) {
-        if (l.match_id === matchId && ids.includes(l.id) && from.includes(l.state)) {
-          Object.assign(l, { state, answered_at: new Date(), answered_by: by, answered_via: via, answered_on: on });
+        if (l.match_id === matchId && ids.includes(l.id) && l.state === 'asked') {
+          Object.assign(l, { state: 'confirmed', answered_at: new Date(), answered_by: by, answered_via: via, answered_on: on });
         }
       }
       return rows([]);
@@ -337,9 +334,9 @@ const refusal = async (p: Promise<unknown>): Promise<string> => {
   }
   throw new Error('expected a refusal');
 };
-const press = (shown: LineRow[], ticked: LineRow[], on: lines.AnsweredOn = 'offer-accept') => ({
+/** One press of the main button on a page that listed these lines. */
+const press = (shown: LineRow[], on: lines.AnsweredOn = 'offer-accept') => ({
   shown: shown.map((l) => l.id),
-  ticked: ticked.map((l) => l.id),
   on,
 });
 
@@ -478,8 +475,8 @@ describe('asking a line', () => {
 
 // ---------------------------------------------------------------------------
 describe('taking a line off', () => {
-  it('takes off one of the asker’s own, whatever the answer to it was', async () => {
-    for (const state of ['asked', 'confirmed', 'declined']) {
+  it('takes off one of the asker’s own, confirmed or still waiting', async () => {
+    for (const state of ['asked', 'confirmed']) {
       const l = seed('Comes with both keys', state);
       const off = await lines.withdrawLine(ANA, MATCH, l.id);
       expect(off).toMatchObject({ confirmation_id: l.id, state: 'withdrawn', already: false });
@@ -509,97 +506,76 @@ describe('taking a line off', () => {
 
 // ---------------------------------------------------------------------------
 describe('the rule: accepted only with every asked line confirmed', () => {
-  it('the seller ticks them all and the buyer’s figure is accepted', async () => {
+  it('the seller’s press confirms every line its page listed, and accepts the figure', async () => {
     const a = seed('Comes with both keys');
     const b = seed('Brakes were serviced this year');
     const o: any = await offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, {
-      lines: press([a, b], [a, b]),
+      lines: press([a, b]),
     });
     expect(o.state).toBe('accepted-by-human');
     expect([a.state, b.state]).toEqual(['confirmed', 'confirmed']);
     expect(a).toMatchObject({ answered_by: BEPPE, answered_via: 'counter', answered_on: 'offer-accept' });
   });
 
-  it('the seller leaves one unticked: nothing is agreed, and the answers are saved', async () => {
-    const a = seed('Comes with both keys');
-    const b = seed('Brakes were serviced this year');
-    const p = offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a, b], [a]) });
-    await expect(p).rejects.toMatchObject({
-      linesNotConfirmed: true,
-      payload: { code: 'NOT_UNLOCKED_YET', human_action: lines.SELLER_NOT_AGREED_WORDS },
-    });
-    expect(world.offers[0].state).toBe('proposed');
-    expect([a.state, b.state]).toEqual(['confirmed', 'declined']);
-    // Saved means committed: the transaction that refused did not roll back.
-    expect(world.log.filter((s) => /^ROLLBACK/.test(s))).toHaveLength(0);
-    expect(world.log.filter((s) => /^COMMIT/.test(s))).toHaveLength(1);
-    // No press was written down as an accept.
-    expect(events().some((e) => e.event === 'offer-accepted-by-human')).toBe(false);
-    // And the buyer's assistant learns which on its next sweep.
-    const seen = (await lines.linesForAgent(ANA, matchRow(MATCH)))!;
-    expect(seen.confirmations.map((l) => l.state)).toEqual(['confirmed', 'declined']);
-    expect(seen.note.text).toBe(lines.LINES_NOTE_BUYER_DECLINED);
-  });
-
-  it('a line answered no earlier still stands in the way, until it is ticked', async () => {
-    const a = seed('Comes with both keys', 'declined');
-    await expect(
-      offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a], []) }),
-    ).rejects.toMatchObject({ linesNotConfirmed: true });
-    // No second "declined" is written for a line that already was.
-    expect(events()).toHaveLength(0);
-    // The seller may change a no to a yes.
-    await offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a], [a]) });
-    expect(a.state).toBe('confirmed');
-    expect(world.offers[0].state).toBe('accepted-by-human');
-  });
-
-  it('a line the page never showed is not taken as answered, and still holds it up', async () => {
+  it('a line the page did not list refuses the press: nothing confirmed, nothing accepted', async () => {
     const a = seed('Comes with both keys');
     const late = seed('Has never been crashed'); // asked after the page was drawn
-    await expect(
-      offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a], [a]) }),
-    ).rejects.toMatchObject({ linesNotConfirmed: true });
-    expect(a.state).toBe('confirmed');
-    expect(late.state).toBe('asked');
+    const p = offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a]) });
+    await expect(p).rejects.toMatchObject({
+      linesChanged: true,
+      payload: { code: 'NOT_UNLOCKED_YET', human_action: lines.LINES_CHANGED_WORDS },
+    });
+    expect([a.state, late.state]).toEqual(['asked', 'asked']);
+    expect(world.offers[0].state).toBe('proposed');
+    // All or nothing: the transaction rolled back and nothing was logged.
+    expect(world.log.filter((s) => /^ROLLBACK/.test(s))).toHaveLength(1);
+    expect(world.log.filter((s) => /^COMMIT/.test(s))).toHaveLength(0);
+    expect(events()).toHaveLength(0);
+    expect(lines.LINES_CHANGED_WORDS).toMatch(/Open the page again/);
   });
 
-  it('a press with no boxes on it cannot accept over an unanswered line', async () => {
-    seed('Comes with both keys');
+  it('a press off a page that listed nothing cannot accept over a waiting line', async () => {
+    const a = seed('Comes with both keys');
     await expect(offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter')).rejects.toMatchObject({
-      linesNotConfirmed: true,
+      linesChanged: true,
     });
+    expect(a.state).toBe('asked');
     expect(world.offers[0].state).toBe('proposed');
   });
 
-  it('the buyer is refused while a line is unanswered or answered no, and told what to do', async () => {
-    for (const state of ['asked', 'declined']) {
-      world.lines = [];
-      seed('Comes with both keys', state);
-      const said = await refusal(offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter'));
-      expect(said, state).toBe(lines.BUYER_BLOCKED_WORDS);
-      expect(said).toMatch(/tell your assistant to take it off/);
-      expect(world.offers[1].state).toBe('proposed');
-    }
+  it('the buyer is refused while a line is waiting, and told what to do', async () => {
+    seed('Comes with both keys');
+    const said = await refusal(offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter'));
+    expect(said).toBe(lines.BUYER_BLOCKED_WORDS);
+    expect(said).toBe(
+      'The seller has not yet confirmed what you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.',
+    );
+    expect(world.offers[1].state).toBe('proposed');
   });
 
-  it('and is let through once the line is taken off', async () => {
-    const l = seed('Comes with both keys', 'declined');
+  it('and is let through once the line is taken off, or once it is confirmed', async () => {
+    const l = seed('Comes with both keys');
     await expect(offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter')).rejects.toBeTruthy();
     await lines.withdrawLine(ANA, MATCH, l.id);
     const o: any = await offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter');
     expect(o.state).toBe('accepted-by-human');
+
+    world.offers[1].state = 'proposed';
+    const again = seed('Brakes were serviced this year');
+    await expect(offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter')).rejects.toBeTruthy();
+    await lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', press([again], 'lines-confirm'));
+    const o2: any = await offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter');
+    expect(o2.state).toBe('accepted-by-human');
   });
 
-  it('a buyer’s press never answers a line, whatever its form says', async () => {
+  it('a buyer’s press never confirms a line, whatever its form says', async () => {
     const l = seed('Comes with both keys');
     await expect(
-      offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter', undefined, { lines: press([l], [l]) }),
+      offers.acceptOfferByHuman(BEPPES_OFFER, ANA, 'counter', undefined, { lines: press([l]) }),
     ).rejects.toMatchObject({ linesNotConfirmed: true });
     expect(l.state).toBe('asked');
-    expect(await lines.answerLinesByHuman(MATCH, ANA, 'counter', press([l], [l], 'lines-confirm'))).toEqual({
+    expect(await lines.confirmLinesByHuman(MATCH, ANA, 'counter', press([l], 'lines-confirm'))).toEqual({
       confirmed: [],
-      declined: [],
     });
     expect(l.state).toBe('asked');
     expect(events()).toHaveLength(0);
@@ -607,7 +583,6 @@ describe('the rule: accepted only with every asked line confirmed', () => {
 
   it('sending a figure is never held up by a line, from either side', async () => {
     seed('Comes with both keys');
-    seed('Brakes were serviced this year', 'declined');
     const expiry = new Date(Date.now() + 86_400_000).toISOString();
     for (const who of [ANA, BEPPE]) {
       const placed: any = await offers.proposeOffer(
@@ -620,20 +595,20 @@ describe('the rule: accepted only with every asked line confirmed', () => {
     }
   });
 
-  it('checks and accepts inside one lock, with the lines read after it is held', async () => {
+  it('confirms and accepts inside one lock, with the lines read after it is held', async () => {
     const a = seed('Comes with both keys');
     world.log = [];
-    await offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a], [a]) });
+    await offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, { lines: press([a]) });
     const at = (re: RegExp) => world.log.findIndex((s) => re.test(s));
     const begin = at(/^BEGIN/);
     const lock = at(/pg_advisory_xact_lock/);
-    const answered = at(/UPDATE confirm_lines SET state = \$2/);
-    const read = world.log.findIndex((s, i) => i > answered && /FROM confirm_lines WHERE match_id = \$1 AND state <> 'withdrawn'/.test(s));
+    const confirmed = at(/UPDATE confirm_lines SET state = 'confirmed'/);
+    const read = world.log.findIndex((s, i) => i > confirmed && /FROM confirm_lines WHERE match_id = \$1 AND state <> 'withdrawn'/.test(s));
     const accepted = at(/UPDATE offers SET state='accepted-by-human'/);
     const commit = at(/^COMMIT/);
     expect(begin).toBeGreaterThanOrEqual(0);
-    expect([begin, lock, answered, read, accepted, commit]).toEqual(
-      [begin, lock, answered, read, accepted, commit].slice().sort((x, y) => x - y),
+    expect([begin, lock, confirmed, read, accepted, commit]).toEqual(
+      [begin, lock, confirmed, read, accepted, commit].slice().sort((x, y) => x - y),
     );
     // Asking takes the same lock, so it cannot land between the two.
     world.log = [];
@@ -691,7 +666,7 @@ describe('where no line was ever asked, nothing is different', () => {
     expect(same.sha256).toBe(rec.sha256);
   });
 
-  it('a page with nothing to tick prints no boxes and no hidden field', () => {
+  it('a page with no lines on it prints no list and no hidden field', () => {
     const html = pages.oneQuestionPage({
       token: 't',
       question: 'Accept $415 AUD for your Trek?',
@@ -705,55 +680,70 @@ describe('where no line was ever asked, nothing is different', () => {
     });
     expect(html).not.toContain('lines_shown');
     expect(html).not.toContain('type="checkbox"');
+    // And Not now is the way off the page it always was.
+    expect(html).toContain('<a class="btn secondary" href="/">Not now</a>');
+    expect(html).not.toContain('value="no"');
   });
 });
 
 // ---------------------------------------------------------------------------
-describe('only the seller’s human answers a line, by their own press', () => {
-  it('the page of its own: ticked is confirmed, unticked is declined, in one press', async () => {
+describe('only the seller’s human confirms a line, by their own press', () => {
+  it('the page of its own: one press confirms every line it listed', async () => {
     const a = seed('Comes with both keys');
     const b = seed('Brakes were serviced this year');
-    const out = await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', press([a, b], [b], 'lines-confirm'));
-    expect(out).toEqual({ confirmed: [b.id], declined: [a.id] });
-    expect([a.state, b.state]).toEqual(['declined', 'confirmed']);
+    const out = await lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', press([a, b], 'lines-confirm'));
+    expect(out).toEqual({ confirmed: [a.id, b.id] });
+    expect([a.state, b.state]).toEqual(['confirmed', 'confirmed']);
     expect(b.answered_on).toBe('lines-confirm');
     // Nothing was accepted by it.
     expect(world.offers.every((o) => o.state === 'proposed')).toBe(true);
   });
 
-  it('a confirmed line is never unconfirmed by a later press', async () => {
-    const a = seed('Comes with both keys', 'confirmed');
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', press([a], [], 'lines-confirm'));
-    expect(a.state).toBe('confirmed');
+  it('and is refused, confirming nothing, where a waiting line was not listed', async () => {
+    const a = seed('Comes with both keys');
+    const late = seed('Has never been crashed');
+    expect(await refusal(lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', press([a], 'lines-confirm')))).toBe(
+      lines.LINES_CHANGED_WORDS,
+    );
+    expect(await refusal(lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', undefined))).toBe(lines.LINES_CHANGED_WORDS);
+    expect([a.state, late.state]).toEqual(['asked', 'asked']);
+    expect(events()).toHaveLength(0);
+  });
+
+  it('there is no state but asked, confirmed and withdrawn', () => {
+    const sql = readFileSync(join(__dirname, '..', '..', 'migrations', '066_confirm_lines.sql'), 'utf8');
+    expect(sql).toMatch(/CHECK \(state IN \('asked', 'confirmed', 'withdrawn'\)\)/);
+    expect(sql).not.toMatch(/'declined'/);
+    expect(sql).not.toMatch(/not-agreed|approval_links_decision_check/);
+    const src = readFileSync(join(__dirname, '..', '..', 'src', 'domain', 'confirmLines.ts'), 'utf8');
+    expect(src).toContain("export type LineState = 'asked' | 'confirmed' | 'withdrawn';");
+    expect(src).not.toMatch(/'declined'|line-declined/);
   });
 
   it('refuses any recording that is not the human’s own page', async () => {
     const a = seed('Comes with both keys');
     for (const via of ['internal-ops', 'agent', 'agent-attested', '', undefined]) {
       await expect(
-        lines.answerLinesByHuman(MATCH, BEPPE, via as any, press([a], [a], 'lines-confirm')),
+        lines.confirmLinesByHuman(MATCH, BEPPE, via as any, press([a], 'lines-confirm')),
       ).rejects.toThrow(/only recorded from the human's own press/);
       await expect(
-        lines.applyLinePress(db.getPool(), matchRow(MATCH) as any, BEPPE, via as any, press([a], [a])),
+        lines.applyLinePress(db.getPool(), matchRow(MATCH) as any, BEPPE, via as any, press([a])),
       ).rejects.toThrow(/only recorded from the human's own press/);
     }
     expect(a.state).toBe('asked');
   });
 
-  it('writes every answer to the locked log, without the words', async () => {
+  it('writes every confirmation to the locked log, one per line, without the words', async () => {
     const a = seed('Comes with both keys');
     const b = seed('Brakes were serviced this year');
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', press([a, b], [a], 'lines-confirm'));
+    await lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', press([a, b], 'lines-confirm'));
     expect(events()).toEqual([
       { event: 'line-confirmed-by-human', match_id: MATCH, line_id: a.id, account_id: BEPPE, recorded_via: 'counter' },
-      { event: 'line-declined-by-human', match_id: MATCH, line_id: b.id, account_id: BEPPE, recorded_via: 'counter' },
+      { event: 'line-confirmed-by-human', match_id: MATCH, line_id: b.id, account_id: BEPPE, recorded_via: 'counter' },
     ]);
     const written = JSON.stringify(events());
     expect(written).not.toContain('both keys');
     expect(written).not.toContain('Brakes');
-    // The log is written before the row changes.
-    const firstUpdate = world.log.findIndex((s) => /UPDATE confirm_lines SET state = \$2/.test(s));
-    expect(firstUpdate).toBeGreaterThan(-1);
   });
 
   it('gives an assistant no tool that confirms one', async () => {
@@ -776,12 +766,13 @@ describe('only the seller’s human answers a line, by their own press', () => {
         expect(r.isError, action).toBe(true);
       }
     }
-    // Fetching the page answers nothing either: it mints a link and returns.
+    // Fetching the page confirms nothing either: it mints a link and returns.
     const link: any = await dispatchTool(cfg, BEPPE, 'respond', { intro_id: MATCH, action: 'request_confirm' });
     expect(link.isError).toBeFalsy();
-    expect(link.structuredContent.say).toMatch(/^Here is your page — it asks you to confirm in writing what the buyer has asked about/);
+    expect(link.structuredContent.say).toMatch(/^Here is your page — it asks you to confirm in writing what the buyer has asked about, in one press/);
     expect(link.structuredContent.say.endsWith(link.structuredContent.link)).toBe(true);
-    expect(link.structuredContent.what_it_does).toMatch(/You cannot tick or confirm any of it for them/);
+    expect(link.structuredContent.what_it_does).toMatch(/You cannot confirm any of it for them/);
+    expect(link.structuredContent.what_it_does).toMatch(/they press Not now, which changes nothing: ask them what is not right/);
     expect(a.state).toBe('asked');
     expect(events()).toHaveLength(0);
   });
@@ -793,18 +784,18 @@ describe('only the seller’s human answers a line, by their own press', () => {
         e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : [],
       );
     const callers = walk(src)
-      .filter((f) => /answerLinesByHuman|applyLinePress/.test(readFileSync(f, 'utf8')))
+      .filter((f) => /confirmLinesByHuman|applyLinePress/.test(readFileSync(f, 'utf8')))
       .map((f) => f.slice(src.length + 1))
       .sort();
     expect(callers).toEqual(['counter/routes.ts', 'domain/confirmLines.ts', 'domain/offers.ts']);
     // The internal ops queue and the tool surface know nothing of it.
     expect(readFileSync(join(src, 'workers', 'opsWorker.ts'), 'utf8')).not.toMatch(/confirm_lines|confirmLines/);
-    expect(readFileSync(join(src, 'mcp', 'tools.ts'), 'utf8')).not.toMatch(/answerLinesByHuman|applyLinePress/);
+    expect(readFileSync(join(src, 'mcp', 'tools.ts'), 'utf8')).not.toMatch(/confirmLinesByHuman|applyLinePress/);
   });
 
   it('the database holds the same rule', () => {
     const sql = readFileSync(join(__dirname, '..', '..', 'migrations', '066_confirm_lines.sql'), 'utf8');
-    expect(sql).toMatch(/confirm_lines_answer_is_a_press CHECK \(\s*state NOT IN \('confirmed', 'declined'\)\s*OR \(answered_at IS NOT NULL AND answered_by IS NOT NULL AND answered_via = 'counter'\)/);
+    expect(sql).toMatch(/confirm_lines_confirmed_is_a_press CHECK \(\s*state <> 'confirmed'\s*OR \(answered_at IS NOT NULL AND answered_by IS NOT NULL AND answered_via = 'counter'\)/);
     expect(sql).toMatch(/ALTER TABLE offers ADD COLUMN IF NOT EXISTS receipt_sha256 text/);
   });
 
@@ -824,7 +815,7 @@ describe('the record lists what the seller confirmed', () => {
     const d = seed('Still under warranty');
     await lines.withdrawLine(ANA, MATCH, d.id);
     await offers.acceptOfferByHuman(ANAS_OFFER, BEPPE, 'counter', undefined, {
-      lines: press([a, b, c], [a, b, c]),
+      lines: press([a, b, c]),
     });
     const rec = await buildReceipt(matchRow(MATCH) as any, world.offers[0], at, {
       confirmed: lines.confirmedWords(await lines.standingLines(MATCH)),
@@ -846,10 +837,9 @@ describe('the record lists what the seller confirmed', () => {
     expect(world.offers[0].receipt_sha256).toBe(accepted.receipt_sha256);
   });
 
-  it('leaves out a line that was declined, taken off or never answered', () => {
+  it('leaves out a line that was taken off or never confirmed', () => {
     const rows = [
       { state: 'confirmed', line: { text: 'Comes with both keys' } },
-      { state: 'declined', line: { text: 'Still under warranty' } },
       { state: 'asked', line: { text: 'Has never been crashed' } },
       { state: 'withdrawn', line: { text: 'Never left outside' } },
       { state: 'confirmed', line: null }, // words erased with an account
@@ -919,13 +909,13 @@ describe('best offer: one buyer’s lines are that buyer’s alone', () => {
   it('and the buyer who did ask is held to their own', async () => {
     const carlas = seed('Comes with a pump', 'asked', OTHER_MATCH, CARLA);
     await expect(offers.acceptOfferByHuman(CARLAS_OFFER, BEPPE, 'counter')).rejects.toMatchObject({
-      linesNotConfirmed: true,
+      linesChanged: true,
     });
-    await offers.acceptOfferByHuman(CARLAS_OFFER, BEPPE, 'counter', undefined, { lines: press([carlas], [carlas]) });
+    await offers.acceptOfferByHuman(CARLAS_OFFER, BEPPE, 'counter', undefined, { lines: press([carlas]) });
     expect(world.offers[1].state).toBe('accepted-by-human');
-    // A press on one introduction cannot answer a line on another.
+    // A press on one introduction cannot confirm a line on another.
     const anas = seed('Comes with both keys');
-    await lines.answerLinesByHuman(OTHER_MATCH, BEPPE, 'counter', press([anas], [anas], 'lines-confirm'));
+    await lines.confirmLinesByHuman(OTHER_MATCH, BEPPE, 'counter', press([anas], 'lines-confirm'));
     expect(anas.state).toBe('asked');
   });
 
@@ -955,29 +945,27 @@ describe('what each assistant sees, wherever it sees the offers', () => {
     }
   });
 
-  it('tells the seller’s assistant its human answers on their own page, and it cannot', async () => {
+  it('tells the seller’s assistant the page’s button confirms them, and it cannot', async () => {
     seed('Comes with both keys');
     const seen = (await lines.linesForAgent(BEPPE, matchRow(MATCH)))!;
     expect(seen.note.text).toBe(lines.LINES_NOTE_SELLER_WAITING);
     expect(seen.note.text).toMatch(/on your human’s own page/);
-    expect(seen.note.text).toMatch(/You cannot confirm any of them yourself/);
     expect(seen.note.text).toMatch(/in a sentence/);
+    expect(seen.note.text).toMatch(/main button confirms them all, and you cannot confirm any yourself/);
+    expect(seen.note.text).toMatch(/your human presses Not now: ask them what is not right, and say so to the other side/);
     expect(seen.lead).toBe(lines.LINES_LEAD_SELLER);
   });
 
-  it('tells the buyer’s assistant which were confirmed and which were not', async () => {
+  it('tells the buyer’s assistant which are confirmed, and what to do if one is not right', async () => {
     const a = seed('Comes with both keys');
-    expect(lines.linesNoteFor('want', [a]).text).toBe(lines.LINES_NOTE_BUYER_WAITING);
+    const waiting = lines.linesNoteFor('want', [a]);
+    expect(waiting.text).toBe(lines.LINES_NOTE_BUYER_WAITING);
+    expect(waiting.text).toMatch(/tell your human, and take that line off with respond\(withdraw_confirmation\) only on their yes/);
+    expect(waiting.text).toMatch(/Only confirmed lines go on the record/);
+    expect(waiting.lead).toBeUndefined();
     a.state = 'confirmed';
     expect(lines.linesNoteFor('want', [a]).text).toBe(lines.LINES_NOTE_BUYER_CONFIRMED);
-    const b = seed('Still under warranty', 'declined');
-    const said = lines.linesNoteFor('want', [a, b]);
-    expect(said.text).toBe(lines.LINES_NOTE_BUYER_DECLINED);
-    expect(said.text).toMatch(/ask whether they want to go ahead without it/);
-    expect(said.text).toMatch(/Only on their yes/);
-    expect(said.text).toMatch(/only confirmed lines go on the record/);
-    expect(said.lead).toBe(lines.LINES_LEAD_BUYER);
-    expect(lines.linesNoteFor('have', [a, b]).text).toBe(lines.LINES_NOTE_SELLER_ANSWERED);
+    expect(lines.linesNoteFor('have', [a]).text).toBe(lines.LINES_NOTE_SELLER_CONFIRMED);
   });
 
   it('rides the sweep beside the figures, and on the lead sentence where it needs this human', async () => {
@@ -1080,7 +1068,8 @@ describe('the respond actions', () => {
       const d = respond.description;
       expect(d).toMatch(/ask_confirmation \(BUYING side: `line` is one thing your human is relying on, in their words, for the seller's human to confirm in writing; only confirmed lines go on the record\)/);
       expect(d).toMatch(/withdraw_confirmation \(takes one off, ONLY on your human's word\)/);
-      expect(d).toMatch(/request_confirm \(SELLING side: their page to tick what the buyer asked them to confirm in writing; you cannot confirm it yourself\)/);
+      expect(d).toMatch(/request_confirm \(SELLING side: their page, whose button confirms in writing all the buyer asked, never you; on Not now, ask what is not right and tell the other side\)/);
+      expect(d).not.toMatch(/tick/);
       expect(lintHumanCopy(d)).toEqual([]);
       const props = (respond.inputSchema as any).properties;
       expect(props.action.enum).toEqual(expect.arrayContaining(['ask_confirmation', 'withdraw_confirmation', 'request_confirm']));
@@ -1100,16 +1089,20 @@ describe('the manual says the general rules', () => {
       expect(t).toMatch(/relying on something the other side has said/);
       expect(t).toMatch(/respond\(ask_confirmation\)/);
       expect(t).toMatch(/no assistant can/);
+      expect(t).toMatch(/main button confirms them all/);
+      expect(t).toMatch(/Not now/);
+      expect(t).toMatch(/what is not right/);
+      expect(t).toMatch(/only on their yes/);
       expect(lintEmailCopy(t)).toEqual([]);
-      // General rules only: no thing is named, and no figure.
+      // General rules only: no thing is named, no figure, and no ticking.
       expect(t).not.toMatch(/\d/);
-      expect(t).not.toMatch(/wire|bike|car|phone/i);
+      expect(t).not.toMatch(/wire|bike|car|phone|tick|declin/i);
     }
     expect(text).toMatch(/never a line they did not give you/);
     expect(text).toMatch(/there is no need to go back to them about each one/);
     expect(text).toMatch(/tell your human in a sentence that the buyer has asked for some things to be confirmed/);
-    expect(text).toMatch(/tell your human which, and ask whether they want to go ahead without it/);
-    expect(text).toMatch(/only on their yes/);
+    expect(text).toMatch(/your human presses Not now, which changes nothing: ask them what is not right, and say so to the other side in the conversation/);
+    expect(text).toMatch(/If the other side tells you something you asked is not right, tell your human/);
     expect(lintHumanCopy(text)).toEqual([]);
   });
 
@@ -1133,31 +1126,30 @@ describe('every sentence here keeps the house register', () => {
     lines.LINE_WITHDRAWN_SENTENCE,
     lines.LINE_ALREADY_WITHDRAWN_SENTENCE,
     lines.LINES_NOTE_SELLER_WAITING,
-    lines.LINES_NOTE_SELLER_ANSWERED,
-    lines.LINES_NOTE_BUYER_DECLINED,
+    lines.LINES_NOTE_SELLER_CONFIRMED,
     lines.LINES_NOTE_BUYER_WAITING,
     lines.LINES_NOTE_BUYER_CONFIRMED,
     lines.LINES_LEAD_SELLER,
-    lines.LINES_LEAD_BUYER,
-    lines.PRESS_NOT_AGREED_SENTENCE,
+    lines.PRESS_NOT_NOW_SENTENCE,
+    lines.PRESS_NOT_NOW_WHAT_TO_DO,
   ];
   const HUMAN = [
     lines.BUYER_BLOCKED_WORDS,
-    lines.SELLER_NOT_AGREED_TITLE,
-    lines.SELLER_NOT_AGREED_WORDS,
     lines.SELLER_LINES_HEADING,
-    lines.SELLER_LINES_ON_ACCEPT,
-    lines.SELLER_LINES_ON_SEND,
-    lines.SELLER_LINE_LABEL,
-    lines.SELLER_LINE_DONE_LABEL,
+    lines.confirmButtonLabel('offer-accept', '$415'),
+    lines.confirmButtonLabel('offer-send', '$415'),
+    lines.confirmButtonLabel('lines-confirm'),
+    lines.LINES_NOT_NOW_LABEL,
+    lines.NOT_NOW_TITLE,
+    lines.NOT_NOW_WORDS,
+    lines.LINES_CHANGED_REDRAW,
+    lines.LINES_CHANGED_WORDS,
     lines.BUYER_LINES_HEADING,
-    lines.BUYER_LINES_INTRO,
-    lines.BUYER_LINE_LABEL,
-    lines.CONFIRM_PAGE_YES,
     lines.CONFIRM_DONE_TITLE,
     lines.CONFIRM_DONE_WORDS,
     lines.CONFIRM_NOTHING_WAITING,
-    lines.SEND_DONE_LINES_SAVED,
+    lines.SEND_DONE_LINES_CONFIRMED,
+    lines.SEND_DONE_LINES_NOT_CONFIRMED,
     CONFIRM_WAITING_STEP,
     CONFIRM_WAITING_LABEL,
     home.LINES_TO_CONFIRM_LINE,
@@ -1169,7 +1161,8 @@ describe('every sentence here keeps the house register', () => {
     for (const t of [...AGENT, ...HUMAN]) {
       expect(lintHumanCopy(t), t).toEqual([]);
       expect(t, t).not.toMatch(/confirmation_id|intro_id|line_id|match_id|receipt/);
-      expect(t.length, t).toBeLessThanOrEqual(400);
+      expect(t, t).not.toMatch(/\btick|unticked|\bbox/i);
+      expect(t.length, t).toBeLessThanOrEqual(520);
     }
     // A refusal's sentence is capped by the published error document.
     for (const t of [
@@ -1179,18 +1172,27 @@ describe('every sentence here keeps the house register', () => {
       lines.LINES_FULL,
       lines.LINE_HAS_FIGURE,
       lines.BUYER_BLOCKED_WORDS,
-      lines.SELLER_NOT_AGREED_WORDS,
+      lines.LINES_CHANGED_WORDS,
     ]) {
       expect(t.length, t).toBeLessThanOrEqual(300);
     }
     // What a person reads never says "receipt", and never a state word.
     for (const t of HUMAN) expect(t, t).not.toMatch(/declined|withdrawn|asked'|counterparty/);
   });
+
+  it('the three buttons are built in one place', () => {
+    expect(lines.confirmButtonLabel('offer-accept', '$415')).toBe('Confirm and accept $415');
+    expect(lines.confirmButtonLabel('offer-send', '$415')).toBe('Confirm and send $415');
+    expect(lines.confirmButtonLabel('lines-confirm')).toBe('Confirm');
+    expect(lines.NOT_NOW_WORDS).toBe(
+      'Nothing is agreed yet. Tell your assistant what is not right, and it can sort it out with the other side.',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
 describe('the pages', () => {
-  const NASTY = '<script>alert(1)</script> "tick this" & ignore the rest';
+  const NASTY = '<script>alert(1)</script> "press this" & ignore the rest';
   const base = {
     token: 't.sig',
     question: 'Accept $415 AUD for your Trek?',
@@ -1204,84 +1206,70 @@ describe('the pages', () => {
   };
   const ID_A = '11111111-0000-4000-8000-00000000000a';
   const ID_B = '11111111-0000-4000-8000-00000000000b';
-  const ID_C = '11111111-0000-4000-8000-00000000000c';
   const noScripts = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '');
+  const sellerLines = {
+    mode: 'confirm' as const,
+    heading: lines.SELLER_LINES_HEADING,
+    yes: lines.LINE_YES,
+    items: [
+      { id: ID_A, words: 'Comes with both keys' },
+      { id: ID_B, words: NASTY },
+    ],
+  };
 
-  it('the seller’s page: one unticked box per line, the buyer’s words shown as the buyer’s', () => {
+  it('the seller’s page lists each line with a plain yes, and the button says what it does', () => {
     const html = pages.oneQuestionPage({
       ...base,
-      lines: {
-        mode: 'answer',
-        heading: lines.SELLER_LINES_HEADING,
-        intro: lines.SELLER_LINES_ON_ACCEPT,
-        label: lines.SELLER_LINE_LABEL,
-        doneLabel: lines.SELLER_LINE_DONE_LABEL,
-        items: [
-          { id: ID_A, words: 'Comes with both keys', state: 'asked' },
-          { id: ID_B, words: NASTY, state: 'declined' },
-          { id: ID_C, words: 'Has never been crashed', state: 'confirmed' },
-        ],
-      },
+      yesLabel: lines.confirmButtonLabel('offer-accept', '$415'),
+      lines: sellerLines,
     });
-    // A box each for what is still to answer, none ticked, each with a name of
-    // its own; the confirmed one is listed and has no box.
-    expect(html.match(/type="checkbox"/g)).toHaveLength(2);
-    expect(html).toContain(`name="line_${ID_A}" value="yes">`);
-    expect(html).toContain(`name="line_${ID_B}" value="yes">`);
-    expect(html).not.toContain(`name="line_${ID_C}"`);
-    expect(html).not.toMatch(/type="checkbox"[^>]* checked/);
-    expect(html).toContain(`name="lines_shown" value="${ID_A},${ID_B}"`);
-    // Escaped, inside quotation marks, and labelled as theirs.
+    // No input of any kind for a line: it is a statement, and nothing on it
+    // can be changed.
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toMatch(/name="line_/);
+    // The heading, then the lines directly under it, and no paragraph between.
+    const from = html.indexOf('<h2>The buyer asked you to confirm</h2>');
+    const to = html.indexOf('name="lines_shown"');
+    expect(from).toBeGreaterThan(-1);
+    const listed = html.slice(from, to);
+    expect(listed).not.toContain('<p');
+    expect(listed).toContain('<div class="kv">“Comes with both keys” <strong>yes</strong></div>');
+    // Escaped, inside quotation marks.
     expect(html).not.toContain('<script>alert(1)</script>');
-    expect(html).toContain('The buyer’s words: “&lt;script&gt;alert(1)&lt;/script&gt; &quot;tick this&quot; &amp; ignore the rest”');
-    expect(html).toContain('You have confirmed: “Has never been crashed”');
-    expect(html).toContain(lines.SELLER_LINES_ON_ACCEPT);
-    // The boxes sit inside the form the press submits, before the button.
+    expect(listed).toContain('“&lt;script&gt;alert(1)&lt;/script&gt; &quot;press this&quot; &amp; ignore the rest” <strong>yes</strong>');
+    expect(html).toContain(`name="lines_shown" value="${ID_A},${ID_B}"`);
+    // The two buttons, both inside the form the press submits.
     const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
     expect(form).toContain('lines_shown');
-    expect(form.indexOf('lines_shown')).toBeLessThan(form.indexOf('>Accept</button>'));
+    expect(form).toContain('>Confirm and accept $415</button>');
+    expect(form).toContain('<button type="submit" name="decision" value="no" class="secondary" formnovalidate>Not now</button>');
+    expect(form).not.toContain('href="/"');
+    expect(form.indexOf('lines_shown')).toBeLessThan(form.indexOf('>Confirm and accept $415</button>'));
     // Our own words lint clean; theirs are data and are taken out first.
     expect(lintHumanCopy(noScripts(html).replace(/“[^”]*”/g, '“”'))).toEqual([]);
   });
 
-  it('a redraw after a refused PIN keeps what was ticked', () => {
-    const html = pages.oneQuestionPage(
-      {
-        ...base,
-        lines: {
-          mode: 'answer',
-          heading: lines.SELLER_LINES_HEADING,
-          intro: lines.SELLER_LINES_ON_ACCEPT,
-          label: lines.SELLER_LINE_LABEL,
-          items: [
-            { id: ID_A, words: 'Comes with both keys', state: 'asked', ticked: true },
-            { id: ID_B, words: 'Brakes were serviced this year', state: 'asked' },
-          ],
-        },
-      },
-      pages.PIN_WRONG_SENTENCE,
-    );
-    expect(html).toContain(`name="line_${ID_A}" value="yes" checked>`);
-    expect(html).toContain(`name="line_${ID_B}" value="yes">`);
-  });
-
-  it('the buyer’s page shows what the seller confirmed before they press, and no boxes', () => {
+  it('the buyer’s page shows what the seller confirmed before they press, the same way', () => {
     const html = pages.oneQuestionPage({
       ...base,
       question: 'Accept $450 AUD for the Trek?',
       lines: {
         mode: 'read',
         heading: lines.BUYER_LINES_HEADING,
-        intro: lines.BUYER_LINES_INTRO,
-        label: lines.BUYER_LINE_LABEL,
-        items: [{ id: ID_A, words: NASTY, state: 'confirmed' }],
+        yes: lines.LINE_YES,
+        items: [{ id: ID_A, words: NASTY }],
       },
     });
-    expect(html).toContain(lines.BUYER_LINES_HEADING);
-    expect(html).toContain('Your words: “&lt;script&gt;');
+    const from = html.indexOf('<h2>The seller has confirmed in writing</h2>');
+    expect(from).toBeGreaterThan(-1);
+    const listed = html.slice(from, html.indexOf('class="actions"'));
+    expect(listed).toContain('“&lt;script&gt;alert(1)&lt;/script&gt; &quot;press this&quot; &amp; ignore the rest” <strong>yes</strong>');
+    expect(listed.slice(0, listed.indexOf('</div>'))).not.toContain('<p');
     expect(html).not.toContain('type="checkbox"');
     expect(html).not.toContain('lines_shown');
-    expect(html.indexOf(lines.BUYER_LINES_HEADING)).toBeLessThan(html.indexOf('>Accept</button>'));
+    // The buyer's page keeps its own two buttons as they were.
+    expect(html).toContain('>Accept</button>');
+    expect(html).toContain('<a class="btn secondary" href="/">Not now</a>');
     expect(lintHumanCopy(noScripts(html).replace(/“[^”]*”/g, '“”'))).toEqual([]);
   });
 
@@ -1292,33 +1280,25 @@ describe('the pages', () => {
       fresh: true,
       elevated: true, // a window is open, and it does not count
       question: 'Confirm what the buyer asked about your Trek?',
-      yesLabel: lines.CONFIRM_PAGE_YES,
-      lines: {
-        mode: 'answer',
-        heading: lines.SELLER_LINES_HEADING,
-        intro: lines.SELLER_LINES_ALONE,
-        label: lines.SELLER_LINE_LABEL,
-        items: [{ id: ID_A, words: 'Comes with both keys', state: 'asked' }],
-      },
+      yesLabel: lines.confirmButtonLabel('lines-confirm'),
+      lines: sellerLines,
     });
     expect(html).toContain('class="pinbox"');
     expect(html).toContain('This takes your PIN every time.');
-    expect(html).toContain(`>${lines.CONFIRM_PAGE_YES}</button>`);
+    expect(html).toContain('>Confirm</button>');
+    expect(html).toContain('value="no" class="secondary" formnovalidate>Not now</button>');
   });
 
-  it('reads the boxes back out of a posted form, one value per name', () => {
-    const body = {
-      lines_shown: `${ID_A},${ID_B},not-an-id`,
-      [`line_${ID_A}`]: 'yes',
-      [`line_${ID_C}`]: 'yes', // never shown: not this page's to tick
-      decision: 'yes',
-    };
-    expect(lines.readLinePress(body, 'offer-accept')).toEqual({
+  it('reads the lines a page listed back out of its form', () => {
+    expect(lines.readLinePress({ lines_shown: `${ID_A},${ID_B},not-an-id`, decision: 'yes' }, 'offer-accept')).toEqual({
       shown: [ID_A, ID_B],
-      ticked: [ID_A],
       on: 'offer-accept',
     });
     expect(lines.readLinePress({ decision: 'yes' }, 'offer-accept')).toBeUndefined();
+    expect(lines.pressCoversAll([{ id: ID_A }], { shown: [ID_A, ID_B], on: 'offer-accept' })).toBe(true);
+    expect(lines.pressCoversAll([{ id: ID_A }, { id: ID_B }], { shown: [ID_A], on: 'offer-accept' })).toBe(false);
+    expect(lines.pressCoversAll([{ id: ID_A }], undefined)).toBe(false);
+    expect(lines.pressCoversAll([], undefined)).toBe(true);
   });
 
   it('the main page says something is waiting, with the way to it', () => {

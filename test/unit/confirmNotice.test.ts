@@ -3,8 +3,7 @@
  * (2 October 2026; domain/confirmLines.ts).
  *
  * A seller whose assistant only wakes when spoken to has to be told the buyer
- * asked them to confirm something, and such a buyer has to be told a line was
- * left unconfirmed. Both ride the EXISTING your-move notice
+ * asked them to confirm something. That rides the EXISTING your-move notice
  * (email/digestEngine.ts, notifyYourMove) through the ops queue, the way the
  * names step does, so every rule of that notice holds here unchanged:
  *
@@ -12,10 +11,13 @@
  *    that has turned match mail off;
  *  - it is the one fixed notice, with nothing in it of what was asked;
  *  - one mail per dedupe key. The key carries the occasion: the oldest line
- *    still unanswered for the seller, so a burst of lines is one mail; the
- *    first line a press left unconfirmed for the buyer, so a press is one mail.
+ *    still waiting to be confirmed, so a burst of lines is one mail.
  *
- * The suite runs the real pipeline end to end: the ask or the press enqueues,
+ * Confirming is all or nothing, so there is no "left unconfirmed" to tell a
+ * buyer about by mail: a seller for whom something is not true presses Not
+ * now, and the two assistants sort it out in the conversation.
+ *
+ * The suite runs the real pipeline end to end: the ask enqueues,
  * the job is handed to notifyYourMove as the ops worker hands it, and the mail
  * is whatever sendEmail would have given SES.
  */
@@ -160,12 +162,11 @@ function fakePool() {
       return rows(world.lines.filter((l) => l.state !== 'withdrawn'));
     }
     if (/SELECT id, state FROM confirm_lines/.test(sql)) {
-      return rows(world.lines.filter((l) => l.state === 'asked' || l.state === 'declined'));
+      return rows(world.lines.filter((l) => l.state === 'asked'));
     }
-    if (/UPDATE confirm_lines\s+SET state = \$2/.test(sql)) {
-      const from = /state IN \('asked', 'declined'\)/.test(sql) ? ['asked', 'declined'] : ['asked'];
+    if (/UPDATE confirm_lines\s+SET state = 'confirmed'/.test(sql)) {
       for (const l of world.lines) {
-        if (params[5].includes(l.id) && from.includes(l.state)) l.state = params[1];
+        if (params[4].includes(l.id) && l.state === 'asked') l.state = 'confirmed';
       }
       return rows([]);
     }
@@ -296,11 +297,10 @@ describe('the seller is told a line is waiting on them', () => {
 
   it('is told again once they have answered and something new is asked', async () => {
     await lines.askLine(cfg, ANA, MATCH, 'Comes with both keys');
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', {
+    await lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', {
       shown: [world.lines[0].id],
-      ticked: [world.lines[0].id],
       on: 'lines-confirm',
-    }, cfg);
+    });
     await lines.askLine(cfg, ANA, MATCH, 'Has never been crashed');
     await deliver();
     expect(mails().map((m) => m.to)).toEqual([addressOf(BEPPE), addressOf(BEPPE)]);
@@ -335,60 +335,24 @@ describe('the seller is told a line is waiting on them', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('the buyer is told a line was left unconfirmed', () => {
-  const ask = async (...texts: string[]) => {
-    for (const t of texts) await lines.askLine(cfg, ANA, MATCH, t);
+describe('nothing else about a line raises mail', () => {
+  it('a press that confirms, or one that is refused, sends the buyer nothing', async () => {
+    await lines.askLine(cfg, ANA, MATCH, 'Comes with both keys');
+    await lines.askLine(cfg, ANA, MATCH, SECRET);
     sqsSend.mockClear();
-    sesSend.mockClear();
-    world.sends.clear();
-    return world.lines.map((l) => l.id as string);
-  };
-
-  it('once per press, on the page of its own', async () => {
-    const [a, b, c] = await ask('Comes with both keys', SECRET, 'Has never been crashed');
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', { shown: [a, b, c], ticked: [a], on: 'lines-confirm' }, cfg);
-    // Two lines left unconfirmed, one job, one mail.
-    expect(jobs()).toEqual([
-      { op: 'your-move-notify', match_id: MATCH, account_id: ANA, step: 'written', occasion: `declined:${b}` },
-    ]);
-    await deliver();
-    await deliver();
-    expect(mails()).toHaveLength(1);
-    expect(mails()[0].to).toBe(addressOf(ANA));
-    expect(mails()[0].subject).toBe(NEWS_NOTICE_SUBJECT);
-    expect(JSON.stringify(mails())).not.toMatch(/zebra|saddle/i);
-  });
-
-  it('and when the seller pressed Accept with one left unticked', async () => {
-    const [a, b] = await ask('Comes with both keys', SECRET);
+    const [a, b] = world.lines.map((l) => l.id as string);
+    // Refused: the page did not list everything that is waiting.
     await expect(
-      offers.acceptOfferByHuman(OFFER, BEPPE, 'counter', cfg, {
-        lines: { shown: [a, b], ticked: [a], on: 'offer-accept' },
-      }),
-    ).rejects.toMatchObject({ linesNotConfirmed: true });
-    expect(jobs()).toHaveLength(1);
-    expect(jobs()[0]).toMatchObject({ account_id: ANA, occasion: `declined:${b}` });
-    await deliver();
-    expect(mails().map((m) => m.to)).toEqual([addressOf(ANA)]);
+      offers.acceptOfferByHuman(OFFER, BEPPE, 'counter', cfg, { lines: { shown: [a], on: 'offer-accept' } }),
+    ).rejects.toMatchObject({ linesChanged: true });
+    await lines.confirmLinesByHuman(MATCH, BEPPE, 'counter', { shown: [a, b], on: 'lines-confirm' });
+    expect(jobs()).toHaveLength(0);
   });
 
-  it('gets none when their assistant brings them the news', async () => {
-    world.hearsVia[ANA] = 'assistant';
-    const [a] = await ask(SECRET);
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', { shown: [a], ticked: [], on: 'lines-confirm' }, cfg);
-    await deliver();
+  it('an occasion that is not a line being asked is dropped', async () => {
+    await notifyYourMove(cfg, MATCH, ANA, 'written', `declined:${'1'.repeat(8)}-0000-4000-8000-000000000001`);
     expect(mails()).toHaveLength(0);
-    expect([...world.sends.values()]).toEqual([{ template: 'your-move', status: 'suppressed' }]);
-  });
-
-  it('nothing is sent for a press that confirmed everything, or changed nothing', async () => {
-    const [a] = await ask('Comes with both keys');
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', { shown: [a], ticked: [a], on: 'lines-confirm' }, cfg);
-    expect(jobs()).toHaveLength(0);
-    // A line already answered no is not declined a second time by a later press.
-    world.lines[0].state = 'declined';
-    await lines.answerLinesByHuman(MATCH, BEPPE, 'counter', { shown: [a], ticked: [], on: 'lines-confirm' }, cfg);
-    expect(jobs()).toHaveLength(0);
+    expect(world.sends.size).toBe(0);
   });
 });
 

@@ -395,18 +395,18 @@ function fakePool() {
         return rows((world.lines ?? []).filter((l) => l.state !== 'withdrawn'));
       }
       if (/SELECT id, state FROM confirm_lines/.test(sql)) {
-        return rows((world.lines ?? []).filter((l) => l.state === 'asked' || l.state === 'declined'));
+        return rows((world.lines ?? []).filter((l) => l.state === 'asked'));
       }
-      if (/UPDATE confirm_lines\s+SET state = \$2/.test(sql)) {
-        const from = /state IN \('asked', 'declined'\)/.test(sql) ? ['asked', 'declined'] : ['asked'];
+      if (/UPDATE confirm_lines\s+SET state = 'confirmed'/.test(sql)) {
         for (const l of world.lines ?? []) {
-          if (params[5].includes(l.id) && from.includes(l.state)) {
-            l.state = params[1];
-            l.answered_on = params[4];
+          if (params[4].includes(l.id) && l.state === 'asked') {
+            l.state = 'confirmed';
+            l.answered_on = params[3];
           }
         }
         return rows([]);
       }
+      if (/SELECT match_id FROM offers WHERE id/.test(sql)) return rows([{ match_id: MATCH }]);
 
       // ---- matches & offers ----
       if (/SELECT c\.collect_until/.test(sql)) {
@@ -1784,14 +1784,18 @@ describe('a link opened while signed out', () => {
 // ---------------------------------------------------------------------------
 // WRITTEN LINES ON THE PAGES A SELLER ALREADY PRESSES (2 October 2026;
 // domain/confirmLines.ts). The buying side asks a short line; the seller's
-// human confirms it with their own press. An offer is accepted only with
-// every asked line confirmed. Held here at the pages and the presses
-// themselves; the rule and its lock are held in confirmLines.test.ts.
+// human confirms it with their own press. Confirming is all or nothing and
+// the main button does it: the page lists the lines with a plain yes beside
+// each, and the button says "Confirm and ...". An offer is accepted only with
+// nothing still waiting. Held here at the pages and the presses themselves;
+// the rule and its lock are held in confirmLines.test.ts.
 // ---------------------------------------------------------------------------
 describe('written lines on the pages', () => {
   const L1 = '22222222-0000-4000-8000-000000000001';
   const L2 = '22222222-0000-4000-8000-000000000002';
   const NASTY = 'Works <b>fine</b> & "as new"';
+  const NOT_NOW =
+    'Nothing is agreed yet. Tell your assistant what is not right, and it can sort it out with the other side.';
   const aLine = (id: string, text: string, state = 'asked') => ({
     id,
     match_id: MATCH,
@@ -1801,6 +1805,8 @@ describe('written lines on the pages', () => {
     created_at: new Date(),
   });
   const states = () => (world.lines ?? []).map((l) => l.state);
+  const visible = (html: string) =>
+    noScripts(html).replace(/<style[\s\S]*?<\/style>/g, '').replace(/“[^”]*”/g, '“”');
 
   beforeEach(() => {
     world.collectUntil = null;
@@ -1812,94 +1818,124 @@ describe('written lines on the pages', () => {
       world.lines = [aLine(L1, 'Comes with both keys'), aLine(L2, NASTY)];
     });
 
-    it('lists each line as an unticked box, the buyer’s words escaped and shown as theirs', async () => {
+    it('lists each line with a plain yes, and the button says it confirms and accepts', async () => {
       const minted = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
       // The assistant says in one clause that they are on the page.
-      expect(minted.say).toContain('It also lists what the buyer has asked you to confirm in writing');
+      expect(minted.say).toContain(
+        'It also lists what the buyer has asked you to confirm in writing, and the same press confirms them',
+      );
       expect(minted.say.trim().endsWith(minted.link)).toBe(true);
+      expect(minted.what_it_does).toMatch(/its main button confirms them all: only they can press it/);
       const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(minted.link))}`);
       expect(page.statusCode).toBe(200);
-      expect(page.body).toContain('The buyer asked you to confirm');
-      expect(page.body).toContain('Leave one unticked and nothing is agreed.');
-      expect(page.body.match(/type="checkbox"/g)).toHaveLength(2);
-      expect(page.body).not.toMatch(/type="checkbox"[^>]* checked/);
-      expect(page.body).toContain('The buyer’s words: “Works &lt;b&gt;fine&lt;/b&gt; &amp; &quot;as new&quot;”');
+      expect(page.body).toContain('<h2>The buyer asked you to confirm</h2>');
+      expect(page.body).toContain('<div class="kv">“Comes with both keys” <strong>yes</strong></div>');
+      expect(page.body).toContain('“Works &lt;b&gt;fine&lt;/b&gt; &amp; &quot;as new&quot;” <strong>yes</strong>');
       expect(page.body).not.toContain('<b>fine</b>');
-      expect(lintHumanCopy(noScripts(page.body).replace(/<style[\s\S]*?<\/style>/g, '').replace(/“[^”]*”/g, '“”'))).toEqual([]);
+      // No boxes, and no paragraph under the heading.
+      expect(page.body).not.toContain('type="checkbox"');
+      const listed = page.body.slice(page.body.indexOf('<h2>The buyer asked'), page.body.indexOf('lines_shown'));
+      expect(listed).not.toContain('<p');
+      expect(page.body).toContain('>Confirm and accept $430</button>');
+      expect(page.body).toContain('formnovalidate>Not now</button>');
+      expect(lintHumanCopy(visible(page.body))).toEqual([]);
       expect(world.links[0].used_at).toBeNull();
     });
 
-    it('ticks them all and presses: the lines are confirmed and the figure is agreed', async () => {
+    it('the press confirms every line the page listed and agrees the figure', async () => {
       const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
       const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
         decision: 'yes',
         pin: PIN,
         lines_shown: `${L1},${L2}`,
-        [`line_${L1}`]: 'yes',
-        [`line_${L2}`]: 'yes',
       });
       expect(pressed.body).toContain('The number is agreed.');
       expect(states()).toEqual(['confirmed', 'confirmed']);
+      expect((world.lines ?? []).map((l) => l.answered_on)).toEqual(['offer-accept', 'offer-accept']);
       expect(world.offerState).toBe('accepted-by-human');
       expect(world.links[0].decision).toBe('approved');
     });
 
-    it('leaves one unticked: nothing is agreed, the page says so, and the answers are saved', async () => {
-      const { link, press_id } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+    it('a line the page did not list refuses the press before anything is spent, and is listed now', async () => {
+      const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+      // The page was drawn with one line; the buyer has asked a second since.
       const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
         decision: 'yes',
         pin: PIN,
-        lines_shown: `${L1},${L2}`,
-        [`line_${L1}`]: 'yes',
+        lines_shown: `${L1}`,
       });
-      expect(pressed.statusCode).toBe(200);
-      expect(pressed.body).toContain('<h1>Nothing is agreed</h1>');
+      expect(pressed.statusCode).toBe(409);
       expect(pressed.body).toContain(
-        'Something the buyer asked you to confirm is still unconfirmed, so nothing is agreed. Your answers are saved, and the buyer is told.',
+        'The buyer has asked for something more since you opened this page. It is listed now: read it, then press again.',
       );
-      expect(pressed.body).not.toContain('The number is agreed.');
+      expect(pressed.body).toContain(`name="lines_shown" value="${L1},${L2}"`);
+      expect(states()).toEqual(['asked', 'asked']);
       expect(world.offerState).toBe('proposed');
-      expect(states()).toEqual(['confirmed', 'declined']);
-      expect((world.lines ?? []).map((l) => l.answered_on)).toEqual(['offer-accept', 'offer-accept']);
-      // The press landed and was neither a yes nor a Not now, and an assistant
-      // holding the line on it is told the truth.
-      expect(world.links[0].used_at).not.toBeNull();
-      expect(world.links[0].decision).toBe('not-agreed');
-      const waited = await humanLinks.waitForPress(cfg, ANA, press_id, { capMs: 50, pollMs: 10 });
-      expect(waited.pressed).toBe(true);
-      expect(waited.decision).toBeUndefined();
-      expect(waited.note.text).toMatch(/nothing is agreed/);
+      expect(world.links[0].used_at).toBeNull();
+      // And a press with no list at all is refused the same way.
+      const bare = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, { decision: 'yes', pin: PIN });
+      expect(bare.statusCode).toBe(409);
+      expect(states()).toEqual(['asked', 'asked']);
+      expect(world.offerState).toBe('proposed');
     });
 
-    it('a wrong PIN saves nothing, costs no link, and keeps the ticks', async () => {
+    it('Not now changes nothing: no line, and the figure stays on the table', async () => {
+      const { link, press_id } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+      const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
+        decision: 'no',
+        lines_shown: `${L1},${L2}`,
+      });
+      expect(pressed.statusCode).toBe(200);
+      expect(pressed.body).toContain(NOT_NOW);
+      expect(states()).toEqual(['asked', 'asked']);
+      // The offer is neither taken nor turned down.
+      expect(world.offerState).toBe('proposed');
+      expect(world.links[0].decision).toBe('declined');
+      // The assistant holding the line is told plainly, and what to do next.
+      const waited = await humanLinks.waitForPress(cfg, ANA, press_id, { capMs: 50, pollMs: 10 });
+      expect(waited).toMatchObject({ pressed: true, decision: 'declined' });
+      expect(waited.note.text).toBe('You pressed Not now, so nothing was confirmed and nothing is agreed.');
+      expect(waited.what_to_do).toMatch(/Ask your human what was not right/);
+      expect(waited.what_to_do).toMatch(/say so to the other side in the conversation/);
+    });
+
+    it('a wrong PIN confirms nothing and costs no link', async () => {
       const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
       const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, {
         decision: 'yes',
         pin: '000000',
         lines_shown: `${L1},${L2}`,
-        [`line_${L1}`]: 'yes',
       });
       expect(pressed.body).toContain(cpages.PIN_WRONG_SENTENCE);
-      expect(pressed.body).toContain(`name="line_${L1}" value="yes" checked>`);
-      expect(pressed.body).toContain(`name="line_${L2}" value="yes">`);
+      expect(pressed.body).toContain('>Confirm and accept $430</button>');
       expect(states()).toEqual(['asked', 'asked']);
+      expect(world.offerState).toBe('proposed');
       expect(world.links[0].used_at).toBeNull();
     });
 
-    it('the main page’s road is the same page and the same rule', async () => {
+    it('the main page’s road is the same page, and its Not now leaves the offer standing too', async () => {
       const page = await inject('GET', `/approvals/offer/${OFFER}`);
-      expect(page.body.match(/type="checkbox"/g)).toHaveLength(2);
+      expect(page.body).toContain('>Confirm and accept $430</button>');
+      expect(page.body).toContain('formnovalidate>Not now</button>');
+      const notNow = await inject('POST', '/approve', {
+        action: 'offer-accept',
+        ref_id: OFFER,
+        decision: 'no',
+        lines_shown: `${L1},${L2}`,
+      });
+      expect(notNow.statusCode).toBe(200);
+      expect(notNow.body).toContain(NOT_NOW);
+      expect(states()).toEqual(['asked', 'asked']);
+      expect(world.offerState).toBe('proposed'); // never routed to the decline
       const pressed = await inject('POST', '/approve', {
         action: 'offer-accept',
         ref_id: OFFER,
         decision: 'yes',
         pin: PIN,
         lines_shown: `${L1},${L2}`,
-        [`line_${L2}`]: 'yes',
       });
-      expect(pressed.body).toContain('<h1>Nothing is agreed</h1>');
-      expect(states()).toEqual(['declined', 'confirmed']);
-      expect(world.offerState).toBe('proposed');
+      expect(pressed.body).toContain('The number is agreed.');
+      expect(states()).toEqual(['confirmed', 'confirmed']);
     });
 
     it('nobody without the seller’s own session presses any of it', async () => {
@@ -1912,7 +1948,6 @@ describe('written lines on the pages', () => {
           ref_id: MATCH,
           decision: 'yes',
           lines_shown: `${L1},${L2}`,
-          [`line_${L1}`]: 'yes',
         }).toString(),
       });
       // Turned away at the door, before any of it is read: an agent's key is
@@ -1928,28 +1963,39 @@ describe('written lines on the pages', () => {
       world.lines = [aLine(L1, 'Comes with both keys'), aLine(L2, 'Brakes were serviced this year')];
     });
 
-    it('is fetched by the seller’s assistant, and one press answers the lot', async () => {
+    it('is fetched by the seller’s assistant, and one press confirms the lot', async () => {
       const r: any = await respond({ intro_id: MATCH, action: 'request_confirm' });
       const link = body(r).link as string;
       expect(body(r).say).toContain(link);
-      expect(states()).toEqual(['asked', 'asked']); // fetching answers nothing
+      expect(states()).toEqual(['asked', 'asked']); // fetching confirms nothing
       const t = encodeURIComponent(tokenOf(link));
       const page = await inject('GET', `/a/${t}`);
       expect(page.body).toContain('Confirm what the buyer asked about your Mountain bike?');
-      expect(page.body).toContain('>Confirm what is ticked<');
+      expect(page.body).toContain('<h2>The buyer asked you to confirm</h2>');
+      expect(page.body).toContain('>Confirm</button>');
+      expect(page.body).toContain('formnovalidate>Not now</button>');
+      expect(page.body).not.toContain('type="checkbox"');
       expect(page.body).toContain('This takes your PIN every time.');
-      const pressed = await inject('POST', `/a/${t}`, {
-        decision: 'yes',
-        pin: PIN,
-        lines_shown: `${L1},${L2}`,
-        [`line_${L1}`]: 'yes',
-      });
-      expect(pressed.body).toContain('<h1>Saved</h1>');
-      expect(pressed.body).toContain('Only what you confirmed goes on the record of a deal.');
-      expect(states()).toEqual(['confirmed', 'declined']);
+      expect(lintHumanCopy(visible(page.body))).toEqual([]);
+      const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN, lines_shown: `${L1},${L2}` });
+      expect(pressed.body).toContain('<h1>Confirmed</h1>');
+      expect(states()).toEqual(['confirmed', 'confirmed']);
       expect((world.lines ?? [])[0].answered_on).toBe('lines-confirm');
       expect(world.offerState).toBe('proposed'); // nothing was accepted by it
       expect(world.links[0].decision).toBe('approved');
+    });
+
+    it('Not now changes nothing, and the assistant is told to ask what was not right', async () => {
+      const r: any = await respond({ intro_id: MATCH, action: 'request_confirm' });
+      const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(body(r).link))}`, {
+        decision: 'no',
+        lines_shown: `${L1},${L2}`,
+      });
+      expect(pressed.body).toContain(NOT_NOW);
+      expect(states()).toEqual(['asked', 'asked']);
+      const waited = await humanLinks.waitForPress(cfg, ANA, body(r).press_id, { capMs: 50, pollMs: 10 });
+      expect(waited.note.text).toMatch(/nothing was confirmed and nothing is agreed/);
+      expect(waited.what_to_do).toMatch(/Ask your human what was not right/);
     });
 
     it('takes the PIN at the press whatever window is open', async () => {
@@ -1961,10 +2007,9 @@ describe('written lines on the pages', () => {
         ref_id: MATCH,
         decision: 'yes',
         pin: '',
-        lines_shown: `${L1}`,
-        [`line_${L1}`]: 'yes',
+        lines_shown: `${L1},${L2}`,
       });
-      expect(pressed.body).not.toContain('<h1>Saved</h1>');
+      expect(pressed.body).not.toContain('<h1>Confirmed</h1>');
       expect(states()).toEqual(['asked', 'asked']);
       const again = await inject('POST', '/approve', {
         action: 'lines-confirm',
@@ -1972,10 +2017,8 @@ describe('written lines on the pages', () => {
         decision: 'yes',
         pin: PIN,
         lines_shown: `${L1},${L2}`,
-        [`line_${L1}`]: 'yes',
-        [`line_${L2}`]: 'yes',
       });
-      expect(again.body).toContain('<h1>Saved</h1>');
+      expect(again.body).toContain('<h1>Confirmed</h1>');
       expect(states()).toEqual(['confirmed', 'confirmed']);
     });
 
@@ -1985,68 +2028,78 @@ describe('written lines on the pages', () => {
       expect(page.body).toContain('There is nothing waiting to be confirmed on this one.');
     });
 
-    it('the page that sends a figure carries the boxes too, and the figure still goes', async () => {
+    it('the page that sends a figure lists them too, and one press sends and confirms', async () => {
       const minted = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 450, ccy: 'AUD' });
-      expect(minted.say).toContain('It also lists what the buyer has asked you to confirm in writing');
+      expect(minted.say).toContain('and the same press confirms them');
       const t = encodeURIComponent(tokenOf(minted.link));
       const page = await inject('GET', `/a/${t}`);
-      expect(page.body.match(/type="checkbox"/g)).toHaveLength(2);
-      expect(page.body).toContain('One you leave unticked is saved as unconfirmed, and the buyer is told.');
-      const pressed = await inject('POST', `/a/${t}`, {
-        decision: 'yes',
-        pin: PIN,
-        lines_shown: `${L1},${L2}`,
-        [`line_${L2}`]: 'yes',
-      });
-      // Sending is never held up by a line, answered or not.
+      expect(page.body).toContain('<h2>The buyer asked you to confirm</h2>');
+      expect(page.body).toContain('>Confirm and send $450</button>');
+      expect(page.body).not.toContain('type="checkbox"');
+      const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN, lines_shown: `${L1},${L2}` });
       expect(pressed.body).toContain('Your number is on the table for the other side.');
-      expect(pressed.body).toContain('Your answers on what the buyer asked are saved too.');
+      expect(pressed.body).toContain('What the buyer asked is confirmed too.');
       expect(world.offers).toHaveLength(1);
-      expect(states()).toEqual(['declined', 'confirmed']);
+      expect(states()).toEqual(['confirmed', 'confirmed']);
+    });
+
+    it('Not now on the send page sends nothing and confirms nothing', async () => {
+      const minted = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 450, ccy: 'AUD' });
+      const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(minted.link))}`, {
+        decision: 'no',
+        lines_shown: `${L1},${L2}`,
+      });
+      expect(pressed.body).toContain(NOT_NOW);
+      expect(world.offers).toHaveLength(0);
+      expect(states()).toEqual(['asked', 'asked']);
     });
   });
 
   describe('the buyer taking the seller’s figure', () => {
-    it('is told plainly while a line is unanswered or answered no, and the link is kept', async () => {
-      for (const state of ['asked', 'declined']) {
+    it('is told plainly while a line is waiting, and the link is kept', async () => {
+      world.lines = [aLine(L1, 'Comes with both keys')];
+      const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
+      const t = encodeURIComponent(tokenOf(link));
+      const page = await inject('GET', `/a/${t}`);
+      expect(page.body).toContain(
+        'The seller has not yet confirmed what you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.',
+      );
+      expect(page.body).not.toContain('>Accept<');
+      const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+      expect(pressed.body).toContain('tell your assistant to take it off');
+      expect(world.offerState).toBe('proposed');
+      // The link is still good for when the line is confirmed or taken off.
+      expect(world.links[0].used_at).toBeNull();
+    });
+
+    it('goes through on the same link once the line is taken off, or confirmed', async () => {
+      for (const then of ['withdrawn', 'confirmed']) {
         world.links = [];
-        world.lines = [aLine(L1, 'Comes with both keys', state)];
+        world.offerState = 'proposed';
+        world.lines = [aLine(L1, 'Comes with both keys')];
         const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
         const t = encodeURIComponent(tokenOf(link));
-        const page = await inject('GET', `/a/${t}`);
-        expect(page.body, state).toContain(
-          'The seller has not confirmed everything you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.',
-        );
-        expect(page.body).not.toContain('>Accept<');
-        const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
-        expect(pressed.body).toContain('tell your assistant to take it off');
+        await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
         expect(world.offerState).toBe('proposed');
-        // The link is still good for when the line is answered or taken off.
-        expect(world.links[0].used_at).toBeNull();
+        world.lines[0].state = then;
+        const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
+        expect(pressed.body, then).toContain('The number is agreed.');
+        expect(world.offerState).toBe('accepted-by-human');
       }
     });
 
-    it('goes through on the same link once the line is taken off', async () => {
-      world.lines = [aLine(L1, 'Comes with both keys', 'declined')];
-      const { link } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
-      const t = encodeURIComponent(tokenOf(link));
-      await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
-      expect(world.offerState).toBe('proposed');
-      world.lines[0].state = 'withdrawn';
-      const pressed = await inject('POST', `/a/${t}`, { decision: 'yes', pin: PIN });
-      expect(pressed.body).toContain('The number is agreed.');
-      expect(world.offerState).toBe('accepted-by-human');
-    });
-
-    it('shows what the seller confirmed before the press, and ticks nothing for anybody', async () => {
+    it('shows what the seller confirmed before the press, with yes beside each', async () => {
       world.lines = [aLine(L1, NASTY, 'confirmed')];
       const { link, say } = await humanLinks.acceptNumberLink(cfg, ANA, OFFER);
       expect(say).not.toContain('It also lists');
       const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
-      expect(page.body).toContain('The seller has confirmed in writing');
-      expect(page.body).toContain('Your words: “Works &lt;b&gt;fine&lt;/b&gt; &amp; &quot;as new&quot;”');
+      expect(page.body).toContain('<h2>The seller has confirmed in writing</h2>');
+      expect(page.body).toContain('“Works &lt;b&gt;fine&lt;/b&gt; &amp; &quot;as new&quot;” <strong>yes</strong>');
       expect(page.body).not.toContain('type="checkbox"');
+      expect(page.body).not.toContain('lines_shown');
       expect(page.body).toContain('>Accept<');
+      expect(page.body).toContain('<a class="btn secondary" href="/">Not now</a>');
+      expect(lintHumanCopy(visible(page.body))).toEqual([]);
     });
   });
 
@@ -2058,6 +2111,15 @@ describe('written lines on the pages', () => {
     const page = await inject('GET', `/a/${encodeURIComponent(tokenOf(link))}`);
     expect(page.body).not.toContain('type="checkbox"');
     expect(page.body).not.toContain('lines_shown');
-    expect(page.body).not.toContain('confirm');
+    expect(page.body).not.toMatch(/asked you to confirm|Confirm and|confirmed in writing/);
+    expect(page.body).toContain('>Accept</button>');
+    expect(page.body).toContain('<a class="btn secondary" href="/">Not now</a>');
+    // And a Not now on a page with no lines says what it always said.
+    const pressed = await inject('POST', `/a/${encodeURIComponent(tokenOf(link))}`, { decision: 'no' });
+    expect(pressed.body).toContain('Nothing changed, and no reason was sent.');
+    world.anaSells = true;
+    const send = await humanLinks.sendNumberLink(cfg, ANA, MATCH, { amount: 450, ccy: 'AUD' });
+    const sendPage = await inject('GET', `/a/${encodeURIComponent(tokenOf(send.link))}`);
+    expect(sendPage.body).toContain('>Offer it at $450</button>');
   });
 });

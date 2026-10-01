@@ -53,8 +53,8 @@ export type ApprovalAction =
   /** Confirm in writing what the buying side asked about, on a page of its
    *  own for when the seller has no figure to send or take
    *  (domain/confirmLines.ts). Bound to one introduction at mint time. It is
-   *  the one-question page with boxes on it, and it takes the PIN or the
-   *  passkey at the press as a money press does. */
+   *  the one-question page with the lines listed on it, and it takes the PIN
+   *  or the passkey at the press as a money press does. */
   | 'lines-confirm';
 
 /**
@@ -95,8 +95,8 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   // and it takes the same credential the rest of them take: the press is the
   // whole of the consent it grants, so it has to be the human's own.
   'conversation-renew',
-  // Confirming written lines, from 2 October 2026: the same page with a box
-  // to tick beside each line, and the press is the seller's own.
+  // Confirming written lines, from 2 October 2026: the same page with the
+  // lines listed on it, and the press is the seller's own.
   'lines-confirm',
 ];
 
@@ -259,13 +259,7 @@ export async function consumeLink(id: string): Promise<boolean> {
   return !!r.rowCount;
 }
 
-export async function recordLinkDecision(
-  id: string,
-  // 'not-agreed': a press that landed and saved what it said, on which
-  // nothing was agreed (a seller's Accept with a written line left
-  // unconfirmed; domain/confirmLines.ts).
-  decision: 'approved' | 'declined' | 'not-agreed',
-): Promise<void> {
+export async function recordLinkDecision(id: string, decision: 'approved' | 'declined'): Promise<void> {
   await getPool().query('UPDATE approval_links SET decision = $2 WHERE id = $1', [id, decision]);
 }
 
