@@ -88,6 +88,34 @@ function fakePool() {
         const t = world.tokens.find((x) => x.token_hash === params[0] && x.kind === 'refresh');
         return rows(t ? [t] : []);
       }
+      // Rotation: revoke the presented refresh token and mint the new pair in
+      // one statement, and only while that token is still unrevoked.
+      if (/WITH old AS \(\s*UPDATE oauth_tokens SET revoked = true/.test(sql)) {
+        const [accessHash, refreshHash, accountId, clientId, scope, manualVersion, familyId, familyStartedAt, , oldHash] = params;
+        const old = world.tokens.find((x) => x.token_hash === oldHash && x.kind === 'refresh' && !x.revoked);
+        if (!old) return rows([]);
+        old.revoked = true;
+        const shared = {
+          account_id: accountId,
+          client_id: clientId,
+          scope,
+          manual_version: manualVersion,
+          family_id: familyId,
+          family_started_at: familyStartedAt,
+        };
+        const minted = [
+          mkToken({ ...shared, token_hash: accessHash, kind: 'access', expires_at: new Date(Date.now() + 3600_000) }),
+          mkToken({
+            ...shared,
+            token_hash: refreshHash,
+            kind: 'refresh',
+            rotated_from: oldHash,
+            expires_at: new Date(Date.now() + 30 * 86_400_000),
+          }),
+        ];
+        world.tokens.push(...minted);
+        return rows(minted.map((t) => ({ token_hash: t.token_hash })));
+      }
       if (/INSERT INTO oauth_tokens/.test(sql)) {
         const [accessHash, refreshHash, accountId, clientId, scope, manualVersion, familyId, familyStartedAt] = params;
         const in1h = new Date(Date.now() + 3600_000);

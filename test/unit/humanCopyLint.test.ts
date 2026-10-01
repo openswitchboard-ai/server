@@ -313,6 +313,34 @@ const PAGES: { name: string; html: string }[] = [
   { name: 'settings hub', html: home.settingsPage(settings()) },
   { name: 'settings hub, hears through the assistant', html: home.settingsPage(settings({ hearsVia: 'assistant' })) },
   {
+    name: 'settings hub, connected assistants',
+    html: home.settingsPage(
+      settings({
+        assistants: [
+          {
+            clientId: 'cccccccc-3333-4333-8333-cccccccccccc',
+            name: 'Smithery',
+            via: 'connect.smithery.ai',
+            connected: DAY('2026-09-20T00:00:00.000Z'),
+            lastUsed: DAY('2026-09-30T00:00:00.000Z'),
+          },
+          {
+            clientId: 'dddddddd-4444-4444-8444-dddddddddddd',
+            name: 'Claude Code',
+            via: 'localhost',
+            connected: DAY('2026-09-01T00:00:00.000Z'),
+            lastUsed: DAY('2026-09-29T00:00:00.000Z'),
+          },
+        ],
+      }),
+      home.disconnectedNotice('Claude'),
+    ),
+  },
+  {
+    name: 'settings hub, none connected, already disconnected',
+    html: home.settingsPage(settings({ assistants: [] }), home.ALREADY_DISCONNECTED_NOTICE),
+  },
+  {
     name: 'arrangement',
     html: home.arrangementPage(
       {

@@ -261,6 +261,7 @@ describe('the limiters themselves', () => {
       'verification-email': [15, 3_600_000],
       'area-suggest': [60, 60_000],
       'kill-switch': [5, 3_600_000],
+      'assistant-disconnect': [20, 3_600_000],
       'pin-attempt': [10, 60_000],
       'anonymous-session': [10, 60_000],
     });

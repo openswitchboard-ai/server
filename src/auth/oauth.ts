@@ -461,25 +461,52 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
       // than rotating means a suspension ends an agent's access within the
       // access token's own hour.
       if (await isSuspended(row.account_id)) return refuse('account-suspended');
-      // Rotate: revoke the old refresh token, issue a fresh pair in the same
-      // family, ageing from the same press.
-      await getPool().query('UPDATE oauth_tokens SET revoked = true WHERE token_hash = $1', [hash]);
-      const tokens = await issueTokens(
-        row.account_id,
-        row.client_id,
-        row.scope,
-        row.manual_version ?? null,
-        row.manual_start_sent_at ?? null,
-        {
-          id: row.family_id ?? randomUUID(),
-          startedAt: row.family_started_at ?? new Date(),
-        },
+      // Rotate: revoke the old refresh token and issue a fresh pair in the
+      // same family, ageing from the same press — in ONE statement, and only
+      // while the old token is still unrevoked. Everything above read the row
+      // a moment ago; if the person pressed Disconnect since (or the same
+      // token is being refreshed twice at once), the revoke finds nothing and
+      // nothing is minted. A disconnect that comes after this has taken the
+      // row waits for it to finish and then sweeps up the new pair
+      // (connectedAssistants.ts).
+      const access = `${ACCESS_TOKEN_PREFIX}${b64url(randomBytes(32))}`;
+      const refresh = `osb_rt_${b64url(randomBytes(32))}`;
+      const rotated = await getPool().query(
+        `WITH old AS (
+           UPDATE oauth_tokens SET revoked = true
+            WHERE token_hash = $10 AND kind = 'refresh' AND NOT revoked
+            RETURNING token_hash
+         )
+         INSERT INTO oauth_tokens (token_hash, kind, account_id, client_id, scope, manual_version,
+                                   family_id, family_started_at, manual_start_sent_at, rotated_from, expires_at)
+         SELECT v.token_hash, v.kind, $3::uuid, $4::uuid, $5::text, $6::integer,
+                $7::uuid, $8::timestamptz, $9::timestamptz, v.rotated_from, now() + v.ttl
+           FROM old
+          CROSS JOIN (VALUES ($1::text, 'access'::text, NULL::text, interval '${ACCESS_TTL_S} seconds'),
+                             ($2::text, 'refresh'::text, $10::text, interval '${REFRESH_TTL_S} seconds'))
+                AS v(token_hash, kind, rotated_from, ttl)
+         RETURNING token_hash`,
+        [
+          sha256hex(access),
+          sha256hex(refresh),
+          row.account_id,
+          row.client_id,
+          row.scope,
+          row.manual_version ?? null,
+          row.family_id ?? randomUUID(),
+          row.family_started_at ?? new Date(),
+          row.manual_start_sent_at ?? null,
+          hash,
+        ],
       );
-      await getPool().query(
-        `UPDATE oauth_tokens SET rotated_from = $1 WHERE token_hash = $2`,
-        [hash, sha256hex(tokens.refresh_token)],
-      );
-      return reply.send(tokens);
+      if (!rotated.rowCount) return refuse('refresh-token-revoked');
+      return reply.send({
+        access_token: access,
+        token_type: 'Bearer',
+        expires_in: ACCESS_TTL_S,
+        refresh_token: refresh,
+        scope: row.scope,
+      });
     }
     return reply.code(400).send({ error: 'unsupported_grant_type' });
   });

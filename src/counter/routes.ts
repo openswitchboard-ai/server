@@ -20,6 +20,7 @@ import {
   anonymousSessionLimiter,
   areaSuggestLimiter,
   killSwitchLimiter,
+  assistantDisconnectLimiter,
   pinAttemptLimiter,
   rateLimitBypassed,
   verificationEmailLimiter,
@@ -78,6 +79,7 @@ import { reportLink } from '../domain/humanLinks.js';
 import { OsbError } from '../protocol.js';
 import * as ops from '../domain/counterOps.js';
 import * as agentKeys from '../domain/agentKeys.js';
+import * as connected from '../auth/connectedAssistants.js';
 import * as settlements from '../domain/settlements.js';
 import {
   checkoutUrlForSettlement,
@@ -4719,7 +4721,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     // send time) and writes to the WORM consent log first.
     // ------------------------------------------------------------------
     const settingsView = async (accountId: string): Promise<home.EmailSettingsView> => {
-      const [es, hearsVia, timezone, profile, creds0, arrangement, keys] = await Promise.all([
+      const [es, hearsVia, timezone, profile, creds0, arrangement, keys, assistants] = await Promise.all([
         ops.emailSettings(accountId),
         getHearsVia(accountId),
         getTimezone(accountId),
@@ -4727,6 +4729,7 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         credentialsOf(accountId),
         readArrangement(accountId),
         agentKeys.listAgentKeys(accountId),
+        connected.connectedAssistants(accountId),
       ]);
       // Which parts of the standing arrangement are set; the whole of it is a tap away.
       const summary = home.arrangementSummaryLine(arrangementInPlainWords(arrangement));
@@ -4737,6 +4740,13 @@ this time, and nothing has moved. Try sending it again from the settlement page.
         approveWith: { pin: !!creds0.hasPin, passkey: !!creds0.hasPasskey },
         ...(summary ? { arrangementSummary: summary } : {}),
         keyCount: keys.length,
+        assistants: assistants.map((a) => ({
+          clientId: a.clientId,
+          name: a.clientName,
+          via: a.redirectHost,
+          connected: pages.localTime(a.firstConnected, 'day'),
+          lastUsed: pages.localTime(a.lastUsed, 'day'),
+        })),
         freqMatches: es.freqMatches,
         freqDigests: es.freqDigests,
         complaintSuppressed: es.complaintSuppressed,
@@ -4747,7 +4757,56 @@ this time, and nothing has moved. Try sending it again from the settlement page.
     counter.get('/settings', async (req, reply) => {
       const s = await requireSession(req, reply);
       if (!s) return;
-      return html(reply, home.settingsPage(await settingsView(s.accountId!)));
+      // A disconnect lands back here with one line saying so. The line is
+      // fixed; the only thing read from the address is which assistant, and
+      // its name is only used when this account really did hold it and holds
+      // it no longer (connectedAssistants.ts, disconnectedName).
+      const q: any = req.query ?? {};
+      let notice: string | undefined;
+      if (q.saved === 'disconnected') {
+        notice = home.disconnectedNotice(
+          await connected.disconnectedName(s.accountId!, String(q.assistant ?? '')),
+        );
+      } else if (q.saved === 'already-disconnected') {
+        notice = home.ALREADY_DISCONNECTED_NOTICE;
+      }
+      return html(reply, home.settingsPage(await settingsView(s.accountId!), notice));
+    });
+
+    // ------------------------------------------------------------------
+    // Disconnect one assistant that signed in through OAuth. Like Stop, it
+    // only takes access away, so a signed-in session is enough: no PIN or
+    // passkey. The cross-site check over this whole page class stands in front
+    // of it, and the per-account pacing below keeps a loop from hammering it.
+    // ------------------------------------------------------------------
+    counter.post('/assistants/disconnect', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      if (await assistantDisconnectLimiter.limited(s.accountId!)) {
+        return html(
+          reply,
+          pages.messagePage(
+            'Just a moment',
+            '<p>That button has been pressed many times in the last hour. Give it a few minutes before pressing again.</p>',
+          ),
+          429,
+        );
+      }
+      const clientId = String((req.body as any)?.client_id ?? '');
+      if (!connected.CLIENT_ID_RE.test(clientId)) {
+        return html(
+          reply,
+          home.settingsPage(await settingsView(s.accountId!), 'That assistant is unknown.'),
+          400,
+        );
+      }
+      const done = await connected.disconnectAssistant(s.accountId!, clientId);
+      return reply.redirect(
+        done.revoked
+          ? `/settings?saved=disconnected&assistant=${encodeURIComponent(clientId)}`
+          : '/settings?saved=already-disconnected',
+        303,
+      );
     });
 
     // Which way this person hears about their switchboard. It is the one thing

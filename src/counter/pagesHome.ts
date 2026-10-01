@@ -1253,6 +1253,8 @@ export interface EmailSettingsView {
   arrangementSummary?: string;
   /** How many keys are live. */
   keyCount?: number;
+  /** Assistants signed in through OAuth, most recently used first. */
+  assistants?: ConnectedAssistantView[];
   /** Kept on the view for older callers; the page no longer shows it. Every
    *  notice email is the same bare notice now, so blind mode changes nothing. */
   blindMode?: boolean;
@@ -1290,6 +1292,50 @@ function approveFact(a?: { pin: boolean; passkey: boolean }): string {
   return a.pin ? 'Your PIN.' : 'Your passkey.';
 }
 
+/** One assistant signed in through OAuth, as the settings page lists it. */
+export interface ConnectedAssistantView {
+  /** Form value only; never shown. */
+  clientId: string;
+  /** The name the assistant registered under. Untrusted: escaped here. */
+  name: string;
+  /** The host it signs in through, e.g. "localhost". */
+  via: string;
+  /** Both are localTime(d, 'day') markup, inserted without esc(). */
+  connected: string;
+  lastUsed: string;
+}
+
+export const CONNECTED_ASSISTANTS_HEAD = 'Connected assistants';
+export const CONNECTED_ASSISTANTS_EMPTY = 'None connected right now.';
+export const CONNECTED_ASSISTANTS_FACT =
+  'These signed in to work the switchboard for you. Disconnect one and it stops straight away.';
+
+/** The line after a disconnect. The name is the assistant's own, escaped where the notice is drawn. */
+export function disconnectedNotice(name?: string): string {
+  return `Disconnected. ${name ?? 'That assistant'} can't reach your account any more.`;
+}
+export const ALREADY_DISCONNECTED_NOTICE = 'That assistant was already disconnected.';
+
+function connectedAssistantsSection(list: ConnectedAssistantView[] | undefined): string {
+  const rows = list ?? [];
+  if (!rows.length) {
+    return `<section class="set"><h2>${esc(CONNECTED_ASSISTANTS_HEAD)}</h2>
+<p class="set-fact">${esc(CONNECTED_ASSISTANTS_EMPTY)}</p></section>`;
+  }
+  const items = rows
+    .map(
+      (a) => `<li><span><strong>${esc(a.name)}</strong>${a.via ? ` via ${esc(a.via)}` : ''}, connected ${a.connected}, last used ${a.lastUsed}</span>
+<form method="POST" action="/assistants/disconnect"><input type="hidden" name="client_id" value="${esc(a.clientId)}">
+<button type="submit" class="secondary">Disconnect</button></form></li>`,
+    )
+    .join('\n');
+  return `<section class="set"><h2>${esc(CONNECTED_ASSISTANTS_HEAD)}</h2>
+<p class="set-fact">${esc(CONNECTED_ASSISTANTS_FACT)}</p>
+<ul class="assistants">
+${items}
+</ul></section>`;
+}
+
 /** One settings section that is a fact and a link. */
 function linkSection(head: string, fact: string, href: string, linkText: string): string {
   return `<section class="set"><h2>${esc(head)}</h2>
@@ -1302,6 +1348,10 @@ section.set { border-bottom:1px solid var(--line); padding:0 0 var(--s4); }
 section.set h2 { margin-top:var(--s5); margin-bottom:var(--s1); }
 .set-fact { margin:0 0 var(--s1); }
 section.set a { font-family:var(--sans); font-weight:600; font-size:var(--t-sm); }
+ul.assistants { list-style:none; padding:0; margin:var(--s2) 0 0; }
+ul.assistants li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+  gap:var(--s2); padding:var(--s2) 0; border-top:1px solid var(--line); }
+ul.assistants form { margin:0; }
 section.set details > summary { font-family:var(--sans); font-weight:600; font-size:var(--t-sm);
   color:var(--accent); cursor:pointer; }
 </style>`;
@@ -1356,6 +1406,7 @@ ${linkSection('How you approve things', approveFact(v.approveWith), '/security',
   <button type="submit" class="secondary" id="hears-save" hidden>Save</button>
 </form></section>
 ${linkSection('Your assistant', v.arrangementSummary ?? 'Nothing set yet.', '/arrangement', 'Change')}
+${connectedAssistantsSection(v.assistants)}
 ${linkSection("Keys for assistants that can't sign in", keys, '/agent-keys', 'Change')}
 <section class="set"><h2>Time zone</h2>
 ${zone}</section>

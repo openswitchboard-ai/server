@@ -301,6 +301,14 @@ export const areaSuggestLimiter = makeIpLimiter(60, 60 * 1000, 'area-suggest');
  */
 export const killSwitchLimiter = makeIpLimiter(5, 60 * 60 * 1000, 'kill-switch');
 
+/**
+ * Disconnecting an assistant: 20 per ACCOUNT per hour. Like Stop it only takes
+ * access away, so it asks for no PIN; this is what keeps a script on a stolen
+ * session from hammering the revoke and the consent log behind it. Twenty is
+ * far more assistants than anybody connects.
+ */
+export const assistantDisconnectLimiter = makeIpLimiter(20, 60 * 60 * 1000, 'assistant-disconnect');
+
 
 /**
  * PIN tries: 10 per ACCOUNT per minute, on top of the lockout in the database.
