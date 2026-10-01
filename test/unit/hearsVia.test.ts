@@ -492,6 +492,10 @@ describe('a figure a human types on their page reaches the other human', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Since 2 October 2026 an acceptance sends BOTH people the record of what was
+// agreed (receipt.test.ts). This world's postings carry no screened words, so
+// no record can be built here and the acceptance takes the fallback road: the
+// old notice, to the person whose figure it was. That road is what is held.
 describe('an acceptance reaches the person whose figure it was', () => {
   beforeEach(async () => {
     await offers.proposeOffer(

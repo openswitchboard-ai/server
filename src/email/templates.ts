@@ -38,6 +38,14 @@
  * whatever hears_via says, because they are about the account rather than
  * about the network.
  *
+ * AND THE RECORD OF A DEAL (2 October 2026). When a human accepts an offer,
+ * both people are sent the same block of facts and its fingerprint
+ * (domain/receipt.ts, renderReceipt below). It is the one mail whose whole
+ * purpose is to be kept and shown to somebody else later, so it cannot be the
+ * bare notice and it cannot depend on how a person hears about things. It
+ * sends whatever hears_via says and carries no link and no button. A reader
+ * with blind mode on still gets the bare 'deal-agreed' notice in its place.
+ *
  * The footer keeps the unsubscribe link (RFC 8058 one-click) and the
  * email-settings link, which are required of any sender; nothing else.
  *
@@ -141,12 +149,19 @@ export const EXEMPT_TEMPLATES = new Set<string>([
   // The one email a deleted account is sent, to the address it held, just
   // before that address is erased. Nothing else ever goes to it again.
   'account-deleted',
+  // The record of a deal: the same facts to both people, kept by them. See the
+  // top of this file and domain/receipt.ts.
+  'receipt',
 ]);
 
 const esc = (s: string): string =>
   String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
+
+/** The same escaping, for a caller that has to recognise a passage once it is
+ *  inside the HTML part (email/send.ts, a person's own words). */
+export const escapeHtml = esc;
 
 /**
  * A figure as a person writes it: "$415 AUD", "$415.50 AUD". Whole amounts
@@ -567,6 +582,83 @@ export function renderDealAgreed(
     f,
   );
   return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c6) The record of a deal. One human accepted the other's figure, and BOTH
+// of them get this: the same block of facts, and the fingerprint of that block
+// that sits in the locked record beside the press (domain/receipt.ts).
+//
+// The block arrives already in its canonical form and is put into the
+// plain-text part untouched, between two marker lines, so the fingerprint can
+// be worked out again from the email by anybody. The HTML part shows the same
+// lines one under another. Nothing in the block is written here: this only
+// frames it, says to keep it, and hands the handover back to the two people.
+//
+// The lines of the block are other people's words in places (what the seller
+// posted, the note beside the figure), so they are shown as a quoted record
+// and escaped, and nothing reads them as anything else.
+// ---------------------------------------------------------------------------
+export const RECEIPT_SUBJECT = 'Deal agreed: your record';
+/** The two lines the block sits between in the plain-text part. They are not
+ *  part of the block and are not fingerprinted. */
+export const RECEIPT_STARTS = '-------- record starts --------';
+export const RECEIPT_ENDS = '-------- record ends --------';
+export const RECEIPT_LINES = {
+  heading: 'You have a deal.',
+  keep: 'This is your record of what was agreed, and the other person has been sent the same one. Keep this email.',
+  codeLabel: 'Code for this record:',
+  matches:
+    'The code matches the one in OpenSwitchboard\'s locked record of this deal, so either of you can show this email later and it can be checked.',
+  handover: 'Where and when to hand it over is for the two of you.',
+  howToCheck:
+    'To check it: the code is the SHA-256 of the record above, line for line as written here.',
+} as const;
+
+export function renderReceipt(
+  v: { block: string; fingerprint: string },
+  f: FooterLinks,
+): EmailContent {
+  const L = RECEIPT_LINES;
+  const lines = v.block.split('\n');
+  const box =
+    `<tr><td style="font-family:${SANS};font-size:15px;line-height:1.7;color:${INK};background:${PAPER};border:1px solid ${LINE};border-radius:12px;padding:14px 16px">` +
+    lines.map((l) => esc(l)).join('<br>') +
+    `</td></tr>`;
+  const code =
+    `<tr><td style="font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};padding-top:16px">${esc(L.codeLabel)}</td></tr>` +
+    `<tr><td style="font-family:${MONO};font-size:13px;line-height:1.5;color:${INK};word-break:break-all;padding:2px 0 6px">${esc(v.fingerprint)}</td></tr>`;
+  const html = shell(
+    h1(esc(L.heading)) +
+      para(esc(L.keep), ';padding-bottom:14px') +
+      box +
+      code +
+      para(esc(L.matches)) +
+      para(esc(L.handover)) +
+      small(esc(L.howToCheck)),
+    f,
+    HAVE,
+  );
+  const text =
+    `${L.heading}\n\n${L.keep}\n\n` +
+    `${RECEIPT_STARTS}\n${v.block}\n${RECEIPT_ENDS}\n\n` +
+    `${L.codeLabel}\n${v.fingerprint}\n\n` +
+    `${L.matches}\n\n${L.handover}\n\n${L.howToCheck}\n\n` +
+    footerText(f);
+  return { subject: RECEIPT_SUBJECT, html, text };
+}
+
+/**
+ * The block back out of a plain-text part: the lines between the two markers.
+ * It is how the tests prove the mail carries what was fingerprinted, and it is
+ * the whole of what a person checking a record has to do before hashing.
+ */
+export function receiptBlockIn(text: string): string | undefined {
+  const flat = String(text).replace(/\r\n?/g, '\n');
+  const a = flat.indexOf(`${RECEIPT_STARTS}\n`);
+  const b = flat.indexOf(`\n${RECEIPT_ENDS}`);
+  if (a < 0 || b < 0 || b < a) return undefined;
+  return flat.slice(a + RECEIPT_STARTS.length + 1, b);
 }
 
 // ---------------------------------------------------------------------------

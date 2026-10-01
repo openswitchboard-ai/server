@@ -12,9 +12,11 @@
  *    (email_complaint_suppressed_at) withholds all non-transactional mail
  *    until the human re-enables it from the counter.
  *  - VOICE: the banned-phrase lint runs on every subject + body in every env.
+ *    It is a rule about the switchboard's own sentences; a passage a caller
+ *    marks as a person's own words (`verbatim`) is left out of it.
  *  - THE NOTICE RULE (2026-09-11, see the top of templates.ts): everything
- *    that is not a verification code, a security notice or the kill-switch
- *    mail is a NOTICE. A notice carries no link and no button beyond the two
+ *    that is not a verification code, a security notice, the kill-switch
+ *    mail or the record of a deal is a NOTICE. A notice carries no link and no button beyond the two
  *    footer controls, and it goes out only when the recipient's hears_via is
  *    'email'. Both halves are enforced here rather than at each call site, so
  *    a new template cannot quietly opt itself out.
@@ -35,7 +37,13 @@ import { getPool } from '../db.js';
 import { emailHash, getHearsVia } from '../domain/accounts.js';
 import { assertEmailCopyClean, assertNoticeClean } from './lint.js';
 import { signEmailToken } from './tokens.js';
-import { EXEMPT_TEMPLATES, newsNotice, type EmailContent, type FooterLinks } from './templates.js';
+import {
+  EXEMPT_TEMPLATES,
+  escapeHtml,
+  newsNotice,
+  type EmailContent,
+  type FooterLinks,
+} from './templates.js';
 import type { Config } from '../config.js';
 
 export type EmailKind = 'transactional' | 'bulk';
@@ -53,6 +61,27 @@ export interface SendEmailInput {
   content: EmailContent;
   /** '[SAMPLE] ' for the visual-review set. */
   subjectPrefix?: string;
+  /**
+   * Passages in the body that are A PERSON'S OWN WORDS, shown as theirs: what
+   * a seller posted, a note beside a figure. The voice lint is a rule about
+   * what the switchboard writes, and holding it against somebody else's
+   * sentence would mean a record of a deal is never sent because the buyer
+   * wrote "cash, not transfer". Each passage is taken out of the copy before
+   * the lint reads it, as written and as it stands escaped in the HTML part.
+   * Everything around the passages is linted as ever.
+   */
+  verbatim?: string[];
+}
+
+/** The copy with the caller's verbatim passages blanked, for the voice lint. */
+export function withoutVerbatim(copy: string, verbatim: string[] | undefined): string {
+  let out = copy;
+  // Longest first, so a passage that sits inside another goes with it.
+  for (const p of [...(verbatim ?? [])].sort((a, b) => b.length - a.length)) {
+    if (!p) continue;
+    out = out.split(escapeHtml(p)).join(' ').split(p).join(' ');
+  }
+  return out;
 }
 
 export type SendStatus =
@@ -237,11 +266,12 @@ export async function sendEmail(cfg: Config, input: SendEmailInput): Promise<Sen
   // VOICE gate: banned phrases never leave the building, any env.
   const context = `template=${input.template}`;
   assertEmailCopyClean(input.content.subject, context);
-  assertEmailCopyClean(input.content.text, context);
-  assertEmailCopyClean(input.content.html, context);
+  assertEmailCopyClean(withoutVerbatim(input.content.text, input.verbatim), context);
+  assertEmailCopyClean(withoutVerbatim(input.content.html, input.verbatim), context);
 
   // THE NOTICE RULE (see the top of templates.ts). Everything that is not one
-  // of the three exemptions is a notice, and a notice carries no link and no
+  // of the exemptions (the three about the account, and the record of a deal)
+  // is a notice, and a notice carries no link and no
   // button beyond the two footer controls, and goes only to someone whose
   // assistant is not the one bringing them the news.
   const isNotice = !EXEMPT_TEMPLATES.has(input.template);

@@ -15,6 +15,7 @@ import {
   renderApproval,
   renderChannelWaiting,
   renderDealAgreed,
+  renderReceipt,
   renderDigest,
   renderKillSwitch,
   renderOfferOnTheTable,
@@ -165,6 +166,25 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       blind: true,
       content: renderDealAgreed(
         { amount: 415, ccy: 'AUD', categoryLabel: LABEL, blind: true },
+        links,
+      ),
+    },
+    // The record of a deal: the same block of facts to both people, with its
+    // fingerprint (domain/receipt.ts). Not a notice; it is theirs to keep.
+    {
+      name: 'receipt',
+      blind: false,
+      content: renderReceipt(
+        {
+          block: [
+            'Agreed: 2 October 2026, 03:14 UTC',
+            'What: Trek Marlin 5 hardtail',
+            'As the seller posted it: Medium frame, 2021, good condition.',
+            'Amount agreed: $415 AUD',
+            'Offered by the buyer. Accepted by the seller.',
+          ].join('\n'),
+          fingerprint: 'c'.repeat(64),
+        },
         links,
       ),
     },
@@ -575,7 +595,10 @@ describe('the email rule: a notice carries no link and no button', () => {
         !t.name.startsWith('verification') &&
         !t.name.startsWith('security') &&
         !t.name.startsWith('kill-switch') &&
-        !t.name.startsWith('account-deleted'),
+        !t.name.startsWith('account-deleted') &&
+        // The record of a deal is kept, so it says its own thing; it still
+        // carries no link and no button (receipt.test.ts).
+        !t.name.startsWith('receipt'),
     );
 
   it('every notice passes the notice lint: nothing but the footer controls', () => {

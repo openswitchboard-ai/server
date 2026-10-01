@@ -1,7 +1,15 @@
 import { aboutThing, offerAmountInWords } from '../email/templates.js';
 import { getPool } from '../db.js';
 import { decryptFields, writeConsentEvent } from '../crypto.js';
-import { assertNotSwap, getMatch, ownCardId, readersOwnThingLabel, sideOf } from './matches.js';
+import {
+  assertNotSwap,
+  getMatch,
+  ownCardId,
+  readersOwnThingLabel,
+  sideOf,
+  type MatchRow,
+} from './matches.js';
+import type { Receipt } from './receipt.js';
 import { isLadderPattern } from './matchRules.js';
 import { type Arrangement } from './arrangement.js';
 import { sayFor } from './lanes.js';
@@ -984,12 +992,20 @@ export async function acceptOfferByHuman(
   // The collection window used to lock acceptance here while the accepting
   // human's own want or have was contested. It is gone (migration 030): a
   // human's yes is never blocked by how many other people are about.
+  //
+  // THE RECORD OF WHAT WAS AGREED (domain/receipt.ts). Built before the press
+  // is written down, so its fingerprint can sit in the locked log beside the
+  // press. Best-effort, exactly as the mail is: a record that cannot be built
+  // is no reason to refuse a human's yes, and the event is then written
+  // without the field.
+  const receipt = await receiptOrNothing(m, o);
   await writeConsentEvent({
     event: 'offer-accepted-by-human',
     offer_id: offerId,
     match_id: o.match_id,
     account_id: humanAccountId,
     recorded_via: recordedVia,
+    ...(receipt ? { receipt_sha256: receipt.sha256 } : {}),
   });
   await getPool().query(
     `INSERT INTO consent_tokens (match_id, account_id, kind, recorded_via)
@@ -1003,14 +1019,70 @@ export async function acceptOfferByHuman(
   // Best offer: taking one is choosing, so the rest are declined in the same
   // breath and their people are told, plainly, that it went elsewhere.
   await declineTheRest(offerId, o.match_id);
-  // The person whose figure this was is owed the news. It goes however they
-  // hear about the switchboard: their agent may bring it on its next sweep,
-  // and an agreed price is the one moment worth saying twice.
-  if (cfg) await notifyProposerOfAcceptance(cfg, r.rows[0]);
+  // BOTH of them are owed the record, the same one, and only this pair: the
+  // people whose numbers were just declined get nothing of it. Where no record
+  // could be built, the person whose figure this was is still owed the news,
+  // and gets it the way they always did.
+  if (cfg) {
+    if (receipt) await sendReceiptToBoth(cfg, m, r.rows[0], receipt);
+    else await notifyProposerOfAcceptance(cfg, r.rows[0]);
+  }
   return serializeOffer(r.rows[0]);
 }
 
 /**
+ * The record for this acceptance, or nothing. Never throws: whatever goes
+ * wrong in building it, the acceptance is recorded and stands.
+ */
+async function receiptOrNothing(m: MatchRow, o: OfferRow): Promise<Receipt | undefined> {
+  try {
+    const { buildReceipt } = await import('./receipt.js');
+    return await buildReceipt(m, o);
+  } catch (err) {
+    console.warn('receipt could not be built; the acceptance is recorded without one', err);
+    return undefined;
+  }
+}
+
+/**
+ * The same record to the two people on this introduction: the one who
+ * accepted and the one whose figure it was. One mail each, each on its own
+ * try, so one address that will not take mail costs the other person nothing.
+ * Best-effort throughout: the acceptance is recorded and stands whatever
+ * happens here, and the fingerprint is already in the locked log.
+ */
+async function sendReceiptToBoth(
+  cfg: Config,
+  m: MatchRow,
+  o: OfferRow,
+  receipt: Receipt,
+): Promise<void> {
+  await Promise.all(
+    [m.account_want, m.account_have].map(async (accountId) => {
+      try {
+        const { sendReceiptEmail } = await import('../counter/email.js');
+        const { accountEmail } = await import('./counterOps.js');
+        const to = await accountEmail(accountId, 'receipt');
+        if (!to) return;
+        await sendReceiptEmail(cfg, to, accountId, {
+          offerId: o.id,
+          block: receipt.block,
+          fingerprint: receipt.sha256,
+          amount: Number(o.amount),
+          ccy: o.ccy,
+          side: accountId === m.account_want ? 'want' : 'have',
+        });
+      } catch (err) {
+        console.warn('receipt email failed; the acceptance stands', err);
+      }
+    }),
+  );
+}
+
+/**
+ * THE FALLBACK, for an acceptance that has no record (sendReceiptToBoth above
+ * is the ordinary road since 2 October 2026).
+ *
  * "Deal: $415 AUD agreed for your mountain bike." Sent to the human who made
  * the offer, once the other human has taken it. Nothing about money moving —
  * a settlement is a separate thing the two of them may or may not use — so the

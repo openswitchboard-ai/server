@@ -12,6 +12,7 @@ import {
   renderDealAgreed,
   renderKillSwitch,
   renderOfferOnTheTable,
+  renderReceipt,
   renderScreeningRejected,
   renderSecurityNotice,
   renderSettlementProposed,
@@ -209,6 +210,10 @@ export async function sendOfferOnTheTableEmail(
  * rule (2026-09-11) it is a notice like the rest, so the one pipeline holds it
  * back when their own assistant is the one bringing them the news — which it
  * is, on the next sweep, carrying the same sentence in its own voice.
+ *
+ * Since 2 October 2026 the ordinary mail on an acceptance is the record, to
+ * both people (sendReceiptEmail below). This one is what is left for an
+ * acceptance no record could be built for.
  */
 export async function sendDealAgreedEmail(
   cfg: Config,
@@ -233,6 +238,63 @@ export async function sendDealAgreedEmail(
       },
       ctx.links,
     ),
+  });
+}
+
+/**
+ * The record of a deal, to ONE of the two people. The caller sends it to both
+ * (domain/offers.ts), with the same block and the same fingerprint each time.
+ *
+ * It is not a notice: it goes out however this person hears about the
+ * switchboard, because it is theirs to keep and to show (email/templates.ts,
+ * the exemptions). De-duped on the offer and the account, so one acceptance
+ * raises one record per person however many times its caller runs.
+ *
+ * BLIND MODE. A reader who asked for emails with nothing in them gets nothing
+ * in this one either: the bare 'deal-agreed' notice goes in its place, on the
+ * notice rule's own terms, and the block and the fingerprint stay out of their
+ * inbox. `side` and the figure are only for that notice's renderer, which
+ * drops them when blind.
+ *
+ * Every line of the block is handed to the pipeline as verbatim: they are the
+ * record, parts of them are other people's own words, and the voice lint is
+ * about the sentences around them.
+ */
+export async function sendReceiptEmail(
+  cfg: Config,
+  to: string,
+  accountId: string,
+  input: {
+    offerId: string;
+    block: string;
+    fingerprint: string;
+    amount: number;
+    ccy: string;
+    side: 'want' | 'have';
+  },
+): Promise<SendOutcome> {
+  const ctx = await emailAccountContext(cfg, accountId);
+  if (ctx.blind) {
+    return sendEmail(cfg, {
+      to,
+      accountId,
+      template: 'deal-agreed',
+      kind: 'transactional',
+      dedupeKey: `deal-agreed:${input.offerId}:${accountId}`,
+      content: renderDealAgreed(
+        { amount: input.amount, ccy: input.ccy, blind: true, side: input.side },
+        ctx.links,
+      ),
+    });
+  }
+  return sendEmail(cfg, {
+    to,
+    accountId,
+    template: 'receipt',
+    kind: 'transactional',
+    dedupeKey: `receipt:${input.offerId}:${accountId}`,
+    content: renderReceipt({ block: input.block, fingerprint: input.fingerprint }, ctx.links),
+    verbatim: input.block.split('\n'),
   });
 }
 
