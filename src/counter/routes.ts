@@ -3167,6 +3167,7 @@ in on this device and lets you approve what is waiting.</p>
             s.accountId!,
             'counter',
             confirmLines.readLinePress(b, 'lines-confirm'),
+            cfg,
           );
           await links.recordLinkDecision(row.id, 'approved');
           return html(reply, doneFor('link', ...CONFIRMED_DONE));
@@ -3196,6 +3197,7 @@ in on this device and lets you approve what is waiting.</p>
             s.accountId!,
             'counter',
             confirmLines.readLinePress(b, 'offer-send'),
+            cfg,
           );
           const linesSaved =
             answered.confirmed.length || answered.declined.length
@@ -3507,6 +3509,7 @@ in on this device and lets you approve what is waiting.</p>
             s.accountId!,
             'counter',
             confirmLines.readLinePress(b, 'lines-confirm'),
+            cfg,
           );
           return html(reply, doneFor('session', ...CONFIRMED_DONE));
         }

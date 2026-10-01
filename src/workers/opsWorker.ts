@@ -437,11 +437,16 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   // your-move:{match}:{account} dedupe key. A 'details' job from
                   // before 13 September 2026 may still be on the queue; nothing
                   // raises that step any more and notifyYourMove drops it.
+                  //
+                  // 'written': a line asked to be confirmed in writing is
+                  // waiting on this person. Its occasion rides in the same
+                  // dedupe key, so a burst of lines is one notice.
                   await notifyYourMove(
                     cfg,
                     body.match_id,
                     body.account_id,
-                    body.step === 'details' ? 'details' : 'names',
+                    body.step === 'details' ? 'details' : body.step === 'written' ? 'written' : 'names',
+                    typeof body.occasion === 'string' ? body.occasion : undefined,
                   );
                   break;
                 }

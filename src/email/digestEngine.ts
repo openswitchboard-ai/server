@@ -210,14 +210,31 @@ export async function sendChannelWaitingNudge(
 //
 // One nudge per recipient (the dedupe key carries no timestamp), and quiet for
 // an account that has turned match mail off.
+//
+//   step 'written' — a written line is waiting on this person
+//                    (domain/confirmLines.ts): the seller has something to
+//                    answer, or the buyer has a line that was not confirmed.
+//
+// The names step happens once on an introduction, so one key per recipient was
+// the whole of its throttle. A written line can happen more than once, and a
+// key that had already been spent on the names step would swallow it. So this
+// step carries an OCCASION that goes into the same key: the caller names the
+// thing the notice is about (the oldest line still unanswered; the first line
+// one press left unconfirmed), and everything that belongs to that one
+// occasion, a burst of lines or a redelivered job, coalesces on it exactly as
+// before. No occasion, no notice.
 // ---------------------------------------------------------------------------
+const OCCASION = /^(asked|declined):[0-9a-f-]{36}$/;
+
 export async function notifyYourMove(
   cfg: Config,
   matchId: string,
   recipientAccount: string,
   step: YourMoveStep = 'names',
+  occasion?: string,
 ): Promise<void> {
   if (step === 'details') return;
+  if (step === 'written' && !(occasion && OCCASION.test(occasion))) return;
   const r = await getPool().query(
     `SELECT category, account_want, account_have, card_want, card_have, swap FROM matches WHERE id = $1`,
     [matchId],
@@ -238,12 +255,15 @@ export async function notifyYourMove(
     accountId: recipientAccount,
     template: 'your-move',
     kind: 'bulk',
-    dedupeKey: `your-move:${matchId}:${recipientAccount}`,
+    dedupeKey:
+      step === 'written'
+        ? `your-move:${matchId}:${recipientAccount}:${occasion}`
+        : `your-move:${matchId}:${recipientAccount}`,
     content: renderYourMove(
       {
         categoryLabel: ctx.blind ? undefined : ownLabel,
         blind: ctx.blind,
-        step: 'names',
+        step,
         side: sideOf(m, recipientAccount),
       },
       ctx.links,

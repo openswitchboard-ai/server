@@ -30,6 +30,7 @@ import {
   SELLER_NOT_AGREED_WORDS,
   applyLinePress,
   confirmedWords,
+  notifyBuyerOfDeclined,
   standingLines,
   unconfirmed,
   withIntroductionLocked,
@@ -1034,10 +1035,11 @@ export async function acceptOfferByHuman(
     const current: OfferRow = again.rows[0] ?? o;
     stillOpen(current);
     // The seller's boxes, where this press came off a page that had any.
-    await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
+    const pressed = await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
     const lines = await standingLines(m.id, client);
     if (unconfirmed(lines).length) {
       return {
+        pressed,
         refused: new OsbError('NOT_UNLOCKED_YET', {
           human_action:
             humanAccountId === m.account_have ? SELLER_NOT_AGREED_WORDS : BUYER_BLOCKED_WORDS,
@@ -1073,6 +1075,9 @@ export async function acceptOfferByHuman(
     return { accepted: r.rows[0] as OfferRow, receipt };
   });
   if ('refused' in outcome) {
+    // The answers are saved. A buyer who hears by email is told it is their
+    // move, once for this press (domain/confirmLines.ts).
+    if (outcome.pressed) await notifyBuyerOfDeclined(cfg, m, outcome.pressed);
     throw Object.assign(outcome.refused as OsbError, { linesNotConfirmed: true });
   }
   const { accepted, receipt } = outcome;

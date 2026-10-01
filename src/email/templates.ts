@@ -496,7 +496,14 @@ export function renderChannelWaiting(
 // notice like the rest: the step it is about is one their assistant can hand
 // them a link to, so the email says what happened and stops there.
 // ---------------------------------------------------------------------------
-export type YourMoveStep = 'names' | 'details';
+//
+// THE 'written' STEP (2 October 2026; domain/confirmLines.ts). The buyer has
+// asked the seller's human to confirm something in writing, or the seller's
+// press left one of the buyer's lines unconfirmed. Either way it is this
+// person's move, and one whose assistant only wakes when spoken to would
+// otherwise be left waiting in silence. It says nothing of what was asked:
+// the line's words never reach this file.
+export type YourMoveStep = 'names' | 'details' | 'written';
 
 export function renderYourMove(
   v: { categoryLabel?: string; blind: boolean; step?: YourMoveStep; side: ReaderSide },
@@ -508,6 +515,16 @@ export function renderYourMove(
   // yes to swapping first names, and the two of them can talk once this
   // person says yes back. The sentence says exactly that and no more.
   const tail = 'Your yes is the last step before the two of you can talk.';
+  if (v.step === 'written') {
+    const waiting = thing
+      ? `Something about ${theirThing(thing, v.side)} is waiting on you.`
+      : 'Something is waiting on you.';
+    const { html, text } = notice(
+      { heading: 'It is your move.', line: v.blind ? 'Something is waiting on you.' : waiting, accent: MATCH },
+      f,
+    );
+    return { subject, html, text };
+  }
   const line = v.blind
     ? 'Someone is ready to hear back from you.'
     : thing

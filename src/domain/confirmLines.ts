@@ -37,6 +37,8 @@
  * signs.
  */
 import type pg from 'pg';
+import { SendMessageCommand } from '@aws-sdk/client-sqs';
+import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { writeConsentEvent } from '../crypto.js';
 import { getMatch, noMoneySentence, sideOf, type MatchRow } from './matches.js';
@@ -390,6 +392,11 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
     return r.rows[0] as ConfirmLineRow | undefined;
   });
   if (!row) throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_FULL });
+  // The seller's human is told it is their move, where email is how they
+  // hear. The occasion is the oldest line still unanswered, so however many
+  // lines are asked while that one waits, it is one notice.
+  const oldest = (await standingLines(m.id).catch(() => [])).find((l) => l.state === 'asked');
+  await notifyWrittenMove(cfg, m.id, m.account_have, `asked:${(oldest ?? row).id}`);
   // Something moved on this introduction, so its slot's clock starts again,
   // as it does for a figure and a message (domain/sequencer.ts).
   try {
@@ -564,6 +571,7 @@ export async function answerLinesByHuman(
   humanAccountId: string,
   recordedVia: AnswerRecordedVia,
   press: LinePress | undefined,
+  cfg?: Config,
 ): Promise<PressOutcome> {
   if (!(ANSWER_RECORDED_VIA as readonly string[]).includes(recordedVia)) {
     throw new Error(
@@ -574,9 +582,68 @@ export async function answerLinesByHuman(
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, humanAccountId);
   if (!press || humanAccountId !== m.account_have) return { confirmed: [], declined: [] };
-  return withIntroductionLocked(m.id, (client) =>
+  const out = await withIntroductionLocked(m.id, (client) =>
     applyLinePress(client, m, humanAccountId, recordedVia, press),
   );
+  await notifyBuyerOfDeclined(cfg, m, out);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// NOBODY WHO HEARS BY EMAIL IS LEFT WAITING IN SILENCE.
+//
+// A seller whose assistant only wakes when spoken to would never learn the
+// buyer had asked them to confirm something, and such a buyer would never
+// learn a line was left unconfirmed. Both are told the way a passive human is
+// told it is their turn at the names step: the existing your-move notice
+// (email/digestEngine.ts, notifyYourMove), through the ops queue, as
+// recordStage3OptIn does it. Everything about that notice is unchanged and is
+// what decides whether a mail goes at all: only an account that hears by
+// email, never one that has turned match mail off, never a suppressed
+// address, and one mail per dedupe key. It is the one fixed notice and it
+// carries nothing of what was asked; nothing but ids crosses this function.
+//
+// Best-effort: a notice that cannot be enqueued changes nothing about the
+// line or the press.
+// ---------------------------------------------------------------------------
+async function notifyWrittenMove(
+  cfg: Config | undefined,
+  matchId: string,
+  recipientAccount: string,
+  occasion: string,
+): Promise<void> {
+  if (!cfg?.opsQueueUrl) return;
+  try {
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: cfg.opsQueueUrl,
+        MessageBody: JSON.stringify({
+          op: 'your-move-notify',
+          match_id: matchId,
+          account_id: recipientAccount,
+          step: 'written',
+          occasion,
+        }),
+      }),
+    );
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error(`your-move-notify: enqueue failed (line unaffected): ${e?.message ?? e}`);
+  }
+}
+
+/**
+ * The buyer is told once per press that left something unconfirmed. A line
+ * goes from unanswered to "no" exactly once, so the first such line of a
+ * press names that press and no other.
+ */
+export async function notifyBuyerOfDeclined(
+  cfg: Config | undefined,
+  m: Pick<MatchRow, 'id' | 'account_want'>,
+  out: PressOutcome,
+): Promise<void> {
+  if (!out.declined.length) return;
+  await notifyWrittenMove(cfg, m.id, m.account_want, `declined:${out.declined[0]}`);
 }
 
 // ---------------------------------------------------------------------------
