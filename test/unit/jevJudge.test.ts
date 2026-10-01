@@ -39,6 +39,7 @@ import {
   JEV_JUDGE_TIMEOUT_MS,
   JEV_JUDGE_TOP_N,
   jevJudgesTier,
+  flooredTier,
   jevTier,
   judgeWithJev,
   type JudgeRequest,
@@ -166,7 +167,7 @@ describe('the thresholds', () => {
     expect(jevTier({ same_kind: 0.9, compatible: 0.31 }, SPRING_WANT, SPRING_HAVE)).toBe('possible');
   });
 
-  it('NOTHING otherwise, never a near miss', () => {
+  it("Jev's own NOTHING otherwise (before the near-miss floor)", () => {
     expect(jevTier({ same_kind: 0.9, compatible: 0.3 }, SPRING_WANT, SPRING_HAVE)).toBe('nothing');
     expect(jevTier({ same_kind: 0.69, compatible: 0.99 }, SPRING_WANT, SPRING_HAVE)).toBe('possible');
     expect(jevTier({ same_kind: 0.3, compatible: 0.99 }, SPRING_WANT, SPRING_HAVE)).toBe('possible');
@@ -185,6 +186,41 @@ describe('the thresholds', () => {
     expect(jevTier({ same_kind: 0.95, compatible: 0.95 }, saysFits, have)).toBe('sure');
     // "for" in the want's own words is it saying what it fits.
     expect(jevTier({ same_kind: 0.95, compatible: 0.95 }, { kind: 'steam wand for Gaggia Classic' }, have)).toBe('sure');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('THE NEAR-MISS FLOOR: Jev never erases a pair the rules placed at near miss or above', () => {
+  it('a Jev NOTHING on a rules SURE, POSSIBLE or NEAR-MISS is a near miss', () => {
+    for (const rules of ['sure', 'possible', 'near-miss'] as const) {
+      expect(flooredTier('nothing', rules), rules).toBe('near-miss');
+    }
+  });
+
+  it('never higher than Jev said, and never on a rules NOTHING', () => {
+    expect(flooredTier('sure', 'near-miss')).toBe('sure');
+    expect(flooredTier('possible', 'sure')).toBe('possible');
+    expect(flooredTier('sure', 'possible')).toBe('sure');
+    expect(flooredTier('nothing', 'nothing')).toBe('nothing');
+  });
+
+  it('same kind high with compatible low is a near miss, not nothing', async () => {
+    // A borrow want against a lend have with a stated size that conflicts.
+    const ask = vi.fn(async () => ok(0.72, 0.28));
+    const out = await judgeWithJev([req('ladder', 0.6, { rulesTier: 'near-miss' })], () => {}, { ask, enabled: true });
+    expect(out.get('ladder')).toMatchObject({ tier: 'near-miss', jevTier: 'nothing', floored: true });
+  });
+
+  it('same kind low on a rules SURE is a near miss, not nothing', async () => {
+    const ask = vi.fn(async () => ok(0.14, 0.5));
+    const out = await judgeWithJev([req('kit', 0.9, { rulesTier: 'sure' })], () => {}, { ask, enabled: true });
+    expect(out.get('kit')).toMatchObject({ tier: 'near-miss', jevTier: 'nothing', floored: true });
+  });
+
+  it('an answer Jev lifts is not marked floored', async () => {
+    const ask = vi.fn(async () => ok(0.9, 0.9));
+    const out = await judgeWithJev([req('a', 0.9, { rulesTier: 'possible' })], () => {}, { ask, enabled: true });
+    expect(out.get('a')).toMatchObject({ tier: 'sure', jevTier: 'sure', floored: false });
   });
 });
 
@@ -238,6 +274,7 @@ function req(key: string, score: number, over: Partial<JudgeRequest> = {}): Judg
   return {
     key,
     score,
+    rulesTier: 'sure',
     want: { id: `w-${key}`, category: 'goods.electronics.console.sim-racing', ...SPRING_WANT },
     have: { id: `h-${key}`, category: 'goods.electronics.console.sim-racing', ...SPRING_HAVE },
     ...over,
@@ -453,16 +490,24 @@ describe('in the matcher', () => {
     expect(log).not.toHaveBeenCalledWith('matcher: jev judged a pair', expect.anything());
   });
 
-  it('FLAG ON: Jev saying it is not the thing turns a rules SURE into no introduction', async () => {
+  it('FLAG ON: Jev saying it is not the thing turns a rules SURE into a near miss, never into nothing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(answerBody(0.2, 0.2))));
     initJev(cfgWith({ jevMatching: true }));
     const out = (await runMatchingForCard(cfgWith(), SOURCE, log))!;
     expect(out.matchesCreated).toHaveLength(0);
-    expect(out.nearMisses).toBe(0);
+    expect(out.nearMisses).toBe(1);
     expect(log).toHaveBeenCalledWith(
       'matcher: jev judged a pair',
-      expect.objectContaining({ rules_tier: 'sure', jev_tier: 'nothing' }),
+      expect.objectContaining({ rules_tier: 'sure', jev_tier: 'nothing', tier: 'near-miss', floored: true }),
     );
+  });
+
+  it('FLAG ON: same kind with a stated conflict (compatible low) is a near miss', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(answerBody(0.72, 0.28))));
+    initJev(cfgWith({ jevMatching: true }));
+    const out = (await runMatchingForCard(cfgWith(), SOURCE, log))!;
+    expect(out.matchesCreated).toHaveLength(0);
+    expect(out.nearMisses).toBe(1);
   });
 
   it('FLAG ON: Jev turns a rules POSSIBLE into SURE, and the row says Jev decided', async () => {

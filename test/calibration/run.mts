@@ -64,7 +64,13 @@ if (!existsSync(pairsPath)) {
   );
   process.exit(0);
 }
-const pairs: Pair[] = JSON.parse(readFileSync(pairsPath, 'utf8'));
+// A pair labelled "near-miss" (the honest answer is "something close, not an
+// introduction") counts as NOTHING here: these lines fit the three tiers that
+// introduce or do not, and a near miss introduces nobody. The Jev judge
+// calibration (jev-judge.mts) reads the four labels as they are.
+const pairs: Pair[] = (JSON.parse(readFileSync(pairsPath, 'utf8')) as (Omit<Pair, 'label'> & { label: string })[]).map(
+  (p) => ({ ...p, label: (p.label === 'near-miss' ? 'nothing' : p.label) as Label }),
+);
 const cachePath = join(here, '.cache.json');
 const modelId = process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0';
 const cfg = { bedrockEmbedModelId: modelId } as Parameters<typeof embedText>[0];

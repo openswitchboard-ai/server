@@ -7,8 +7,7 @@
  * labelled calibration set (test/calibration) found TypeSafe's Jev answered
  * those better than the rules, with no NOTHING pair called SURE, so from
  * today Jev decides them wherever JEV_MATCHING is on (config.ts: on in dev,
- * OFF in prod until a data-processing agreement and privacy wording are in
- * place).
+ * off in prod unless set; it has been set on in prod since 1 October 2026).
  *
  * WHICH PAIRS IT JUDGES. Only pairs that have already passed every hard rule
  * (geo, price, urgency, mutes, own account, the shelf gate) and that the rules
@@ -22,8 +21,16 @@
  *   SURE      same_kind_of_thing >= 0.7 AND compatible >= 0.7, and the parts
  *             guard allows it (matchTiers.partsGuardAllowsSure: where either
  *             side is a part, the want must say what it fits, or it is a maybe);
- *   POSSIBLE  same_kind_of_thing >= 0.7 AND compatible > 0.3;
- *   NOTHING   otherwise. Not a near miss: Jev has said it is not the thing.
+ *   POSSIBLE  same_kind_of_thing >= 0.3 AND compatible > 0.3;
+ *   NEAR-MISS otherwise. THE NEAR-MISS FLOOR (founder, 1 October 2026): Jev
+ *             may lift a pair or keep it, but it never erases one. Every pair
+ *             it is asked about is one the rules placed at NEAR-MISS or above,
+ *             so where its answer would be NOTHING the pair is recorded as a
+ *             near miss instead. A near miss never makes an introduction; it
+ *             only means the switchboard can say "something close is here"
+ *             rather than nothing (answers never say nothing while something
+ *             waits). The usual case is same_kind_of_thing high and compatible
+ *             low: the same kind of thing with a stated detail that conflicts.
  *
  * WHEN IT DOES NOT. The rules' own answer stands wherever Jev is off, not
  * configured, slow (JEV_JUDGE_TIMEOUT_MS per call, one attempt, no retry),
@@ -89,8 +96,8 @@ export function noulsOf(answers: Record<string, JevAnswer>): JevNouls | undefine
 }
 
 /**
- * Jev's tier for one pair. Pure. The parts guard is the rules' own, read on
- * the two postings in want -> have order.
+ * Jev's own tier for one pair, before the near-miss floor. Pure. The parts
+ * guard is the rules' own, read on the two postings in want -> have order.
  */
 export function jevTier(nouls: JevNouls, want: PostingWords, have: PostingWords): Exclude<Tier, 'near-miss'> {
   if (nouls.same_kind >= JEV_SURE_SAME_KIND_MIN && nouls.compatible >= JEV_SURE_COMPATIBLE_MIN) {
@@ -100,6 +107,17 @@ export function jevTier(nouls: JevNouls, want: PostingWords, have: PostingWords)
     return 'possible';
   }
   return 'nothing';
+}
+
+/**
+ * THE NEAR-MISS FLOOR. The tier a pair ends with once Jev has answered: Jev's
+ * own tier, except that a NOTHING on a pair the rules placed at NEAR-MISS or
+ * above becomes NEAR-MISS. Never higher than Jev said, never lower than a
+ * near miss where the rules found one. Pure.
+ */
+export function flooredTier(jev: Exclude<Tier, 'near-miss'>, rules: Tier): Tier {
+  if (jev === 'nothing' && rules !== 'nothing') return 'near-miss';
+  return jev;
 }
 
 /** One side of a pair as the judge needs it: what is sent, and what the parts guard reads. */
@@ -115,10 +133,17 @@ export interface JudgeRequest {
   have: JudgeSide;
   /** The rules' fit, which picks the top N. */
   score: number;
+  /** The rules' tier, which sets the near-miss floor. */
+  rulesTier: Tier;
 }
 
 export interface JudgeVerdict {
-  tier: Exclude<Tier, 'near-miss'>;
+  /** The tier the pair ends with: Jev's, floored at a near miss. */
+  tier: Tier;
+  /** Jev's own answer before the floor, for the log. */
+  jevTier: Exclude<Tier, 'near-miss'>;
+  /** True where the floor turned Jev's NOTHING into a near miss. */
+  floored: boolean;
   nouls: JevNouls;
   latencyMs: number;
 }
@@ -176,8 +201,12 @@ export async function judgeWithJev(
           });
           return;
         }
+        const own = jevTier(nouls, req.want, req.have);
+        const tier = flooredTier(own, req.rulesTier);
         out.set(req.key, {
-          tier: jevTier(nouls, req.want, req.have),
+          tier,
+          jevTier: own,
+          floored: tier !== own,
           nouls,
           latencyMs: result.latencyMs ?? Date.now() - started,
         });

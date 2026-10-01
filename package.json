@@ -40,6 +40,7 @@
     "jev-transcript": "tsx scripts/eval/jev-transcript-score.mts",
     "shelf-gaps": "tsx scripts/ops/shelf-gaps.mts",
     "calibrate-tiers": "tsx test/calibration/run.mts",
+    "calibrate-jev": "tsx test/calibration/jev-judge.mts",
     "probe": "tsx test/probe/run.ts"
   },
   "dependencies": {

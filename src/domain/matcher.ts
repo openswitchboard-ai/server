@@ -791,6 +791,7 @@ export async function runMatchingForCard(
           want: sides(p.want),
           have: sides(p.have),
           score: p.judged.score,
+          rulesTier: p.judged.tier,
         }))
     : [];
   const verdicts = await judgeWithJev(judgeRequests, log);
@@ -806,7 +807,9 @@ export async function runMatchingForCard(
         card_want: want.id,
         card_have: have.id,
         rules_tier: judged.tier,
-        jev_tier: verdict.tier,
+        jev_tier: verdict.jevTier,
+        tier: verdict.tier,
+        floored: verdict.floored,
         same_kind: Number(verdict.nouls.same_kind.toFixed(3)),
         compatible: Number(verdict.nouls.compatible.toFixed(3)),
         latency_ms: verdict.latencyMs,

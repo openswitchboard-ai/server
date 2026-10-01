@@ -34,6 +34,22 @@ touches a database or anything deployed.
   telling it the want is the `a` side (`wantIs`), which the covered rule
   needs.
 
+## The borderline judge
+
+```
+OSB_INTERNAL_DIR=/path/to/internal AWS_PROFILE=<profile> AWS_REGION=us-east-1 npm run calibrate-jev
+```
+
+`jev-judge.mts` runs the matcher's own decision over the same pairs: the rules
+tier, which pairs are put to Jev (`jevJudge.jevJudgesTier`), Jev's own tier,
+and the tier after the near-miss floor (`jevJudge.flooredTier`), and prints
+the three as confusion tables. A pair may also be labelled `near-miss` (close,
+never an introduction); `run.mts` counts that as `nothing`, because its lines
+only decide who is introduced. Jev's answers are cached in `.jev-cache.json`
+(gitignored), keyed by the exact state and questions sent, so a re-run only
+calls Jev for pairs it has not seen in that form; `--no-call` uses the cache
+alone. The key is read from Secrets Manager and never printed.
+
 ## What the numbers mean
 
 - **cos**: cosine similarity of the two projection embeddings (Titan v2).

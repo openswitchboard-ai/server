@@ -4,6 +4,11 @@ An outside model is asked two of this switchboard's own judgements, its answer
 is written down beside ours, and **nothing the switchboard does changes because
 of it**. That is the whole arrangement. It runs on dev and nowhere else.
 
+The same model is also used, separately, as **the borderline judge** in
+matching (on in dev, and live in prod since 1 October 2026), described below.
+The shadow itself has never run in prod and the client still refuses to start
+it there.
+
 The code: `src/shadow/jev.ts` (the client), `src/shadow/jevTrials.ts` (the two
 trials and the boundary of what is sent), `migrations/047_jev_shadow.sql` (the
 table), `scripts/ops/jev-shadow-report.mts` (the only thing that reads it).
@@ -102,13 +107,12 @@ their own experiments, and we want the same posting to get the same answer.
 
 Three separate things have to be true before a single request goes out:
 
-1. `JEV_SECRET_ARN` is set. Infra passes it to **dev tasks only**
-   (`infra/lib/core-stack.ts`, search "jev"); the secret `osb/dev/jev` is
-   imported by name, never created by CloudFormation, so the key itself never
-   passes through a template. **There is no `osb/prod/jev` and infra never
-   makes one** — the prod template is byte-for-byte unchanged by this work.
-2. `envName` is not `prod`. The client refuses to initialise in prod even with
-   the variable set, and says so in a boot line. Deploys are split: a push
+1. `JEV_SECRET_ARN` is set (`infra/lib/core-stack.ts`, search "jev"). The
+   secrets `osb/dev/jev` and, since 1 October 2026, `osb/prod/jev` (for the
+   matching judge only) are imported by name, never created by
+   CloudFormation, so a key never passes through a template.
+2. `envName` is not `prod`. The client refuses to start the shadow in prod
+   even with the variable set (the judge has its own gate, below). Deploys are split: a push
    deploys dev, and prod is a separate dispatch. The check stays anyway,
    because "prod got the env var by accident" is a thing that happens to
    every project eventually.
@@ -137,7 +141,17 @@ matches. That is a separate path from the shadow, in
 - SURE where same_kind_of_thing >= 0.7 and compatible >= 0.7 and the parts
   guard allows it (where either side is a part, the want must say what it
   fits); POSSIBLE where same_kind_of_thing >= 0.3 and compatible > 0.3;
-  otherwise NOTHING (not a near miss).
+  otherwise a NEAR MISS.
+- **The near-miss floor (1 October 2026).** Jev may lift a pair or keep it,
+  but it never erases one. Every pair it is asked about is one the rules
+  placed at NEAR-MISS or above, so where Jev's own answer would be NOTHING
+  the pair is recorded as a near miss instead. A near miss never makes an
+  introduction. The usual case is the same kind of thing with a stated
+  detail that conflicts (same_kind_of_thing high, compatible low), where
+  "something close is here" is the true answer and "nothing" is not. The log
+  line records Jev's own tier, the tier the pair ended with, and whether the
+  floor applied. Calibration: `npm run calibrate-jev`
+  (test/calibration/README.md).
 - One call per pair, for the best five candidates of a posting, all at once,
   2 s timeout, no retry. On a timeout, an error, a half answer or the flag
   off, the rules' tier stands. `matches.judged_by` (migration 060) records
@@ -146,10 +160,11 @@ matches. That is a separate path from the shadow, in
   also drops attribute keys that name a price and any sum of money written
   into a value or the kind.
 
-**Before it is switched on in prod**, the DPA below and privacy wording must
-be in place, and infra must provide the `osb/prod/jev` secret, pass its ARN as
-`JEV_SECRET_ARN` to the prod task with read access, and set
-`JEV_MATCHING=on`.
+**In prod since 1 October 2026.** The founder switched the judge on in prod
+on that date: infra provides `osb/prod/jev`, passes its ARN as
+`JEV_SECRET_ARN` to the prod task, and sets `JEV_MATCHING=on`. The privacy
+page names TypeSafe as a processor for this. TypeSafe's answer on data
+retention for this account is still pending (see the terms section below).
 
 ## The rehearsal transcript scorer
 
@@ -201,17 +216,19 @@ of thing; we did not introduce and Jev says the same kind and compatible), and
 mean latency and token totals for each trial. It refuses to run against prod,
 where the table exists and is permanently empty.
 
-## TypeSafe's terms, and what has to happen before any prod use
+## TypeSafe's terms
 
 TypeSafe states that it does not train on user data, and offers a data
 processing agreement with zero data retention on its enterprise plan. **Neither
-of those is in hand.** This deployment is running on ordinary terms, against
-dev data, with the smallest state either question can be answered from.
+is in hand.** The shadow runs on ordinary terms, against dev data, with the
+smallest state either question can be answered from.
 
-**A DPA with ZDR is required before any prod use of this model, in shadow or
-otherwise, and before anything in prod is sent to it in any form.** A decision
-to let an outside model touch a live judgement is a separate decision again,
-and neither belongs in a small edit to a call site.
+Current status, plainly: the borderline judge has run in prod since
+1 October 2026 on the founder's decision, sending only the pair state
+described above. The privacy page names TypeSafe and says we have asked how
+long it keeps what it receives and whether it trains on it; **that answer is
+pending**, and the page is to be updated when it comes. The shadow is not, and
+will not be, run in prod.
 
 ## Truncating it
 
