@@ -126,6 +126,24 @@ function isInitialize(body: unknown): boolean {
 }
 
 export function registerMcpRoutes(app: FastifyInstance, cfg: Config): void {
+  // A public card of what the server offers, for directories that list it
+  // (Smithery reads /.well-known/mcp/server-card.json). It lets them show the
+  // tools without signing in as anybody, so no directory needs to hold a token
+  // on a real account to list us. The same list ListTools serves; no account.
+  app.get('/.well-known/mcp/server-card.json', async (_req, reply) => {
+    reply.header('cache-control', 'public, max-age=3600');
+    return {
+      serverInfo: { name: 'openswitchboard', version: '0.1.0' },
+      authentication: { required: true, schemes: ['oauth2'] },
+      tools: toolsFor(cfg).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      })),
+      resources: [],
+      prompts: [],
+    };
+  });
   app.post('/mcp', async (req, reply) => {
     const auth = await authenticate(req);
     if (!auth) return unauthorized(cfg, reply);
