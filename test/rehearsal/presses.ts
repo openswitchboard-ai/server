@@ -247,7 +247,7 @@ type SealedApi = {
 const SEALED: SealedApi = new Function(`${SEALED_CORE_JS}\nreturn OSB_SEALED;`)();
 
 const receivingKeys = new Map<string, { privateKey: webcrypto.CryptoKey; publicRaw: Uint8Array; key_id: string }>();
-const contactToSend = new Map<string, { address?: string; phone?: string }>();
+const contactToSend = new Map<string, { address?: string; phone?: string; email?: string }>();
 /** What each human sent and what each opened, for the checks. */
 export const contactLog: { sent: { accountId: string; status: number }[]; opened: { accountId: string; details?: any; status: number }[] } = {
   sent: [],
@@ -255,7 +255,7 @@ export const contactLog: { sent: { accountId: string; status: number }[]; opened
 };
 
 /** The details this human types when their send page opens. */
-export function setContactFor(accountId: string, details: { address?: string; phone?: string }): void {
+export function setContactFor(accountId: string, details: { address?: string; phone?: string; email?: string }): void {
   contactToSend.set(accountId, details);
 }
 

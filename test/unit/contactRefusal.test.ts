@@ -39,7 +39,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('the words doors', () => {
   it('refuses an address or a phone number in a message and in an offer note', async () => {
     for (const door of ['message', 'offer_words'] as const) {
-      for (const text of ['call me on 0412 345 678', 'come to 12 Smith St after five']) {
+      for (const text of ['call me on 0412 345 678', 'come to 12 Smith St after five', 'email me at sam@example.com']) {
         const v = await runIntake(ON, { door, sender_account: ANA, text }, { checks: [contactDetails], ledger: { recordVerdict() {} } });
         expect(v.outcome, `${door}: ${text}`).toBe('refuse');
         expect(v.reason_code).toBe(CONTACT_IN_WORDS_REASON);
@@ -114,8 +114,8 @@ describe('what the tools and the manual say', () => {
 
   it('offers the page on respond, and refuses the words on send_message', () => {
     expect((desc('respond').inputSchema as any).properties.action.enum).toContain('request_send_contact');
-    expect(desc('respond').description).toMatch(/request_send_contact \(address or phone: they type it there; never ask or relay\)/);
-    expect(desc('send_message').description).toMatch(/An address or a phone number is REFUSED too/);
+    expect(desc('respond').description).toMatch(/request_send_contact \(address, phone or email: they type it there; never ask or relay\)/);
+    expect(desc('send_message').description).toMatch(/An address, phone number or email is REFUSED too/);
     expect(desc('send_message').description).toContain('respond(request_send_contact)');
   });
 
@@ -135,8 +135,8 @@ describe('what the tools and the manual say', () => {
     expect(note).toMatch(/Never ask your human for an address or a phone number, never ask them to type one to you, and never relay one/);
     expect(note).toMatch(/opens once, so they should write the details down/);
     const photos = manualSection('photos')!.text;
-    expect(photos).toMatch(/an address or a phone number has that page of its own and never goes in a message, an offer note or a caption/);
-    expect(photos).toMatch(/Where it answers that the page is not on here, or for an email, the older rule holds/);
+    expect(photos).toMatch(/an address, a phone number or an email has that page of its own and never goes in a message, an offer note or a caption/);
+    expect(photos).toMatch(/Where it answers that the page is not on here, the older rule holds/);
     // The old rule, that a number travels in the words on the human's say-so, is gone.
     expect(photos).not.toMatch(/A phone number, an address or an email is not yours to offer/);
   });

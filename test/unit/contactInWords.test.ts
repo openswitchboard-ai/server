@@ -42,7 +42,22 @@ const ADDRESSES = [
   '221b Baker Street',
 ];
 
+const EMAILS = [
+  'email me at sam.lee@example.com',
+  'it is name+bike@example.co.uk',
+  'reach me: jo_88@mail.example.org',
+  'write to sam at example dot com',
+  'sam (at) example (dot) net',
+];
+
 const PASSES = [
+  // Emails' look-alikes (1 October 2026).
+  'find me @samlee on there',
+  'see you at 5pm',
+  'it went for $40 @ the market',
+  'the file is photo@2x.png',
+  'icon@3x.webp attached',
+  'meet at the station at noon',
   'Thursday around 7pm works',
   'I can do 7:30 on Saturday',
   'between 9 and 5 any weekday',
@@ -104,6 +119,9 @@ describe('contact details in the words', () => {
   }
   for (const t of ADDRESSES) {
     it(`finds an address: ${t}`, () => expect(contactDetailRule(t)).toBe('address'));
+  }
+  for (const t of EMAILS) {
+    it(`finds an email: ${t}`, () => expect(contactDetailRule(t)).toBe('email'));
   }
   for (const t of PASSES) {
     it(`lets ordinary words through: ${t}`, () => expect(contactDetailRule(t)).toBeUndefined());

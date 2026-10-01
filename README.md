@@ -150,7 +150,7 @@ These are the invariants worth reading the code to check:
   `carriesMoneyFigure` rule a message is held to — a figure never travels in the
   words. A figure written inside the image is not detectable and no claim is
   made that it is.
-- Addresses and phone numbers go browser to browser, sealed
+- Addresses, phone numbers and emails go browser to browser, sealed
   (`src/domain/sealedContact.ts`, `src/counter/sealedScript.ts`, migration
   063). Every browser a person signs in on makes its own P-256 key pair with
   WebCrypto; the private half is non-extractable and stays in that browser's
@@ -165,8 +165,8 @@ These are the invariants worth reading the code to check:
   copies are deleted at 7 days. Neither assistant sees the details and the
   server holds no key that opens them. Those pages carry no inline script:
   one script from this origin, pinned by SRI, under `script-src 'self'`. A
-  message, an offer note or a photo caption carrying an address or a phone
-  number is refused (`src/intake/checks/contactDetails.ts`). The ledger
+  message, an offer note or a photo caption carrying an address, a phone
+  number or an email is refused (`src/intake/checks/contactDetails.ts`). The ledger
   records that contact details were sent, who to whom and when, and never
   what they were. Setting a browser up to receive takes the PIN or a passkey
   (never an emailed code) and sends a security notice; the browsers are

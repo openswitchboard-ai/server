@@ -377,9 +377,9 @@ export const SENTENCES = {
    * other side, so the tail is the ordinary one for this agent's lane.
    */
   contact_in_words: waitingOn({
-    about: 'Words carrying an address or a phone number were turned back; the send-contact page is the road.',
+    about: 'Words carrying an address, a phone number or an email were turned back; the send-contact page is the road.',
     budget: 620,
-    head: 'This one has not gone. It carries an address or a phone number, and those never go in a message. Fetch respond(request_send_contact) and hand your human the page: they type their details there, and neither assistant sees them. Send your words again without them.',
+    head: 'This one has not gone. It carries an address, a phone number or an email, and those never go in a message. Fetch respond(request_send_contact) and hand your human the page: they type their details there, and neither assistant sees them. Send your words again without them.',
     thing: 'anything that comes back',
   }),
 

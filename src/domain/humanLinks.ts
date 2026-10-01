@@ -471,7 +471,7 @@ export const CONTACT_NOT_READY =
 
 /** Where a deployment has the send-contact page switched off. */
 export const CONTACT_OFF_HERE =
-  'Sending contact details through the switchboard is not on here yet. The older rule stands: an address or a phone number travels in a message only when your human gives it to you for that purpose, and you say it is theirs.';
+  'Sending contact details through the switchboard is not on here yet. The older rule stands: an address, a phone number or an email travels in a message only when your human gives it to you for that purpose, and you say it is theirs.';
 
 export async function sendContactLink(
   cfg: Config,
@@ -506,14 +506,14 @@ export async function sendContactLink(
   const page = url(cfg, token);
   return {
     say: saySentence(
-      'you to type your address or phone number yourself, on your own device, and it sends them scrambled so only their browser can read them. I never see them, so type them there and never to me. Sending takes your PIN or passkey',
+      'you to type your address, phone number or email yourself, on your own device, and it sends them scrambled so only their browser can read them. I never see them, so type them there and never to me. Sending takes your PIN or passkey',
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page where your human types their own address or phone number, or both, and presses Send. Their browser scrambles the details so only the other person\'s browser can read them: you never see them, the switchboard never reads them, and you must never ask your human to type them to you or read them out. The other person can open them once, within seven days.',
+      'Opens one page where your human types their own address, phone number or email, any of them, and presses Send. Their browser scrambles the details so only the other person\'s browser can read them: you never see them, the switchboard never reads them, and you must never ask your human to type them to you or read them out. The other person can open them once, within seven days.',
   };
 }
 
@@ -732,7 +732,7 @@ const PAGE_ASKS: Record<string, string> = {
   'negotiation-auto': 'whether to hand you the wheel on this one',
   report: 'them to report this to the switchboard',
   'shelf-pick': 'them to pick which shelf this belongs on',
-  'contact-send': 'them to type their address or phone number themselves and send it, sealed, to the other side',
+  'contact-send': 'them to type their address, phone number or email themselves and send it, sealed, to the other side',
 };
 
 export const PRESS_SENTENCES = {

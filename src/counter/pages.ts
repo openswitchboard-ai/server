@@ -1565,7 +1565,9 @@ export function contactSendPage(v: ContactSendView): string {
   <textarea id="c_address" rows="3" maxlength="500" autocomplete="street-address"></textarea>
   <label for="c_phone">Your phone number</label>
   <input id="c_phone" type="tel" maxlength="40" autocomplete="tel">
-  <p class="field-help">Fill in one or both. Send only what you want ${esc(v.who)} to have.</p>
+  <label for="c_email">Your email</label>
+  <input id="c_email" type="email" maxlength="254" autocomplete="email">
+  <p class="field-help">Fill in any of them. Send only what you want ${esc(v.who)} to have.</p>
   <div class="consent-box">
     <label><input type="checkbox" id="c_remember"> Remember on this device</label>
     <p class="field-help">Keeps them scrambled in this browser only, so the boxes are filled in next time. Untick it and send to forget them.</p>
@@ -1617,6 +1619,7 @@ export function contactReceivePage(v: ContactReceiveView): string {
   <h2>Their details</h2>
   <p class="lead sealed-shown" id="r_address" hidden></p>
   <p class="lead sealed-shown" id="r_phone" hidden></p>
+  <p class="lead sealed-shown" id="r_email" hidden></p>
   <button type="button" class="secondary" id="r_copy" hidden>Copy</button>
   <p class="small muted">Our scrambled copy is deleted. This is the only time they show here.</p>
 </div>
@@ -1659,7 +1662,7 @@ export function contactSetupPage(v: ContactSetupView): string {
     'Set up this browser',
     `
 <h1>Set up this browser to receive contact details.</h1>
-<p class="lead">When someone sends you their address or phone number, it is scrambled so only your own browsers can read it. This makes this browser one of them.</p>
+<p class="lead">When someone sends you their address, phone number or email, it is scrambled so only your own browsers can read it. This makes this browser one of them.</p>
 <noscript><p class="small muted">This page needs scripts switched on.</p></noscript>
 <p class="small muted" id="snoscript" hidden>This browser cannot do this. Open the page in an up-to-date browser.</p>
 <div id="serr" role="alert"></div>

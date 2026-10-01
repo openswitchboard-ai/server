@@ -53,5 +53,8 @@ describe('the sealed-contact checks', () => {
   it('needs the opened details to match', () => {
     expect(checkContactOpened([{ status: 200, details: { phone: '0400 000 000' } }]).verdict).toBe('pass');
     expect(checkContactOpened([{ status: 410 }]).verdict).toBe('fail');
+    expect(checkContactOpened([{ status: 200, details: { phone: '0400 000 000', email: 'buyer.rehearsal@example.com' } }], true).verdict).toBe('pass');
+    expect(checkContactOpened([{ status: 200, details: { phone: '0400 000 000' } }], true).verdict).toBe('fail');
+    expect(checkContactStayedOffChat(['email him at buyer.rehearsal@example.com']).verdict).toBe('fail');
   });
 });

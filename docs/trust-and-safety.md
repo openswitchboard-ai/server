@@ -399,7 +399,7 @@ secrecy obligations.
 
 ## Sealed contact details (1 October 2026)
 
-Addresses and phone numbers are the one thing the switchboard carries without
+Addresses, phone numbers and emails are the one thing the switchboard carries without
 being able to read. The sender types them on their own page; their browser
 seals one copy per browser key the recipient has registered (ECDH P-256,
 HKDF-SHA-256, AES-256-GCM, introduction and key id as associated data,
@@ -435,7 +435,7 @@ who to whom and when.
 The switchboard **does** see the words at send time. It has to: it writes the
 sentences, screens the content and refuses the money figures. It is not
 end-to-end encrypted and has never claimed to be, with one exception:
-addresses and phone numbers, above. What is true, and what the
+addresses, phone numbers and emails, above. What is true, and what the
 privacy page should say plainly:
 
 - Everything in transit is under TLS (ACM certificate on the load balancer).

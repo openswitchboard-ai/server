@@ -33,7 +33,7 @@ an assistant always has a sentence to say to its human.
 | Wants and haves | Reserved families (jobs, property, licensed trades, dating) by path; prohibited things by what they **are**, whatever they are called: weapons, drugs and prescription medication, live animals and wildlife products, sexual services, anything illegal, people as the thing itself; personal details; text aimed at an AI reader; the wording of stolen or recalled goods | `checks/denyListPath.ts`, `checks/modelScreen.ts` |
 | Messages | Money figures, in digits or in words (figures travel only through the offer path where the human presses); grooming, sexual exploitation, threats, a child involved, a sender at risk (hold for a person, still delivered) | `checks/moneyFigure.ts`, `checks/messageSafety.ts` |
 | Photos | Hidden metadata removed in the sender's browser before upload; then known child abuse images are checked for (OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost), and, before the other side is told a photo exists, a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoHashMatch.ts`, `checks/photoModeration.ts` |
-| Messages, offer notes, photo captions | An address or a phone number, which goes back with a sentence pointing to the send-contact page. Deterministic patterns in the server; nothing is sent to any outside service | `checks/contactDetails.ts` |
+| Messages, offer notes, photo captions | An address, a phone number or an email, which goes back with a sentence pointing to the send-contact page. Deterministic patterns in the server; nothing is sent to any outside service | `checks/contactDetails.ts` |
 | Contact details sent | Nothing to read: they arrive scrambled. The suspension check runs, and the ledger records that they were sent, who to whom and when | `domain/sealedContact.ts` |
 | Reports | Never refused for their words. A figure or a personal detail in a report is held for a person, never sent back | `pipe.ts` (`REFUSAL_FREE_DOORS`) |
 
@@ -49,9 +49,9 @@ the police, and the account that sent it is closed.
 
 The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
 
-### Addresses and phone numbers
+### Addresses, phone numbers and emails
 
-A person types their address or phone number on their own page. Their browser
+A person types their address, phone number or email on their own page. Their browser
 scrambles it so only the other person's browser can read it, and sends only the
 scrambled copy. Neither assistant sees it. We hold the scrambled copy until it
 is opened, and then delete it, or for up to 7 days if nobody opens it. We have

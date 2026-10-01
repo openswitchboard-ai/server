@@ -284,6 +284,7 @@ export const SEALED_PAGE_JS = String.raw`
     var form = document.getElementById('sealedForm');
     var addr = document.getElementById('c_address');
     var phone = document.getElementById('c_phone');
+    var email = document.getElementById('c_email');
     var remember = document.getElementById('c_remember');
     var pinBox = document.getElementById('c_pin');
     var sendBtn = document.getElementById('c_send');
@@ -302,15 +303,16 @@ export const SEALED_PAGE_JS = String.raw`
         var d = await S.openLocal(box, dk);
         if (d.address && !addr.value) addr.value = d.address;
         if (d.phone && !phone.value) phone.value = d.phone;
+        if (d.email && email && !email.value) email.value = d.email;
         remember.checked = true;
       } catch (e) {}
     })();
 
     async function send(viaPasskey) {
       showErr('');
-      var a = addr.value.trim(), p = phone.value.trim();
-      if (!a && !p) { showErr('Fill in your address, your phone number, or both.'); return; }
-      if (a.length > 500 || p.length > 40) { showErr('That is longer than an address or a phone number.'); return; }
+      var a = addr.value.trim(), p = phone.value.trim(), m = email ? email.value.trim() : '';
+      if (!a && !p && !m) { showErr('Fill in your address, your phone number or your email.'); return; }
+      if (a.length > 500 || p.length > 40 || m.length > 254) { showErr('That is longer than an address, a phone number or an email.'); return; }
       if (!keys.length) { showErr('Their side is not ready to receive yet. Ask your assistant for a fresh page later.'); return; }
       sendBtn.disabled = true; if (pkBtn) pkBtn.disabled = true;
       var old = sendBtn.textContent; sendBtn.textContent = 'Sending…';
@@ -318,7 +320,7 @@ export const SEALED_PAGE_JS = String.raw`
         // A FRESH CEREMONY: the passkey assertion is made for this press and
         // goes with it; the server checks it at the press itself.
         var assertion = viaPasskey ? await passkeyAssertion() : null;
-        var details = {}; if (a) details.address = a; if (p) details.phone = p;
+        var details = {}; if (a) details.address = a; if (p) details.phone = p; if (m) details.email = m;
         var envelopes = [];
         for (var i = 0; i < keys.length; i++) envelopes.push(await S.seal(details, keys[i], match));
         if (remember.checked) {
@@ -332,7 +334,7 @@ export const SEALED_PAGE_JS = String.raw`
         if (assertion) body.passkey = JSON.stringify(assertion);
         else if (pinBox && pinBox.value) body.pin = pinBox.value;
         var done = await postJson(action, body);
-        addr.value = ''; phone.value = ''; if (pinBox) pinBox.value = '';
+        addr.value = ''; phone.value = ''; if (email) email.value = ''; if (pinBox) pinBox.value = '';
         var page = document.getElementById('page');
         page.innerHTML = '';
         var h = document.createElement('h1'); h.textContent = done.title || 'Sent'; page.appendChild(h);
@@ -374,7 +376,8 @@ export const SEALED_PAGE_JS = String.raw`
           ready.hidden = true; shown.hidden = false;
           say(document.getElementById('r_address'), d.address ? String(d.address) : '');
           say(document.getElementById('r_phone'), d.phone ? String(d.phone) : '');
-          var lines = [d.address, d.phone].filter(Boolean).join('\n');
+          say(document.getElementById('r_email'), d.email ? String(d.email) : '');
+          var lines = [d.address, d.phone, d.email].filter(Boolean).join('\n');
           var copy = document.getElementById('r_copy');
           if (copy && navigator.clipboard) {
             copy.hidden = false;

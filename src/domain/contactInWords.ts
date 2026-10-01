@@ -1,5 +1,6 @@
 /**
- * AN ADDRESS OR A PHONE NUMBER NEVER TRAVELS IN THE WORDS (1 October 2026).
+ * AN ADDRESS, A PHONE NUMBER OR AN EMAIL NEVER TRAVELS IN THE WORDS (1 October
+ * 2026; emails added the same day).
  *
  * Contact details now have a road of their own: the send-contact page, where
  * the person types them on their own device and their browser scrambles them
@@ -116,7 +117,25 @@ function spelledPhone(text: string): boolean {
   return false;
 }
 
-export type ContactKind = 'phone' | 'address';
+export type ContactKind = 'phone' | 'address' | 'email';
+
+/**
+ * An email address. File names that only look like one ("photo@2x.png") are
+ * left alone: the part after the last dot has to be a word-like ending that is
+ * not a picture or document extension. Written out ("name at example dot
+ * com") counts too.
+ */
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.([A-Za-z]{2,24})\b/g;
+const FILE_ENDINGS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'pdf', 'heic', 'bmp', 'tif', 'tiff', 'mp4', 'mov', 'txt', 'doc', 'docx', 'zip']);
+const SPELLED_EMAIL_RE =
+  /\b[a-z0-9._-]{2,}\s*(?:\(at\)|\[at\]|\sat\s)\s*[a-z0-9-]{2,}\s*(?:\(dot\)|\[dot\]|\sdot\s)\s*(?:com|net|org|edu|gov|io|co|au|nz|uk|me)\b/i;
+
+function hasEmail(text: string): boolean {
+  for (const m of text.matchAll(EMAIL_RE)) {
+    if (!FILE_ENDINGS.has(m[1].toLowerCase())) return true;
+  }
+  return SPELLED_EMAIL_RE.test(text);
+}
 
 /**
  * What kind of contact detail these words carry, if any. The rule that fired
@@ -124,6 +143,7 @@ export type ContactKind = 'phone' | 'address';
  */
 export function contactDetailRule(text: string): ContactKind | undefined {
   if (!text) return undefined;
+  if (hasEmail(text)) return 'email';
   for (const m of text.matchAll(PHONE_CANDIDATE_RE)) {
     const start = m.index ?? 0;
     // A run straight after a currency sign or a letter is a price or a model
@@ -152,4 +172,4 @@ export const CONTACT_IN_WORDS_REASON = 'contact-details-in-words';
  * the line beside a photo.
  */
 export const CONTACT_IN_CAPTION_LINE =
-  'Take the address or phone number out of the description. Your assistant can give you a page to send those to them privately.';
+  'Take the address, phone number or email out of the description. Your assistant can give you a page to send those to them privately.';

@@ -17,7 +17,7 @@ import { passed, type Check, type CheckResult } from '../types.js';
 
 /** The lane-free refusal, for a caller that knows nothing about the agent. */
 export const CONTACT_IN_WORDS_ACTION =
-  'This one has not gone. It carries an address or a phone number, and those never go in a message. Fetch respond(request_send_contact) and hand your human the page: they type their details there themselves, and they go to the other person without either assistant seeing them. Send these words again without them.';
+  'This one has not gone. It carries an address, a phone number or an email, and those never go in a message. Fetch respond(request_send_contact) and hand your human the page: they type their details there themselves, and they go to the other person without either assistant seeing them. Send these words again without them.';
 
 export const contactDetails: Check = {
   name: 'contactDetails',

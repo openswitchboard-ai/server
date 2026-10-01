@@ -415,8 +415,8 @@ describe('the wording', () => {
 
 // ---------------------------------------------------------------------------
 describe('the manual', () => {
-  it('is at version 82, and that entry says the general rule', () => {
-    expect(MANUAL.version).toBe(82);
+  it('carries version 82, and that entry says the general rule', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(82);
     const note = MANUAL_CHANGELOG.find((c) => c.version === 82)!.note;
     expect(note).toMatch(/ask it once, with its meaning unchanged, and take no for an answer/);
     expect(lintEmailCopy(note)).toEqual([]);
