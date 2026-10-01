@@ -1055,7 +1055,7 @@ export async function buildSignal(m: MatchRow, accountId: string) {
  * when they say it is done.
  */
 export const DEAL_AGREED_WHAT_TO_DO =
-  'The deal is agreed and the handover is theirs to arrange. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
+  'The deal is agreed and the handover is theirs to arrange. The same record of what was agreed has been sent to both people by email: tell your human to keep theirs. When your human says it is done — handed over, paid, sorted — ask how it went in those words, good, fine or bad, and send the one they said on respond(verdict). Then ask whether to take their posting down.';
 
 /**
  * THE SAME TWO QUESTIONS WHERE NO FIGURE WAS EVER AGREED (1 October 2026).

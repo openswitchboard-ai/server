@@ -193,7 +193,7 @@ export function hearsViaNote(hearsVia: HearsVia): {
   return {
     text:
       hearsVia === 'assistant'
-        ? 'You are the one who brings this human the news. The switchboard sends them no mail about any of it, so anything you do not pass on, they never hear.'
+        ? 'You are the one who brings this human the news. The switchboard sends them no mail about any of it, so anything you do not pass on, they never hear. The one exception is a deal: a record of any deal they agree is emailed to both people, whatever they chose.'
         : 'This human is emailed about anything that needs them, because you only act when they speak to you. Assume they have read nothing since you last talked, and tell them what has happened before you ask them anything.',
     provenance: 'switchboard-system',
   };

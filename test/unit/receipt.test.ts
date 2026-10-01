@@ -50,6 +50,9 @@ import * as db from '../../src/db.js';
 import { initCounterKeys } from '../../src/counter/keys.js';
 import * as offers from '../../src/domain/offers.js';
 import * as home from '../../src/counter/pagesHome.js';
+import { hearsViaNote } from '../../src/domain/accounts.js';
+import { DEAL_AGREED_WHAT_TO_DO } from '../../src/domain/matches.js';
+import { MANUAL_BODY, MANUAL_CHANGELOG } from '../../src/mcp/instructions.js';
 import {
   buildReceipt,
   canonicalReceipt,
@@ -60,7 +63,7 @@ import {
   receiptTime,
 } from '../../src/domain/receipt.js';
 import { sendEmail, withoutVerbatim } from '../../src/email/send.js';
-import { lintHumanCopy, noticeLinkHits } from '../../src/email/lint.js';
+import { lintEmailCopy, lintHumanCopy, noticeLinkHits } from '../../src/email/lint.js';
 import {
   EXEMPT_TEMPLATES,
   NEWS_NOTICE_SUBJECT,
@@ -812,5 +815,39 @@ describe('best offer: the record is for the accepted pair only', () => {
       expect(m.text).not.toContain('400');
       expect(m.text).not.toContain('Carla');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What an assistant is told. It must never tell its human to expect no email
+// about a deal, and it tells them to keep the record. The mail is best-effort,
+// so the words are "has been sent" and never that it arrived.
+describe('the agent-facing sentences are true about the record', () => {
+  it('the hears-through-the-assistant note names the one exception', () => {
+    const t = hearsViaNote('assistant').text;
+    expect(t).toContain('The switchboard sends them no mail about any of it');
+    expect(t).toContain(
+      'The one exception is a deal: a record of any deal they agree is emailed to both people, whatever they chose.',
+    );
+    expect(lintEmailCopy(t)).toEqual([]);
+  });
+
+  it('the deal-agreed wrap-up says the record has been sent and to keep it', () => {
+    expect(DEAL_AGREED_WHAT_TO_DO).toContain(
+      'The same record of what was agreed has been sent to both people by email: tell your human to keep theirs.',
+    );
+    expect(DEAL_AGREED_WHAT_TO_DO).not.toMatch(/has arrived|they have received|\$\d/);
+    expect(lintEmailCopy(DEAL_AGREED_WHAT_TO_DO)).toEqual([]);
+  });
+
+  it('the manual body and its newest changelog entry say the general rule', () => {
+    expect(MANUAL_BODY).toContain(
+      'The record of a deal is emailed to both people either way: tell them to keep it.',
+    );
+    expect(MANUAL_BODY).not.toContain('every one of those emails is a notice');
+    const last = MANUAL_CHANGELOG[MANUAL_CHANGELOG.length - 1];
+    expect(last.note).toContain('never tell a human to expect no email about a deal');
+    expect(last.note).toContain('Tell your human to keep it');
+    expect(lintEmailCopy(last.note)).toEqual([]);
   });
 });
