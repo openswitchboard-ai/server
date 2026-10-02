@@ -262,10 +262,14 @@ describe('the manual introduces itself', () => {
       'want me to archive it and keep the book club open for more people',
     );
     expect(MANUAL_BODY).toContain('respond(archive)');
-    // Honesty about what survives: the record stays; the conversation and the
-    // number live in the human's own chat.
+    // Honesty about what survives: the record stays; the conversation lives in
+    // the human's own chat; and contact details went page to page, so no
+    // assistant ever held a number (2 October 2026, once the contact page was
+    // on: the body used to say "their number is here with us").
     expect(MANUAL_BODY).toMatch(/you hold on to who they got chatting with/i);
-    expect(MANUAL_BODY).toContain('the switchboard keeps neither');
+    expect(MANUAL_BODY).toContain('you never saw them, so you hold none');
+    expect(MANUAL_BODY).not.toContain('their number is here with us');
+    expect(MANUAL_BODY).not.toContain('any number they swapped');
     // Later retrieval answers the "who was that again?" question, plainly.
     expect(MANUAL_BODY).toContain('who was that book club person again?');
   });
