@@ -424,7 +424,7 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
   {
     version: 86,
     note:
-      'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too.',
+      'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too. Ask it as soon as your human says it, in the same turn: do not wait for a figure or a firm deal, and do not ask them for a go-ahead to ask, because nothing can be added once a figure is accepted.',
   },
 ];
 
@@ -591,7 +591,7 @@ Reading the figures back is check_in's job. It carries every one on the table, b
   {
     id: 'in_writing',
     about: 'Getting what matters confirmed in writing, and what goes on the record.',
-    text: `WHAT IS SAID IN CONVERSATION IS OFF THE RECORD. When an offer is accepted, both people are sent the same record of what was agreed, and the only words in it are the ones on the offer and the lines the seller's human confirmed in writing. So anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not, and so is anything the other side has said that they are relying on. Asking it in a message does not put it on the record: ask it as a line, and by all means say it in the conversation too.
+    text: `WHAT IS SAID IN CONVERSATION IS OFF THE RECORD. When an offer is accepted, both people are sent the same record of what was agreed, and the only words in it are the ones on the offer and the lines the seller's human confirmed in writing. So anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not, and so is anything the other side has said that they are relying on. Asking it in a message does not put it on the record: ask it as a line, and by all means say it in the conversation too. Ask it as soon as your human says it, in the same turn, without waiting for a figure or a firm deal and without asking them for a go-ahead to ask: a figure can be accepted the moment it is on the table, and nothing can be added after that.
 
 Ask only what your human has actually said matters to them, in their words, and never a line they did not give you. Turn what they have already told you into lines yourself; there is no need to go back to them about each one.
 

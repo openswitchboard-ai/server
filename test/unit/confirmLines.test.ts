@@ -247,6 +247,21 @@ function fakePool() {
           .map((o) => ({ receipt_sha256: o.receipt_sha256 })),
       );
     }
+    if (/SELECT match_id FROM offers WHERE id/.test(sql)) {
+      return rows(world.offers.filter((o) => o.id === params[0]).map((o) => ({ match_id: o.match_id })));
+    }
+    if (/SELECT amount, ccy, message FROM offers/.test(sql)) {
+      return rows(
+        world.offers
+          .filter(
+            (o) =>
+              o.match_id === params[0] &&
+              o.proposer_account !== params[1] &&
+              ['proposed', 'awaiting-human'].includes(o.state),
+          )
+          .slice(0, 1),
+      );
+    }
     if (/SELECT \* FROM offers WHERE id/.test(sql)) {
       return rows(world.offers.filter((o) => o.id === params[0]));
     }
@@ -659,7 +674,9 @@ describe('where no line was ever asked, nothing is different', () => {
     const [entry]: any = await checkMatches(cfg, ANA);
     expect('confirmations' in entry).toBe(false);
     expect('confirmations_note' in entry).toBe(false);
-    const r: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action: 'list_offers' });
+    // (The buyer's list carries the figure pointer while the seller's figure
+    // is on the table and no line is asked; that is its own suite below.)
+    const r: any = await dispatchTool(cfg, BEPPE, 'respond', { intro_id: MATCH, action: 'list_offers' });
     expect(Object.keys(r.structuredContent)).toEqual(['offers']);
     const rec = await buildReceipt(matchRow(MATCH) as any, world.offers[0], new Date('2026-10-02T03:14:00Z'));
     expect(rec.block).not.toMatch(/confirmed by the seller/i);
@@ -1009,7 +1026,7 @@ describe('the record pointer on the message path', () => {
   it('rides for the buying side while no line has been asked', async () => {
     expect(await lines.recordPointerFor(ANA, MATCH)).toBe(lines.RECORD_POINTER);
     expect(lines.RECORD_POINTER).toBe(
-      'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation), as well as here.',
+      'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation): ask it now, in this same turn, as well as saying it here. Do not wait for a figure, and do not ask your human for a go-ahead to ask.',
     );
     expect(lintHumanCopy(lines.RECORD_POINTER)).toEqual([]);
     expect(lines.RECORD_POINTER).not.toMatch(/\d|_id\b/);
@@ -1079,6 +1096,149 @@ describe('the record pointer on the message path', () => {
     seed('Comes with both keys');
     const after: any = await dispatchTool(cfg, ANA, 'send_message', { intro_id: MATCH, text: 'Thanks' });
     expect(after.structuredContent).toEqual(sent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SECOND PROMPT, WHEN A FIGURE ARRIVES. The pointer on the message path was
+// read as "later": a figure was typed and accepted and no line was ever asked.
+// So the same note, worded for the moment, rides every answer on the offer
+// path for a buying assistant that has asked no line. It never holds a figure
+// up: it is a field beside an answer that is otherwise what it always was.
+describe('the figure pointer on the offer path', () => {
+  const NOTE = () => ({ text: lines.FIGURE_POINTER, provenance: 'switchboard-system' });
+  const PRESS = '33333333-0000-4000-8000-000000000001';
+
+  it('says to ask now, and why', async () => {
+    expect(await lines.recordPointerFor(ANA, MATCH, 'figure')).toBe(lines.FIGURE_POINTER);
+    expect(lines.FIGURE_POINTER).toBe(
+      'A figure can be accepted the moment it is on the table, and nothing can be added once it is. If your human has said anything has to be true for them to go ahead, ask it with respond(ask_confirmation) now, in this same turn, without asking them first.',
+    );
+    expect(lintHumanCopy(lines.FIGURE_POINTER)).toEqual([]);
+    expect(lines.FIGURE_POINTER).not.toMatch(/\d|_id\b/);
+    expect(await lines.recordPointerForOffer(ANA, BEPPES_OFFER)).toBe(lines.FIGURE_POINTER);
+  });
+
+  it('holds to the same conditions as the message path', async () => {
+    expect(await lines.recordPointerFor(BEPPE, MATCH, 'figure')).toBeUndefined();
+    expect(await lines.recordPointerForOffer(BEPPE, ANAS_OFFER)).toBeUndefined();
+    expect(await lines.recordPointerForOffer(ANA, undefined)).toBeUndefined();
+    expect(await lines.recordPointerForOffer(ANA, lineId())).toBeUndefined();
+    world.swap = true;
+    expect(await lines.recordPointerFor(ANA, MATCH, 'figure')).toBeUndefined();
+    world.swap = false;
+    seed('Comes with both keys', 'withdrawn');
+    expect(await lines.recordPointerFor(ANA, MATCH, 'figure')).toBeUndefined();
+    world.lines = [];
+    world.offers[1].state = 'accepted-by-human';
+    expect(await lines.recordPointerFor(ANA, MATCH, 'figure')).toBeUndefined();
+  });
+
+  const offerArgs = {
+    intro_id: MATCH,
+    action: 'propose_offer',
+    offer: { amount: 420, ccy: 'AUD', expiry: new Date(Date.now() + 86_400_000).toISOString() },
+  };
+
+  it('rides propose_offer when the figure goes up, and when it was already up', async () => {
+    const placed = { kind: 'offer', offer_id: ANAS_OFFER, intro_id: MATCH, amount: 420, ccy: 'AUD', state: 'proposed' };
+    const spy = vi.spyOn(offers, 'proposeOffer').mockResolvedValue(placed as any);
+    const buyer: any = await dispatchTool(cfg, ANA, 'respond', offerArgs);
+    expect(buyer.structuredContent).toMatchObject({ ...placed, record_note: NOTE() });
+    expect(buyer.structuredContent.note.provenance).toBe('switchboard-system');
+    // The figure was put up first and as it always was: the note never gates it.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const seller: any = await dispatchTool(cfg, BEPPE, 'respond', offerArgs);
+    expect('record_note' in seller.structuredContent).toBe(false);
+
+    spy.mockResolvedValue({ already_on_table: true, offer_id: ANAS_OFFER, amount: 420, ccy: 'AUD', say: 'Still there.' } as any);
+    const again: any = await dispatchTool(cfg, ANA, 'respond', offerArgs);
+    expect(again.structuredContent).toMatchObject({ already_on_table: true, record_note: NOTE() });
+  });
+
+  it('rides the refusal that hands over the page to send the figure from, and no other refusal', async () => {
+    const spy = vi.spyOn(offers, 'proposeOffer').mockRejectedValue(
+      new OsbError('CONSENT_REQUIRED', {
+        human_action: 'Your human sends this one themselves: https://my.test/a/token',
+        press_id: PRESS,
+      }),
+    );
+    const buyer: any = await dispatchTool(cfg, ANA, 'respond', offerArgs);
+    expect(buyer.isError).toBe(false);
+    // The refusal is the refusal it always was, with the note beside it.
+    expect(buyer.structuredContent).toMatchObject({
+      nothing_happened: true,
+      what_happened: 'your_human_presses',
+      code: 'CONSENT_REQUIRED',
+      press_id: PRESS,
+      link: 'https://my.test/a/token',
+      record_note: NOTE(),
+    });
+    expect(JSON.parse(buyer.content[0].text)).toEqual(buyer.structuredContent);
+    const seller: any = await dispatchTool(cfg, BEPPE, 'respond', offerArgs);
+    expect(seller.structuredContent.code).toBe('CONSENT_REQUIRED');
+    expect('record_note' in seller.structuredContent).toBe(false);
+    // A refusal with no page in it (a figure in the note, say) carries none.
+    spy.mockRejectedValue(new OsbError('CONSENT_REQUIRED', { human_action: 'Take the number out of the note.' }));
+    const other: any = await dispatchTool(cfg, ANA, 'respond', offerArgs);
+    expect(other.structuredContent.code).toBe('CONSENT_REQUIRED');
+    expect('record_note' in other.structuredContent).toBe(false);
+  });
+
+  it('rides request_accept and send_to_human on the other side’s figure', async () => {
+    const humanLinks = await import('../../src/domain/humanLinks.js');
+    const page = { say: 'Here is your page', link: 'https://my.test/a/t', press_id: PRESS, expires_in_minutes: 15, what_it_does: 'x' };
+    vi.spyOn(humanLinks, 'acceptNumberLink').mockResolvedValue(page);
+    vi.spyOn(offers, 'agentOfferAction').mockResolvedValue({ kind: 'offer', offer_id: BEPPES_OFFER, intro_id: MATCH, state: 'awaiting-human' } as any);
+    for (const action of ['request_accept', 'send_to_human']) {
+      const buyer: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action, offer_id: BEPPES_OFFER });
+      expect(buyer.structuredContent.record_note, action).toEqual(NOTE());
+      const seller: any = await dispatchTool(cfg, BEPPE, 'respond', { intro_id: MATCH, action, offer_id: ANAS_OFFER });
+      expect('record_note' in seller.structuredContent, action).toBe(false);
+    }
+    // The other offer actions are not a figure moving towards a deal.
+    for (const action of ['decline_offer', 'withdraw_offer']) {
+      const r: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action, offer_id: BEPPES_OFFER });
+      expect('record_note' in r.structuredContent, action).toBe(false);
+    }
+    // And once a line has been asked, neither carries it.
+    seed('Comes with both keys');
+    const after: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action: 'request_accept', offer_id: BEPPES_OFFER });
+    expect(after.structuredContent).toEqual(page);
+  });
+
+  it('rides list_offers and the check_in entry while the other side’s figure is on the table', async () => {
+    const listed: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action: 'list_offers' });
+    expect(listed.structuredContent.record_note).toEqual(NOTE());
+    const [entry]: any = await checkMatches(cfg, ANA);
+    expect(entry.offer).toBeDefined();
+    expect(entry.record_note).toEqual(NOTE());
+    // The seller sees the buyer's figure on the table and gets no such note.
+    const sellers: any = await dispatchTool(cfg, BEPPE, 'respond', { intro_id: MATCH, action: 'list_offers' });
+    expect('record_note' in sellers.structuredContent).toBe(false);
+    const [sellerEntry]: any = await checkMatches(cfg, BEPPE);
+    expect('record_note' in sellerEntry).toBe(false);
+  });
+
+  it('does not ride them with no figure from the other side, after a line, or after an accept', async () => {
+    // Only the buyer's own figure is out.
+    world.offers = [anOffer(ANAS_OFFER, ANA)];
+    const own: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action: 'list_offers' });
+    expect('record_note' in own.structuredContent).toBe(false);
+    const [ownEntry]: any = await checkMatches(cfg, ANA);
+    expect('record_note' in ownEntry).toBe(false);
+    // The seller's figure is out, and a line has been asked.
+    world.offers = [anOffer(BEPPES_OFFER, BEPPE)];
+    seed('Comes with both keys');
+    const asked: any = await dispatchTool(cfg, ANA, 'respond', { intro_id: MATCH, action: 'list_offers' });
+    expect('record_note' in asked.structuredContent).toBe(false);
+    const [askedEntry]: any = await checkMatches(cfg, ANA);
+    expect('record_note' in askedEntry).toBe(false);
+    // Nothing asked, and the deal is done.
+    world.lines = [];
+    world.offers[0].state = 'accepted-by-human';
+    const [done]: any = await checkMatches(cfg, ANA);
+    expect('record_note' in done).toBe(false);
   });
 });
 
@@ -1208,7 +1368,16 @@ describe('the manual says the general rules', () => {
     expect(MANUAL.version).toBe(86);
     const note = MANUAL_CHANGELOG.find((c) => c.version === 86)!.note;
     expect(note).toBe(
-      'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too.',
+      'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too. Ask it as soon as your human says it, in the same turn: do not wait for a figure or a firm deal, and do not ask them for a go-ahead to ask, because nothing can be added once a figure is accepted.',
+    );
+    // WHEN (dev, the run after): the pointer was read as "later", and a figure
+    // was accepted with no line ever asked. The rule now says in the same turn.
+    expect(manualSection('in_writing')!.text).toContain(
+      'Ask it as soon as your human says it, in the same turn, without waiting for a figure or a firm deal and without asking them for a go-ahead to ask: a figure can be accepted the moment it is on the table, and nothing can be added after that.',
+    );
+    const lineDescription = (TOOLS.find((t) => t.name === 'respond')!.inputSchema as any).properties.line.description;
+    expect(lineDescription).toContain(
+      'Ask it as soon as they say it, in the same turn: do not wait for a figure or a firm deal, and do not ask your human for a go-ahead to ask.',
     );
     const text = manualSection('in_writing')!.text;
     expect(text).toContain(

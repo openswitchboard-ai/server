@@ -159,7 +159,9 @@ describe('the caller cannot choose which introduction its offer lands on', () =>
   it('spreads the offer first and the checked introduction last', () => {
     const src = read('mcp/tools.ts');
     const at = src.indexOf("case 'propose_offer'");
-    const scope = src.slice(at, at + 900);
+    // The case grew a note beside its answer (the figure pointer), so the
+    // window is wider; what is held is the same.
+    const scope = src.slice(at, at + 2000);
     // The order is the whole fix: match_id after the spread wins.
     expect(scope).toMatch(/\.\.\.offer,\s*\n\s*match_id: intro_id,/);
     expect(scope).not.toMatch(/match_id: intro_id,\s*\n\s*\.\.\.offer,/);

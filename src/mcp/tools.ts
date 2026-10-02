@@ -533,7 +533,7 @@ export const TOOLS: ToolDef[] = [
           minLength: 1,
           maxLength: 200,
           description:
-            "Required for ask_confirmation. One short thing your human says has to be true of the thing for them to go ahead, whether the other side has said it or not, or something the other side said that they are relying on, in your human's own words, for the seller's human to confirm in writing. Saying it in a message does not put it on the record: ask it here, and say it in the conversation too if you like. Turn what they have already said matters into lines yourself, without asking them about each one, and never add a line they did not give you. No sum of money in it and no way of reaching anybody.",
+            "Required for ask_confirmation. One short thing your human says has to be true of the thing for them to go ahead, whether the other side has said it or not, or something the other side said that they are relying on, in your human's own words, for the seller's human to confirm in writing. Saying it in a message does not put it on the record: ask it here, and say it in the conversation too if you like. Ask it as soon as they say it, in the same turn: do not wait for a figure or a firm deal, and do not ask your human for a go-ahead to ask. Turn what they have already said matters into lines yourself, without asking them about each one, and never add a line they did not give you. No sum of money in it and no way of reaching anybody.",
         },
         confirmation_id: {
           type: 'string',
@@ -1919,15 +1919,42 @@ async function dispatchToolInner(
             // carrying its own `match_id` overwrote the intro_id this call was
             // authorised against, and the figure went onto a different
             // introduction from the one the door checked.
-            const placed = await offers.proposeOffer(cfg, accountId, {
-              ...offer,
-              match_id: intro_id,
-            });
+            //
+            // THE FIGURE POINTER (domain/confirmLines.ts) rides every answer
+            // here for a buying assistant that has asked no line yet: the
+            // figure going up, the same figure already up, and the refusal
+            // that hands over the page for its human to send it from. It is
+            // read AFTER the figure has been dealt with and it only ever adds
+            // a note, so it cannot hold a figure up.
+            const figureNote = async () => {
+              const pointer = await confirmLines.recordPointerFor(accountId, intro_id, 'figure');
+              return pointer ? { record_note: matches.sbNote(pointer) } : {};
+            };
+            let placed;
+            try {
+              placed = await offers.proposeOffer(cfg, accountId, {
+                ...offer,
+                match_id: intro_id,
+              });
+            } catch (e: any) {
+              // The page for their human to send the figure from: the same
+              // refusal as ever, with the note beside it.
+              if (e instanceof OsbError && e.payload.code === 'CONSENT_REQUIRED' && e.payload.press_id) {
+                const answer = protocolAnswer(e.payload, name);
+                const body = { ...answer.structuredContent, ...(await figureNote()) };
+                return {
+                  ...answer,
+                  content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
+                  structuredContent: body,
+                };
+              }
+              throw e;
+            }
             // The same figure again, while theirs is still open: nothing new
             // went up, and the sentence says so (domain/offers.ts).
             if ('already_on_table' in placed) {
               const { say, ...rest } = placed;
-              return ok({ ...rest, note: matches.sbNote(say) });
+              return ok({ ...rest, note: matches.sbNote(say), ...(await figureNote()) });
             }
             return ok({
               ...placed,
@@ -1937,6 +1964,7 @@ async function dispatchToolInner(
                   await arrangement.arrangementOrNothing(accountId),
                 ),
               ),
+              ...(await figureNote()),
             });
           }
           case 'send_to_human':
@@ -1944,11 +1972,18 @@ async function dispatchToolInner(
           case 'withdraw_offer': {
             if (!offer_id) return invalidInput(`${action} requires offer_id`);
             const done = await offers.agentOfferAction(cfg, accountId, offer_id, action);
+            // Bringing the other side's figure to their human is a figure
+            // moving: the pointer rides it (domain/confirmLines.ts).
+            const pointer =
+              action === 'send_to_human'
+                ? await confirmLines.recordPointerForOffer(accountId, offer_id)
+                : undefined;
             return ok({
               ...done,
               note: matches.sbNote(
                 offers.offerActionSentence(action, await arrangement.arrangementOrNothing(accountId)),
               ),
+              ...(pointer ? { record_note: matches.sbNote(pointer) } : {}),
             });
           }
           case 'list_offers': {
@@ -1958,11 +1993,20 @@ async function dispatchToolInner(
             const listed = await offers.listOffers(accountId, intro_id);
             const m = await matches.getMatch(intro_id);
             const lines = m ? await confirmLines.linesForAgent(accountId, m) : undefined;
+            // And where the other side's figure is on the table, the figure
+            // pointer, for a buying assistant that has asked no line yet.
+            const theirsLive = (await offers.offerTable(accountId, intro_id)).some(
+              (l) => l.side === 'theirs' && (l.state === 'proposed' || l.state === 'awaiting-human'),
+            );
+            const pointer = theirsLive
+              ? await confirmLines.recordPointerFor(accountId, intro_id, 'figure')
+              : undefined;
             return ok({
               offers: listed,
               ...(lines
                 ? { confirmations: lines.confirmations, confirmations_note: lines.note }
                 : {}),
+              ...(pointer ? { record_note: matches.sbNote(pointer) } : {}),
             });
           }
           // ---------------------------------------------------------------
@@ -2069,7 +2113,11 @@ async function dispatchToolInner(
             return ok(await humanLinks.sendContactLink(cfg, accountId, intro_id));
           case 'request_accept': {
             if (!args?.offer_id) return invalidInput('request_accept requires offer_id');
-            return ok(await humanLinks.acceptNumberLink(cfg, accountId, String(args.offer_id)));
+            const page = await humanLinks.acceptNumberLink(cfg, accountId, String(args.offer_id));
+            // The page that takes a figure: the last moment a line can be
+            // asked (domain/confirmLines.ts).
+            const pointer = await confirmLines.recordPointerForOffer(accountId, String(args.offer_id));
+            return ok(pointer ? { ...page, record_note: matches.sbNote(pointer) } : page);
           }
           case 'request_auto_negotiate': {
             if (!args?.intent_id) return invalidInput('request_auto_negotiate requires intent_id');

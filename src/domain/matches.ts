@@ -1992,6 +1992,14 @@ export async function checkMatches(
       // sentence has one that is the switchboard's own all the way through.
       if (incoming.message) entry.offer_message_note = sbNote(OFFER_NOTE_SENTENCE);
       entry.next = 'awaiting_your_human';
+      // A FIGURE FROM THE OTHER SIDE IS ON THE TABLE, and it can be accepted
+      // the moment their human opens their page. For a buying assistant that
+      // has asked no line yet, the pointer rides the entry: anything their
+      // human said has to be true is asked now (domain/confirmLines.ts).
+      // Best-effort, and it adds a note and nothing else.
+      const { recordPointerFor } = await import('./confirmLines.js');
+      const pointer = await recordPointerFor(accountId, m.id, 'figure');
+      if (pointer) entry.record_note = sbNote(pointer);
     }
     // BOTH sides of the table, most recent first. An agent that only ever saw
     // the other side's figures had no way to know its own human had typed one

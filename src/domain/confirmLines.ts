@@ -700,13 +700,46 @@ export async function linesForAgent(
 //     assistant that already knows the road is not told again every message.
 //
 // Two small reads, best-effort: a read that fails says nothing.
+//
+// AND AGAIN WHEN A FIGURE ARRIVES (dev, the run after). The sentence was read
+// as "later": an assistant sent its message, told its human it could have the
+// seller confirm things "once we get to a firm deal", a figure was typed and
+// accepted, and no line was ever asked. A figure can be accepted the moment
+// it is on the table, and nothing can be added after that. So the sentence
+// now says to ask in the same turn, and a second one, worded for the moment,
+// rides the answers on the offer path under exactly the same conditions: where
+// the buying assistant puts a figure forward or fetches the page for one, and
+// where the other side's figure is on the table (mcp/tools.ts and the sweep
+// in domain/matches.ts say which answers). It is a note beside an answer and
+// nothing else: it never holds a figure up.
 // ---------------------------------------------------------------------------
 export const RECORD_POINTER =
-  'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation), as well as here.';
+  'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation): ask it now, in this same turn, as well as saying it here. Do not wait for a figure, and do not ask your human for a go-ahead to ask.';
+
+export const FIGURE_POINTER =
+  'A figure can be accepted the moment it is on the table, and nothing can be added once it is. If your human has said anything has to be true for them to go ahead, ask it with respond(ask_confirmation) now, in this same turn, without asking them first.';
+
+/** Which moment the assistant is at: saying something, or a figure moving. */
+export type PointerMoment = 'conversation' | 'figure';
+
+/** The same pointer for an offer, found by the introduction it sits on. */
+export async function recordPointerForOffer(
+  accountId: string,
+  offerId: string | undefined,
+): Promise<string | undefined> {
+  try {
+    if (!offerId) return undefined;
+    const r = await getPool().query('SELECT match_id FROM offers WHERE id = $1', [offerId]);
+    return recordPointerFor(accountId, r.rows[0]?.match_id, 'figure');
+  } catch {
+    return undefined;
+  }
+}
 
 export async function recordPointerFor(
   accountId: string,
   matchId: string | undefined,
+  moment: PointerMoment = 'conversation',
 ): Promise<string | undefined> {
   try {
     if (!matchId) return undefined;
@@ -717,7 +750,7 @@ export async function recordPointerFor(
     const asked = await pool.query('SELECT 1 FROM confirm_lines WHERE match_id = $1 LIMIT 1', [m.id]);
     if (asked.rows.length) return undefined;
     if (await acceptedAlready(m.id, pool)) return undefined;
-    return RECORD_POINTER;
+    return moment === 'figure' ? FIGURE_POINTER : RECORD_POINTER;
   } catch {
     return undefined;
   }
