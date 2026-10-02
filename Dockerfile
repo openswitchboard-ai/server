@@ -21,16 +21,14 @@ COPY migrations ./migrations
 # Offline place data (GeoNames, CC BY 4.0 — see NOTICE). Location resolution
 # runs in-process; the switchboard never calls a geocoding service.
 COPY data ./data
-# The PhotoDNA SDK, if this build context has it. It is Microsoft-licensed and
-# is not in the repository, so what lands here is whatever the deploy put in
-# vendor/photodna on the way past, with its manifest.json
-# (vendor/photodna/README.md). A build with only the README carries only the
-# README and the server reports PhotoDNA off. A build with ANY of the SDK there
-# must verify, manifest and files, or the build fails: a deployment that
-# carries the SDK and cannot load it would hold every photo.
+# The known-image check's optional module, if this build context has it. It is
+# not in the repository, so what lands here is whatever the deploy put in
+# vendor/known-image on the way past (vendor/known-image/README.md). A build
+# with only the README carries only the README and the server reports the
+# check off. A build with ANYTHING else there must verify or the build fails:
+# a deployment that carries a module that cannot work would hold every photo.
 COPY vendor ./vendor
-ARG PHOTODNA_MANIFEST_SHA256
-RUN node dist/scripts/safety/photodna-verify.mjs vendor/photodna
+RUN node dist/scripts/safety/known-image-verify.mjs vendor/known-image
 USER node
 EXPOSE 8080
 CMD ["node", "dist/src/index.js"]

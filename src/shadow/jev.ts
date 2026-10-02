@@ -268,7 +268,7 @@ interface JevState {
 let state: JevState | undefined;
 
 /**
- * Called once at boot, the same shape initPhotoDna and initStripe use, and it
+ * Called once at boot, the same shape initKnownImageCheck and initStripe use, and it
  * says out loud which of the two reasons it is off for. "No ARN" is the
  * ordinary state of any deployment nobody has switched this on for; "prod"
  * is the interesting one, because it means an env var reached an environment
@@ -333,7 +333,7 @@ export function resetJevForTests(): void {
 
 /**
  * The API key, from Secrets Manager, held five minutes — the same window and
- * the same reasoning as the Stripe and PhotoDNA keys. Returned and never
+ * the same reasoning as the Stripe key. Returned and never
  * logged, never put in an error, never written down.
  */
 async function apiKey(cfg: Config): Promise<string> {

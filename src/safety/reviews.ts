@@ -139,8 +139,8 @@ export const KNOWN_ABUSE_IMAGE_FLAG = 'known_abuse_image' as const;
  * The same row, the same ninety-day preserve and the same one operator line as
  * a flagged message, with two differences. There is no ledger entry: the thing
  * that arrived was an image, it is in quarantine rather than in the ledger, and
- * the quarantine row is what points at it. And the matching service's tracking
- * id rides along, because that is what a referral to the ACCCE or the NCMEC
+ * the quarantine row is what points at it. And the answer's reference
+ * rides along, because that is what a referral to the ACCCE or the NCMEC
  * quotes.
  *
  * Nothing about the picture is here. Not the key, not the hash, not the

@@ -1,6 +1,6 @@
 -- A photo that matched a known abuse image, and how that row differs from
 -- every other quarantined one
--- (src/safety/photodna.ts; src/intake/checks/photoHashMatch.ts;
+-- (src/safety/knownImageCheck.ts; src/intake/checks/photoHashMatch.ts;
 --  docs/trust-and-safety.md, "A known-image match")
 --
 -- OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
@@ -18,7 +18,7 @@
 -- WHAT IS IN THE COLUMNS AND WHAT IS NOT. Whether it matched, and the names of
 -- the lists that said so. NOT the hash: a hash is a handle on one specific
 -- picture, this table is read by operators on ordinary screens, and there is
--- nothing an operator does with a hash. The service's tracking id is the thing
+-- nothing an operator does with a hash. The answer's reference is the thing
 -- a referral quotes, and it goes on the review row below.
 ALTER TABLE photo_quarantine
   ADD COLUMN IF NOT EXISTS hash_match boolean NOT NULL DEFAULT false,

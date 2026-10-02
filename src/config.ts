@@ -167,22 +167,15 @@ export interface Config {
    *  was, but nothing that passes is kept, so a report has no evidence behind
    *  it. The service says so once at startup rather than failing to boot. */
   safetyPublicKey?: string;
-  /** Secrets Manager secret holding {api_key} for PhotoDNA's MatchHash
-   *  service (src/safety/photodna.ts). Unset = known-image hash matching is
-   *  off for this deployment: the server says so once at boot, and a photo
-   *  still goes through every other check before it is delivered. Prod stays
-   *  unset until prod has a secret of its own. */
-  photoDnaSecretArn?: string;
-  /** Where the licensed PhotoDNA files and their manifest sit, relative to
-   *  the process. They are never in git (vendor/photodna/README.md); a
-   *  deployment that does not have them runs with the check off. */
-  photoDnaSdkDir: string;
-  /** The SHA-256 the SDK's manifest.json must have. Unset = the value pinned
-   *  in src/safety/photodna.ts. For a fork with its own licence. */
-  photoDnaManifestSha256?: string;
-  /** An override for where the hashes are sent, so the suite can point it at
-   *  a stand-in. Unset = the endpoint in the SDK's manifest. */
-  photoDnaEndpoint?: string;
+  /** Secrets Manager secret the known-image check's module reads
+   *  (src/safety/knownImageCheck.ts). Unset = the known-image check is off
+   *  for this deployment: the server says so once at boot, and a photo still
+   *  goes through every other check before it is delivered. Set, and a photo
+   *  is held whenever the module cannot answer. */
+  knownImageSecretArn?: string;
+  /** Where the optional known-image module sits, relative to the process. It
+   *  is never in git (vendor/known-image/README.md). */
+  knownImageModuleDir: string;
   /** Secrets Manager secret holding {apiKey} for TypeSafe AI's System One
    *  model (src/shadow/jev.ts). Unset = Jev is never asked. In dev it turns
    *  on the shadow trials (answers written down, nothing changes) and, with
@@ -306,10 +299,11 @@ export function loadConfig(): Config {
     settlementReturnSilenceDays: Number(process.env.SETTLEMENT_RETURN_SILENCE_DAYS ?? 7),
     settlementTrackingGraceDays: Number(process.env.SETTLEMENT_TRACKING_GRACE_DAYS ?? 7),
     safetyPublicKey: safetyPublicKeyFrom(process.env.SAFETY_PUBLIC_KEY),
-    photoDnaSecretArn: process.env.PHOTODNA_SECRET_ARN || undefined,
-    photoDnaSdkDir: process.env.PHOTODNA_SDK_DIR || 'vendor/photodna',
-    photoDnaManifestSha256: process.env.PHOTODNA_MANIFEST_SHA256 || undefined,
-    photoDnaEndpoint: process.env.PHOTODNA_ENDPOINT || undefined,
+    // PHOTODNA_SECRET_ARN is the name this setting had before; it is still
+    // read so that a task carrying only the old name keeps the check on.
+    knownImageSecretArn:
+      process.env.KNOWN_IMAGE_SECRET_ARN || process.env.PHOTODNA_SECRET_ARN || undefined,
+    knownImageModuleDir: process.env.KNOWN_IMAGE_MODULE_DIR || 'vendor/known-image',
     jevSecretArn: process.env.JEV_SECRET_ARN || undefined,
     jevEndpoint: process.env.JEV_ENDPOINT || JEV_ENDPOINT,
     jevModel: process.env.JEV_MODEL || JEV_MODEL,

@@ -12,7 +12,7 @@ import { startOpsWorker } from './workers/opsWorker.js';
 import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 import { warmCategoryCorpus } from './domain/categorySuggest.js';
 import { warnIfLedgerDisabled } from './safety/ledger.js';
-import { initPhotoDna, warnIfPhotoDnaDisabled } from './safety/photodna.js';
+import { initKnownImageCheck, warnIfKnownImageCheckOff } from './safety/knownImageCheck.js';
 import { initJev } from './shadow/jev.js';
 
 async function main() {
@@ -35,7 +35,7 @@ async function main() {
   initEnvelope(cfg);
   await initCounterKeys(cfg);
   initStripe(cfg);
-  initPhotoDna(cfg);
+  initKnownImageCheck(cfg);
 
   const app = buildApp(cfg);
   const log = (msg: string, extra?: any) => app.log.info(extra ?? {}, msg);
@@ -70,11 +70,10 @@ async function main() {
   // is still checked, and nothing that passes is kept.
   warnIfLedgerDisabled(cfg, (msg) => app.log.warn(msg));
 
-  // And one where it has no known-image hash matching, which is every
-  // deployment that does not carry the licensed files or has no subscription
-  // key. Nothing waits on it: loading the module means reading two files, and
-  // a photo arriving before that finishes simply asks again.
-  void warnIfPhotoDnaDisabled(cfg, (msg) => app.log.warn(msg));
+  // And one where it has no known-image check, which is every deployment that
+  // does not carry the optional module or has no secret for it. Nothing waits
+  // on it: a photo arriving before the module is up simply asks again.
+  void warnIfKnownImageCheckOff(cfg, (msg) => app.log.warn(msg));
 
   // And one line for the outside model this deployment may be quietly asking
   // for a second opinion. It says which of the two reasons it is off for,

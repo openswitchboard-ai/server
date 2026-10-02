@@ -85,7 +85,7 @@ export async function quarantinePhoto(args: {
   match_id?: string;
   sender_account?: string;
   labels: string[];
-  /** True where a known abuse-image hash matched (src/safety/photodna.ts).
+  /** True where the known-image check matched (src/safety/knownImageCheck.ts).
    *  A different kind of row entirely: nothing was guessed at, and what is in
    *  front of the operator is a referral rather than a decision. */
   hash_match?: boolean;

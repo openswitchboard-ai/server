@@ -1,6 +1,6 @@
 /**
  * IS THIS PICTURE ONE THAT HAS ALREADY BEEN FOUND?
- * (src/safety/photodna.ts; docs/trust-and-safety.md, "A known-image match").
+ * (src/safety/knownImageCheck.ts; docs/trust-and-safety.md, "A known-image match").
  *
  * OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
  *
@@ -15,7 +15,7 @@
  * the bytes have landed and before the other side has been told there is
  * anything to fetch. Running it ahead of the moderation call is not about
  * cost. It is that a match must not depend on a second machine's opinion, and a
- * photo refused by Rekognition first would never have been hashed at all.
+ * photo refused by Rekognition first would never have been checked at all.
  *
  * WHAT A MATCH DOES, in one act:
  *
@@ -29,8 +29,7 @@
  *              sexual family and for the same reason in law, with the row
  *              marked as a hash match so the queue can tell the two apart.
  *   REVIEW     a safety review is opened, flagged known_abuse_image, carrying
- *              the matching service's tracking id, which is what a referral
- *              quotes.
+ *              the answer's reference, which is what a referral quotes.
  *   SUSPEND    the sender's account is stopped: every door shut, every posting
  *              down, every open conversation severed, every credential pulled
  *              back. This is the one check on this switchboard that suspends
@@ -44,24 +43,24 @@
  * call that did not come back has not said the picture is unknown.
  *
  * BEING SWITCHED OFF IS NOT AN ERROR, AND IT PASSES. A deployment with no
- * subscription secret configured has no hash matching at all (a dev checkout
- * without the licensed files), and it passes with a detail saying so; the pipe
- * carries on and Rekognition still screens every picture.
+ * secret configured has no known-image check at all (a checkout without a
+ * module), and it passes with a detail saying so; the pipe carries on and
+ * Rekognition still screens every picture.
  *
  * BUT A DEPLOYMENT THAT IS MEANT TO MATCH AND CANNOT HOLDS (2026-09-28
- * review). Where the secret IS configured and the SDK did not load, this used
- * to pass every photo as "off" for the life of the process. Now it holds, with
- * PHOTOS_PAUSED, and the loader tries again a minute later
- * (safety/photodna.ts, photoDnaState).
+ * review). Where the secret IS configured and the module did not come up,
+ * this used to pass every photo as "off" for the life of the process. Now it
+ * holds, with PHOTOS_PAUSED, and the loader tries again a minute later
+ * (safety/knownImageCheck.ts, knownImageState).
  *
- * WHAT IS WRITTEN DOWN: the reason code, and the tracking id on the review
- * row. NEVER THE HASH. A hash is a handle on one specific picture, a log line
- * is the one thing in this system that is read casually, and there is nothing
- * an operator does with a hash that the tracking id does not do better.
+ * WHAT IS WRITTEN DOWN: the reason code, and the answer's reference on the
+ * review row. NOTHING THAT IDENTIFIES THE PICTURE. A log line is the one
+ * thing in this system that is read casually, and there is nothing an
+ * operator needs that the reference does not give.
  */
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { s3 } from '../../aws.js';
-import { edgeHashes, matchHashes, photoDnaState } from '../../safety/photodna.js';
+import { checkKnownImage, knownImageState, type KnownImageOutcome } from '../../safety/knownImageCheck.js';
 import { quarantinePhoto } from '../../safety/photoQuarantine.js';
 import { KNOWN_ABUSE_IMAGE_FLAG, openKnownImageReview } from '../../safety/reviews.js';
 import { suspendAccount } from '../../safety/suspend.js';
@@ -78,11 +77,15 @@ export const KNOWN_ABUSE_IMAGE_REASON = 'KNOWN_ABUSE_IMAGE';
 /** The reason the account is stopped, on the account row. */
 export const KNOWN_ABUSE_IMAGE_SUSPENSION = 'known_abuse_image';
 
-/** The detail that says this deployment has no hash matching in it. */
-export const PHOTODNA_OFF_DETAIL = 'photodna_off';
+/** The detail that says this deployment has no known-image check in it. */
+export const KNOWN_IMAGE_OFF_DETAIL = 'known_image_off';
 
-/** The sentence a sender reads while hash matching is meant to be on and is
- *  not up yet. */
+/** The reason code a photo holds under while the check is meant to be on and
+ *  is not up yet. */
+export const KNOWN_IMAGE_NOT_LOADED = 'known-image-not-loaded';
+
+/** The sentence a sender reads while the check is meant to be on and is not
+ *  up yet. */
 export const PHOTOS_PAUSED = 'photos are paused for a moment; try again shortly.';
 
 /** Counts and codes only, the same rule every other line in this service follows. */
@@ -105,29 +108,27 @@ export const photoHashMatch: Check = {
     // Nothing to look at at the presign door, where no object exists yet, and
     // nothing at all in a deployment that carries no photos.
     if (!cfg?.photoModeration || !item.object) return passed('photoHashMatch');
-    const dna = await photoDnaState(cfg);
-    if (dna === 'off') {
-      return passed('photoHashMatch', { detail: PHOTODNA_OFF_DETAIL });
+    const state = await knownImageState(cfg);
+    if (state === 'off') {
+      return passed('photoHashMatch', { detail: KNOWN_IMAGE_OFF_DETAIL });
     }
-    if (dna === 'unavailable') {
+    if (state === 'unavailable') {
       hashLog('photo-hash-match-unavailable', {
-        reason_code: 'photodna-not-loaded',
+        reason_code: KNOWN_IMAGE_NOT_LOADED,
       });
       return {
         name: 'photoHashMatch',
         outcome: 'hold',
-        reason_code: 'photodna-not-loaded',
+        reason_code: KNOWN_IMAGE_NOT_LOADED,
         plain_words: PHOTOS_PAUSED,
       };
     }
 
     const { bucket, key } = item.object;
 
-    let outcome: Awaited<ReturnType<typeof matchHashes>>;
+    let outcome: KnownImageOutcome;
     try {
-      const bytes = await fetchBytes(bucket, key);
-      // The SDK may return one hash or two; both are matched.
-      outcome = await matchHashes(await edgeHashes(bytes, cfg), cfg);
+      outcome = await checkKnownImage(await fetchBytes(bucket, key), cfg);
     } catch (e: any) {
       // NEVER A PASS. No detail from the error beyond its name: the messages
       // on this path can carry a key or an object key.
@@ -144,7 +145,7 @@ export const photoHashMatch: Check = {
       };
     }
 
-    if (!outcome.match) return passed('photoHashMatch');
+    if (!outcome.matched) return passed('photoHashMatch');
 
     // THE THREE ACTS BEHIND THE REFUSAL. None of them may stop it: the verdict
     // is already reached, and a database that will not take a row is not a
@@ -166,7 +167,7 @@ export const photoHashMatch: Check = {
       await openKnownImageReview({
         match_id: item.match_id,
         sender_account: item.sender_account,
-        tracking_id: outcome.trackingId,
+        tracking_id: outcome.ref,
       });
     } catch {
       /* the refusal stands; the quarantine row is still there to be found */
@@ -177,7 +178,7 @@ export const photoHashMatch: Check = {
       /* the refusal stands; an operator suspends by hand from the review */
     }
 
-    // The reason code and nothing else: no hash, no source, no key.
+    // The reason code and nothing else: no source, no reference, no key.
     hashLog('photo-refused', { reason_code: KNOWN_ABUSE_IMAGE_REASON });
     return {
       name: 'photoHashMatch',

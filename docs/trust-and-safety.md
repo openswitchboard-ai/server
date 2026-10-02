@@ -259,7 +259,7 @@ The one thing on this switchboard that is not a judgement call.
 **What the machine did, before anybody was told anything.** The photo was
 refused with the ordinary sentence. The bytes were copied to the quarantine
 prefix and the original deleted, marked as a match. A safety review was
-opened, flagged `known_abuse_image`, carrying the match's tracking id. The sender's
+opened, flagged `known_abuse_image`, carrying the match's reference. The sender's
 account was suspended: every door shut, every posting down, every open
 conversation severed, every credential pulled back. Neither user was told
 anything beyond the ordinary refusal, and the person on the other side was
@@ -272,8 +272,8 @@ never told there was a photo at all.
    repository displays or fetches a quarantined object, and
    `scripts/safety/quarantine.mts` prints the match first and says to refer it.
 2. **Report it to the ACCCE**, the Australian Centre to Counter Child
-   Exploitation, on the AFP's online form at accce.gov.au. Quote the tracking
-   id from the review row, the quarantine id, the introduction id and the time.
+   Exploitation, on the AFP's online form at accce.gov.au. Quote the reference
+   from the review row, the quarantine id, the introduction id and the time.
    Say that the material is preserved and where, and ask how they want it
    handed over. This is the s 474.25 referral and it is not optional.
 3. **Preserve.** Mark the quarantine row `--referred`, which keeps it forever:
@@ -285,20 +285,18 @@ never told there was a photo at all.
    not have an NCMEC ESP account yet and have not registered for one. Until we
    do, a US-connected matter goes through the ACCCE, who deal with NCMEC
    themselves. Registering is an open item.
-5. **Write it down.** Date, tracking id, review id, quarantine id, who was
+5. **Write it down.** Date, reference, review id, quarantine id, who was
    told, what they said, and what was handed over. It is counted in the
    transparency report as well: kind and what was produced, nothing
    identifying, aggregated and delayed.
 
-**What is logged, and what is not.** `{event:'photo-refused', reason_code:
-'KNOWN_ABUSE_IMAGE'}` at the moment of refusal; `{event:'photo-quarantined',
-quarantine_id, match_id, hash_match}`; `{event:'safety-review', review_id,
-match_id}`. Nothing that identifies the picture itself is in any of them, in
-any row, or in the ledger: a log line is the one thing in this system that is
-read casually. The tracking id is on the review row and nowhere
-else, because that is what a referral quotes.
+**What is logged, and what is not.** The refusal's reason code, and the ids of
+the quarantine row and the review. Nothing that identifies the picture itself
+is in any of them, in any row, or in the ledger: a log line is the one thing
+in this system that is read casually. The reference a referral quotes is on
+the review row and nowhere else.
 
-**The licence.** OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
+**The licence.** OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost. The known-image check is an optional module that is not in this repository; without one the check is off, and the other photo checks still run.
 
 ## Law enforcement: the runbook
 

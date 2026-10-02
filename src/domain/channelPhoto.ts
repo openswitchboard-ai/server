@@ -304,7 +304,7 @@ export async function reencodeWithoutMetadata(
   input: Buffer,
   format: 'jpeg' | 'png' | 'webp',
 ): Promise<Buffer> {
-  // Imported here for the reason photodna.ts gives: a native module that a
+  // Imported here and not at the top, on purpose: a native module that a
   // process which never sees a photo should not pay to open.
   const { default: sharp } = await import('sharp');
   let actual: string | undefined;

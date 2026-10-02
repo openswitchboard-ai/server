@@ -2,10 +2,9 @@
  * What a known-image match does, and what the rest of the door does around it
  * (src/intake/checks/photoHashMatch.ts).
  *
- * Both halves of the machinery are stood in for here: a hasher that answers
- * what the test tells it to, and a match client that says match or no match.
- * Nothing in this file talks to Microsoft, hashes anything, or reads a picture,
- * and no licensed file is involved.
+ * The known-image check is stood in for here: a checker that answers what the
+ * test tells it to. Nothing in this file talks to any outside service or reads
+ * a picture, and no module is involved (src/safety/knownImageCheck.ts).
  *
  * What is asserted:
  *
@@ -13,41 +12,33 @@
  *    plain sentence the sexual-label refusal uses — word for word, so that a
  *    sender can never tell the two apart.
  *  - AND THE THREE ACTS HAPPEN BEHIND IT: the object is quarantined marked as
- *    a hash match with the source names, a review is opened flagged
- *    known_abuse_image carrying the tracking id, and the sender is suspended.
+ *    a match with the source names, a review is opened flagged
+ *    known_abuse_image carrying the answer's reference, and the sender is
+ *    suspended.
  *  - NONE OF THEM CAN UNDO THE REFUSAL. A database that will not take a row is
  *    not a reason to carry a known abuse image to another person.
- *  - AN ERROR IS A HOLD, at every step: the fetch, the hash and the match.
+ *  - AN ERROR IS A HOLD, at every step: the fetch and the check.
  *  - NO MATCH PASSES, and OFF PASSES with the detail that says so, so the pipe
  *    carries on to the moderation call either way.
- *  - NOTHING WRITTEN DOWN CARRIES A HASH. Not the operator's line, not the
- *    verdict, not a row.
+ *  - NOTHING WRITTEN DOWN IDENTIFIES THE PICTURE. Not the operator's line,
+ *    not the verdict, not a row.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fake = vi.hoisted(() => ({
   available: true,
-  /** Set to say the secret is configured and the files did not load. */
+  /** Set to say the secret is configured and the module did not come up. */
   unloaded: false,
-  hashes: ['hash-one', 'hash-two'],
-  outcome: { match: false, sources: [] as string[], trackingId: undefined as string | undefined },
-  hashThrows: undefined as Error | undefined,
-  matchThrows: undefined as Error | undefined,
-  hashedBytes: [] as number[],
-  matched: [] as string[][],
+  outcome: { matched: false, sources: [] as string[], ref: undefined as string | undefined },
+  checkThrows: undefined as Error | undefined,
+  checkedBytes: [] as number[],
 }));
 
-vi.mock('../../src/safety/photodna.js', () => ({
-  photoDnaAvailable: async () => fake.available,
-  photoDnaState: async () => (fake.unloaded ? 'unavailable' : fake.available ? 'ready' : 'off'),
-  edgeHashes: async (bytes: Uint8Array) => {
-    fake.hashedBytes.push(bytes.length);
-    if (fake.hashThrows) throw fake.hashThrows;
-    return fake.hashes;
-  },
-  matchHashes: async (hashes: string[]) => {
-    fake.matched.push(hashes);
-    if (fake.matchThrows) throw fake.matchThrows;
+vi.mock('../../src/safety/knownImageCheck.js', () => ({
+  knownImageState: async () => (fake.unloaded ? 'unavailable' : fake.available ? 'ready' : 'off'),
+  checkKnownImage: async (bytes: Uint8Array) => {
+    fake.checkedBytes.push(bytes.length);
+    if (fake.checkThrows) throw fake.checkThrows;
     return fake.outcome;
   },
 }));
@@ -66,7 +57,7 @@ const db = await import('../../src/db.js');
 const {
   KNOWN_ABUSE_IMAGE_REASON,
   KNOWN_ABUSE_IMAGE_SUSPENSION,
-  PHOTODNA_OFF_DETAIL,
+  KNOWN_IMAGE_OFF_DETAIL,
   photoHashMatch,
 } = await import('../../src/intake/checks/photoHashMatch.js');
 const { PHOTO_BEING_LOOKED_AT, PHOTO_REFUSED } = await import(
@@ -102,12 +93,9 @@ const item = (over: Partial<IntakeItem> = {}): IntakeItem => ({
 beforeEach(() => {
   fake.available = true;
   fake.unloaded = false;
-  fake.hashes = ['hash-one', 'hash-two'];
-  fake.outcome = { match: false, sources: [], trackingId: undefined };
-  fake.hashThrows = undefined;
-  fake.matchThrows = undefined;
-  fake.hashedBytes = [];
-  fake.matched = [];
+  fake.outcome = { matched: false, sources: [], ref: undefined };
+  fake.checkThrows = undefined;
+  fake.checkedBytes = [];
   suspended.calls = [];
   suspended.throws = undefined;
   queries = [];
@@ -144,16 +132,14 @@ beforeEach(() => {
 });
 
 const matched = () => {
-  fake.outcome = { match: true, sources: ['Test', 'NCMEC'], trackingId: 'EUS_track_1' };
+  fake.outcome = { matched: true, sources: ['Test', 'NCMEC'], ref: 'ref_track_1' };
 };
 
 describe('a picture that matched nothing', () => {
-  it('passes, having hashed the bytes and asked once', async () => {
+  it('passes, having handed the bytes over and asked once', async () => {
     const r = await photoHashMatch.run(item(), cfg);
     expect(r.outcome).toBe('pass');
-    expect(fake.hashedBytes).toEqual([5]);
-    // Both hashes of the one picture go in one request.
-    expect(fake.matched).toEqual([['hash-one', 'hash-two']]);
+    expect(fake.checkedBytes).toEqual([5]);
     expect(suspended.calls).toEqual([]);
     expect(copied).toEqual([]);
   });
@@ -184,12 +170,12 @@ describe('a picture that matched', () => {
     expect(insert!.params).toContainEqual([]);
   });
 
-  it('opens a review flagged known_abuse_image, carrying the tracking id', async () => {
+  it('opens a review flagged known_abuse_image, carrying the reference', async () => {
     await photoHashMatch.run(item(), cfg);
     const insert = queries.find((q) => /INSERT INTO safety_reviews/.test(q.sql));
     expect(insert).toBeTruthy();
     expect(insert!.params).toContainEqual([KNOWN_ABUSE_IMAGE_FLAG]);
-    expect(insert!.params).toContain('EUS_track_1');
+    expect(insert!.params).toContain('ref_track_1');
     expect(insert!.sql).toContain('tracking_id');
     // One line at warn with two ids, exactly as a flagged message gets.
     expect(warned).toHaveLength(1);
@@ -225,7 +211,7 @@ describe('a picture that matched', () => {
     await photoHashMatch.run(item(), cfg);
     const everything = [...logged, ...warned].join('\n');
     expect(logged.some((l) => l.includes('"reason_code":"KNOWN_ABUSE_IMAGE"'))).toBe(true);
-    for (const secret of ['hash-one', 'hash-two', KEY, 'abc.jpg']) {
+    for (const secret of ['ref_track_1', 'NCMEC', KEY, 'abc.jpg']) {
       expect(everything).not.toContain(secret);
     }
   });
@@ -241,22 +227,22 @@ describe('an answer that did not come back', () => {
     expect(copied).toEqual([]);
   });
 
-  it('holds when the hashing fails', async () => {
-    fake.hashThrows = new Error('photodna hashing failed: Image is flat');
+  it('holds when the check throws', async () => {
+    fake.checkThrows = new Error('the module could not read the picture');
     const r = await photoHashMatch.run(item(), cfg);
     expect(r.outcome).toBe('hold');
     expect(r.reason_code).toBe('photo-hash-match-unavailable');
   });
 
-  it('holds when the match call fails, and never on a pass', async () => {
-    fake.matchThrows = new Error('photodna match answered 503');
+  it('holds when the answer does not come back, and never on a pass', async () => {
+    fake.checkThrows = new Error('the service answered 503');
     const r = await photoHashMatch.run(item(), cfg);
     expect(r.outcome).toBe('hold');
     expect(r.outcome).not.toBe('pass');
   });
 
   it('says nothing in the line beyond the error name', async () => {
-    fake.matchThrows = Object.assign(new Error('key sk_live_abcdef leaked into a message'), {
+    fake.checkThrows = Object.assign(new Error('key sk_live_abcdef leaked into a message'), {
       name: 'TimeoutError',
     });
     await photoHashMatch.run(item(), cfg);
@@ -269,38 +255,37 @@ describe('the doors and deployments it does not stand at', () => {
   it('passes at presign, where there is no object yet, without hashing', async () => {
     const r = await photoHashMatch.run(item({ object: undefined }), cfg);
     expect(r.outcome).toBe('pass');
-    expect(fake.hashedBytes).toEqual([]);
+    expect(fake.checkedBytes).toEqual([]);
   });
 
   it('passes where the deployment carries no photos', async () => {
     const r = await photoHashMatch.run(item(), { photoModeration: false } as unknown as Config);
     expect(r.outcome).toBe('pass');
-    expect(fake.hashedBytes).toEqual([]);
+    expect(fake.checkedBytes).toEqual([]);
   });
 
-  it('passes with a detail saying so where PhotoDNA is off, so the pipe carries on', async () => {
+  it('passes with a detail saying so where the check is off, so the pipe carries on', async () => {
     fake.available = false;
     const r = await photoHashMatch.run(item(), cfg);
     expect(r.outcome).toBe('pass');
-    expect(r.detail).toBe(PHOTODNA_OFF_DETAIL);
-    expect(r.detail).toBe('photodna_off');
+    expect(r.detail).toBe(KNOWN_IMAGE_OFF_DETAIL);
+    expect(r.detail).toBe('known_image_off');
     // Nothing was fetched and nothing was asked.
-    expect(fake.hashedBytes).toEqual([]);
-    expect(fake.matched).toEqual([]);
+    expect(fake.checkedBytes).toEqual([]);
     // And no sender is stopped for a deployment's missing licence.
     expect(suspended.calls).toEqual([]);
   });
 
-  it('HOLDS, never passes, where a secret is configured and the SDK did not load', async () => {
+  it('HOLDS, never passes, where a secret is configured and the module did not come up', async () => {
     const { PHOTOS_PAUSED } = await import('../../src/intake/checks/photoHashMatch.js');
     fake.available = false;
     fake.unloaded = true;
     const r = await photoHashMatch.run(item(), cfg);
     expect(r.outcome).toBe('hold');
-    expect(r.reason_code).toBe('photodna-not-loaded');
+    expect(r.reason_code).toBe('known-image-not-loaded');
     expect(r.plain_words).toBe(PHOTOS_PAUSED);
     expect(PHOTOS_PAUSED).toBe('photos are paused for a moment; try again shortly.');
-    expect(fake.hashedBytes).toEqual([]);
+    expect(fake.checkedBytes).toEqual([]);
     expect(suspended.calls).toEqual([]);
   });
 });

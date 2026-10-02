@@ -38,7 +38,7 @@ Place data in `data/gazetteer.json.gz` comes from GeoNames under CC BY 4.0 — s
 [NOTICE](NOTICE).
 
 OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
-The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
+The known-image check is an optional module that is not in this repository; without one the check is off, and the other photo checks still run.
 
 ## How this relates to the other repos
 
@@ -154,7 +154,7 @@ These are the invariants worth reading the code to check:
   that runs no script cannot upload and cannot press Send.
   **Every photo is checked by machine before it is sent on.** At the send
   press, before the other side is told a photo exists, two checks run in order.
-  The first is a known-image check (`src/intake/checks/photoHashMatch.ts`). A
+  The first is a known-image check. A
   match is refused, the photo is held unseen for police, and the sender's
   account is suspended. The second is Rekognition's moderation labels
   (`src/intake/checks/photoModeration.ts`). A photo refused for violence, hate

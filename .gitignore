@@ -21,12 +21,13 @@ nagatha-fresh.json
 *-fresh.json
 *-fixed.json
 
-# The PhotoDNA SDK (vendor/photodna/README.md). Microsoft confidential,
-# licensed at no cost, and never committed: the deploy puts the files and
-# their manifest.json beside that README on the way past. Only the README is
-# in git.
-vendor/photodna/*
-!vendor/photodna/README.md
+# The known-image check's optional module (vendor/known-image/README.md).
+# Never committed: a deployment puts it beside that README on the way past.
+# Only the README is in git. vendor/photodna is where it used to sit, and
+# stays ignored so an old checkout's files cannot be committed by accident.
+vendor/known-image/*
+!vendor/known-image/README.md
+vendor/photodna/
 
 # Working artefacts rendered from public code for review, not source:
 # scripts/render-category-phrases.ts writes here by default.

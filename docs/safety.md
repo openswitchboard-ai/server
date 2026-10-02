@@ -47,7 +47,7 @@ OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost.
 If a photo is a known child abuse image, it does not go, it is kept unseen for
 the police, and the account that sent it is closed.
 
-The PhotoDNA licence covers this deployment only; a fork needs its own licence from Microsoft, and without one the known-image check is off; the other photo checks still run.
+The known-image check is an optional module that is not in this repository; without one the check is off, and the other photo checks still run.
 
 ### Addresses, phone numbers and emails
 
