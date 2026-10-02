@@ -215,6 +215,9 @@ function fakePool() {
     if (/FROM confirm_lines\s+WHERE match_id = \$1 AND state <> 'withdrawn'/.test(sql)) {
       return rows(world.lines.filter((l) => l.match_id === params[0] && l.state !== 'withdrawn'));
     }
+    if (/SELECT 1 FROM confirm_lines WHERE match_id = \$1 LIMIT 1/.test(sql)) {
+      return rows(world.lines.filter((l) => l.match_id === params[0]).slice(0, 1));
+    }
     if (/FROM confirm_lines WHERE id = \$1 AND match_id = \$2/.test(sql)) {
       return rows(world.lines.filter((l) => l.id === params[0] && l.match_id === params[1]));
     }
@@ -998,6 +1001,88 @@ describe('what each assistant sees, wherever it sees the offers', () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE POINTER ON THE MESSAGE PATH. A buying assistant that puts what its human
+// needs to be true into a message, and never asks it as a line, is standing
+// at send_message or open_conversation when it does. So those two answers
+// carry one sentence, for that assistant only, until a line has been asked.
+describe('the record pointer on the message path', () => {
+  it('rides for the buying side while no line has been asked', async () => {
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBe(lines.RECORD_POINTER);
+    expect(lines.RECORD_POINTER).toBe(
+      'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation), as well as here.',
+    );
+    expect(lintHumanCopy(lines.RECORD_POINTER)).toEqual([]);
+    expect(lines.RECORD_POINTER).not.toMatch(/\d|_id\b/);
+  });
+
+  it('never rides for the selling side', async () => {
+    expect(await lines.recordPointerFor(BEPPE, MATCH)).toBeUndefined();
+  });
+
+  it('never rides where no money changes hands', async () => {
+    world.swap = true;
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBeUndefined();
+  });
+
+  it('stops once a line has been asked, whatever became of it', async () => {
+    for (const state of ['asked', 'confirmed', 'withdrawn']) {
+      world.lines = [];
+      seed('Comes with both keys', state);
+      expect(await lines.recordPointerFor(ANA, MATCH), state).toBeUndefined();
+    }
+    // A line on somebody else's introduction changes nothing here.
+    world.lines = [];
+    seed('Comes with a pump', 'asked', OTHER_MATCH, CARLA);
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBe(lines.RECORD_POINTER);
+  });
+
+  it('stops once a figure is accepted, and on an introduction that has closed', async () => {
+    world.offers[0].state = 'accepted-by-human';
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBeUndefined();
+    world.offers[0].state = 'proposed';
+    world.matchState = 'archived';
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBeUndefined();
+  });
+
+  it('says nothing for a stranger, a missing introduction, or a read that fails', async () => {
+    expect(await lines.recordPointerFor(CARLA, MATCH)).toBeUndefined();
+    expect(await lines.recordPointerFor(ANA, undefined)).toBeUndefined();
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async () => {
+        throw new Error('database down');
+      },
+    } as any);
+    expect(await lines.recordPointerFor(ANA, MATCH)).toBeUndefined();
+  });
+
+  it('is on the answer to send_message and open_conversation, beside what was there', async () => {
+    const channel = await import('../../src/domain/channel.js');
+    const matches = await import('../../src/domain/matches.js');
+    const sent = { message_id: 'm-1', note: { text: 'Sent.', provenance: 'switchboard-system' } };
+    const opened = { kind: 'conversation.open', conversation_id: 'c-1' };
+    vi.spyOn(channel, 'sendMessage').mockResolvedValue(sent as any);
+    vi.spyOn(matches, 'openChannel').mockResolvedValue(opened as any);
+    for (const [tool, args, was] of [
+      ['send_message', { intro_id: MATCH, text: 'Is it still there?' }, sent],
+      ['open_conversation', { intro_id: MATCH }, opened],
+    ] as const) {
+      const buyer: any = await dispatchTool(cfg, ANA, tool, args);
+      expect(buyer.structuredContent, tool).toEqual({
+        ...was,
+        record_note: { text: lines.RECORD_POINTER, provenance: 'switchboard-system' },
+      });
+      // The selling side's answer is the answer it always was.
+      const seller: any = await dispatchTool(cfg, BEPPE, tool, args);
+      expect(seller.structuredContent, tool).toEqual(was);
+    }
+    // And the buyer's is too, once a line has been asked.
+    seed('Comes with both keys');
+    const after: any = await dispatchTool(cfg, ANA, 'send_message', { intro_id: MATCH, text: 'Thanks' });
+    expect(after.structuredContent).toEqual(sent);
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('the respond actions', () => {
   it('ask_confirmation asks, and answers with the sentence to say', async () => {
     const r: any = await dispatchTool(cfg, ANA, 'respond', {
@@ -1066,7 +1151,9 @@ describe('the respond actions', () => {
     for (const tools of [TOOLS, toolsFor({ sealedContact: false })]) {
       const respond = tools.find((t) => t.name === 'respond')!;
       const d = respond.description;
-      expect(d).toMatch(/ask_confirmation \(BUYING side: `line` is one thing your human is relying on, in their words, for the seller's human to confirm in writing; only confirmed lines go on the record\)/);
+      expect(d).toMatch(/ask_confirmation \(BUYING side: `line` is one thing your human needs to be true, in their words, for the seller's human to confirm in writing; a message puts nothing on the record\)/);
+      // The trigger is what their human needs, whoever has or has not said it.
+      expect(d).not.toMatch(/relying on/);
       expect(d).toMatch(/withdraw_confirmation \(takes one off, ONLY on your human's word\)/);
       expect(d).toMatch(/request_confirm \(SELLING side: their page, whose button confirms in writing all the buyer asked, never you; on Not now, ask what is not right and tell the other side\)/);
       expect(d).not.toMatch(/tick/);
@@ -1074,6 +1161,13 @@ describe('the respond actions', () => {
       const props = (respond.inputSchema as any).properties;
       expect(props.action.enum).toEqual(expect.arrayContaining(['ask_confirmation', 'withdraw_confirmation', 'request_confirm']));
       expect(props.line.description).toMatch(/never add a line they did not give you/);
+      expect(props.line.description).toMatch(
+        /One short thing your human says has to be true of the thing for them to go ahead, whether the other side has said it or not, or something the other side said that they are relying on/,
+      );
+      expect(props.line.description).toMatch(
+        /Saying it in a message does not put it on the record: ask it here, and say it in the conversation too/,
+      );
+      expect(lintHumanCopy(props.line.description)).toEqual([]);
       expect(props.line.description).toMatch(/without asking them about each one/);
     }
   });
@@ -1081,12 +1175,12 @@ describe('the respond actions', () => {
 
 // ---------------------------------------------------------------------------
 describe('the manual says the general rules', () => {
-  it('at version 85, in a section of its own', () => {
-    expect(MANUAL.version).toBe(85);
+  it('since version 85, in a section of its own', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(85);
     const note = MANUAL_CHANGELOG.find((c) => c.version === 85)!.note;
     const text = manualSection('in_writing')!.text;
     for (const t of [note, text]) {
-      expect(t).toMatch(/relying on something the other side has said/);
+      expect(t).toMatch(/relying on/);
       expect(t).toMatch(/respond\(ask_confirmation\)/);
       expect(t).toMatch(/no assistant can/);
       expect(t).toMatch(/main button confirms them all/);
@@ -1106,7 +1200,31 @@ describe('the manual says the general rules', () => {
     expect(lintHumanCopy(text)).toEqual([]);
   });
 
+  // Version 86 (rehearsal, after Stage B went live): a buyer's human said up
+  // front that the thing had to be a certain way, and their assistant put it
+  // in a message twice and never asked it as a line, because every sentence
+  // said a line was for something "the other side has said".
+  it('widens the trigger at version 86: what their human needs to be true, whoever has said it', () => {
+    expect(MANUAL.version).toBe(86);
+    const note = MANUAL_CHANGELOG.find((c) => c.version === 86)!.note;
+    expect(note).toBe(
+      'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too.',
+    );
+    const text = manualSection('in_writing')!.text;
+    expect(text).toContain(
+      'So anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not, and so is anything the other side has said that they are relying on. Asking it in a message does not put it on the record: ask it as a line, and by all means say it in the conversation too.',
+    );
+    expect(text).not.toContain('So when your human is relying on something the other side has said');
+    for (const t of [note, text]) {
+      expect(lintEmailCopy(t)).toEqual([]);
+      expect(t).not.toMatch(/\d/);
+    }
+  });
+
   it('never rewords an entry that has shipped', () => {
+    expect(MANUAL_CHANGELOG.find((c) => c.version === 85)!.note).toBe(
+      "Something that matters can now be confirmed in writing. When your human is relying on something the other side has said, ask for it with respond(ask_confirmation), in your human's words and only what they said matters. The seller's human confirms it with their own press on their own page, and no assistant can. Only confirmed lines go on the record of a deal, and nothing said in conversation does. On the selling side, tell your human in a sentence that the buyer has asked for some things to be confirmed, and hand them the page: its main button confirms them all. If something asked is not true they press Not now; ask them what is not right and say so to the other side. An offer is accepted only once every line asked is confirmed; if the other side says one is not right, tell your human, and take it off only on their yes.",
+    );
     expect(MANUAL_CHANGELOG.find((c) => c.version === 84)!.note).toBe(
       'When an offer is accepted, the same record of what was agreed is sent by email to both people, however they hear about things. Tell your human to keep it, and never tell a human to expect no email about a deal.',
     );

@@ -680,6 +680,50 @@ export async function linesForAgent(
 }
 
 // ---------------------------------------------------------------------------
+// THE POINTER ON THE MESSAGE PATH (rehearsal, after Stage B went live).
+//
+// Twice a buyer's human said, up front, that the thing had to be a certain
+// way, and twice their assistant put that in a message to the other side and
+// never asked it as a line. Every sentence about lines had said to ask one
+// when the human was relying on something "the other side has said", and
+// nothing stood where the assistant was at that moment: sending a message.
+//
+// So the answer to opening a conversation and to sending a message carries
+// one sentence, for the one assistant it is true and useful for:
+//
+//   - on the BUYING side (only that side asks a line);
+//   - on an introduction where money can change hands (no swap, no no-money
+//     shelf: there is no offer to accept there and no record);
+//   - while the introduction is open and no figure on it has been accepted
+//     (after that nothing can be added to the deal);
+//   - and only until a line has been asked on it, in any state, so an
+//     assistant that already knows the road is not told again every message.
+//
+// Two small reads, best-effort: a read that fails says nothing.
+// ---------------------------------------------------------------------------
+export const RECORD_POINTER =
+  'What is said in this conversation is off the record of a deal. Anything your human says has to be true for them to go ahead belongs on respond(ask_confirmation), as well as here.';
+
+export async function recordPointerFor(
+  accountId: string,
+  matchId: string | undefined,
+): Promise<string | undefined> {
+  try {
+    if (!matchId) return undefined;
+    const m = await getMatch(matchId);
+    if (!m || m.account_want !== accountId) return undefined;
+    if (m.state !== 'open' || noMoneySentence(m)) return undefined;
+    const pool = getPool();
+    const asked = await pool.query('SELECT 1 FROM confirm_lines WHERE match_id = $1 LIMIT 1', [m.id]);
+    if (asked.rows.length) return undefined;
+    if (await acceptedAlready(m.id, pool)) return undefined;
+    return RECORD_POINTER;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // What each person's page shows.
 // ---------------------------------------------------------------------------
 
