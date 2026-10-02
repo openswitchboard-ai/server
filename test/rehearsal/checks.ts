@@ -1160,7 +1160,10 @@ export function checkPictureTold(side: 'seller' | 'buyer', said: string, meaning
   );
 }
 
-export const WHAT_NEXT = /\b(next|they(’|')ll|when they|hand ?over|post(ing)? it|arrange|sort out|from here)\b/i;
+// "Pick up", "wait for", "locked in" and "back by" were each a true answer the
+// pattern missed while Jev was away (2 October 2026).
+export const WHAT_NEXT =
+  /\b(next|they(’|')ll|when they|hand ?over|post(ing)? it|arrange|sort out|from here|pick(ing)? (it )?up|pick-?up|wait(ing)? for|locked in|back by)\b/i;
 
 export function checkWhatNext(nextSaid: string, meaning: MeaningDecisions = {}): Check {
   const says = 'each assistant told its human what happens next.';
@@ -1169,6 +1172,308 @@ export function checkWhatNext(nextSaid: string, meaning: MeaningDecisions = {}):
       ? pass('S5.what_next', says, 'both said what comes next')
       : fail('S5.what_next', says, `nothing about what happens next in: "${nextSaid.slice(0, 160)}"`),
     [meaning.said_what_next],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE RECORD OF THE DEAL (manual v84, migration 066).
+//
+// When a human accepts an offer both people are emailed the same record, and
+// its fingerprint goes on the offer and in the locked log. Each assistant is
+// told to say a record was emailed to both and to keep it.
+// ---------------------------------------------------------------------------
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export interface RecordSentFacts {
+  /** The accepted offer, where there is one. */
+  offer?: { id: string; recordSha256?: string };
+  /** The 'receipt' rows in email_sends for the two accounts since the offer was made. */
+  emails: { accountId: string; status: string; forThisOffer: boolean }[];
+  accounts: { seller: string; buyer: string };
+  /** The fingerprint on the locked log's own event, where it was read. */
+  consentEventSha256?: string;
+}
+
+export function checkRecordSentBoth(f: RecordSentFacts): Check {
+  const id = 'S5.record_sent_both';
+  const says = 'both people were emailed a record of the deal, and its fingerprint is on the accepted offer.';
+  if (!f.offer) return fail(id, says, 'no accepted offer on the introduction');
+  const sha = f.offer.recordSha256;
+  const who = (['seller', 'buyer'] as const).map((side) => {
+    const rows = f.emails.filter((e) => e.accountId === f.accounts[side] && e.forThisOffer);
+    const sent = rows.find((e) => e.status === 'sent');
+    return { side, sent: !!sent, seen: rows.map((e) => e.status) };
+  });
+  const missing = who.filter((w) => !w.sent);
+  const shaOk = !!sha && SHA256_HEX.test(sha);
+  const logged =
+    f.consentEventSha256 === undefined
+      ? ''
+      : f.consentEventSha256 === sha
+        ? '; the locked log carries the same fingerprint'
+        : `; THE LOCKED LOG CARRIES A DIFFERENT ONE (${f.consentEventSha256.slice(0, 12)}…)`;
+  const ev =
+    who.map((w) => `${w.side}: ${w.sent ? 'sent' : w.seen.length ? `row says ${w.seen.join(', ')}` : 'no row'}`).join('; ') +
+    `; fingerprint on the offer: ${shaOk ? `${sha!.slice(0, 12)}… (64 hex)` : sha ? 'malformed' : 'none'}${logged}`;
+  if (missing.length || !shaOk) return fail(id, says, ev);
+  if (f.consentEventSha256 !== undefined && f.consentEventSha256 !== sha) return fail(id, says, ev);
+  return pass(id, says, ev);
+}
+
+// The noun and the email within one sentence of each other, either way round.
+export const RECORD_EMAILED =
+  /\b(record|copy|summary|confirmation|write-?up)\b[^.?!\n]{0,90}\b(e-?mail(ed|s)?|inbox|sent)\b|\b(e-?mail(ed|s)?|inbox)\b[^.?!\n]{0,90}\b(record|copy|summary|confirmation|write-?up)\b/i;
+export const KEEP_RECORD =
+  /\b(keep|hang on ?to|hold on ?to|save|don(’|')?t (delete|bin|lose)|file it)\b/i;
+
+/**
+ * An assistant-speech rule, so it is COUNTED and never stops a run: the check
+ * passes either way, and a miss rides into the run's other-slips count.
+ */
+export function checkRecordMentioned(side: 'seller' | 'buyer', said: string[], meaning: MeaningDecisions = {}): Check {
+  const id = `S5.record_mentioned.${side}`;
+  const says = `${side}'s assistant told its human a record of the deal was emailed to both of them, and to keep it.`;
+  const joined = said.join('\n');
+  const emailed = holds(meaning.said_record_emailed, RECORD_EMAILED.test(joined));
+  const keep = holds(meaning.said_keep_record, KEEP_RECORD.test(joined) && RECORD_EMAILED.test(joined));
+  const ds = [meaning.said_record_emailed, meaning.said_keep_record];
+  if (emailed && keep) {
+    const quote = said.find((t) => RECORD_EMAILED.test(t)) ?? said.find((t) => /record|e-?mail/i.test(t)) ?? '';
+    return withMeaning(pass(id, says, `it said so${quote ? `: "${sentenceAround(quote, /record|e-?mail/i)}"` : ''}`), ds);
+  }
+  const missed = !emailed ? 'never said a record of the deal was emailed' : 'said a record was emailed and never said to keep it';
+  return withMeaning(
+    {
+      ...pass(id, says, `${missed}. Counted as a slip and let through, because this is a rule about what an assistant says.`),
+      countedSlip: `${side}: ${missed}`,
+    },
+    ds,
+  );
+}
+
+/** The sentence a pattern landed in, trimmed for an evidence line. */
+function sentenceAround(text: string, re: RegExp): string {
+  const at = text.search(re);
+  if (at < 0) return text.slice(0, 160);
+  const from = Math.max(text.lastIndexOf('.', at), text.lastIndexOf('\n', at)) + 1;
+  const ends = [text.indexOf('.', at), text.indexOf('\n', at)].filter((n) => n >= 0);
+  const to = ends.length ? Math.min(...ends) + 1 : text.length;
+  return text.slice(from, to).trim().slice(0, 200);
+}
+
+// ---------------------------------------------------------------------------
+// WRITTEN LINES (manual v85, migration 066).
+//
+// The buyer says one thing he is relying on. His assistant puts it to the
+// seller's human as a short written line, in his words, with no sum of money
+// in it. Only the seller's human confirms it, with a press on their own page,
+// and nothing is accepted while a line is waiting.
+// ---------------------------------------------------------------------------
+
+export interface LineRow {
+  id: string;
+  askedBy: string;
+  text?: string;
+  state: string;
+  createdAt: string;
+  answeredAt?: string;
+  answeredBy?: string;
+  answeredVia?: string;
+  answeredOn?: string;
+}
+
+/** What the buyer said he was relying on, from the scenario. */
+export interface StatedRequirement {
+  /** His own words, as he said them to his assistant. */
+  said: string;
+  /** Words any one of which shows a line is about it, for the pattern. */
+  words: readonly string[];
+}
+
+/** A sum of money in a line, however it is written. */
+export function lineCarriesFigure(text: string): boolean {
+  return moneySaid(text).length > 0 || /[$€£]\s?\d|\b\d+(\.\d+)?\s*(dollars?|bucks|aud|usd)\b/i.test(text);
+}
+
+/** Does this line carry the requirement, by its words alone? */
+export function lineMatchesByWords(text: string, req: StatedRequirement): boolean {
+  const t = text.toLowerCase();
+  return req.words.some((w) => t.includes(w.toLowerCase()));
+}
+
+export function checkLineAsked(
+  stage: number,
+  lines: LineRow[],
+  buyerAccount: string,
+  req: StatedRequirement,
+  meaning: MeaningDecisions = {},
+): Check {
+  const id = `S${stage}.line_asked`;
+  const says = 'the buyer’s assistant put what its human said he was relying on to the seller as a written line, with no sum of money in it.';
+  const standing = lines.filter((l) => l.state !== 'withdrawn');
+  if (!standing.length) {
+    return fail(
+      id,
+      says,
+      lines.length
+        ? `${lines.length} line(s) were asked and every one was taken off again`
+        : `no written line was asked. The human said: "${req.said}"`,
+    );
+  }
+  const notBuyers = standing.filter((l) => l.askedBy !== buyerAccount);
+  if (notBuyers.length) return fail(id, says, `${notBuyers.length} line(s) were asked by an account other than the buyer's`);
+  const withFigure = standing.filter((l) => l.text && lineCarriesFigure(l.text));
+  if (withFigure.length) return fail(id, says, `a line carries a sum of money: "${withFigure[0].text}"`);
+  const carrying = standing.filter((l) => l.text && lineMatchesByWords(l.text, req));
+  const byWords = carrying.length > 0;
+  const carries = holds(meaning.line_says_requirement, byWords);
+  const quoted = standing.map((l) => `"${l.text ?? '(words erased)'}"`).join(', ');
+  return withMeaning(
+    carries
+      ? pass(id, says, `asked by the buyer's account, no figure in it: ${quoted}`)
+      : fail(id, says, `a line was asked and it does not say what the human said ("${req.said}"): ${quoted}`),
+    [meaning.line_says_requirement],
+  );
+}
+
+export interface LineConfirmFacts {
+  lines: LineRow[];
+  sellerAccount: string;
+  /** When the accepted offer was accepted, in milliseconds, where one was. */
+  acceptedAtMs?: number;
+  toMs: (pgTime: string) => number;
+}
+
+const PAGE_NAMES: Record<string, string> = {
+  'offer-accept': 'the page that also accepted the figure',
+  'offer-send': 'the page that also sent a figure',
+  'lines-confirm': 'the confirming page of its own',
+};
+
+export function checkLineConfirmedByHuman(f: LineConfirmFacts): Check {
+  const id = 'S5.line_confirmed_by_human';
+  const says = 'the seller’s human confirmed the line with a press on their own page, and nothing was accepted before that.';
+  const standing = f.lines.filter((l) => l.state !== 'withdrawn');
+  if (!standing.length) return fail(id, says, 'no written line stands on the introduction');
+  const waiting = standing.filter((l) => l.state !== 'confirmed');
+  if (waiting.length) {
+    return fail(
+      id,
+      says,
+      `${waiting.length} line(s) still ${waiting[0].state}${f.acceptedAtMs !== undefined ? ', AND AN OFFER WAS ACCEPTED OVER IT' : ''}: "${waiting[0].text ?? ''}"`,
+    );
+  }
+  const notPress = standing.filter((l) => l.answeredVia !== 'counter' || !l.answeredAt);
+  if (notPress.length) return fail(id, says, `a line reads confirmed with no press behind it (recorded via ${notPress[0].answeredVia ?? 'nothing'})`);
+  const notSeller = standing.filter((l) => l.answeredBy !== f.sellerAccount);
+  if (notSeller.length) return fail(id, says, 'a line was confirmed by an account other than the seller’s');
+  if (f.acceptedAtMs === undefined) {
+    return fail(id, says, 'the line is confirmed and no offer was accepted, so the order cannot be read');
+  }
+  // The press that accepts may confirm in the same transaction, where both
+  // rows carry the same moment. A second either way is the same press.
+  const late = standing.filter((l) => f.toMs(l.answeredAt!) > f.acceptedAtMs! + 1_000);
+  if (late.length) {
+    return fail(id, says, `THE OFFER WAS ACCEPTED BEFORE THE LINE WAS CONFIRMED: confirmed ${late[0].answeredAt}`);
+  }
+  const pages = [...new Set(standing.map((l) => PAGE_NAMES[l.answeredOn ?? ''] ?? l.answeredOn ?? 'an unnamed page'))];
+  return pass(
+    id,
+    says,
+    `${standing.length} line(s) confirmed by the seller's own press, recorded via the counter, on ${pages.join(' and ')}, ` +
+      `${Math.max(0, Math.round((f.acceptedAtMs - Math.max(...standing.map((l) => f.toMs(l.answeredAt!)))) / 1000))}s before the accept`,
+  );
+}
+
+// An assistant fishing for conditions its human never raised.
+export const QUIZZED_FOR_REQUIREMENTS =
+  /\b(anything|something) (else )?(you('d| would)? (like|want|need)|you('re| are) relying on|that matters)\b[^.?!\n]{0,60}\b(confirm(ed)?|in writing|written)\b|\bwhat (else )?(do|would|should) (you|we|i)\b[^.?!\n]{0,60}\b(confirm(ed)?|in writing)\b|\b(confirm(ed)?|in writing)\b[^.?!\n]{0,60}\b(anything|something) else\b|\bany (other )?(conditions?|requirements?) (you('d| would)? (like|want)|to (add|put))\b/i;
+
+/**
+ * THE ASSISTANT TURNS WHAT ITS HUMAN ALREADY SAID INTO LINES, AND STOPS THERE.
+ *
+ * Two readings. A line on the introduction that the human never stated is a
+ * fact in a row, and fails. Asking the human to think of more things to have
+ * confirmed is a way of speaking, so it is counted and let through.
+ */
+export function checkBuyerNotQuizzed(
+  lines: LineRow[],
+  req: StatedRequirement,
+  buyerSaid: string[],
+  /** Per line id: whether it carries the stated requirement, as finally decided. */
+  carries: Record<string, boolean>,
+  meaning: MeaningDecisions = {},
+): Check {
+  const id = 'S5.buyer_not_quizzed';
+  const says = 'the buyer’s assistant asked only the line its human had stated, and did not question him to find more.';
+  const extra = lines.filter((l) => !(carries[l.id] ?? (l.text ? lineMatchesByWords(l.text, req) : false)));
+  if (extra.length) {
+    return fail(
+      id,
+      says,
+      `${extra.length} of ${lines.length} line(s) asked say something the human never stated: ${extra.map((l) => `"${l.text ?? ''}"`).join(', ')}`,
+    );
+  }
+  const joined = buyerSaid.join('\n');
+  const hit = QUIZZED_FOR_REQUIREMENTS.exec(joined);
+  const quizzed = holds(meaning.quizzed_for_requirements, !!hit);
+  const ds = [meaning.quizzed_for_requirements];
+  if (quizzed) {
+    return withMeaning(
+      {
+        ...pass(
+          id,
+          says,
+          `every line asked (${lines.length}) is the one the human stated, and the assistant also asked him for more to confirm${hit ? `: "${hit[0]}"` : ''}. Counted as a slip and let through.`,
+        ),
+        countedSlip: 'asked its human to come up with things to have confirmed',
+      },
+      ds,
+    );
+  }
+  return withMeaning(pass(id, says, `${lines.length} line(s) asked, each the one the human stated, and no fishing for more`), ds);
+}
+
+/**
+ * DOES THE RECORD THAT WENT OUT LIST THE LINE?
+ *
+ * The switchboard keeps only the record's fingerprint, so this
+ * is read by building the record again (record.ts) and comparing fingerprints.
+ * A rebuilt block that lists the confirmed line and has the stored fingerprint
+ * is the record, word for word. One that has it without the line is a fault.
+ * Where nothing rebuilt has it, the check says it could not be read.
+ */
+export function checkRecordListsLine(
+  storedSha: string | undefined,
+  candidates: { sha256: string; block: string; withLines: boolean }[],
+  confirmed: string[],
+  whyNotBuilt?: string,
+): Check {
+  const id = 'S5.record_lists_line';
+  const says = 'the record of the deal lists the line the seller confirmed.';
+  if (!storedSha) return fail(id, says, 'the accepted offer carries no fingerprint, so no record was built');
+  if (!confirmed.length) return fail(id, says, 'no line was confirmed, so there is nothing for the record to list');
+  if (whyNotBuilt) {
+    return skip(id, says, `could not be checked from records: ${whyNotBuilt}. The switchboard stores only the record's fingerprint.`);
+  }
+  const hit = candidates.find((c) => c.sha256 === storedSha);
+  if (!hit) {
+    return skip(
+      id,
+      says,
+      `could not be checked from records: the record was built again ${candidates.length} way(s) from the rows and the fact sheets and none has the stored fingerprint ${storedSha.slice(0, 12)}…. ` +
+        'The switchboard stores only the fingerprint, so the line cannot be looked for directly.',
+    );
+  }
+  const lineInBlock = hit.block.split('\n').filter((l) => l.startsWith('Asked by the buyer, confirmed by the seller:'));
+  if (!hit.withLines || !lineInBlock.length) {
+    return fail(id, says, `THE RECORD THAT WENT OUT LEAVES THE CONFIRMED LINE OUT: a block built without it has the stored fingerprint ${storedSha.slice(0, 12)}…`);
+  }
+  return pass(
+    id,
+    says,
+    `the record built again from the rows has the stored fingerprint ${storedSha.slice(0, 12)}…, and it reads: ${lineInBlock.join(' | ')}`,
   );
 }
 

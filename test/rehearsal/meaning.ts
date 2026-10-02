@@ -209,6 +209,42 @@ export const MEANINGS = {
       'reports that the OTHER person’s posting came down. No when it says a posting is UP or was filed UNDER a shelf or ' +
       'category: putting something up under a heading is posting it, the opposite of taking it down.',
   },
+  // THE RECORD OF THE DEAL (manual v84). Both people are emailed the same
+  // record when an offer is accepted, and each assistant is told to say so.
+  said_record_emailed: {
+    says: 'said a record of the deal was emailed',
+    instructions:
+      'An offer has been accepted and the deal is agreed. Does the assistant tell its human that a record of what was ' +
+      'agreed has been sent by email — to them, or to both people? Yes if it says so anywhere in assistant_said, in any ' +
+      'wording (a written record, a copy of the deal, a confirmation of what was agreed, sent by email or waiting in ' +
+      'their inbox). No if it never mentions any such email.',
+  },
+  said_keep_record: {
+    says: 'told them to keep the record',
+    instructions:
+      'An offer has been accepted and a record of what was agreed has been emailed to the human. Does the assistant ' +
+      'tell its human to keep that email or that record — to hold on to it, save it, or leave it undeleted? Yes if it ' +
+      'says so anywhere in assistant_said, in any wording. No if it never tells them to keep it.',
+  },
+  // WRITTEN LINES (manual v85). The buying side's assistant turns what its
+  // human already said matters into a line for the seller's human to confirm.
+  line_says_requirement: {
+    says: 'the written line says what the human said mattered',
+    instructions:
+      'assistant_said holds one short line the assistant wrote for the other person to confirm in writing. ' +
+      'human_said_last is what its human had said mattered to them. Does the line ask for the same thing the human ' +
+      'said — the same claim, in the same or similar words, with nothing of substance added? Yes if it carries the ' +
+      'human’s meaning. No if it is about something the human never said, or adds a condition of its own.',
+  },
+  quizzed_for_requirements: {
+    says: 'asked its human to come up with things to have confirmed',
+    instructions:
+      'Does the assistant ask its human to come up with things for the other person to confirm in writing — for ' +
+      'example asking what else they want confirmed, whether there are other conditions they want in writing, or ' +
+      'running through possible conditions one at a time? Yes if it asks for requirements the human had never ' +
+      'raised. No if it only offers to put into writing something the human already said, reports that a line was ' +
+      'asked or confirmed, or never raises the subject.',
+  },
 } satisfies Record<string, MeaningQuestion>;
 
 export type MeaningId = keyof typeof MEANINGS;
@@ -257,26 +293,98 @@ export type MeaningAsker = (
 let enabled = process.env.REHEARSAL_MEANING_JEV !== '0';
 let override: MeaningAsker | undefined;
 let keyPromise: Promise<string | undefined> | undefined;
+let keyReader: () => Promise<string | undefined> = readKeyOnce;
+let keyRetryAfterMs = 0;
+
+/** How long after a failed read of the key the next read waits. */
+export const KEY_RETRY_MS = 15_000;
 
 /** The run turns this off for --dry; tests inject a stub. */
-export function configureMeaning(opts: { enabled?: boolean; ask?: MeaningAsker | null }): void {
+export function configureMeaning(opts: {
+  enabled?: boolean;
+  ask?: MeaningAsker | null;
+  /** Tests only: how the key is read. Null puts the real reader back. */
+  readKey?: (() => Promise<string | undefined>) | null;
+}): void {
   if (opts.enabled !== undefined) enabled = opts.enabled;
   if (opts.ask !== undefined) override = opts.ask ?? undefined;
+  if (opts.readKey !== undefined) {
+    keyReader = opts.readKey ?? readKeyOnce;
+    keyPromise = undefined;
+    keyRetryAfterMs = 0;
+  }
 }
 
-async function readKey(): Promise<string | undefined> {
-  keyPromise ??= (async () => {
-    try {
-      const secrets = new SecretsManagerClient({ region: REGION });
-      const r = await secrets.send(new GetSecretValueCommand({ SecretId: JEV_SECRET }));
-      const json = JSON.parse(r.SecretString ?? '{}');
-      return json.apiKey ? String(json.apiKey) : undefined;
-    } catch {
-      // The message could quote the secret; all the caller needs is "no key".
-      return undefined;
-    }
-  })();
-  return keyPromise;
+async function readKeyOnce(): Promise<string | undefined> {
+  try {
+    const secrets = new SecretsManagerClient({ region: REGION });
+    const r = await secrets.send(new GetSecretValueCommand({ SecretId: JEV_SECRET }));
+    const json = JSON.parse(r.SecretString ?? '{}');
+    return json.apiKey ? String(json.apiKey) : undefined;
+  } catch {
+    // The message could quote the secret; all the caller needs is "no key".
+    return undefined;
+  }
+}
+
+/**
+ * A KEY THAT WAS READ IS KEPT. A READ THAT FAILED IS TRIED AGAIN.
+ *
+ * The first version kept whatever the first read returned for the life of the
+ * process. One expired sign-in or one dropped connection at the first meaning
+ * check then left every later check in a three-hour series on its pattern,
+ * and the only trace was a clause in each check's evidence. So only a key is
+ * remembered. A failed read is forgotten, and the next question reads again
+ * once a short pause has passed, so a judge that is away does not cost a
+ * round trip on every check.
+ */
+export async function readKey(now: () => number = Date.now): Promise<string | undefined> {
+  if (keyPromise) return keyPromise;
+  if (now() < keyRetryAfterMs) return undefined;
+  const attempt = keyReader();
+  keyPromise = attempt;
+  const key = await attempt.catch(() => undefined);
+  if (!key) {
+    if (keyPromise === attempt) keyPromise = undefined;
+    keyRetryAfterMs = now() + KEY_RETRY_MS;
+  }
+  return key;
+}
+
+// ---------------------------------------------------------------------------
+// How often Jev answered, so a run can say when it never did.
+// ---------------------------------------------------------------------------
+
+export interface MeaningTally {
+  /** Questions put to the judge (one per call that had words to read). */
+  asked: number;
+  /** Calls the judge answered. */
+  answered: number;
+  /** Calls it could not be reached for, by reason. */
+  reasons: Record<string, number>;
+}
+
+let tally: MeaningTally = { asked: 0, answered: 0, reasons: {} };
+
+export function resetMeaningTally(): void {
+  tally = { asked: 0, answered: 0, reasons: {} };
+}
+
+export function meaningTally(): MeaningTally {
+  return { asked: tally.asked, answered: tally.answered, reasons: { ...tally.reasons } };
+}
+
+/**
+ * One loud sentence where the judge never answered across a whole run, and
+ * nothing where it answered at least once or was never asked.
+ */
+export function jevAwayAllRun(t: MeaningTally): string | undefined {
+  if (!t.asked || t.answered) return undefined;
+  const why = Object.entries(t.reasons)
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `${r} (${n})`)
+    .join('; ');
+  return `JEV WAS UNAVAILABLE FOR THIS WHOLE RUN: ${t.asked} meaning question(s) asked, none answered. Every meaning check fell back to its pattern. ${why}`;
 }
 
 /** The live asker, exported for calibrateMeaning.ts. */
@@ -313,11 +421,16 @@ async function safeAsk(
   state: MeaningState,
   ids: MeaningId[],
 ): Promise<{ answers: Partial<Record<MeaningId, number | null>>; reason?: string }> {
+  tally.asked += 1;
+  let out: { answers: Partial<Record<MeaningId, number | null>>; reason?: string };
   try {
-    return await ask(state, ids);
+    out = await ask(state, ids);
   } catch (e) {
-    return { answers: {}, reason: `the judge threw: ${(e as Error)?.name ?? 'error'}` };
+    out = { answers: {}, reason: `the judge threw: ${(e as Error)?.name ?? 'error'}` };
   }
+  if (out.reason) tally.reasons[out.reason] = (tally.reasons[out.reason] ?? 0) + 1;
+  else tally.answered += 1;
+  return out;
 }
 
 /**

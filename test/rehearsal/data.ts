@@ -98,6 +98,21 @@ export interface Scenario {
    * says that event.
    */
   WRAP_WORDS?: { seller: string; buyer: string };
+  /**
+   * One thing the buyer says he is relying on, in his own words, said to his
+   * assistant once the two are connected. Where a scenario has one, his
+   * assistant is expected to put it to the seller's human as a written line,
+   * the seller's human confirms it on their own page, and the record of the
+   * deal lists it. The seller's sheet must make it true. Left out, no line is
+   * expected and the written-line checks are not run. An errand with no offer
+   * in it has no use for one.
+   */
+  REQUIREMENT?: {
+    /** What the buyer says. */
+    said: string;
+    /** Words any one of which shows a line is about it. */
+    words: readonly string[];
+  };
 }
 
 export type Reach = 'country' | 'radius';

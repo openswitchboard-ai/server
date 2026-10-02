@@ -203,11 +203,18 @@ export interface OfferFacts {
   state: string;
   authoredBy: string;
   createdAt: string;
+  /** When the row last changed: for an accepted offer, when it was accepted. */
+  updatedAt?: string;
+  /** The fingerprint of the record of the deal, set by the accept (066). */
+  recordSha256?: string;
+  /** The note that rode with the figure, where there was one. */
+  note?: string;
 }
 
 export async function offersOn(matchId: string): Promise<OfferFacts[]> {
   const rows = await dbExec(
-    `SELECT id::text, proposer_account::text, amount::text, ccy, state, authored_by, created_at::text
+    `SELECT id::text, proposer_account::text, amount::text, ccy, state, authored_by, created_at::text,
+            updated_at::text, receipt_sha256, message::text
        FROM offers WHERE match_id = :m::uuid ORDER BY created_at`,
     [{ name: 'm', value: matchId }],
   );
@@ -219,7 +226,137 @@ export async function offersOn(matchId: string): Promise<OfferFacts[]> {
     state: String(r[4]),
     authoredBy: String(r[5]),
     createdAt: String(r[6]),
+    ...(r[7] ? { updatedAt: String(r[7]) } : {}),
+    ...(r[8] ? { recordSha256: String(r[8]) } : {}),
+    ...(wordsOf(r[9]) ? { note: wordsOf(r[9]) } : {}),
   }));
+}
+
+/** The words in a stored `{ text, provenance }`, or in a bare string. */
+function wordsOf(v: unknown): string | undefined {
+  if (v === null || v === undefined) return undefined;
+  let parsed: unknown = v;
+  try {
+    parsed = JSON.parse(String(v));
+  } catch {
+    /* a bare string */
+  }
+  const text = typeof parsed === 'string' ? parsed : (parsed as { text?: unknown } | null)?.text;
+  return typeof text === 'string' && text.trim() ? text : undefined;
+}
+
+/**
+ * THE RECORD OF THE DEAL, AS FAR AS A ROW CAN SHOW IT (migration 066).
+ *
+ * The switchboard keeps the record's fingerprint and never its words, so what
+ * can be read here is who was sent one. One row per person in email_sends,
+ * template 'receipt', keyed on the offer and the account.
+ */
+export interface RecordEmailFacts {
+  accountId: string;
+  status: string;
+  /** True where the row's key names this offer. */
+  forThisOffer: boolean;
+  createdAt: string;
+}
+
+export async function recordEmailsFor(
+  offerId: string,
+  accountIds: (string | undefined)[],
+  sinceIso: string,
+): Promise<RecordEmailFacts[]> {
+  const list = ids(accountIds);
+  if (!list) return [];
+  const rows = await dbExec(
+    `SELECT account_id::text, status, dedupe_key, created_at::text
+       FROM email_sends
+      WHERE template = 'receipt'
+        AND account_id = ANY(string_to_array(:ids, ',')::uuid[])
+        AND created_at > :since::timestamptz
+      ORDER BY created_at`,
+    [{ name: 'ids', value: list }, { name: 'since', value: sinceIso }],
+  );
+  return rows.map((r) => ({
+    accountId: String(r[0]),
+    status: String(r[1]),
+    forThisOffer: String(r[2]).includes(offerId),
+    createdAt: String(r[3]),
+  }));
+}
+
+/** One written line the buying side asked the seller's human to confirm (066). */
+export interface LineFacts {
+  id: string;
+  askedBy: string;
+  /** The words. Undefined once erased. */
+  text?: string;
+  state: string;
+  createdAt: string;
+  answeredAt?: string;
+  answeredBy?: string;
+  /** How the confirming was recorded: 'counter' is a press on their own page. */
+  answeredVia?: string;
+  /** Which page it was confirmed on. */
+  answeredOn?: string;
+  withdrawnAt?: string;
+}
+
+/** Every line ever asked on this introduction, taken-off ones included, in the order asked. */
+export async function linesOn(matchId: string): Promise<LineFacts[]> {
+  const rows = await dbExec(
+    `SELECT id::text, asked_by::text, line::text, state, created_at::text, answered_at::text,
+            answered_by::text, answered_via, answered_on, withdrawn_at::text
+       FROM confirm_lines WHERE match_id = :m::uuid ORDER BY created_at, id`,
+    [{ name: 'm', value: matchId }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    askedBy: String(r[1]),
+    ...(wordsOf(r[2]) ? { text: wordsOf(r[2]) } : {}),
+    state: String(r[3]),
+    createdAt: String(r[4]),
+    ...(r[5] ? { answeredAt: String(r[5]) } : {}),
+    ...(r[6] ? { answeredBy: String(r[6]) } : {}),
+    ...(r[7] ? { answeredVia: String(r[7]) } : {}),
+    ...(r[8] ? { answeredOn: String(r[8]) } : {}),
+    ...(r[9] ? { withdrawnAt: String(r[9]) } : {}),
+  }));
+}
+
+/**
+ * What the seller's posting showed the buyer, as the record of a deal reads
+ * it: the screened words for the thing and the screened details, and the
+ * shelf. Read so the record can be rebuilt and its fingerprint compared
+ * (record.ts). Nothing here is under an account's own key.
+ */
+export interface PostingShown {
+  kind?: string;
+  attributes: Record<string, unknown>;
+  category: string;
+  matchState: string;
+  matchStage: number;
+  swap: boolean;
+}
+
+export async function sellerPostingShown(matchId: string): Promise<PostingShown | undefined> {
+  const rows = await dbExec(
+    `SELECT c.screened_content::text, m.category, m.state, m.stage, COALESCE(m.swap, false)
+       FROM matches m JOIN cards c ON c.id = m.card_have
+      WHERE m.id = :m::uuid`,
+    [{ name: 'm', value: matchId }],
+  );
+  const r = rows[0];
+  if (!r) return undefined;
+  const screened = safeJson(r[0]) as { kind?: unknown; attributes?: unknown };
+  const attrs = screened.attributes;
+  return {
+    ...(typeof screened.kind === 'string' && screened.kind.trim() ? { kind: screened.kind } : {}),
+    attributes: attrs && typeof attrs === 'object' && !Array.isArray(attrs) ? (attrs as Record<string, unknown>) : {},
+    category: String(r[1] ?? ''),
+    matchState: String(r[2]),
+    matchStage: Number(r[3]),
+    swap: r[4] === true || String(r[4]) === 'true',
+  };
 }
 
 export async function photosOn(matchId: string): Promise<

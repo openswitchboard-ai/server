@@ -32,6 +32,10 @@ import {
   WHAT_NEXT,
   aboutTheirPicture,
   pinPattern,
+  KEEP_RECORD,
+  QUIZZED_FOR_REQUIREMENTS,
+  RECORD_EMAILED,
+  plainWordsOverlap,
 } from './checks.js';
 import { bandOf, liveAsk, type MeaningId, type MeaningState } from './meaning.js';
 import { loadMeaningExamples, missingData } from './data.js';
@@ -241,6 +245,12 @@ function regexFor(id: MeaningId, said: string[], humanLast?: string): boolean {
     case 'asked_to_take_down': return askedByPattern(humanLast ? [humanLast] : [], said[said.length - 1]);
     case 'claimed_takedown': return CLAIMED_TAKEDOWN.test(j);
     case 'asked_supply': return SUPPLY_ASK.test(j);
+    case 'said_record_emailed': return RECORD_EMAILED.test(j);
+    case 'said_keep_record': return RECORD_EMAILED.test(j) && KEEP_RECORD.test(j);
+    // The line's pattern reads the scenario's own words for the requirement,
+    // which a calibration example does not carry: shared words stand in.
+    case 'line_says_requirement': return !!humanLast && plainWordsOverlap(j, humanLast);
+    case 'quizzed_for_requirements': return QUIZZED_FOR_REQUIREMENTS.test(j);
   }
 }
 
@@ -270,6 +280,12 @@ function situationFor(id: MeaningId): string {
       return 'The assistant has just taken its human’s posting down or filed an introduction away. These are its words to its human just before.';
     case 'claimed_takedown':
       return 'This is one turn of the assistant talking to its human.';
+    case 'said_record_emailed': case 'said_keep_record':
+      return 'An offer has been accepted and the deal is agreed. The same record of what was agreed has been emailed to both people. These are the assistant’s replies to its human since.';
+    case 'line_says_requirement':
+      return 'The assistant wrote one short line for the other person to confirm in writing. human_said_last is what its own human had said mattered.';
+    case 'quizzed_for_requirements':
+      return 'The human told the assistant one thing they are relying on about what they are buying. These are the assistant’s replies to its human from then until the deal was agreed.';
   }
 }
 

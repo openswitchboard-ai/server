@@ -133,12 +133,34 @@ import {
   type JudgedClaim,
   type JudgedTakedown,
   type TakedownEvent,
+  checkBuyerNotQuizzed,
+  checkLineAsked,
+  checkLineConfirmedByHuman,
+  checkRecordListsLine,
+  checkRecordMentioned,
+  checkRecordSentBoth,
+  KEEP_RECORD,
+  lineMatchesByWords,
+  QUIZZED_FOR_REQUIREMENTS,
+  RECORD_EMAILED,
+  type LineRow,
 } from './checks.js';
+import { acceptEventFor } from './consentLog.js';
+import { loadRecordBuilders, recordCandidates, type RecordCandidate } from './record.js';
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
 import { bedrockSimulator, cannedSimulator, extractPresses, type HumanTurn, type Simulator } from './human.js';
 import { scoreTranscript, splitSlips, type ScoreResult } from './jev.js';
-import { configureMeaning, judgeMeanings, type MeaningDecisions, type MeaningId } from './meaning.js';
+import {
+  configureMeaning,
+  holds,
+  jevAwayAllRun,
+  judgeMeanings,
+  meaningTally,
+  resetMeaningTally,
+  type MeaningDecisions,
+  type MeaningId,
+} from './meaning.js';
 import { DEFAULT_STREAK, PROMISE_RULE } from './levels.js';
 import { boardIsClear, rememberAccounts, sweepLedgerCards } from './ledger.js';
 import {
@@ -209,6 +231,11 @@ useScenarioWords({
 const MONEY = scenario.MONEY !== false;
 const REACH = scenario.REACH ?? { seller: 'country' as const };
 const ASKS = (scenario.ASK_BEFORE_POSTING ?? ALL_ASKS).filter((a) => MONEY || a !== 'kind_of_sale');
+/**
+ * THE ONE THING THE BUYER IS RELYING ON, where the scenario gives him one. A
+ * written line rides on an offer, so an errand with no money in it has none.
+ */
+const REQUIREMENT = MONEY ? scenario.REQUIREMENT : undefined;
 // The stage a sale spends on its figure is, without money, the two settling
 // the arrangement; its heading says so in the transcript and the log.
 if (!MONEY) STAGE_NAMES[5] = 'Settling the arrangement';
@@ -1013,6 +1040,26 @@ async function oneRun(
     // THE FIRST WORDS ARE A QUESTION, NOT A NUDGE. See FIRST_WORDS: a neutral
     // nudge gave two people who volunteer nothing nothing to say, and the
     // stage recorded zero messages in either direction.
+    // THE BUYER SAYS WHAT HE IS RELYING ON, ONCE, IN HIS OWN WORDS, before
+    // anything else is said between the two. His assistant is expected to put
+    // it to the seller's human as a written line without being told to
+    // (manual v85). The seller's first look, a few lines down, is where it
+    // arrives. The rounds are there for an assistant that asks first whether
+    // to put it in writing: he says yes.
+    const requirementFrom = turns.length;
+    const linesNow = async (): Promise<LineRow[]> =>
+      DRY
+        ? REQUIREMENT
+          ? [dryLine(REQUIREMENT.said)]
+          : []
+        : await db.linesOn(match!.id);
+    if (REQUIREMENT) {
+      await converse(sides.buyer, 3, {
+        opener: REQUIREMENT.said,
+        rounds: 3,
+        done: async () => (await linesNow()).some((l) => l.state !== 'withdrawn'),
+      });
+    }
     for (let round = 0; round < 3; round++) {
       for (const id of ['buyer', 'seller'] as SideId[]) {
         const opener = FIRST_WORDS[id][round];
@@ -1180,6 +1227,29 @@ async function oneRun(
     } else {
       record(checkMessagesLeft([], false));
     }
+    /** Per line id, whether it says what the buyer said, as finally decided. */
+    const lineCarries: Record<string, boolean> = {};
+    const judgeLines = async (lines: LineRow[]): Promise<MeaningDecisions> => {
+      let last: MeaningDecisions = {};
+      for (const l of lines) {
+        if (!l.text || !REQUIREMENT) continue;
+        const byWords = lineMatchesByWords(l.text, REQUIREMENT);
+        const m = await meaningOf(
+          [['line_says_requirement', byWords]],
+          [l.text],
+          'The assistant wrote one short line for the other person to confirm in writing. human_said_last is what its own human had said mattered.',
+          REQUIREMENT.said,
+        );
+        lineCarries[l.id] = holds(m.line_says_requirement, byWords);
+        if (l.state !== 'withdrawn') last = m;
+      }
+      return last;
+    };
+    if (REQUIREMENT) {
+      const lines = await linesNow();
+      const m = await judgeLines(lines);
+      record(checkLineAsked(3, lines, sides.buyer.actor.accountId, REQUIREMENT, m));
+    }
     await closeStageChecked();
 
     if (SCENARIO === 'report') {
@@ -1286,6 +1356,25 @@ async function oneRun(
     // through his assistant and accepts on his own page.
     // =====================================================================
     openStage(5);
+    /** Where the turns about an accepted offer begin, once one carries a record. */
+    let recordSaidFrom: number | undefined;
+    const recordMentioned = async (): Promise<void> => {
+      if (recordSaidFrom === undefined) return;
+      for (const id of ['seller', 'buyer'] as SideId[]) {
+        const said = turnsText(turns.slice(recordSaidFrom), { side: id, role: 'assistant' });
+        const joined = said.join('\n');
+        const emailed = RECORD_EMAILED.test(joined);
+        const m = await meaningOf(
+          [
+            ['said_record_emailed', emailed],
+            ['said_keep_record', emailed && KEEP_RECORD.test(joined)],
+          ],
+          said,
+          'An offer has been accepted and the deal is agreed. The same record of what was agreed has been emailed to both people. These are the assistant\u2019s replies to its human since.',
+        );
+        record(checkRecordMentioned(id, said, m));
+      }
+    };
     if (!MONEY) {
       // NO FIGURE, SO THE TWO OF THEM SETTLE THE ARRANGEMENT INSTEAD. Each
       // says the scenario's words for it — the looking side first, then the
@@ -1402,6 +1491,107 @@ async function oneRun(
           )
         : fail('S5.human_accepted', "acceptance was the seller human's own press.", `HTTP ${accepted.status}: ${accepted.body}`),
     );
+    // -----------------------------------------------------------------
+    // THE RECORD OF THE DEAL, AND THE WRITTEN LINE ON IT (migration 066).
+    // Read off the rows the accept wrote, before another word is said.
+    // -----------------------------------------------------------------
+    {
+      const both = { seller: sides.seller.actor.accountId, buyer: sides.buyer.actor.accountId };
+      const acceptedOffer = DRY
+        ? { ...offers[0], state: 'accepted-by-human', recordSha256: 'd'.repeat(64), updatedAt: new Date().toISOString() }
+        : (await db.offersOn(match.id)).find((o) => o.state === 'accepted-by-human');
+      const acceptedAtMs = acceptedOffer?.updatedAt ? db.pgTimeMs(acceptedOffer.updatedAt) : undefined;
+      // The two emails go out after the press is written down, one each, so
+      // their rows are given a little time to read 'sent'.
+      let emails: db.RecordEmailFacts[] = [];
+      if (DRY) {
+        emails = (['seller', 'buyer'] as SideId[]).map((id) => ({ accountId: both[id], status: 'sent', forThisOffer: true, createdAt: '' }));
+      } else if (acceptedOffer) {
+        for (let i = 0; i < 8; i++) {
+          emails = await db.recordEmailsFor(acceptedOffer.id, [both.seller, both.buyer], acceptedOffer.createdAt);
+          const sent = new Set(emails.filter((e) => e.forThisOffer && e.status === 'sent').map((e) => e.accountId));
+          if (sent.size >= 2) break;
+          await sleep(5_000);
+        }
+      }
+      const event =
+        DRY || !acceptedOffer || acceptedAtMs === undefined
+          ? { outcome: 'unread' as const, why: 'dry run' }
+          : await acceptEventFor(acceptedOffer.id, acceptedAtMs);
+      if (event.outcome !== 'found') log(`  the locked log's line about the accept was not read: ${event.why ?? event.outcome}`);
+      record(
+        checkRecordSentBoth({
+          ...(acceptedOffer ? { offer: { id: acceptedOffer.id, ...(acceptedOffer.recordSha256 ? { recordSha256: acceptedOffer.recordSha256 } : {}) } } : {}),
+          emails,
+          accounts: both,
+          // Found with no fingerprint in it reads as '', which is a mismatch.
+          ...(event.outcome === 'found' ? { consentEventSha256: event.recordSha256 ?? '' } : {}),
+        }),
+      );
+      if (acceptedOffer?.recordSha256) recordSaidFrom = sellerFigFrom;
+
+      if (REQUIREMENT) {
+        const lines = await linesNow();
+        if (DRY) for (const l of lines) Object.assign(l, { state: 'confirmed', answeredAt: new Date(Date.now() - 1000).toISOString(), answeredBy: both.seller, answeredVia: 'counter', answeredOn: 'offer-accept' });
+        record(
+          checkLineConfirmedByHuman({
+            lines,
+            sellerAccount: both.seller,
+            ...(acceptedAtMs !== undefined ? { acceptedAtMs } : {}),
+            toMs: db.pgTimeMs,
+          }),
+        );
+        await judgeLines(lines.filter((l) => !(l.id in lineCarries)));
+        const buyerSaid = turnsText(turns.slice(requirementFrom), { side: 'buyer', role: 'assistant' });
+        const quizMeaning = await meaningOf(
+          [['quizzed_for_requirements', QUIZZED_FOR_REQUIREMENTS.test(buyerSaid.join('\n'))]],
+          buyerSaid,
+          'The human told the assistant one thing they are relying on about what they are buying. These are the assistant\u2019s replies to its human from then until the deal was agreed.',
+          REQUIREMENT.said,
+        );
+        record(checkBuyerNotQuizzed(lines, REQUIREMENT, buyerSaid, lineCarries, quizMeaning));
+
+        // The record, built again, to see whether the one that went out lists the line.
+        const confirmed = lines.filter((l) => l.state === 'confirmed' && l.text).map((l) => l.text!);
+        let candidates: RecordCandidate[] = [];
+        let whyNot: string | undefined;
+        if (DRY) whyNot = 'a dry run builds no record';
+        else if (acceptedOffer && acceptedAtMs !== undefined) {
+          try {
+            const posting = await db.sellerPostingShown(match.id);
+            if (!posting) throw new Error('the seller\u2019s posting could not be read');
+            const namesShared = (await db.namesConsents(match.id)).length >= 2;
+            const ways = (sh: FactSheet) => [...new Set([sh.suburb, sh.locality, sh.locality.split(',')[0]?.trim()].filter((x): x is string => !!x))];
+            candidates = recordCandidates(
+              {
+                acceptedAtMs,
+                posting,
+                amount: acceptedOffer.amount,
+                ccy: acceptedOffer.ccy,
+                offeredBy: acceptedOffer.proposer === both.buyer ? 'buyer' : 'seller',
+                ...(acceptedOffer.note ? { note: acceptedOffer.note } : {}),
+                confirmed,
+                ...(namesShared
+                  ? {
+                      people: {
+                        buyer: { firstName: TONY.firstName, localities: ways(TONY) },
+                        seller: { firstName: ALEX.firstName, localities: ways(ALEX) },
+                      },
+                    }
+                  : {}),
+              },
+              await loadRecordBuilders(),
+            );
+          } catch (e) {
+            whyNot = `the record could not be built again here (${(e as Error).message.slice(0, 120)})`;
+          }
+        }
+        const listed = checkRecordListsLine(acceptedOffer?.recordSha256, candidates, confirmed, whyNot);
+        record(listed);
+        const hit = candidates.find((c) => c.sha256 === acceptedOffer?.recordSha256);
+        if (hit) recordBlocks.push({ run: runNo, sha256: hit.sha256, block: hit.block });
+      }
+    }
     const nextFrom = turns.length;
     for (const id of ['seller', 'buyer'] as SideId[]) await converse(sides[id], 5, { rounds: 2 });
     const nextTurns = turnsText(turns.slice(nextFrom), { role: 'assistant' });
@@ -1413,6 +1603,9 @@ async function oneRun(
     );
     record(checkWhatNext(nextSaid, nextMeaning));
     }
+    // Where the wrap-up is not run, the stage that agreed the deal is the
+    // last chance either assistant had to speak about the record.
+    if (LAST_STAGE < 6) await recordMentioned();
     await closeStageChecked();
     if (LAST_STAGE < 6) return finish();
 
@@ -1467,6 +1660,9 @@ async function oneRun(
         ? pass('S6.taken_down', "the seller's one-off posting was taken down once it was done.", 'nothing of the seller’s is still up')
         : fail('S6.taken_down', "the seller's one-off posting was taken down once it was done.", `${stillUp.length} posting(s) still live: ${stillUp.map((c) => c.state).join(', ')}`),
     );
+    // Read at the very end, so an assistant that says it in the wrap-up has
+    // said it. The id stays with stage 5, where the record was made.
+    await recordMentioned();
     await closeStageChecked();
     return finish();
   } catch (e) {
@@ -1647,6 +1843,17 @@ function dryMatch() {
   };
 }
 
+/** One written line, as a dry run pretends the buyer's assistant asked it. */
+function dryLine(text: string): LineRow {
+  return { id: 'dry-line', askedBy: 'dry-buyer', text, state: 'asked', createdAt: new Date().toISOString() };
+}
+
+/**
+ * Each record of a deal the run could build again with the stored
+ * fingerprint, kept so the series folder holds the words that went out.
+ */
+const recordBlocks: { run: number; sha256: string; block: string }[] = [];
+
 function dryToolLines(): ToolCallLine[] {
   const at = Date.now();
   return [
@@ -1680,6 +1887,8 @@ async function main(): Promise<number> {
   const scores: ScoreResult[] = [];
   const summaries: RunSummary[] = [];
   let cutShort = false;
+  /** Runs in which Jev never answered one meaning question. */
+  const jevAwayRuns: number[] = [];
 
   /**
    * A VOID IS NOT AN ATTEMPT, AND A BROKEN NETWORK IS NOT SIX FINDINGS.
@@ -1703,7 +1912,18 @@ async function main(): Promise<number> {
   for (let i = 1; i <= MAX_RUNS; i++) {
     const cast = castForRun(CASTS, i);
     log(`=== run ${i} of at most ${MAX_RUNS}: seller ${cast.seller}, buyer ${cast.buyer} ===`);
+    resetMeaningTally();
     const { result, turns } = await oneRun(i, cast);
+    const judge = meaningTally();
+    const away = DRY ? undefined : jevAwayAllRun(judge);
+    if (away) {
+      const bar = '!'.repeat(72);
+      console.log(`\n${bar}\nrun ${i}: ${away}\n${bar}\n`);
+      jevAwayRuns.push(i);
+    }
+    for (const b of recordBlocks.filter((r) => r.run === i)) {
+      writeFileSync(join(PRIVATE_DIR, `run-${i}-record.txt`), `${b.block}\n`, { mode: 0o600 });
+    }
 
     // The transcript, in the one shape the scorer can read back.
     const md = renderTranscript(
@@ -1769,7 +1989,7 @@ async function main(): Promise<number> {
       : [];
     writeFileSync(
       join(SERIES_DIR, `run-${i}.json`),
-      `${JSON.stringify({ ...result, scoreboard: score, jevShadow: shadow }, null, 2)}\n`,
+      `${JSON.stringify({ ...result, scoreboard: score, jevShadow: shadow, meaningJudge: judge }, null, 2)}\n`,
     );
 
     console.log(runTable(result));
@@ -1851,6 +2071,11 @@ async function main(): Promise<number> {
   );
   if (scores.some((s) => s.unavailable)) {
     notRun.push(`The speech rules could not be read on at least one run: ${scores.find((s) => s.unavailable)!.unavailable}.`);
+  }
+  if (jevAwayRuns.length) {
+    notRun.push(
+      `JEV WAS UNAVAILABLE FOR THE WHOLE OF RUN${jevAwayRuns.length > 1 ? 'S' : ''} ${jevAwayRuns.join(', ')}: every meaning check there was decided by its pattern alone.`,
+    );
   }
   if (cutShort) notRun.push('The series stopped at the first unclean run; the remaining runs were not attempted.');
 

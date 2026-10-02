@@ -44,6 +44,8 @@ export interface PressOutcome {
   body: string;
   /** What the page asked before it was pressed, where that matters. */
   asked?: boolean;
+  /** How many written lines the pressed page listed, where it listed any. */
+  linesShown?: number;
 }
 
 /**
@@ -84,17 +86,49 @@ export async function pressOneQuestion(
     return { status: ok ? 200 : 401, body: ok ? 'This browser is set up.' : 'set up failed' };
   }
   const needsPin = askBody.includes('name="pin"');
+  // A page that lists written lines names them in a hidden field, and its
+  // main button sends that field back. The person presses the page as it was
+  // drawn, so the harness sends what the page held.
+  const shown = linesShownOn(askBody);
   const res = await counterFetch(
     actor.jar,
     link,
-    form({ decision: 'yes', ...(needsPin ? { pin: actor.pin } : {}), ...fields }),
+    form({
+      decision: 'yes',
+      ...(needsPin ? { pin: actor.pin } : {}),
+      ...(shown ? { lines_shown: shown } : {}),
+      ...fields,
+    }),
   );
-  return {
+  const outcome: PressOutcome = {
     status: res.status,
     body: strip(await res.text()).slice(0, 300),
     asked: askBody.includes('name="first_name"'),
+    ...(shown ? { linesShown: shown.split(',').length } : {}),
   };
+  pressLog.push({ accountId: actor.accountId, link, status: outcome.status, linesShown: outcome.linesShown ?? 0, at: Date.now() });
+  return outcome;
 }
+
+/**
+ * WRITTEN LINES ON A PAGE (server src/domain/confirmLines.ts).
+ *
+ * Where the buyer has asked the seller's human to confirm something in
+ * writing, the seller's pages list those lines above the main button and
+ * carry their ids in one hidden field, `lines_shown`. The press confirms the
+ * lines the page listed and no others, so a press that leaves the field out
+ * is refused while a line is waiting. This reads the field off the page the
+ * person was shown. Undefined where the page lists none.
+ */
+export function linesShownOn(html: string): string | undefined {
+  const tag = html.match(/<input\b[^>]*\bname="lines_shown"[^>]*>/i)?.[0];
+  if (!tag) return undefined;
+  const value = tag.match(/\bvalue="([^"]*)"/i)?.[1]?.trim();
+  return value ? value : undefined;
+}
+
+/** Every page a simulated human pressed through a link, for the checks. */
+export const pressLog: { accountId: string; link: string; status: number; linesShown: number; at: number }[] = [];
 
 /**
  * Type a figure on the human's own offer page and send it.
@@ -124,12 +158,46 @@ export async function typeFigure(
 
 /** Accept a figure that is on the table, on the human's own main page. */
 export async function acceptOffer(actor: TestActor, offerId: string): Promise<PressOutcome> {
+  // READ THE PAGE, THEN PRESS IT. The accept page lists any written lines the
+  // buyer asked, and its button confirms them and accepts in one press. A
+  // person sees the page before pressing, so the harness opens it first and
+  // sends back the lines it listed.
+  const page = await counterFetch(actor.jar, `/approvals/offer/${encodeURIComponent(offerId)}`);
+  const shown = page.status === 200 ? linesShownOn(await page.text()) : undefined;
   const res = await counterFetch(
     actor.jar,
     '/approve',
-    form({ action: 'offer-accept', ref_id: offerId, decision: 'approve', pin: actor.pin }),
+    form({
+      action: 'offer-accept',
+      ref_id: offerId,
+      decision: 'approve',
+      pin: actor.pin,
+      ...(shown ? { lines_shown: shown } : {}),
+    }),
   );
-  return { status: res.status, body: strip(await res.text()).slice(0, 300) };
+  return {
+    status: res.status,
+    body: strip(await res.text()).slice(0, 300),
+    ...(shown ? { linesShown: shown.split(',').length } : {}),
+  };
+}
+
+/**
+ * Confirm what the buyer asked, on the seller's page of its own, reached from
+ * the main page. For a caller that wants the press without a link: the run
+ * itself leaves this to the link the assistant hands over.
+ */
+export async function confirmLines(actor: TestActor, matchId: string): Promise<PressOutcome> {
+  const page = await counterFetch(actor.jar, `/approvals/confirm/${encodeURIComponent(matchId)}`);
+  const html = await page.text();
+  const shown = page.status === 200 ? linesShownOn(html) : undefined;
+  if (!shown) return { status: page.status, body: strip(html).slice(0, 300), linesShown: 0 };
+  const res = await counterFetch(
+    actor.jar,
+    '/approve',
+    form({ action: 'lines-confirm', ref_id: matchId, decision: 'approve', pin: actor.pin, lines_shown: shown }),
+  );
+  return { status: res.status, body: strip(await res.text()).slice(0, 300), linesShown: shown.split(',').length };
 }
 
 /**
