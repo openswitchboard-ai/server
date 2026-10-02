@@ -409,8 +409,9 @@ export async function bootstrapActor(firstName: string, locality: string): Promi
   await counterLogin(jar, email);
   const pin = await ensurePin(jar);
   // The onboarding question sits between the PIN and the pages this actor is
-  // about, so it is answered here, once, for every suite.
-  await completeOnboarding(jar);
+  // about, so it is answered here, once, for every suite. The page saves what
+  // it is given, so it is given this actor's own name and place.
+  await completeOnboarding(jar, { firstName, locality });
   const accessToken = await oauthFlow(jar);
   return { email, accountId, pin, accessToken, jar };
 }

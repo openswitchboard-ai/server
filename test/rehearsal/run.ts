@@ -1562,6 +1562,7 @@ async function oneRun(
             if (!posting) throw new Error('the seller\u2019s posting could not be read');
             const namesShared = (await db.namesConsents(match.id)).length >= 2;
             const ways = (sh: FactSheet) => [...new Set([sh.suburb, sh.locality, sh.locality.split(',')[0]?.trim()].filter((x): x is string => !!x))];
+            const builders = await loadRecordBuilders();
             candidates = recordCandidates(
               {
                 acceptedAtMs,
@@ -1580,8 +1581,36 @@ async function oneRun(
                     }
                   : {}),
               },
-              await loadRecordBuilders(),
+              builders,
             );
+            // THE FIXTURE'S OWN NAME AND TOWN, TRIED AS WELL. Since onboarding
+            // stopped being skippable (2 October 2026) bootstrapActor answers
+            // it with the integration fixture's defaults, and a run's two
+            // accounts then hold those in place of the fact sheets' names.
+            // A record that names them is still the record; the log says so,
+            // because the names step then shared the wrong names too.
+            if (namesShared) {
+              const fixture = { firstName: 'Test', localities: ['Hobart, Tasmania, Australia'] };
+              candidates.push(
+                ...recordCandidates(
+                  {
+                    acceptedAtMs,
+                    posting,
+                    amount: acceptedOffer.amount,
+                    ccy: acceptedOffer.ccy,
+                    offeredBy: acceptedOffer.proposer === both.buyer ? 'buyer' : 'seller',
+                    ...(acceptedOffer.note ? { note: acceptedOffer.note } : {}),
+                    confirmed,
+                    people: { buyer: fixture, seller: fixture },
+                  },
+                  builders,
+                ),
+              );
+              const hitNow = candidates.find((c) => c.sha256 === acceptedOffer.recordSha256);
+              if (hitNow && /^(Buyer|Seller): Test, Hobart/m.test(hitNow.block)) {
+                log('  RIG FAULT: the record names both people "Test, Hobart, Tasmania, Australia", the integration fixture\u2019s defaults, in place of the fact sheets\u2019 names');
+              }
+            }
           } catch (e) {
             whyNot = `the record could not be built again here (${(e as Error).message.slice(0, 120)})`;
           }

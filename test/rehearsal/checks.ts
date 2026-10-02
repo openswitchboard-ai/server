@@ -1240,7 +1240,10 @@ export function checkRecordMentioned(side: 'seller' | 'buyer', said: string[], m
   const ds = [meaning.said_record_emailed, meaning.said_keep_record];
   if (emailed && keep) {
     const quote = said.find((t) => RECORD_EMAILED.test(t)) ?? said.find((t) => /record|e-?mail/i.test(t)) ?? '';
-    return withMeaning(pass(id, says, `it said so${quote ? `: "${sentenceAround(quote, /record|e-?mail/i)}"` : ''}`), ds);
+    // The sentence the email is in, where the pattern found one: an earlier
+    // "on the record" in the same turn is about the line and is the wrong quote.
+    const where = RECORD_EMAILED.test(quote) ? RECORD_EMAILED : /e-?mail|inbox|record/i;
+    return withMeaning(pass(id, says, `it said so${quote ? `: "${sentenceAround(quote, where)}"` : ''}`), ds);
   }
   const missed = !emailed ? 'never said a record of the deal was emailed' : 'said a record was emailed and never said to keep it';
   return withMeaning(
