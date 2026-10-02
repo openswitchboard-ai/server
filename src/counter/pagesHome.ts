@@ -1163,12 +1163,16 @@ const HEARS_VIA_OPTIONS: ModeOption[] = [
  * before their assistant is authorised.
  *
  * It asks the single thing the software cannot work out for itself (whether
- * email goes out at all) and, while it has their attention, offers the first
- * name and suburb they would share. Both of those may be left blank: the
- * names step asks for them again when it matters.
+ * email goes out at all) and the first name and suburb they would share.
  *
- * "Skip for now" leaves hears_via on 'email', which is the safe answer: a
- * person nobody has told us about gets told rather than left in silence.
+ * NOTHING ON IT CAN BE SKIPPED (founder, 2 October 2026). The page used to
+ * carry a "Skip for now" button and let both boxes go blank, on the reasoning
+ * that the names step would ask again when it mattered. But the suburb is
+ * what an assistant posts from, and how a person hears about things decides
+ * whether they are ever told anything, so an account that skipped the page
+ * started life with neither. All three are asked for here, once, and the
+ * account goes no further until they are given. The names step still asks an
+ * older account whose boxes are empty.
  */
 export interface HelloView {
   hearsVia: HearsVia;
@@ -1253,15 +1257,10 @@ ${errBox(error)}
   </div>
   <h2>What you share on a match</h2>
   <p class="small muted">A first name and a suburb, shared only after both
-  people say yes. You can leave these for now.</p>
-  ${plainSharedFields({ firstName: v.firstName, locality: v.locality }, { optional: true })}
+  people say yes.</p>
+  ${plainSharedFields({ firstName: v.firstName, locality: v.locality })}
   <input type="hidden" class="tz" name="timezone" value="${esc(v.timezone ?? '')}">
   <button type="submit">Save and carry on</button>
-</form>
-<form method="POST" action="/hello">
-  <input type="hidden" name="skip" value="yes">
-  <input type="hidden" class="tz" name="timezone" value="${esc(v.timezone ?? '')}">
-  <button type="submit" class="secondary">Skip for now</button>
 </form>
 ${CADENCE_SCRIPT}
 ${ZONE_SCRIPT}`);

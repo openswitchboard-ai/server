@@ -218,8 +218,22 @@ export async function ensurePin(jar: Jar, pin = TEST_PIN): Promise<string> {
  * Idempotent: an account already past the question is redirected on, which is
  * the same 303 a fresh answer gets.
  */
-export async function completeOnboarding(jar: Jar): Promise<void> {
-  const res = await counterFetch(jar, '/hello', form({ hears_via: 'email' }));
+export async function completeOnboarding(
+  jar: Jar,
+  // The page cannot be skipped (2 October 2026): how they hear, a first name
+  // and a suburb are all asked for. A fixture that does not care is somebody
+  // called Test, in a town the gazetteer knows.
+  who: { firstName?: string; locality?: string } = {},
+): Promise<void> {
+  const res = await counterFetch(
+    jar,
+    '/hello',
+    form({
+      hears_via: 'email',
+      first_name: who.firstName ?? 'Test',
+      locality: who.locality ?? 'Hobart, Tasmania, Australia',
+    }),
+  );
   if (res.status !== 303) throw new Error(`onboarding failed: ${res.status}`);
   // The page redirects to whatever is still owed, so being sent back to an
   // earlier step means nothing was stamped and every page read after this

@@ -1264,7 +1264,12 @@ describe('the onboarding question, once', () => {
     expect(page.body).toContain('Through my assistant.');
     expect(page.body).toContain('By email.');
     expect(page.body).toContain('First name');
-    expect(page.body).toContain('>Skip for now</button>');
+    // Nothing on it can be skipped, and both boxes are asked for.
+    expect(page.body).not.toContain('Skip for now');
+    expect(page.body).not.toContain('name="skip"');
+    expect(page.body).not.toContain('You can leave these for now');
+    expect(page.body).toMatch(/name="first_name"[^>]*required/);
+    expect(page.body).toMatch(/name="locality"[^>]*required/);
     // The cadence rides with the always-on answer, in words rather than minutes.
     expect(page.body).toContain('How often should it check?');
     expect(page.body).toContain('Twice a day');
@@ -1290,16 +1295,27 @@ describe('the onboarding question, once', () => {
     expect((await inject('GET', '/hello')).statusCode).toBe(303);
   });
 
-  it('skipping leaves them on email, which is the safe answer', async () => {
+  it('cannot be skipped: a skip, or an empty form, saves nothing and asks again', async () => {
     world.onboardedAt = null;
     world.firstName = '';
     world.locality = '';
-    const r = await inject('POST', '/hello', { skip: 'yes', hears_via: 'assistant' });
-    expect(r.statusCode).toBe(303);
-    expect(world.savedHearsVia).toEqual([]);
-    expect(world.hearsVia).toBe('assistant'); // the world's own starting value
-    expect(world.firstName).toBe('');
-    expect(world.onboardedAt).not.toBeNull();
+    for (const body of [
+      { skip: 'yes', hears_via: 'assistant' },
+      { skip: 'yes' },
+      { hears_via: 'email' },
+      { first_name: 'Lachlan', locality: 'Weston' },
+      {},
+    ]) {
+      const r = await inject('POST', '/hello', body);
+      expect(r.statusCode, JSON.stringify(body)).toBe(400);
+      expect(r.body, JSON.stringify(body)).toContain('<h1>How do you hear about things?</h1>');
+      expect(world.savedHearsVia, JSON.stringify(body)).toEqual([]);
+      expect(world.firstName, JSON.stringify(body)).toBe('');
+      expect(world.onboardedAt, JSON.stringify(body)).toBeNull();
+    }
+    // How they hear is asked for by name when it is the thing missing.
+    const noChoice = await inject('POST', '/hello', { first_name: 'Lachlan', locality: 'Weston' });
+    expect(noChoice.body).toContain('Pick how you hear about things to carry on.');
   });
 
   it('half a shared profile is refused, with the page still asking', async () => {
@@ -1319,6 +1335,8 @@ describe('the onboarding question, once', () => {
     const r = await inject('POST', '/hello', {
       hears_via: 'assistant',
       check_every_minutes: '720',
+      first_name: 'Lachlan',
+      locality: 'Weston',
     });
     expect(r.statusCode).toBe(303);
     expect(world.savedArrangement).toEqual({ runs_on_its_own: true, check_every_minutes: 720 });
@@ -1328,7 +1346,13 @@ describe('the onboarding question, once', () => {
     world.onboardedAt = null;
     world.runsOnItsOwn = undefined;
     world.savedArrangement = undefined;
-    await inject('POST', '/hello', { hears_via: 'email', check_every_minutes: '720' });
+    const r = await inject('POST', '/hello', {
+      hears_via: 'email',
+      check_every_minutes: '720',
+      first_name: 'Lachlan',
+      locality: 'Weston',
+    });
+    expect(r.statusCode).toBe(303);
     expect(world.savedArrangement).toBeUndefined();
   });
 
@@ -1338,10 +1362,13 @@ describe('the onboarding question, once', () => {
     world.onboardedAt = null;
     world.runsOnItsOwn = true;
     world.savedArrangement = undefined;
-    await inject('POST', '/hello', {
+    const r = await inject('POST', '/hello', {
       hears_via: 'assistant',
       check_every_minutes: '180',
+      first_name: 'Lachlan',
+      locality: 'Weston',
     });
+    expect(r.statusCode).toBe(303);
     expect(world.savedArrangement).toBeUndefined();
   });
 

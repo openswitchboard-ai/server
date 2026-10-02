@@ -764,12 +764,12 @@ describe('the area box asks for a suburb without insisting on one', () => {
     }
   });
 
-  it('onboarding asks for neither box, and offers a way past the whole page', () => {
+  it('onboarding asks for both boxes, and offers no way past the page', () => {
     const hello = chome.helloPage({ hearsVia: 'email', firstName: '', locality: '', timezone: null });
-    expect(hello).not.toMatch(/name="first_name"[^>]*required/);
-    expect(hello).not.toMatch(/name="locality"[^>]*required/);
-    expect(hello).toContain('<input type="hidden" name="skip" value="yes">');
-    expect(hello).toContain('>Skip for now</button>');
+    expect(hello).toMatch(/name="first_name"[^>]*required/);
+    expect(hello).toMatch(/name="locality"[^>]*required/);
+    expect(hello).not.toContain('name="skip"');
+    expect(hello).not.toContain('Skip for now');
     // The profile page still wants both.
     const profilePage = chome.sharedProfilePage({ firstName: '', locality: '' });
     expect(profilePage).toMatch(/name="first_name"[\s\S]*?required>/);

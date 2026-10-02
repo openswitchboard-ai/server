@@ -1443,19 +1443,39 @@ in on this device and lets you approve what is waiting.</p>
         return reply.redirect(await nextStep(s.accountId!, s), 303);
       }
       const b: any = req.body ?? {};
-      const skipped = String(b.skip ?? '') === 'yes';
-      // The browser's zone, filled into a hidden box. Recorded on a skip too
-      // (26 September 2026): it is not a choice the person makes, and an
-      // account made through an assistant's sign-in that skipped this page
-      // was left with no clock at all. A bad or missing value is simply not
-      // recorded; the settings page has the picker.
+      // The browser's zone, filled into a hidden box. It is not a choice the
+      // person makes, so it is recorded whatever else is wrong with the form.
+      // A bad or missing value is simply not recorded; the settings page has
+      // the picker.
       const tz = String(b.timezone ?? '').trim();
       if (isValidTimeZone(tz)) await setTimezone(s.accountId!, tz);
-      if (!skipped) {
-        const want = String(b.hears_via ?? '');
-        if (want === 'email' || want === 'assistant') {
-          await setHearsVia(s.accountId!, want, 'counter');
-        }
+      // NOTHING HERE CAN BE SKIPPED (2 October 2026, see helloPage). How they
+      // hear, a first name and a suburb are all asked for, and all checked
+      // BEFORE anything is saved, so a refused form leaves the account exactly
+      // as it was and the page asking again.
+      const want = String(b.hears_via ?? '');
+      const firstName = String(b.first_name ?? '').trim();
+      const locality = String(b.locality ?? '').trim();
+      const askAgain = async (error: string) =>
+        html(
+          reply,
+          home.helloPage(
+            {
+              hearsVia: want === 'assistant' || want === 'email' ? want : await getHearsVia(s.accountId!),
+              firstName,
+              locality,
+            },
+            error,
+          ),
+          400,
+        );
+      if (want !== 'email' && want !== 'assistant') {
+        return askAgain('Pick how you hear about things to carry on.');
+      }
+      const profile = validateSharedProfile({ firstName, locality });
+      if (!profile.ok) return askAgain(profile.error);
+      {
+        await setHearsVia(s.accountId!, want, 'counter');
         // An always-on agent leaves this page with a rhythm to work to, rather
         // than an empty arrangement its agent has to negotiate from scratch.
         // Only ever onto an EMPTY arrangement: an account that already has one
@@ -1474,24 +1494,7 @@ in on this device and lets you approve what is waiting.</p>
             if (checked.ok) await saveArrangement(s.accountId!, checked.value, 'counter');
           }
         }
-        const firstName = String(b.first_name ?? '').trim();
-        const locality = String(b.locality ?? '').trim();
-        // Both boxes or neither. Half a shared profile shares nothing, and the
-        // names step would only ask for the other half later anyway.
-        if (firstName || locality) {
-          const checked = validateSharedProfile({ firstName, locality });
-          if (!checked.ok) {
-            return html(
-              reply,
-              home.helloPage(
-                { hearsVia: await getHearsVia(s.accountId!), firstName, locality },
-                checked.error,
-              ),
-              400,
-            );
-          }
-          await saveSharedProfile(s.accountId!, checked.value, 'counter', cfg);
-        }
+        await saveSharedProfile(s.accountId!, profile.value, 'counter', cfg);
       }
       await ops.markOnboarded(s.accountId!);
       return reply.redirect(await nextStep(s.accountId!, s), 303);
