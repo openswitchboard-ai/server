@@ -1,5 +1,5 @@
 /**
- * N4 (docs/release-readiness.md §1.2): an accept is only ever recorded from
+ * N4: an accept is only ever recorded from
  * the human's own press. acceptOfferByHuman checks recorded_via itself, the
  * ops queue's accept op is refused, and the database constraint says the same.
  */

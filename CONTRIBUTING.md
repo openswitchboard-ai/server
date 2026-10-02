@@ -35,8 +35,9 @@ wasted effort if you have one. Expect most to be closed with a pointer to an
 issue instead.
 
 Anything that does get accepted requires a signed CLA — see [CLA.md](CLA.md).
-It keeps copyright consolidated with the project, which is what makes future
-relicensing or dual-licensing possible. A bot asks for it on your first pull
+You keep your copyright; the CLA gives the project a licence to your
+contribution that includes the right to relicense it, which is what makes
+future relicensing or dual-licensing possible. A bot asks for it on your first pull
 request, and signing is one comment.
 
 ## Running the checks

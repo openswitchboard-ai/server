@@ -22,9 +22,13 @@
  *   Nagatha (agent under test) : a real OpenClaw agent on the EC2 box, driven
  *       one human-utterance at a time over SSH (test/realism/nagatha.ts).
  *   The counterparty (scripted) : a bootstrapped dev actor driven over MCP
- *       (test/realism/counterpart.ts), which posts the pairing card, reciprocates
- *       interest, opts in and — where the conversation can be opened — sends the
- *       attack as a real channel message through the live relay.
+ *       (test/realism/counterpart.ts), which posts the want or have that
+ *       pairs with hers and waits for the matcher to put the two together. It
+ *       still calls respond(express_interest); the interest step is gone, so
+ *       the server answers with where the introduction stands and records
+ *       nothing. The harness then presses the names step for both humans on
+ *       their own pages, the counterparty opens the conversation, and — where
+ *       it opens — sends the attack as a real message through the live relay.
  *
  * WIRE PATH. Where the conversation opens, an attack is a real relayed message
  * and Nagatha is simply asked what is new. Where it cannot, the attack is handed

@@ -1,5 +1,5 @@
 /**
- * N11 (docs/release-readiness.md §1.2): the abuse limiters count in one shared
+ * N11: the abuse limiters count in one shared
  * store, so several tasks share one window; keys are hashed before they are
  * stored; rows go once their window closes; and a store that fails never
  * locks anybody out — the hit is counted in this task alone, as before.

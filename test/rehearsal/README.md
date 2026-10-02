@@ -6,9 +6,13 @@ Two real assistants, each working for a different human, on the **dev**
 switchboard. One human says one loose, ordinary sentence in his own words and
 then answers whatever his assistant asks — truthfully, briefly, volunteering
 nothing. The other asks for advice first and then states his want. The run goes
-from there through posting, the introduction and names, the conversation,
-photos, the figure and wrapping up — and every step is checked against what the
-manual asks and what the database says happened.
+from there through six stages: posting; the introduction and names; the
+conversation, which includes the contact step (contact details go on the
+contact page and stay out of the chat) and the buyer's assistant asking a
+written line; photos; the figure, where the seller's human confirms the
+written line by their own press and the record of the deal is sent to both
+people and lists that line; and wrapping up. Every step is checked against
+what the manual asks and what the database says happened.
 
 **The scenario is not in this repository.** The fact sheets, the opening lines
 and the hand-written meaning examples are our evaluation data and live in a
@@ -99,7 +103,7 @@ npx tsx test/rehearsal/run.ts --dry --stage 6 --runs 1   # the orchestration, fr
 | --- | --- |
 | `AWS_PROFILE=openswitchboard`, `AWS_REGION=us-east-1` | the dev database (RDS Data API), Bedrock for the simulated humans, Secrets Manager for the scorer's key, CloudWatch for the tool-call log |
 | `NAGATHA_HOST`, `NAGATHA_KEY` | the OpenClaw box and the key that opens it |
-| `REHEARSAL_CLAUDE_CONFIG_DIR` | a directory holding nothing but this rig's own Claude Code login (see below) |
+| `REHEARSAL_CLAUDE_CONFIG_DIR` | optional: a directory the Claude driver reuses as `CLAUDE_CONFIG_DIR` in place of a fresh one per run. The driver runs the CLI in bare mode, which reads no login from it; authentication is Bedrock on the run's AWS credentials (see "Claude Code as the third assistant") |
 | `DUET_B_HOST`, `DUET_B_KEY` | the same box; Bilby lives in its own OpenClaw home |
 | `DUET_B_PROFILE=bilby` | which profile is Bilby |
 | `OSB_RATELIMIT_BYPASS` | **read for you.** The suite fetches it from SSM `/osb/dev/ratelimit-bypass` inside the process and puts it where `test/integration/helpers.ts` reads it. It is **never printed**, never written to a report and never passed on a command line. Set it yourself only if you have a reason to |
@@ -123,12 +127,17 @@ The suite **refuses to run against anything but dev**: every URL is checked for
    start while one is still standing. The account ids live in
    `test/rehearsal/.ledger.json`; that file holds account ids and nothing else.
 2. **Mints two fresh humans** (`bootstrapActor`) and an agent key each.
-3. **Deep-cleans both assistants.** `~/osb-deep-clean.sh <dir> <unit>` on the
-   box — the *deep* clean, not the older reset in `test/adversary/box.ts`, which
-   misses `workspace/memory/.dreams`, the state database's memory rows, cron
+3. **Restores both assistants to a baseline.** `~/osb-restore.sh <dir> <unit>`
+   on the box lays each OpenClaw profile back down from a baseline tarball
+   (`box.ts`). That covers what the older reset in `test/adversary/box.ts`
+   misses: `workspace/memory/.dreams`, the state database's memory rows, cron
    jobs the agent made for itself and `workspace/skills/switchboard-*` skills it
-   wrote about the switchboard after reading the manual once. The run's key then
-   goes over **stdin**, never on a command line.
+   wrote about the switchboard after reading the manual once. The scripts
+   installed on the box are in `test/rehearsal/box/`: `osb-restore.sh` (run
+   before every run), `osb-snapshot.sh` (run by hand to take a new baseline)
+   and `osb-blank-key.py` (blanks the agent key in a profile's config so no
+   baseline carries one). The run's key then goes over **stdin**, never on a
+   command line.
 4. **Drives the errand**, one human utterance at a time, with the human
    simulated by a Haiku-class model held to a fact sheet
    (the scenario; see `data.ts`). When the simulated human is handed a link it answers
@@ -226,10 +235,11 @@ pattern's, for a person to label the disagreements.
   and does not fail anybody for it.
 - **Claude Code's authentication.** The driver isolates the working directory,
   `CLAUDE_CONFIG_DIR`, settings sources and MCP servers, so no CLAUDE.md, no
-  memory and no other MCP server can leak into a run. It does **not** isolate
-  who the CLI is signed in as: turns are billed to whoever this machine is
-  signed in as, and a managed/policy settings file still applies. There is no
-  way around that from here.
+  memory and no other MCP server can leak into a run. Turns go through
+  Bedrock by default and are billed to the AWS account behind the run's
+  `AWS_PROFILE`; with `REHEARSAL_CLAUDE_BEDROCK=0` they are billed to the
+  `ANTHROPIC_API_KEY` in the environment. The CLI's own sign-in is not used. A
+  managed/policy settings file on the machine still applies.
 - **The report stage.** `--scenario report` reaches it and reports **"not
   implemented"** rather than a fake pass. The page and `fileReport` are mapped
   (`POST /a/:token` with `decision`, `reason`, `pin`; `src/safety/reports.ts`)

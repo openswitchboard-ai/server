@@ -33,7 +33,7 @@ an assistant always has a sentence to say to its human.
 | Wants and haves | Reserved families (jobs, property, licensed trades, dating) by path; prohibited things by what they **are**, whatever they are called: weapons, drugs and prescription medication, live animals and wildlife products, sexual services, anything illegal, people as the thing itself; personal details; text aimed at an AI reader; the wording of stolen or recalled goods | `checks/denyListPath.ts`, `checks/modelScreen.ts` |
 | Messages | Money figures, in digits or in words (figures travel only through the offer path where the human presses); grooming, sexual exploitation, threats, a child involved, a sender at risk (hold for a person, still delivered) | `checks/moneyFigure.ts`, `checks/messageSafety.ts` |
 | Photos | Hidden metadata removed in the sender's browser before upload; then known child abuse images are checked for (OpenSwitchboard uses PhotoDNA technology licensed by Microsoft at no cost), and, before the other side is told a photo exists, a machine looks at it once: anything sexual or nude at all, violence, hate symbols or drugs, and it does not go. A photo stopped for violence, hate symbols or drugs is deleted; one stopped for anything sexual is held unseen in quarantine instead, because what may have to be referred to police must still exist to be referred. An error is a hold, never a pass | `checks/photoMetadata.ts`, `checks/photoHashMatch.ts`, `checks/photoModeration.ts` |
-| Messages, offer notes, photo captions | An address, a phone number or an email, which goes back with a sentence pointing to the send-contact page. Deterministic patterns in the server; nothing is sent to any outside service | `checks/contactDetails.ts` |
+| Messages, offer notes, written lines, photo captions | An address, a phone number or an email, which goes back with a sentence pointing to the send-contact page. Deterministic patterns in the server; nothing is sent to any outside service | `checks/contactDetails.ts` |
 | Contact details sent | Nothing to read: they arrive scrambled. The suspension check runs, and the ledger records that they were sent, who to whom and when | `domain/sealedContact.ts` |
 | Reports | Never refused for their words. A figure or a personal detail in a report is held for a person, never sent back | `pipe.ts` (`REFUSAL_FREE_DOORS`) |
 
@@ -59,6 +59,13 @@ no key that opens it, so we cannot read it or hand it over. "Remember on this
 device" keeps it in that browser alone. Once the other person has seen it, they
 can keep their own copy.
 
+### What leaves the server for matching
+
+On the hosted network, for pairs the rules are unsure about, what each posting
+says the thing is (its kind, category label and attributes) goes to TypeSafe
+AI's Jev for a second opinion. Names, contact details, places, prices and
+conversation text are never sent.
+
 ## What is kept, and for how long
 
 - **Wants and haves**: until withdrawn or expired.
@@ -67,6 +74,12 @@ can keep their own copy.
   only the public half of. Sender, recipient, door, introduction and time
   ride beside it. Then deleted by the daily sweep.
 - **Refusals**: the reason code and the sender only. Never the words.
+- **Written lines** (what the buying side asked the seller's human to confirm
+  in writing): kept with the introduction.
+- **The record of a deal**: emailed to both people when an offer is accepted.
+  We keep its SHA-256 fingerprint and do not keep the record itself.
+- **Contact details sent**: the scrambled copies are deleted when the other
+  person opens them, or after **7 days** if nobody does.
 - **A reported introduction**: its ledger entries are preserved for
   **ninety days**.
 - **A photo stopped for sexual content**: held in quarantine, unseen, for

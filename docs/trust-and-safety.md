@@ -59,7 +59,7 @@ person that the switchboard has not looked at and cannot account for.*
 | Prohibited, by meaning | Weapons, drugs, prescription meds, live animals (lost and found pets going home excepted, on their own shelf and with no money), wildlife, sexual services, anything illegal, regardless of category name | Model classifier against the deny list's reason codes; the path glob stays as the cheap first pass | Postings, amendments |
 | PII | Names, emails, phones, street addresses, handles, coordinates | Existing model screen | Postings |
 | Money figures | Digits, symbols, spelled amounts, price phrasing | Existing `moneyInWords` | Messages |
-| Contact details in the words | An address (street number, name, street type; PO box) or a phone number (leading + or 0, 1300/1800, the 3-3-4 shape, eight spelled digits). Times, dates, prices, quantities, sizes, model numbers and a suburb on its own pass | `checks/contactDetails.ts` over `domain/contactInWords.ts`; deterministic, in-house, no model and nothing sent to any outside service. A refusal points at the send-contact page and keeps nothing of the words | Messages, offer notes (captions on the photo page) |
+| Contact details in the words | An address (street number, name, street type; PO box), a phone number (leading + or 0, 1300/1800, the 3-3-4 shape, eight spelled digits) or an email address. Times, dates, prices, quantities, sizes, model numbers and a suburb on its own pass | `checks/contactDetails.ts` over `domain/contactInWords.ts`; deterministic, in-house, no model and nothing sent to any outside service. A refusal points at the send-contact page and keeps nothing of the words | Messages, offer notes, written lines (`domain/confirmLines.ts`, through the offer-words door), captions on the photo page |
 | Injection | Text aimed at an AI reader | Existing model screen | Postings |
 | Stolen / recalled markers | Existing | Existing model screen | Postings |
 | Sexual content | Nudity and sexual imagery of any kind, and violence, hate symbols and drugs alongside it | Rekognition `DetectModerationLabels` on the uploaded object at the send press, before the other side is told it exists, `MinConfidence` 50. Refused on any of these top-level labels, in both the old and the current taxonomy names: Explicit, Explicit Nudity, Non-Explicit Nudity of Intimate parts and Kissing, Suggestive, Sexual Activity, Swimwear or Underwear, Violence, Visually Disturbing, Graphic Violence Or Gore, Hate Symbols, Drugs & Tobacco, Drugs, Tobacco. Alcohol, Gambling and Rude Gestures are deliberately not refused: a bottle of wine is a thing somebody may lawfully be handing over. A refusal keeps the reason code alone; an error is a hold, never a pass. WHAT HAPPENS TO THE BYTES DEPENDS ON THE FAMILY. A refusal on violence, hate or drugs deletes the object, as before. A refusal on any of the SEXUAL labels does not: the object is copied to `conversation-photos/quarantine/<introduction>/<name>` in the same bucket, the original is deleted, and a `photo_quarantine` row is written (migration 038) — held ninety days, status `held`. The reason is s 474.25 of the Criminal Code (Cth): a host that becomes aware of child abuse material must refer it to the Australian Federal Police, and Rekognition says "Explicit", never "a child". Deleting on sight destroys the referrable thing, fastest in exactly the cases where that is worst. A copy that fails leaves the original where it is and logs `{event:'photo-quarantine-failed', match_id}` — nothing is ever deleted that could not first be copied. The operator gets one line, `{event:'photo-quarantined', quarantine_id, match_id}`, with no key and no label; the sender's assistant reads the same plain sentence either way and nothing about quarantine reaches any user. A person decides with `scripts/safety/quarantine.mts`, which displays and fetches no image: `--cleared` deletes the object, `--referred` marks it and keeps it forever. The daily sweep takes only `cleared` rows past expiry; a `held` row past ninety days is logged as overdue and left alone, and a `referred` row is never swept | Photos |
@@ -319,6 +319,13 @@ Act and the Crimes Act can reach us.
   law need is kept, and the rest is erased.
 - Postings and introductions: kept as records after withdrawal or expiry
   (`expireDueCards` marks them EXPIRED; nothing deletes cards or matches).
+- Written lines (`confirm_lines`, migration 066): kept with the introduction,
+  as offers are.
+- The record of a deal: emailed to both people at acceptance. Its SHA-256
+  fingerprint is kept (`offers.receipt_sha256`, and in the consent log beside
+  the press); the record itself is not kept.
+- Sealed contact copies: deleted when opened, or at 7 days unopened
+  (`SEALED_TTL_DAYS`, `src/domain/sealedContact.ts`).
 - Consent log: WORM bucket, Object Lock governance two years, no expiry after.
 - Ledger entries: thirty days; ninety where a report (`REPORT_PRESERVE_DAYS`)
   or a safety review (`REVIEW_PRESERVE_DAYS`) preserved them; longer under a
@@ -403,7 +410,7 @@ Addresses, phone numbers and emails are the one thing the switchboard carries wi
 being able to read. The sender types them on their own page; their browser
 seals one copy per browser key the recipient has registered (ECDH P-256,
 HKDF-SHA-256, AES-256-GCM, introduction and key id as associated data,
-plaintext padded to 256 bytes). The private keys are non-extractable and live
+plaintext padded to a multiple of 256 bytes). The private keys are non-extractable and live
 in each browser's IndexedDB. The send door (`contact_send`) accepts scrambled
 copies and nothing else; the suspension check runs and the ledger records the
 send with no body. The recipient's page takes the copy for its own key, and
@@ -418,8 +425,9 @@ money does. When somebody opens a copy on an account with more than one
 receiving browser, a notice goes out, and the other browsers say it was opened
 elsewhere and when. Where the recipient has no browser set up yet, their
 assistant is handed a setup page and the sender's is told when it is ready.
-The whole of it sits behind `SEALED_CONTACT` (on in dev, off in prod until the
-founder switches it on); off, the message doors keep the older rule.
+The whole of it sits behind `SEALED_CONTACT` (unset: on in dev, off in prod).
+The hosted network has had it on since 2 October 2026; off, the message doors
+keep the older rule.
 
 What this does not do: the scrambling page is served by this server, so a
 server changed to lie could serve a page that reads the details as they are

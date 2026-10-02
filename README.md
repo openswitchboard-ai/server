@@ -71,11 +71,12 @@ dynamic client registration, rotated refresh tokens, RFC 8414 and RFC 9728
 metadata. Tokens are opaque, sha256-hashed at rest, and bound to one account.
 
 **3. Domain core** — Postgres (Aurora Serverless v2 with pgvector), envelope
-encryption with per-account KMS data keys, TTL expiry, per-token quotas, and an
+encryption with per-account KMS data keys, TTL expiry, per-account quotas, and an
 LLM screening pipeline on Bedrock. Every decrypt writes a WORM audit line to the
 consent-log bucket before plaintext is returned. A published want or have stays
-`PENDING_SCREENING` until screening passes; rejects become `SCREENING_REJECTED`
-with the reason logged internally.
+`PENDING_SCREENING` until screening passes; rejects become `SCREENING_REJECTED`,
+and the owner is told the reason in plain words: their assistant reads it on
+`list_intents` and they read it on their own page.
 
 ### Product rules enforced server-side
 
@@ -87,14 +88,32 @@ These are the invariants worth reading the code to check:
 - The names step (`intro.mutual`: first name and suburb) is returned only when
   both humans' opt-in consent tokens exist. The gate queries `consent_tokens` directly.
   Those tokens are written by a human's own press and nothing else: `respond(opt_in)`
-  records nothing at all and answers `CONSENT_REQUIRED` carrying the single-use link
-  that human presses, whether or not a first name and area are already on file.
+  records nothing at all. It answers `CONSENT_REQUIRED` carrying the single-use link
+  that human presses, or, if they have already pressed, with where things stand
+  and no link.
 - The only offer-accept state reachable through any agent API is
   `awaiting-human`. `accepted-by-human` is set exclusively by
   `acceptOfferByHuman()`, which has no agent route — it is reachable only from
   the human's own press on their page, and it refuses any other `recorded_via`
   (the internal ops queue's accept op is refused too; migration 061 adds the
   same rule as a database constraint).
+- An accepted offer leaves a record of the deal with both people
+  (`src/domain/receipt.ts`). At the accepting press one block of plain facts is
+  built, the same for both: when, the thing as the seller posted it, the agreed
+  amount, the note that rode with the offer, and the written lines the seller
+  confirmed. First names and suburbs appear only where both have already
+  pressed the names step. The block is emailed to both people and its SHA-256
+  fingerprint is stored beside the press (`offers.receipt_sha256` and the
+  locked log). The switchboard keeps the fingerprint and never the block.
+- A claim that matters goes on the deal as a written line
+  (`src/domain/confirmLines.ts`, migration 066). The buying side's assistant
+  asks one (`respond(ask_confirmation)`); only the seller's human confirms, by
+  their own press on their own page, and one press confirms every line the
+  page showed. No offer on that introduction can be accepted while a line
+  waits. A line is up to 200 characters, carries no sum of money and no
+  contact details, and passes the intake pipe; an introduction takes up to
+  ten standing lines (`MAX_CONFIRM_LINES`). Confirmed lines are listed on the
+  record of the deal.
 - Declines carry no reason (schema-level `additionalProperties: false`).
 - Every free-text field bound for a counterparty is provenance-labelled.
 - Locations are resolved server-side, and never guessed. A want or a have names
@@ -172,13 +191,20 @@ These are the invariants worth reading the code to check:
   (never an emailed code) and sends a security notice; the browsers are
   listed, with a remove button, on the security page. Sending takes a fresh
   PIN or passkey every time. Behind `SEALED_CONTACT=on|off` (unset: on in dev,
-  off in prod); where it is off, nothing about messages or the tools changes.
+  off in prod). The hosted network has had it on since 2 October 2026; where it
+  is off, nothing about messages or the tools changes.
   The page is served by this server, so the protection is
   against every copy at rest, in logs and in both assistants; it is no
   protection against a server changed to serve a different page.
 - Publish is blocked until screening passes, with no bypass. If Bedrock is
   unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
+- One outside service is asked about matching. Where `JEV_MATCHING` is on (the
+  hosted network, since 1 October 2026), a pair the rules are unsure about goes
+  to TypeSafe AI's Jev for a second opinion (`src/domain/jevJudge.ts`). What
+  is sent is what each posting says the thing is: its kind, category label and
+  attributes. Names, contact details, places, prices and conversation text are
+  never sent.
 - Everything one person hands over for another to see goes through one pipe
   (`src/intake/`): postings, messages, photos, reports. Each check is one file;
   the verdict is pass, hold or refuse; what passed is kept encrypted for thirty
@@ -196,8 +222,9 @@ has with it. Every account starts with `hears_via` set to `email`, so the
 switchboard emails the human a short notice when something happens. It flips to
 `assistant` when the standing arrangement is saved with `runs_on_its_own` and a
 cadence, or when the human picks it on their own page. From then on the
-switchboard sends no notices, and the agent carries the news. Sign-in codes and
-security mail still go by email either way. That autonomy
+switchboard sends no notices, and the agent carries the news. Sign-in codes,
+security mail, the account messages and the record of a deal still go by email
+either way. That autonomy
 stops short of the decisions and the money, and the stopping is structural.
 
 - **Sharing a first name and suburb.** `respond(opt_in)` writes nothing, ever.
@@ -235,7 +262,8 @@ stops short of the decisions and the money, and the stopping is structural.
 The one human-facing surface, served from its own hostname
 (`my.openswitchboard.ai`; same service, host separation enforced in-app):
 registration (email code → a passkey or a PIN, the person's pick → 18+ and consent,
-WORM-logged),
+WORM-logged → one page asking how they want to hear about things, a first name
+and a suburb, none of which can be skipped),
 login (email code or passkey), main pages for stage-3 disclosure and offer
 acceptance, the ledger (edit re-screens, withdraw is immediate), the kill switch
 (one tap pauses every want and have and suspends every agent token; un-pausing needs login

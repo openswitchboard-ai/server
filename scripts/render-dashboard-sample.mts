@@ -3,6 +3,9 @@
  *
  *   npx tsx scripts/render-dashboard-sample.mts [out-dir]
  *
+ * The output directory is the argument, else DASHBOARD_SAMPLE_OUT_DIR, else
+ * the system temp directory.
+ *
  * The sample is the negotiation from 27 September 2026, seen from the buyer's
  * side: names shared, a photo from the seller, the buyer's $280, the seller's
  * counter at $290 with a note, and the buyer's assistant's page to send $280
@@ -14,14 +17,13 @@
  * tokens onto :root — the page itself has no switch; it follows the system).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSteps, type StoryFacts } from '../src/domain/matchStory.js';
 import { groupWaitingByMatch, mergeSteps } from '../src/counter/matchStory.js';
 import { dashboardPage, openRequestLabel, OPEN_REQUEST_CTA } from '../src/counter/pagesHome.js';
 
-const outDir =
-  process.argv[2] ??
-  '/private/tmp/claude-501/-Users-lachlantaylor-IntentExchange/49bb31ba-578f-4fd1-9c82-bc668e4e13f1/scratchpad';
+const outDir = process.argv[2] ?? process.env.DASHBOARD_SAMPLE_OUT_DIR ?? tmpdir();
 
 const MATCH = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const BUYER = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
@@ -115,11 +117,11 @@ const grouped = groupWaitingByMatch(
 
 const waiting = grouped.byMatch.get(MATCH)!;
 const view = {
-  firstName: 'Lachlan',
+  firstName: 'Sam',
   killSwitchOn: false,
   ceremony: { hasPin: true, hasPasskey: true, elevated: false },
   cardCounts: { total: 3, published: 3, pending: 0 },
-  sharedProfile: 'Lachlan, Kambah',
+  sharedProfile: 'Sam, Kambah',
   arrangementSummary: 'how often to check — every 2 hours (and 3 more)',
   timezone: 'Australia/Sydney',
   matchBoxes: [

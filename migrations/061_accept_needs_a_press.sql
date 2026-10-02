@@ -1,5 +1,4 @@
--- AN ACCEPT IS ONLY EVER A HUMAN'S PRESS (N4, 30 September 2026;
--- docs/release-readiness.md §1.2).
+-- AN ACCEPT IS ONLY EVER A HUMAN'S PRESS (N4, 30 September 2026).
 --
 -- consent_tokens holds the two consents a human gives on their own page: the
 -- names opt-in (stage3-optin) and taking a figure (offer-accept). Both are

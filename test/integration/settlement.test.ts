@@ -125,11 +125,11 @@ const gateCards: { token: string; intentId: string }[] = [];
  * listings and its own introduction, taken to the names step.
  *
  * Each pair is put back down as its gate ends (see the afterEach below). The
- * quota these two accounts live under is production's — five open wants and
- * haves each, ten publishes a day each — and this suite needs eight
- * introductions, so pairs left standing run the accounts out of open cards
- * partway through and every gate after that fails on the publish rather than
- * on the payment it exists to prove. Withdrawing as we go holds each account
+ * quota these two accounts live under is production's — twenty open wants and
+ * haves each, ten publishes a day each (src/config.ts defaults) — and this
+ * suite needs eight introductions, so pairs left standing count against that
+ * ceiling, and a gate refused on the publish fails there rather than on the
+ * payment it exists to prove. Withdrawing as we go holds each account
  * at two open cards: the shared pair, plus the pair of whichever gate is
  * running.
  */

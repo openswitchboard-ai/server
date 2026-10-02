@@ -765,11 +765,12 @@ export async function withdrawPublishedCards(): Promise<number> {
 /**
  * Take named cards down NOW rather than at the end of the run.
  *
- * The posting quota an account lives under is five open wants and haves, so a
- * suite that needs a fresh pair for each of several gates cannot leave the
- * earlier pairs standing: by the sixth publish the quota refuses it and the
- * gate fails on the board rather than on what it set out to prove. A gate that
- * puts its own pair back as it ends never gets near the ceiling.
+ * The posting quota an account lives under is twenty open wants and haves and
+ * ten publishes a day (src/config.ts defaults), so a suite that needs a fresh
+ * pair for each of several gates should not leave the earlier pairs standing:
+ * once the quota refuses a publish, the gate fails on the board and proves
+ * nothing about what it set out to check. A gate that puts its own pair back
+ * as it ends never gets near the ceiling.
  *
  * Same door as everything else here - `withdraw_intent`, the one a person's
  * agent uses - and the card is dropped from the teardown list so the run's

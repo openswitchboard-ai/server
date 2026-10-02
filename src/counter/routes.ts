@@ -1405,7 +1405,8 @@ in on this device and lets you approve what is waiting.</p>
     // ------------------------------------------------------------------
     // Hello: the one onboarding question. How this person will hear about
     // things (hears_via), plus the first name and area they would share.
-    // Skipping leaves hears_via on 'email', the safe answer.
+    // Nothing on it can be skipped: all three are asked for and checked
+    // before anything is saved (see the POST below).
     // ------------------------------------------------------------------
     const helloView = async (accountId: string): Promise<home.HelloView> => {
       const profile = await readSharedProfile(accountId, {

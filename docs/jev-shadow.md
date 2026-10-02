@@ -2,10 +2,11 @@
 
 An outside model is asked two of this switchboard's own judgements, its answer
 is written down beside ours, and **nothing the switchboard does changes because
-of it**. That is the whole arrangement. It runs on dev and nowhere else.
+of it**. That is the whole arrangement. The shadow runs on dev only.
 
 The same model is also used, separately, as **the borderline judge** in
-matching (on in dev, and live in prod since 1 October 2026), described below.
+matching (on in dev, and on the hosted network since 1 October 2026),
+described below.
 The shadow itself has never run in prod and the client still refuses to start
 it there.
 

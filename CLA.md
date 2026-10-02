@@ -6,9 +6,9 @@ If yours is one we want to take, we will ask you to agree to this first.
 
 It is modelled on the Apache Individual Contributor Licence Agreement, with one
 addition: the licence you grant lets the Project relicense your contribution.
-That keeps the copyright in the work consolidated in one place, so the Project
-can change licence or offer a commercial licence later without having to trace
-and re-ask every past contributor.
+You keep your copyright. The Project gets the right to relicense what you
+contribute, so it can change licence or offer a commercial licence later
+without having to trace and re-ask every past contributor.
 
 "The Project" means LLM Family Investments Pty Ltd (ACN 610 504 482) as trustee
 for the LLM Family Trust (ABN 27 213 698 865), trading as openswitchboard.ai,

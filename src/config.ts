@@ -40,8 +40,8 @@ export interface Quotas {
   /** Max offers proposed per rolling hour per account (RATE_LIMITED_OFFERS). */
   maxOffersPerHour: number;
   /** One ceiling over every write tool together, per account, per rolling
-   *  hour: send_message, publish_intent, respond and settle. It sits above the
-   *  per-thing limits rather than replacing them. */
+   *  hour: send_message, publish_intent, respond, settle and refine_intent. It
+   *  sits above the per-thing limits rather than replacing them. */
   maxWritesPerHour: number;
 }
 
@@ -206,8 +206,7 @@ export interface Config {
   leanSweep: boolean;
   /** JEV AS THE JUDGE ON THE BORDERLINE (founder, 29 September 2026;
    *  src/domain/jevJudge.ts). JEV_MATCHING=on|off; unset is ON in dev and OFF
-   *  in prod. It is off in prod until a data-processing agreement with TypeSafe
-   *  and the privacy wording are in place: switching it on there is one env
+   *  in prod. The hosted network has had it set on since 1 October 2026: one env
    *  var plus the osb/prod/jev secret (JEV_SECRET_ARN). Anything else set here
    *  is a boot failure. On with no JEV_SECRET_ARN is rules only, said at boot. */
   jevMatching: boolean;
@@ -220,9 +219,8 @@ export interface Config {
   /** SEALED CONTACT DETAILS (1 October 2026; domain/sealedContact.ts): the
    *  send-contact page, the receiving keys, and the refusal of an address or a
    *  phone number in the words. SEALED_CONTACT=on|off; unset is ON in dev and
-   *  OFF in prod, so prod behaves exactly as before until Lachlan switches it
-   *  on after a green rehearsal streak that includes the contact step. Absent
-   *  on a hand-built config is off. */
+   *  OFF in prod. The hosted network has had it set on since 2 October 2026.
+   *  Absent on a hand-built config is off. */
   sealedContact?: boolean;
   /** WHEN THE WEBSITE'S LIVE NUMBERS SHOW (founder, 1 October 2026;
    *  src/publicApi.ts, /public/totals). Below postingsMin live wants and haves

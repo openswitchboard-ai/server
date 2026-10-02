@@ -63,12 +63,13 @@ const form = (o: Record<string, string>) => ({
 /**
  * The open-wants-and-haves ceiling on the deployment under test.
  *
- * The server's own default is 5 (src/config.ts), which is what GATE (e) was
- * written against. The dev deployment lifts it to 50 (QUOTA_MAX_OPEN_CARDS in
- * the infra core stack, so the realism eval can drive repeated batches), and a
- * suite that assumes 5 there simply publishes six cards and is told yes six
+ * The server's own default is 20 (src/config.ts), and neither dev nor prod
+ * sets QUOTA_MAX_OPEN_CARDS today, so both run on 20. GATE (e) was written
+ * when the default was 5, and the fallback below is still 5: a suite that
+ * assumes 5 against a ceiling of 20 publishes six cards and is told yes six
  * times. So the number is named rather than assumed: export
- * OSB_MAX_OPEN_CARDS to match the deployment you are pointing at.
+ * OSB_MAX_OPEN_CARDS to match the deployment you are pointing at. At 20 the
+ * gate is skipped, because that is past QUOTA_PUBLISH_BUDGET below.
  */
 const MAX_OPEN_CARDS = Number(process.env.OSB_MAX_OPEN_CARDS ?? 5);
 /**
