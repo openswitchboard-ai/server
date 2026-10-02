@@ -32,7 +32,7 @@ import { settlementsConfigured, type Config } from '../config.js';
 import { formatMinor, isZeroDecimal, settlementBreakdown, toMinorUnits } from '../stripe.js';
 import { UUID } from '../domain/postingRef.js';
 import { looksLikeContactDetail } from '../domain/arrangement.js';
-import { MANDATE_AMOUNT_MAX } from '../domain/negotiation.js';
+import { MANDATE_AMOUNT_MAX, MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
@@ -569,7 +569,10 @@ export const TOOLS: ToolDef[] = [
             amount: { type: 'number', exclusiveMinimum: 0 },
             ccy: { type: 'string', pattern: '^[A-Z]{3}$' },
             expiry: { type: 'string', format: 'date-time' },
-            message: { type: 'string', maxLength: 2000 },
+            // The limit the offer path enforces (domain/negotiation.ts,
+            // validateOfferNote). This said 2000 while 200 was the rule, so a
+            // client that trusted the schema wrote a note that was refused.
+            message: { type: 'string', maxLength: MANDATE_NOTE_MAX },
           },
           required: ['amount', 'ccy', 'expiry'],
           additionalProperties: false,

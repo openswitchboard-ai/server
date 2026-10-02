@@ -40,6 +40,7 @@ import {
 import { OWN_HUMAN_HEADING, OWN_HUMAN_PREAMBLE, SUSPENDED_BLOCK } from '../../src/mcp/connectFacts.js';
 import { SETTLEMENT_OFF_BLOCK } from '../../src/mcp/mcp.js';
 import { SAY_NOTE, TOOLS } from '../../src/mcp/tools.js';
+import { MANDATE_NOTE_MAX } from '../../src/domain/negotiation.js';
 import { WHAT_HAPPENS_NEXT_NOTE } from '../../src/domain/cards.js';
 import { DETAIL_HUMAN_ACTION, detailShortfall } from '../../src/domain/postingDetail.js';
 import { PHOTO_NOTE } from '../../src/domain/channel.js';
@@ -328,6 +329,14 @@ describe('nothing is taken down or filed away unasked', () => {
   it('says so on both tools that do it', () => {
     expect(TOOLS.find((t) => t.name === 'respond')!.description).toContain('archive (ONLY on their yes)');
     expect(TOOLS.find((t) => t.name === 'withdraw_intent')!.description).toContain('ONLY WHEN THEY ASK YOU TO, or say yes when you ask');
+  });
+
+  it('tells a client the same limit on an offer note that the offer path enforces', () => {
+    // It said 2000 while 200 was the rule, so a note that passed the schema
+    // was refused a moment later.
+    const respond: any = TOOLS.find((t) => t.name === 'respond')!;
+    expect(respond.inputSchema.properties.offer.properties.message.maxLength).toBe(MANDATE_NOTE_MAX);
+    expect(MANDATE_NOTE_MAX).toBe(200);
   });
 });
 
