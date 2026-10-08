@@ -14,9 +14,12 @@
 --                      to nobody else. `norm` is the value case-folded with
 --                      everything but letters and digits removed, which is the
 --                      form the engine compares. Null on a posting with none.
---   identifier_norms   the `norm` of each, as a text array, written in the same
---                      statement from the same values. It exists for the index
---                      below and for nothing else.
+--   identifier_norms   the forms each is compared in, as a text array, written
+--                      in the same statement from the same values: the `norm`,
+--                      and the value with leading zeros dropped from each run
+--                      of digits where that differs ("025/165" and "25/165"
+--                      are one identifier). Two forms each, so six at most. It
+--                      exists for the index below and for nothing else.
 --
 -- WHY COLUMNS ON THE POSTING AND NOT A TABLE OF THEIR OWN. An identifier is
 -- part of a posting's words, and everything that keeps a posting's words safe
@@ -33,7 +36,7 @@ ALTER TABLE cards ADD COLUMN IF NOT EXISTS identifier_norms text[];
 ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_identifiers_three_at_most;
 ALTER TABLE cards ADD CONSTRAINT cards_identifiers_three_at_most CHECK (
   (identifiers IS NULL OR (jsonb_typeof(identifiers) = 'array' AND jsonb_array_length(identifiers) <= 3))
-  AND (identifier_norms IS NULL OR cardinality(identifier_norms) <= 3)
+  AND (identifier_norms IS NULL OR cardinality(identifier_norms) <= 6)
 );
 
 -- The exact-match candidate path (domain/matcher.ts retrieveByIdentifier):
@@ -46,4 +49,4 @@ CREATE INDEX IF NOT EXISTS cards_identifier_norms_idx
 COMMENT ON COLUMN cards.identifiers IS
   'Up to three identifiers naming the product or edition: [{ kind, value, norm }]. The value as given is the owner''s alone; norm is what matching compares. Never one object''s own number, never a contact detail (domain/identifiers.ts).';
 COMMENT ON COLUMN cards.identifier_norms IS
-  'The norm of each identifier, for the GIN index the exact-match candidate path reads. Written with identifiers, from the same values.';
+  'The compared forms of each identifier (norm, and the unpadded form where it differs), for the GIN index the exact-match candidate path reads. Written with identifiers, from the same values.';

@@ -267,14 +267,40 @@ export function identifiersOf(stored: unknown): Identifier[] {
   return out.slice(0, IDENTIFIERS_MAX);
 }
 
-/** The normalised forms alone: what the candidate query binds and the index holds. */
-export const identifierNorms = (ids: Identifier[]): string[] => ids.map((i) => i.norm);
+/**
+ * The same value with the leading zeros dropped from each run of digits, taken
+ * while the marks still part the runs: "025/165" reads "25165". The same
+ * number is printed padded in one place and bare in another, and this is the
+ * form in which the two meet. It is a SECOND form beside `norm`, never a
+ * replacement for it: where the runs fall depends on how a value is
+ * punctuated, so two spellings of one long code ("978-0141439518",
+ * "9780141439518") agree as `norm` and need not agree here.
+ */
+export function unpaddedForm(value: string): string {
+  return normaliseIdentifier(value.replace(/\d+/g, (run) => run.replace(/^0+(?=\d)/, '')));
+}
 
-/** Do two postings carry an identifier in common? Compared as normalised. */
+/**
+ * The forms a posting's identifiers are compared in: what the candidate query
+ * binds and the index holds. Each identifier gives its `norm`, and its
+ * unpadded form where that differs and is long enough to say anything. Two
+ * postings share an identifier when any form of one is a form of the other.
+ */
+export function identifierNorms(ids: Identifier[]): string[] {
+  const forms = new Set<string>();
+  for (const i of ids) {
+    forms.add(i.norm);
+    const bare = unpaddedForm(i.value);
+    if (bare.length >= IDENTIFIER_MIN_NORM) forms.add(bare);
+  }
+  return [...forms];
+}
+
+/** Do two postings carry an identifier in common? Any compared form of one that is a form of the other. */
 export function sharesIdentifier(a: unknown, b: unknown): boolean {
   const mine = new Set(identifierNorms(identifiersOf(a)));
   if (!mine.size) return false;
-  return identifiersOf(b).some((i) => mine.has(i.norm));
+  return identifierNorms(identifiersOf(b)).some((form) => mine.has(form));
 }
 
 /** An identifier as its owner is handed it back: the two fields they sent. */

@@ -49,6 +49,7 @@ import {
   kindsInWords,
   namesOneObject,
   normaliseIdentifier,
+  identifierNorms,
   readIdentifiers,
   sharesIdentifier,
 } from '../../src/domain/identifiers.js';
@@ -103,6 +104,28 @@ describe('an identifier is compared as normalised', () => {
     expect(normaliseIdentifier('Éd. 12/B')).toBe('ed12b');
     expect(normaliseIdentifier(9780141439518)).toBe('9780141439518');
     expect(normaliseIdentifier(undefined)).toBe('');
+  });
+
+  it('meets a padded number and a bare one, and leaves long codes agreeing as written', () => {
+    const one = (value: string) => readIdentifiers([{ kind: 'catalogue number', value }]);
+    const forms = (value: string) => {
+      const r = one(value);
+      return r.ok ? identifierNorms(r.identifiers) : [];
+    };
+    expect(forms('025/165')).toEqual(['025165', '25165']);
+    expect(forms('25/165')).toEqual(['25165']);
+    expect(sharesIdentifier(readOk('025/165'), readOk('25/165'))).toBe(true);
+    // One code punctuated two ways still agrees, by its plain form.
+    expect(sharesIdentifier(readOk('978-0141439518'), readOk('9780141439518'))).toBe(true);
+    // Padding is all that is forgiven: a different number is a different number.
+    expect(sharesIdentifier(readOk('025/165'), readOk('26/165'))).toBe(false);
+    // An unpadded form too short to say anything is left out.
+    expect(forms('A-007')).toEqual(['a007']);
+    function readOk(value: string) {
+      const r = one(value);
+      if (!r.ok) throw new Error(r.error);
+      return r.identifiers;
+    }
   });
 
   it('keeps the value as given beside the normalised form', () => {
