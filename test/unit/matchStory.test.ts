@@ -325,6 +325,12 @@ describe('the time on a step', () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * An expiry the offer path accepts whenever this runs. proposeOffer reads the
+ * real clock, so a fixed date here fails the day after it passes.
+ */
+const AHEAD = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
 describe('the same figure, put up again', () => {
   let sql: string[];
   let standing: any[];
@@ -339,7 +345,7 @@ describe('the same figure, put up again', () => {
         proposer_account: BUYER,
         amount: '280',
         ccy: 'AUD',
-        expiry: LATER,
+        expiry: AHEAD,
         state: 'proposed',
         message: null,
       },
@@ -379,7 +385,7 @@ describe('the same figure, put up again', () => {
     match_id: MATCH,
     amount,
     ccy: 'AUD',
-    expiry: LATER.toISOString(),
+    expiry: AHEAD.toISOString(),
     ...(message ? { message } : {}),
   });
 
