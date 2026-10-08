@@ -654,11 +654,13 @@ describe('what the switchboard calls things, in front of a model', () => {
     // `detail_unknown` and `reference` ride beside the posting rather than
     // inside it: the protocol document closes a want or a have to anything it
     // does not name, and both are facts about the posting ATTEMPT rather than
-    // about the thing.
+    // about the thing. `identifiers` rides there too (migration 067): it is
+    // about the thing, and the protocol document does not name it yet.
     expect(Object.keys(publish.inputSchema.properties)).toEqual([
       'listing',
       'detail_unknown',
       'reference',
+      'identifiers',
     ]);
   });
 

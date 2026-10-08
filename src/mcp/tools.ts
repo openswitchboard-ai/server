@@ -33,6 +33,11 @@ import { formatMinor, isZeroDecimal, settlementBreakdown, toMinorUnits } from '.
 import { UUID } from '../domain/postingRef.js';
 import { looksLikeContactDetail } from '../domain/arrangement.js';
 import { MANDATE_AMOUNT_MAX, MANDATE_NOTE_MAX } from '../domain/negotiation.js';
+import {
+  IDENTIFIERS_MAX,
+  IDENTIFIER_KIND_MAX_CHARS,
+  IDENTIFIER_VALUE_MAX_CHARS,
+} from '../domain/identifiers.js';
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
@@ -402,6 +407,49 @@ const patchProperties = Object.fromEntries(
 );
 
 /**
+ * AN IDENTIFIER, AS THE THREE POSTING TOOLS TAKE IT (domain/identifiers.ts,
+ * migration 067). It rides beside the posting on publish_intent and beside the
+ * patch on amend_intent, because the protocol document closes a want or a have
+ * to anything it does not name; the handlers read it from inside as well,
+ * since an assistant will put it where it reads best.
+ *
+ * THE RULE IS IN THIS FIELD'S OWN DESCRIPTION, and it is one general rule:
+ * no kinds are listed because there are none to list. It is written here
+ * rather than in publish_intent's description, which is at its budget, and a
+ * field's description reaches every client whole on the same terms.
+ */
+const identifiersField = (description: string) => ({
+  type: 'array',
+  maxItems: IDENTIFIERS_MAX,
+  description,
+  items: {
+    type: 'object',
+    properties: {
+      kind: {
+        type: 'string',
+        minLength: 1,
+        maxLength: IDENTIFIER_KIND_MAX_CHARS,
+        description: 'What it is, in a few plain words: "model number", "ISBN", "catalogue number".',
+      },
+      value: {
+        type: 'string',
+        minLength: 1,
+        maxLength: IDENTIFIER_VALUE_MAX_CHARS,
+        description: 'The identifier as printed on the product.',
+      },
+    },
+    required: ['kind', 'value'],
+    additionalProperties: false,
+  },
+});
+
+const IDENTIFIERS_RULE =
+  'Where the thing has a number or code that tells its product or edition from the next, give it: a model number, an ISBN, a catalogue number. Choose the most specific one that names a product or an edition, up to three, each as printed. Give none where the thing has none. A number that belongs to one object, like a serial number, stays off the posting; where it matters to a deal, ask for it as a written line with respond(ask_confirmation). No contact details. It is never shown to the other side.';
+
+const IDENTIFIERS_REPLACE =
+  'The identifiers for the product or edition, as publish_intent describes them. Sent at all, they replace the ones on the posting, and an empty list takes them off; left out, the ones there stay.';
+
+/**
  * WHERE SEALED CONTACT DETAILS ARE SWITCHED OFF (config.sealedContact), the
  * two descriptions that speak of them are served as they were before, so an
  * assistant on that deployment is taught exactly the rules it runs under.
@@ -454,6 +502,7 @@ export const TOOLS: ToolDef[] = [
           description:
             'The `reference` the last refusal about this same posting handed you. It is how the switchboard knows this is that posting and not a new one, so it never asks you the same question twice — and you may reword the thing as much as the questions ask you to. Leave it out only when this is a posting nothing has been asked about. It is machinery: never say it to your human.',
         },
+        identifiers: identifiersField(IDENTIFIERS_RULE),
       },
       required: ['listing'],
       additionalProperties: false,
@@ -647,8 +696,12 @@ export const TOOLS: ToolDef[] = [
           description:
             'Short phrases your human says it is NOT. Up to six. Nothing is hidden from them by this; close things simply count for less.',
         },
+        identifiers: identifiersField(IDENTIFIERS_REPLACE),
       },
-      required: ['intent_id', 'also_called'],
+      // `also_called` is no longer required by the shape: a call may bring
+      // identifiers alone. A call that brings neither is still turned back, in
+      // words, by the handler (domain/refine.ts).
+      required: ['intent_id'],
       additionalProperties: false,
     },
   },
@@ -667,6 +720,7 @@ export const TOOLS: ToolDef[] = [
           properties: patchProperties,
           additionalProperties: false,
         },
+        identifiers: identifiersField(IDENTIFIERS_REPLACE),
       },
       required: ['intent_id', 'patch'],
       additionalProperties: false,
@@ -872,6 +926,9 @@ function checkedSchemaFor(name: string, written: any): any {
       props.listing = { type: 'object' };
       props.card = { type: 'object' };
       dropRequired('listing');
+      // Checked by the handler, which answers in a sentence that says what to
+      // do instead (domain/identifiers.ts readIdentifiers).
+      props.identifiers = OPEN_FIELD;
       break;
     case 'check_in':
       props.match_id = { type: 'string' };
@@ -895,6 +952,7 @@ function checkedSchemaFor(name: string, written: any): any {
       break;
     case 'amend_intent':
       props.patch = { type: 'object' };
+      props.identifiers = OPEN_FIELD;
       break;
     case 'standing_arrangement':
       props.arrangement = OPEN_FIELD;
@@ -902,6 +960,7 @@ function checkedSchemaFor(name: string, written: any): any {
     case 'refine_intent':
       props.also_called = OPEN_FIELD;
       props.not_these = OPEN_FIELD;
+      props.identifiers = OPEN_FIELD;
       break;
   }
   return schema;
@@ -1160,12 +1219,17 @@ export function protocolAnswer(payload: ProtocolError, tool?: string): ToolResul
  * shown to somebody — they say what is missing or wrong and nothing about
  * whose fault it is.
  */
-function invalidInput(message: string, humanAction?: string): ToolResult {
+function invalidInput(
+  message: string,
+  humanAction?: string,
+  extra?: { field: string; reason: string },
+): ToolResult {
   const payload = {
     what_happened: 'the call could not be read',
     error: 'invalid_input',
     message,
     ...(humanAction ? { human_action: humanAction } : {}),
+    ...(extra ?? {}),
   };
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
@@ -1515,9 +1579,15 @@ async function dispatchToolInner(
         // back on a refusal will put it where it reads best.
         const reference = args?.reference ?? (listing as any)?.reference;
         if (listing && typeof listing === 'object') delete (listing as any).reference;
+        // And the identifiers, on the same terms: the protocol document does
+        // not name them yet, so they ride beside the posting and are lifted
+        // out of it where an agent put them inside.
+        const identifiers = args?.identifiers ?? (listing as any)?.identifiers;
+        if (listing && typeof listing === 'object') delete (listing as any).identifiers;
         const posted = await cards.publishIntent(cfg, accountId, listing, {
           detailUnknown,
           reference,
+          identifiers,
         });
         // Screening runs in seconds, so the useful thing to say right after
         // posting is how soon there is anything to look for — and what comes
@@ -1779,13 +1849,24 @@ async function dispatchToolInner(
           await refine.refineIntent(cfg, accountId, args?.intent_id, {
             also_called: args?.also_called,
             not_these: args?.not_these,
+            identifiers: args?.identifiers,
           }),
         );
-      case 'amend_intent':
+      case 'amend_intent': {
+        // Identifiers ride beside the patch, and are lifted out of it where an
+        // agent put them inside: the patch is validated as a whole posting
+        // against the protocol document, which does not name them.
+        const patch =
+          args?.patch && typeof args.patch === 'object' && !Array.isArray(args.patch)
+            ? { ...args.patch }
+            : args?.patch;
+        const identifiers = args?.identifiers ?? (patch as any)?.identifiers;
+        if (patch && typeof patch === 'object') delete (patch as any).identifiers;
         return ok({
-          ...(await cards.amendIntent(cfg, accountId, args?.intent_id, args?.patch)),
+          ...(await cards.amendIntent(cfg, accountId, args?.intent_id, patch, { identifiers })),
           say_note: SAY_NOTE,
         });
+      }
       case 'withdraw_intent':
         // cfg travels so that each person whose own line advances behind this
         // is summoned the ordinary way.
@@ -2172,6 +2253,11 @@ async function dispatchToolInner(
   } catch (e: any) {
     if (e instanceof OsbError) return protocolAnswer(e.payload, name);
     if (e?.notFound) return invalidInput(e.message);
+    // A refused identifier says which of its rules it broke, as a word beside
+    // the sentence (domain/identifiers.ts identifierError).
+    if (e?.identifier_refusal) {
+      return invalidInput(e.message, undefined, { field: 'identifiers', reason: e.identifier_refusal });
+    }
     if (e?.validation) return invalidInput(e.message);
     return internalError(name, e);
   }

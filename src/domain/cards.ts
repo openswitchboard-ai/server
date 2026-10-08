@@ -57,6 +57,19 @@ import {
 } from './postingRef.js';
 import { type Arrangement } from './arrangement.js';
 import { laneFor, readLaneFacts, sayAsk, sayFor, sayNote, type Lane } from './lanes.js';
+import {
+  IDENTIFIER_KINDS_SHOWN,
+  IDENTIFIER_KIND_MIN_ACCOUNTS,
+  identifierError,
+  identifierNorms,
+  identifiersOf,
+  kindKey,
+  kindsInWords,
+  ownIdentifiers,
+  readIdentifiers,
+  type Identifier,
+} from './identifiers.js';
+import { promptSafe } from '../intake/promptText.js';
 import type { HearsVia } from './accounts.js';
 import { categoryLabelPath, theirOwnThing } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
@@ -96,6 +109,13 @@ export interface PublishResult {
    * supplyAskFor, supplyAskCarried).
    */
   supply_ask_note?: { text: string; provenance: 'switchboard-system' };
+  /** The identifiers now on the posting, as its owner gave them (domain/identifiers.ts). */
+  identifiers?: { kind: string; value: string }[];
+  /**
+   * Which identifiers other people's postings on this shelf most often carry,
+   * so assistants reach for the same ones (identifierKindsNoteFor below).
+   */
+  identifier_kinds_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
@@ -362,6 +382,10 @@ export interface CardRow {
   also_called?: string[] | null;
   /** Short phrases they say it is NOT: a negative word signal only (050). */
   not_these?: string[] | null;
+  /** Up to three identifiers naming the product or edition: [{ kind, value, norm }] (067). */
+  identifiers?: unknown;
+  /** The `norm` of each, for the exact-match candidate path's index (067). */
+  identifier_norms?: string[] | null;
   geo: any;
   geo_lat: number | null;
   geo_lon: number | null;
@@ -714,6 +738,84 @@ const slotsOf = (card: any): number => {
 const saleOf = (card: any): 'straight' | 'best-offer' =>
   card?.type === 'offering' && card?.sale === 'best-offer' ? 'best-offer' : 'straight';
 
+/**
+ * THE IDENTIFIERS ON A CALL, READ OR REFUSED (domain/identifiers.ts). A
+ * refusal here is a refusal of a field's words, so it leaves the way every
+ * other one does: a plain sentence and the field to fix.
+ */
+function identifiersOrRefuse(sent: unknown): Identifier[] {
+  const read = readIdentifiers(sent);
+  if (!read.ok) throw identifierError(read);
+  return read.identifiers;
+}
+
+/** The two columns, as the statements below bind them. Null where there are none. */
+const identifierColumns = (ids: Identifier[]): [string | null, string[] | null] =>
+  ids.length ? [JSON.stringify(ids), identifierNorms(ids)] : [null, null];
+
+/**
+ * WHICH IDENTIFIERS THIS SHELF USES, counted from other people's postings that
+ * are up on it. A kind is named only where at least
+ * IDENTIFIER_KIND_MIN_ACCOUNTS different accounts use it, so the answer never
+ * tells anybody one person's choice, and the caller's own postings are not
+ * counted. Most used first, IDENTIFIER_KINDS_SHOWN at most.
+ */
+export async function identifierKindsOnShelf(category: string, accountId: string): Promise<string[]> {
+  const r = await getPool().query(
+    `SELECT k.kind, count(DISTINCT c.account_id)::int AS n
+       FROM cards c
+       CROSS JOIN LATERAL (
+         SELECT DISTINCT lower(btrim(i->>'kind')) AS kind
+           FROM jsonb_array_elements(c.identifiers) i
+       ) k
+      WHERE c.category = $1
+        AND c.lifecycle_state = 'PUBLISHED'
+        AND c.expires_at > now()
+        AND NOT c.paused_by_kill_switch
+        AND c.identifiers IS NOT NULL
+        AND c.account_id <> $2::uuid
+        AND k.kind <> ''
+      GROUP BY k.kind
+     HAVING count(DISTINCT c.account_id) >= $3::int
+      ORDER BY n DESC, k.kind ASC
+      LIMIT $4::int`,
+    [category, accountId, IDENTIFIER_KIND_MIN_ACCOUNTS, IDENTIFIER_KINDS_SHOWN],
+  );
+  return r.rows.map((row: any) => String(row.kind));
+}
+
+/**
+ * The note that names them, where there is anything to name. The kinds this
+ * posting already carries are left out, and so is the whole note where that
+ * leaves nothing. The kinds are other people's words, so each goes through
+ * promptSafe and is said in quotes (lanes.ts, ASKS.identifier_kinds).
+ *
+ * A courtesy and nothing more: it never changes whether the posting went up,
+ * so a read that fails costs the answer this note and nothing else.
+ */
+async function identifierKindsNoteFor(
+  category: string,
+  accountId: string,
+  own: Identifier[],
+  lane: { lane: Lane; arrangement: Arrangement },
+): Promise<Pick<PublishResult, 'identifier_kinds_note'>> {
+  let kinds: string[];
+  try {
+    kinds = await identifierKindsOnShelf(category, accountId);
+  } catch {
+    return {};
+  }
+  const mine = new Set(own.map((i) => kindKey(i.kind)));
+  const others = kinds.filter((k) => !mine.has(kindKey(k))).map((k) => promptSafe(k, 40));
+  if (!others.length) return {};
+  return {
+    identifier_kinds_note: {
+      text: sayAsk('identifier_kinds', lane.lane, lane.arrangement, { kinds: kindsInWords(others) }),
+      provenance: 'switchboard-system' as const,
+    },
+  };
+}
+
 /** What a publish attempt may carry beside the posting itself. */
 export interface PublishOpts {
   /**
@@ -727,6 +829,12 @@ export interface PublishOpts {
    * if the posting goes up it becomes its id (domain/postingRef.ts).
    */
   reference?: unknown;
+  /**
+   * Up to three identifiers for the product or edition, each { kind, value }
+   * (domain/identifiers.ts). They ride beside the posting because the protocol
+   * document closes a want or a have to anything it does not name.
+   */
+  identifiers?: unknown;
 }
 
 /**
@@ -800,6 +908,9 @@ async function runPublish(
     });
   }
   checkSchemaVersion(card.schema_version);
+  // The identifiers are read with the rest of the shape: pure, and a refusal
+  // of them is a refusal of what was sent, before anything is spent on it.
+  const identifiers = identifiersOrRefuse(opts.identifiers);
 
   // THE QUOTA COMES FIRST, BEFORE ANYTHING COSTS ANYTHING (2026-09-17 audit).
   // It used to sit below the category gate and the intake pipe, so an account
@@ -1220,17 +1331,17 @@ async function runPublish(
   // follows: one reference, first question to last conversation, and never a
   // moment where two numbers mean the same want or have. Where nothing was ever
   // asked there is no number yet, and the row makes its own as it always did.
-  // $23 can only be a reference this switchboard minted for THIS account, since
+  // $25 can only be a reference this switchboard minted for THIS account, since
   // that is the only thing readPostingRef will hand back (domain/postingRef.ts).
   const r = await getPool().query(
     `INSERT INTO cards (id, account_id, schema_version, type, category, geo, geo_lat, geo_lon,
                         geo_radius_km, geo_country, attributes, ask, urgency, visibility,
                         protocol_status, price_enc, ttl_days, expires_at, slots, sale, kind,
-                        category_as_posted)
-     SELECT COALESCE($23::uuid, gen_random_uuid()),
+                        category_as_posted, identifiers, identifier_norms)
+     SELECT COALESCE($25::uuid, gen_random_uuid()),
              $1,$2,$3,$4,$5,$13,$14,$15,$16,$6,$7,$8,$9,$10,$11,$12::int,
              COALESCE($17::timestamptz, now() + make_interval(days => $12::int)),
-             $18::int, $19, $20, $22
+             $18::int, $19, $20, $22, $23::jsonb, $24::text[]
       WHERE ${OPEN_CARDS_GUARD_SQL('$21::int')}
      RETURNING id, content_version`,
     [
@@ -1265,6 +1376,10 @@ async function runPublish(
       // the answer to a shelf question: that is what was actually sent for the
       // thing, and the shelf it went on is the human's choice.
       answering?.as_posted ?? filed.from,
+      // The identifiers as given and as compared, written together so the
+      // index can never hold a form the row does not (migration 067).
+      ...identifierColumns(identifiers),
+      // The attempt's own number, last.
       attempt.reference ?? null,
     ],
   );
@@ -1360,6 +1475,11 @@ async function runPublish(
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: whatHappensNextNote(facts.arrangement, facts.hearsVia),
     ...(await supplyAskFor(accountId, id, facts.arrangement)),
+    ...(identifiers.length ? { identifiers: ownIdentifiers(identifiers) } : {}),
+    ...(await identifierKindsNoteFor(filed.category, accountId, identifiers, {
+      lane: laneFor(facts.arrangement),
+      arrangement: facts.arrangement,
+    })),
   };
 }
 
@@ -1457,7 +1577,7 @@ export async function listIntents(accountId: string): Promise<any[]> {
   const r = await getPool().query(
     `SELECT id, schema_version, type, category, kind, geo, attributes, ask, urgency, visibility,
             protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at,
-            screening, slots, sale
+            screening, slots, sale, identifiers
      FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
     [accountId],
   );
@@ -1560,6 +1680,11 @@ export async function listIntents(accountId: string): Promise<any[]> {
         slots: row.slots ?? 1,
         ...(row.type === 'HAVE' ? { sale: row.sale ?? 'straight' } : {}),
       },
+      // The identifiers as the owner gave them, beside the posting, which is
+      // where they ride on the way in. Their own, and shown to nobody else.
+      ...(identifiersOf(row.identifiers).length
+        ? { identifiers: ownIdentifiers(row.identifiers) }
+        : {}),
       expires_at: row.expires_at,
       ...(tz && row.expires_at ? { expires_local: localTimeText(new Date(row.expires_at), tz) } : {}),
       created_at: row.created_at,
@@ -1594,6 +1719,7 @@ export async function amendIntent(
   accountId: string,
   intentId: string,
   patch: any,
+  opts: { identifiers?: unknown } = {},
 ): Promise<PublishResult> {
   const card = assertOwnUsableCard(await getCard(intentId), accountId);
   const attempt = await openAttempt(accountId, intentId);
@@ -1663,6 +1789,15 @@ export async function amendIntent(
       });
     }
   }
+  // IDENTIFIERS ON AN AMEND REPLACE THE SET. Sent at all, they are the whole
+  // of what the posting carries afterwards, and an empty list takes them off;
+  // left out, the ones on the row stay. They are read here, with the rest of
+  // the shape, and they are words on the posting like any other: the
+  // statement below moves the content version and sends the row back to the
+  // screen, which reads them (screening.ts collectFreeText) before the
+  // posting is up again or anybody is matched on them.
+  const identifiers =
+    opts.identifiers === undefined ? undefined : identifiersOrRefuse(opts.identifiers);
   const next: any = { ...current, ...patch };
   if (next.price === null || next.price === undefined) delete next.price;
   if (next.ask === null || next.ask === undefined) delete next.ask;
@@ -1810,6 +1945,8 @@ export async function amendIntent(
         renewal_notified_at = NULL, slots=$13::int, sale=$14,
         category=$15, category_as_posted = COALESCE(category_as_posted, $16),
         price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL,
+        identifiers = CASE WHEN $17::boolean THEN $18::jsonb ELSE identifiers END,
+        identifier_norms = CASE WHEN $17::boolean THEN $19::text[] ELSE identifier_norms END,
         content_version = content_version + 1, updated_at=now()
      WHERE id=$1
      RETURNING content_version`,
@@ -1830,6 +1967,9 @@ export async function amendIntent(
       saleOf(next),
       filed.category,
       filed.from,
+      // Whether this amend replaces the identifiers, and with what.
+      identifiers !== undefined,
+      ...identifierColumns(identifiers ?? []),
     ],
   );
   await recordPublishWithinQuota(accountId, intentId, cfg.quotas);
@@ -1847,6 +1987,9 @@ export async function amendIntent(
       }),
     }),
   );
+  const amendFacts = await readLaneFacts(accountId);
+  // The identifiers as the posting now stands: the new set, or the ones kept.
+  const standing = identifiers ?? identifiersOf(card.identifiers);
   // The echo rides on an amend that moved the card, which is also the call an
   // agent makes when its human says the place is wrong.
   return {
@@ -1862,7 +2005,12 @@ export async function amendIntent(
     category: filed.category,
     filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
     what_happens_next_note: await whatHappensNextFor(accountId),
-    ...(await supplyAskCarried(accountId, (await readLaneFacts(accountId)).arrangement)),
+    ...(await supplyAskCarried(accountId, amendFacts.arrangement)),
+    ...(standing.length ? { identifiers: ownIdentifiers(standing) } : {}),
+    ...(await identifierKindsNoteFor(filed.category, accountId, standing, {
+      lane: laneFor(amendFacts.arrangement),
+      arrangement: amendFacts.arrangement,
+    })),
   };
 }
 

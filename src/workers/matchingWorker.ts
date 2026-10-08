@@ -39,6 +39,7 @@ export function startMatchingWorker(cfg: Config, log: (msg: string, extra?: any)
                   candidate_pool: outcome.candidatePool,
                   candidate_pool_capped: outcome.candidatePoolCapped,
                   evaluated: outcome.evaluated,
+                  by_identifier: outcome.byIdentifier,
                   matches: outcome.matchesCreated.length,
                   promoted: outcome.promoted.length,
                   near_misses: outcome.nearMisses,

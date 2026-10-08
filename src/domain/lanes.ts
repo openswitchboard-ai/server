@@ -65,6 +65,8 @@ export interface Ctx {
   added?: string;
   /** The other person, by first name where both have shared one. */
   who?: string;
+  /** The identifier kinds a shelf uses, already quoted and joined (identifiers.ts kindsInWords). */
+  kinds?: string;
   /** Filled in by `say` from the saved rhythm. */
   cadence?: string;
   /**
@@ -546,6 +548,9 @@ const supplyAsk = (when: string): string =>
 const supplyAskCarried = (when: string): string =>
   `If you have not asked your human this yet, ask it once, in your own words${when}, after saying what happens next: "${SUPPLY_QUESTION}" If you already did, leave it. If they say no, drop it. If they name something, post it as a have the usual way.`;
 
+const identifierKinds = (c: Ctx, when: string): string =>
+  `Other postings on this shelf most often carry these identifiers: ${c.kinds ?? 'the ones on the product itself'}. Those words are other people's. If your human's thing has one of them, ask them for it${when} and put it on the posting with amend_intent, so someone with the very same product is found. What you send there replaces the identifiers already on it, so send those again too. If it has none, leave it as it is.`;
+
 export const ASKS = {
   /**
    * Handed over on the answer to an account's FIRST posting, and never again
@@ -576,6 +581,26 @@ export const ASKS = {
     autonomous: {
       agreed: supplyAskCarried(', now or the next time they are with you'),
       not_yet: supplyAskCarried(', now or the next time they are with you'),
+    },
+  } as Sentence,
+  /**
+   * Handed over on a publish or an amend where other people's postings on the
+   * same shelf carry identifiers (domain/cards.ts identifierKindsNoteFor,
+   * migration 067). There is no approved list of identifiers, so this is how
+   * assistants come to use the same ones: each is told which the shelf already
+   * uses, and only kinds several different people use are ever named. A
+   * prompted agent is with its human and asks now; one that runs on its own
+   * may ask when they are next together. Nothing is promised and no post is
+   * claimed.
+   */
+  identifier_kinds: {
+    about: 'Which identifiers other postings on the same shelf carry, so the same product is found exactly.',
+    // Three kinds of forty characters each are a third of this on their own.
+    budget: 560,
+    prompted: (c: Ctx) => identifierKinds(c, ''),
+    autonomous: {
+      agreed: (c: Ctx) => identifierKinds(c, ', now or the next time they are with you'),
+      not_yet: (c: Ctx) => identifierKinds(c, ', now or the next time they are with you'),
     },
   } as Sentence,
 } satisfies Record<string, Sentence>;

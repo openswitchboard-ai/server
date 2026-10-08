@@ -25,7 +25,8 @@ import {
   theirOwnThing,
   KIND_MAX_CHARS,
 } from './matchRules.js';
-import { agreementSentence, wordAgreement } from './matchTiers.js';
+import { IDENTIFIER_SHARED_SENTENCE, agreementSentence, wordAgreement } from './matchTiers.js';
+import { sharesIdentifier } from './identifiers.js';
 import { inLineCount, noteMovement, ownCardIsFull } from './sequencer.js';
 import {
   counterpartyProfileConsentError,
@@ -1270,6 +1271,14 @@ export async function buildAttributes(
   // And on a POSSIBLE one, the switchboard's own word that it may be
   // something else: the details are exactly where a human decides that.
   const maybe = possibleNote(m);
+  // THE SAME IDENTIFIER ON BOTH (migration 067), said plainly on every tier.
+  // Worked out from the SCREENED words on both sides, the reader's own
+  // included, so a posting changed since and not yet screened cannot move this
+  // sentence and nobody can try values against the other side's. The
+  // identifier itself is never in the payload: both people gave it.
+  const own = await getCard(side === 'want' ? m.card_want : m.card_have);
+  const sharedIdentifier =
+    !!own && sharesIdentifier(screenedContentOf(own)?.identifiers, theirs.identifiers);
   if (maybe) {
     notes.push(maybe);
     // WHICH SPECIFICS AGREE AND WHICH DO NOT, computed from the two postings'
@@ -1277,7 +1286,6 @@ export async function buildAttributes(
     // speaking, so it wears the switchboard's label, and it names kinds of
     // detail and never a figure of any sort — see the boundary written over
     // that function. Only on a maybe: on a sure one there is nothing to weigh.
-    const own = await getCard(side === 'want' ? m.card_want : m.card_have);
     if (own) {
       notes.push(
         sbNote(
@@ -1288,10 +1296,13 @@ export async function buildAttributes(
               // own words are their own and are read as they stand.
               { kind: theirs.kind, also_called: theirs.also_called, not_these: theirs.not_these, attributes: theirs.attributes },
             ),
+            { sharedIdentifier },
           ),
         ),
       );
     }
+  } else if (sharedIdentifier) {
+    notes.push(sbNote(IDENTIFIER_SHARED_SENTENCE));
   }
   payload.notes = notes;
   return assertOutbound('intro.attributes', payload);

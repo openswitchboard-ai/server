@@ -36,6 +36,13 @@ import { type Arrangement } from './arrangement.js';
 import { readLaneFacts, sayFor } from './lanes.js';
 import type { HearsVia } from './accounts.js';
 import type { Config } from '../config.js';
+import {
+  identifierError,
+  identifierNorms,
+  identifiersOf,
+  ownIdentifiers,
+  readIdentifiers,
+} from './identifiers.js';
 
 /** How many phrases either list takes, and how long one may be. */
 export const OTHER_WORDS_MAX = 6;
@@ -91,11 +98,17 @@ export function readOtherWords(
   return { ok: true, phrases };
 }
 
+/** The phrases already on a row, for a call that leaves them alone. */
+const phrasesOnRow = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string') : [];
+
 export interface RefineResult {
   intent_id: string;
   state: string;
   also_called: string[];
   not_these: string[];
+  /** The identifiers now on the posting, where it carries any (domain/identifiers.ts). */
+  identifiers?: { kind: string; value: string }[];
   say_note: { text: string; provenance: 'switchboard-system' };
   /** The supply question, carried for a few minutes after a first posting (cards.ts supplyAskCarried). */
   supply_ask_note?: { text: string; provenance: 'switchboard-system' };
@@ -112,6 +125,7 @@ export function refinedSentence(
   notThese: string[],
   a: Arrangement = {},
   hearsVia?: HearsVia,
+  identifiersChanged = false,
 ): string {
   const bits: string[] = [];
   if (alsoCalled.length) {
@@ -122,6 +136,7 @@ export function refinedSentence(
     );
   }
   if (notThese.length) bits.push('I have written down what it is not, so close things count for less.');
+  if (identifiersChanged) bits.push('I have updated the identifiers on it.');
   const added = bits.length ? bits.join(' ') : 'Nothing was added to it.';
   return sayFor('refined', a, { added, hearsVia });
 }
@@ -144,7 +159,7 @@ export async function refineIntent(
   cfg: Config,
   accountId: string,
   intentId: string,
-  input: { also_called?: unknown; not_these?: unknown },
+  input: { also_called?: unknown; not_these?: unknown; identifiers?: unknown },
 ): Promise<RefineResult> {
   if (typeof intentId !== 'string' || !intentId) {
     throw Object.assign(new Error('intent not found'), { notFound: true });
@@ -162,12 +177,23 @@ export async function refineIntent(
   if (!also.ok) throw Object.assign(new Error(also.error), { validation: ['also_called'] });
   const nots = readOtherWords(input?.not_these, 'not_these');
   if (!nots.ok) throw Object.assign(new Error(nots.error), { validation: ['not_these'] });
-  if (!also.phrases.length && input?.also_called === undefined) {
+  // IDENTIFIERS RIDE HERE TOO (migration 067), on the same terms as an amend:
+  // sent at all they replace the set, and left out the ones on the row stay.
+  // A call that brings identifiers leaves alone whichever list of words it
+  // does not send, so adding an identifier never costs a posting its words.
+  const ids = input?.identifiers === undefined ? undefined : readIdentifiers(input.identifiers);
+  if (ids && !ids.ok) throw identifierError(ids);
+  if (!also.phrases.length && input?.also_called === undefined && !ids) {
     throw Object.assign(
       new Error('say at least one other way your human says it'),
       { validation: ['also_called'] },
     );
   }
+  const alsoCalled =
+    ids && input?.also_called === undefined ? phrasesOnRow(card.also_called) : also.phrases;
+  const notThese =
+    ids && input?.not_these === undefined ? phrasesOnRow(card.not_these) : nots.phrases;
+  const identifiers = ids?.ok ? ids.identifiers : undefined;
 
   // The words change, so their version does, in the same statement (migration
   // 055): a verdict still in flight on the old words cannot land on these. The
@@ -178,11 +204,20 @@ export async function refineIntent(
     `UPDATE cards
         SET also_called = $2::jsonb,
             not_these = $3::jsonb,
+            identifiers = CASE WHEN $4::boolean THEN $5::jsonb ELSE identifiers END,
+            identifier_norms = CASE WHEN $4::boolean THEN $6::text[] ELSE identifier_norms END,
             lifecycle_state = 'PENDING_SCREENING', screening = NULL,
             content_version = content_version + 1, updated_at = now()
       WHERE id = $1
       RETURNING content_version`,
-    [intentId, JSON.stringify(also.phrases), JSON.stringify(nots.phrases)],
+    [
+      intentId,
+      JSON.stringify(alsoCalled),
+      JSON.stringify(notThese),
+      identifiers !== undefined,
+      identifiers?.length ? JSON.stringify(identifiers) : null,
+      identifiers?.length ? identifierNorms(identifiers) : null,
+    ],
   );
   await sqs.send(
     new SendMessageCommand({
@@ -195,17 +230,26 @@ export async function refineIntent(
     }),
   );
   const facts = await readLaneFacts(accountId);
+  const standing = identifiers ?? identifiersOf(card.identifiers);
   return {
     intent_id: intentId,
     state: 'PENDING_SCREENING',
-    also_called: also.phrases,
-    not_these: nots.phrases,
+    also_called: alsoCalled,
+    not_these: notThese,
+    ...(standing.length ? { identifiers: ownIdentifiers(standing) } : {}),
     say_note: {
       // One cheap read of this account's own row, so the sentence knows which
       // lane it is speaking into and whether the human behind it is written to
       // at all. Best-effort: unreadable is prompted, the lane that promises the
       // least, and no claim about post.
-      text: refinedSentence(also.phrases, nots.phrases, facts.arrangement, facts.hearsVia),
+      text: refinedSentence(
+        // What this call added, which is what the sentence is about.
+        also.phrases,
+        nots.phrases,
+        facts.arrangement,
+        facts.hearsVia,
+        identifiers !== undefined,
+      ),
       provenance: 'switchboard-system' as const,
     },
     ...(await supplyAskCarried(accountId, facts.arrangement)),

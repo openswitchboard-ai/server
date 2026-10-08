@@ -55,9 +55,17 @@ import {
 } from '../shadow/jevTrials.js';
 import type { CardRow } from './cards.js';
 import { geoOf } from '../geo/normalise.js';
+import { identifierNorms, identifiersOf, sharesIdentifier } from './identifiers.js';
 import type { Config } from '../config.js';
 
 const CANDIDATE_LIMIT = 50;
+/**
+ * How many postings join each run's candidates because they carry one of the
+ * source's identifiers (retrieveByIdentifier). A product's identifier is held
+ * by few postings near enough to matter, so this is a ceiling for the odd
+ * value that is common, and it bounds the cost of the query by construction.
+ */
+export const IDENTIFIER_CANDIDATE_LIMIT = 25;
 /** How many prefiltered cards the pool count looks at before it says "at
  *  least this many" — enough to see starvation coming, cheap to run. */
 const CANDIDATE_POOL_CAP = 500;
@@ -455,6 +463,84 @@ async function retrieveSearched(
   );
 }
 
+/**
+ * THE EXACT-MATCH PATH (9 October 2026, migration 067): opposite-type postings
+ * that carry one of this posting's identifiers, compared as normalised, that
+ * neither pass above already brought back. Two postings for the identical
+ * product can sit outside each other's nearest fifty on a crowded shelf, and
+ * this is how they are looked at anyway.
+ *
+ * It is the search query with one more clause. Every other clause of the
+ * prefilter holds exactly as it does there, because it is the same WHERE:
+ * own account, active account, published, unexpired, not paused, embedded,
+ * mutes both ways, the swap rules on the type, and the geo box. The shelf is
+ * not filtered on, as in search; the tier reads it (matchTiers.ts, A SHARED
+ * IDENTIFIER), and reserved and denied paths are dropped here as they are
+ * there. Ordered the way every candidate list is, nearest in meaning first
+ * and newest on a tie, so where an identifier is common the limit keeps the
+ * postings most likely to be the same thing.
+ *
+ * Being found this way decides nothing. The pair goes through the same hard
+ * rules and the same tier as any other; all this does is make sure it is
+ * looked at.
+ */
+async function retrieveByIdentifier(
+  source: {
+    id: string;
+    account_id: string;
+    type: string;
+    category: string;
+    geo: GeoBucket;
+    embedding_text: string;
+  },
+  norms: string[],
+  alreadyHave: string[],
+): Promise<CandidateRow[]> {
+  if (!norms.length) return [];
+  const w = candidateWhere(source, { shelf: false });
+  const r = await getPool().query(
+    `SELECT c.*, a.data_key_enc, a.is_business AS account_is_business,
+            COALESCE(rep.threshold_bump, 0) AS threshold_bump,
+            1 - (c.embedding <=> $14::vector) AS similarity,
+            EXISTS (SELECT 1 FROM oauth_tokens t
+                    WHERE t.account_id = c.account_id AND t.kind IN ('access','api-key')
+                      AND NOT t.revoked AND NOT t.suspended AND t.expires_at > now()
+                      AND t.last_used_at > now() - interval '1 hour') AS agent_seen_recently
+     FROM cards c
+     JOIN accounts a ON a.id = c.account_id
+     LEFT JOIN reputation rep ON rep.account_id = c.account_id
+     WHERE ${w.sql}
+       AND ${IDENTIFIER_CLAUSE}
+       AND NOT (c.id = ANY($16::uuid[]))
+     ORDER BY ${CANDIDATE_ORDER}
+     LIMIT ${IDENTIFIER_CANDIDATE_LIMIT}`,
+    [...w.params, source.embedding_text, norms, alreadyHave],
+  );
+  return (r.rows as CandidateRow[]).filter(
+    (c) => categoryGate(c.category).ok && !categoryDenied(c.category),
+  );
+}
+
+/** The one clause the exact-match path adds: any identifier in common ($15). */
+const IDENTIFIER_CLAUSE = `c.identifier_norms && $15::text[]`;
+
+/** Exported for the unit tests: the exact-match query's WHERE, clause and limit. */
+export function identifierQueryShape(source: {
+  account_id: string;
+  type: string;
+  category: string;
+  geo: GeoBucket;
+}): { where: string; params: any[]; clause: string; order: string; limit: number } {
+  const w = candidateWhere(source, { shelf: false });
+  return {
+    where: w.sql,
+    params: w.params,
+    clause: IDENTIFIER_CLAUSE,
+    order: CANDIDATE_ORDER,
+    limit: IDENTIFIER_CANDIDATE_LIMIT,
+  };
+}
+
 /** Exported for the unit tests: the search query's WHERE, for the same shape checks. */
 export function searchQueryShape(source: {
   account_id: string;
@@ -562,6 +648,8 @@ export interface MatchingOutcome {
   candidatePoolCapped: boolean;
   /** How many candidates came from searching the whole board (CROSS_SHELF_TOP_N at most). */
   searched: number;
+  /** How many more came from a shared identifier (IDENTIFIER_CANDIDATE_LIMIT at most). */
+  byIdentifier: number;
   /** The introductions made as POSSIBLE on this run: a subset of matchesCreated. */
   possibles: string[];
   /**
@@ -623,9 +711,30 @@ export async function runMatchingForCard(
       error: e?.message,
     });
   }
-  const candidates: { cand: CandidateRow; viaSearch: boolean }[] = [
+  // THE EXACT-MATCH PATH (retrieveByIdentifier): whoever carries one of this
+  // posting's identifiers and was not already found. Like search, a failure
+  // here costs the run these candidates and nothing else.
+  const sourceIdentifiers = identifiersOf((source as any).identifiers);
+  let byIdentifier: CandidateRow[] = [];
+  if (sourceIdentifiers.length) {
+    try {
+      byIdentifier = await retrieveByIdentifier(prefilterSource, identifierNorms(sourceIdentifiers), [
+        ...gated.map((c) => c.id),
+        ...searched.map((c) => c.id),
+      ]);
+    } catch (e: any) {
+      log('matcher: identifier lookup failed, carrying on without it', {
+        card_id: cardId,
+        error: e?.message,
+      });
+    }
+  }
+  // `viaSearch` says the candidate was not chosen by the shelf rule, which is
+  // true of both kinds of search and is all the drift check below asks.
+  const candidates: { cand: CandidateRow; viaSearch: boolean; viaIdentifier?: boolean }[] = [
     ...gated.map((cand) => ({ cand, viaSearch: false })),
     ...searched.map((cand) => ({ cand, viaSearch: true })),
+    ...byIdentifier.map((cand) => ({ cand, viaSearch: true, viaIdentifier: true })),
   ];
   const sourceIsWant = source.type === 'WANT';
 
@@ -639,6 +748,7 @@ export async function runMatchingForCard(
     candidatePool: pool.pool,
     candidatePoolCapped: pool.capped,
     searched: searched.length,
+    byIdentifier: byIdentifier.length,
     possibles: [],
     promoted: [],
   };
@@ -654,6 +764,8 @@ export async function runMatchingForCard(
   const judgedPairs: {
     cand: CandidateRow;
     viaSearch: boolean;
+    viaIdentifier: boolean;
+    sharedIdentifier: boolean;
     swap: boolean;
     want: typeof source | CandidateRow;
     have: typeof source | CandidateRow;
@@ -662,7 +774,7 @@ export async function runMatchingForCard(
     judged: TierResult;
   }[] = [];
 
-  for (const { cand, viaSearch } of candidates) {
+  for (const { cand, viaSearch, viaIdentifier } of candidates) {
     outcome.evaluated++;
     // The SQL prefilter and prefilterKeeps are one rule written twice, once
     // for Postgres and once for us. If they ever disagree, say so: a silent
@@ -737,6 +849,10 @@ export async function runMatchingForCard(
       haveBand = sourceIsWant ? candBand : (sourceBand as PriceBand | undefined);
     }
 
+    // Both rows are PUBLISHED, so both sets of identifiers have been through
+    // the screen with the rest of the posting's words (screening.ts).
+    const sharedIdentifier =
+      sourceIdentifiers.length > 0 && sharesIdentifier(sourceIdentifiers, (cand as any).identifiers);
     const judged = tierFor({
       semantic: Number(cand.similarity),
       categoryA: source.category,
@@ -765,9 +881,23 @@ export async function runMatchingForCard(
       // Which side is the want, for THE WANT IS COVERED (matchTiers.ts). Not
       // on a swap: both sides want there, and that rule reads one direction.
       ...(swap ? {} : { wantIs: sourceIsWant ? ('a' as const) : ('b' as const) }),
+      // Read off the two rows for every candidate, however it was found: a
+      // posting on the shelf can carry the same identifier too.
+      sharedIdentifier,
     });
     if (!judged.parts.hardRulesPass) continue;
-    judgedPairs.push({ cand, viaSearch, swap, want, have, wantBand, haveBand, judged });
+    judgedPairs.push({
+      cand,
+      viaSearch,
+      viaIdentifier: viaIdentifier === true,
+      sharedIdentifier,
+      swap,
+      want,
+      have,
+      wantBand,
+      haveBand,
+      judged,
+    });
   }
 
   // THE BORDERLINE JUDGE (domain/jevJudge.ts). Where JEV_MATCHING is on, the
@@ -792,13 +922,27 @@ export async function runMatchingForCard(
           have: sides(p.have),
           score: p.judged.score,
           rulesTier: p.judged.tier,
+          // A fact about the pair for the judge's own arithmetic (jevJudge.ts
+          // identifierSettles). Nothing about the identifier is sent to Jev.
+          ...(p.sharedIdentifier ? { sharedIdentifier: true } : {}),
         }))
     : [];
   const verdicts = await judgeWithJev(judgeRequests, log);
   const putToJudge = new Set(judgeRequests.map((r) => r.key));
 
   // SECOND PASS: the tier each pair ends with, the possible cap, and the writes.
-  for (const { cand, viaSearch, swap, want, have, wantBand, haveBand, judged } of judgedPairs) {
+  for (const {
+    cand,
+    viaSearch,
+    viaIdentifier,
+    sharedIdentifier,
+    swap,
+    want,
+    have,
+    wantBand,
+    haveBand,
+    judged,
+  } of judgedPairs) {
     const verdict = verdicts.get(cand.id);
     let tier: Tier = verdict ? verdict.tier : judged.tier;
     const judgedBy: Judge = verdict ? 'jev' : 'rules';
@@ -810,6 +954,7 @@ export async function runMatchingForCard(
         jev_tier: verdict.jevTier,
         tier: verdict.tier,
         floored: verdict.floored,
+        ...(verdict.identifierSettled ? { identifier_settled: true } : {}),
         same_kind: Number(verdict.nouls.same_kind.toFixed(3)),
         compatible: Number(verdict.nouls.compatible.toFixed(3)),
         latency_ms: verdict.latencyMs,
@@ -919,7 +1064,11 @@ export async function runMatchingForCard(
           // words themselves stay out of the log.
           why: judged.parts.why,
           judged_by: judgedBy,
-          via_search: viaSearch,
+          via_search: viaSearch && !viaIdentifier,
+          // Found by the exact-match path, and whether the two carry the same
+          // identifier at all. Booleans: the identifier itself is never logged.
+          via_identifier: viaIdentifier,
+          shared_identifier: sharedIdentifier,
           swap,
           shelves_compatible: judged.parts.shelvesCompatible,
           semantic: Number(judged.parts.semantic.toFixed(4)),

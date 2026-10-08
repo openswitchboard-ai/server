@@ -430,6 +430,7 @@ export async function deleteAccount(
             kind = NULL, attributes = '{}'::jsonb, ask = NULL,
             price_enc = NULL, mandate_enc = NULL,
             embedding = NULL, also_called = NULL, not_these = NULL,
+            identifiers = NULL, identifier_norms = NULL,
             category_as_posted = NULL, screened_content = NULL,
             geo = '{}'::jsonb, geo_lat = NULL, geo_lon = NULL,
             geo_radius_km = NULL, geo_country = NULL,

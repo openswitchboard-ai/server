@@ -34,6 +34,15 @@
  *             thing (a part against the whole it fits) and its NOTHING stands.
  *             A near miss never makes an introduction.
  *
+ * A SHARED IDENTIFIER (9 October 2026; matchTiers.ts, A SHARED IDENTIFIER).
+ * Where the two postings carry the same identifier and the rules could not
+ * call the pair sure, Jev's third answer settles it: same_specific_item at or
+ * above JEV_SAME_SPECIFIC_MIN lifts a POSSIBLE of Jev's own to SURE. Anything
+ * less leaves Jev's own answer exactly as it would have been, so the
+ * identifier never costs a pair anything. Such pairs are asked about first,
+ * ahead of the rest of the top N. Jev is sent nothing new for this: the
+ * identifier itself never leaves the switchboard.
+ *
  * WHEN IT DOES NOT. The rules' own answer stands wherever Jev is off, not
  * configured, slow (JEV_JUDGE_TIMEOUT_MS per call, one attempt, no retry),
  * errors, or answers without both nouls. The matcher never waits longer than
@@ -76,7 +85,30 @@ export type Judge = 'rules' | 'jev';
 export function jevJudgesTier(rules: Pick<TierResult, 'tier' | 'parts'>): boolean {
   if (!rules.parts.hardRulesPass) return false;
   if (rules.tier === 'possible' || rules.tier === 'near-miss') return true;
+  // Never a SURE on a covered want or on a shared identifier: neither rests
+  // on the cosine, and both read the two postings' own words to get there.
   return rules.tier === 'sure' && rules.parts.rule === 'sure-close';
+}
+
+/** same_specific_item at or above this settles a shared identifier as SURE. */
+export const JEV_SAME_SPECIFIC_MIN = 0.7;
+
+/**
+ * WHAT A SHARED IDENTIFIER ADDS TO JEV'S ANSWER. Pure. A POSSIBLE of Jev's own
+ * becomes SURE where it also says the two are the same specific item; every
+ * other answer is returned as it came. A NOTHING stays a NOTHING: there Jev
+ * has said the have is not what the want is after, and the same string on
+ * both postings does not answer that. Never lower than Jev said.
+ */
+export function identifierSettles(
+  own: Exclude<Tier, 'near-miss'>,
+  nouls: JevNouls,
+): Exclude<Tier, 'near-miss'> {
+  const sameSpecific = nouls.same_specific;
+  if (own === 'possible' && typeof sameSpecific === 'number' && sameSpecific >= JEV_SAME_SPECIFIC_MIN) {
+    return 'sure';
+  }
+  return own;
 }
 
 export interface JevNouls {
@@ -145,6 +177,8 @@ export interface JudgeRequest {
   score: number;
   /** The rules' tier, which sets the near-miss floor. */
   rulesTier: Tier;
+  /** The two postings carry the same identifier (matchTiers.ts, A SHARED IDENTIFIER). */
+  sharedIdentifier?: boolean;
 }
 
 export interface JudgeVerdict {
@@ -154,6 +188,8 @@ export interface JudgeVerdict {
   jevTier: Exclude<Tier, 'near-miss'>;
   /** True where the floor turned Jev's NOTHING into a near miss. */
   floored: boolean;
+  /** True where a shared identifier and same_specific_item lifted a POSSIBLE to SURE. */
+  identifierSettled?: boolean;
   nouls: JevNouls;
   latencyMs: number;
 }
@@ -179,7 +215,13 @@ export async function judgeWithJev(
   const timeoutMs = opts.timeoutMs ?? JEV_JUDGE_TIMEOUT_MS;
   const ask: Ask =
     opts.ask ?? ((state, questions) => askJevForMatching(state, questions, { timeoutMs }));
-  const chosen = [...requests].sort((a, b) => b.score - a.score).slice(0, opts.topN ?? JEV_JUDGE_TOP_N);
+  // Best fit first, with the pairs that share an identifier ahead of the rest:
+  // those are the ones the answer can settle outright.
+  const chosen = [...requests]
+    .sort(
+      (a, b) => Number(b.sharedIdentifier === true) - Number(a.sharedIdentifier === true) || b.score - a.score,
+    )
+    .slice(0, opts.topN ?? JEV_JUDGE_TOP_N);
   const questions = jevPairQuestions();
 
   await Promise.all(
@@ -211,12 +253,14 @@ export async function judgeWithJev(
           });
           return;
         }
-        const own = jevTier(nouls, req.want, req.have);
+        const said = jevTier(nouls, req.want, req.have);
+        const own = req.sharedIdentifier ? identifierSettles(said, nouls) : said;
         const tier = flooredTier(own, req.rulesTier, nouls.same_kind);
         out.set(req.key, {
           tier,
           jevTier: own,
           floored: tier !== own,
+          ...(own !== said ? { identifierSettled: true } : {}),
           nouls,
           latencyMs: result.latencyMs ?? Date.now() - started,
         });

@@ -14,7 +14,9 @@
  *
  * WHERE EACH STEP COMES FROM, and what it can never say:
  *
- *  - introduced: the match row's own created_at.
+ *  - introduced: the match row's own created_at. Where the two postings
+ *    carry the same identifier (domain/identifiers.ts), one more line says
+ *    so, read from the screened words on both sides and never naming it.
  *  - names: the stage-3 opt-ins in consent_tokens. The other side's opt-in is
  *    only ever told once both have said yes (stage 3), because "they said yes,
  *    waiting on you" before that is a thing the names step does not reveal.
@@ -35,6 +37,8 @@ import { getPool } from '../db.js';
 import { decryptFields } from '../crypto.js';
 import { getAccount } from './accounts.js';
 import { offerAmountInWords } from '../email/templates.js';
+import { sharesIdentifier } from './identifiers.js';
+import { screenedContentOf } from './screenedContent.js';
 
 /** One line on a match's timeline. `text` is plain words, never markup. */
 export interface MatchStep {
@@ -76,11 +80,16 @@ export interface StoryFacts {
   };
   /** The other side's first name, once names have crossed. */
   theirName?: string;
+  /** The two postings carry the same identifier, as screened on both sides. */
+  sharedIdentifier?: boolean;
   optIns: { account_id: string; recorded_at: Date }[];
   photos: { account_id: string; at: Date }[];
   messages: { sender_account: string; at: Date }[];
   offers: StoryOffer[];
 }
+
+/** The line under "You were introduced" where both postings carry the same identifier. */
+export const IDENTIFIER_STEP = 'Both postings carry the same identifier';
 
 export const STEP_TAG_OPEN = 'still open';
 export const STEP_TAG_WAITING = 'waiting for you';
@@ -101,6 +110,9 @@ export function buildSteps(f: StoryFacts, now: Date = new Date()): MatchStep[] {
   const t = (d: Date | string) => new Date(d);
 
   steps.push({ at: t(f.match.created_at), text: 'You were introduced' });
+  if (f.sharedIdentifier) {
+    steps.push({ at: t(f.match.created_at), text: IDENTIFIER_STEP });
+  }
 
   // Names. The other side's yes is said only once both have said it.
   const mineIn = f.optIns.find((o) => o.account_id === me);
@@ -248,9 +260,11 @@ export async function readStoryFacts(
   const pool = getPool();
   const mr = await pool.query(
     `SELECT m.id, m.state, m.stage, m.created_at, m.account_want, m.account_have, m.category,
-            m.live, c.category AS own_category, c.kind AS own_kind
+            m.live, c.category AS own_category, c.kind AS own_kind,
+            c.screened_content AS own_screened, t.screened_content AS their_screened
        FROM matches m
        LEFT JOIN cards c ON c.id = CASE WHEN m.account_want = $1 THEN m.card_want ELSE m.card_have END
+       LEFT JOIN cards t ON t.id = CASE WHEN m.account_want = $1 THEN m.card_have ELSE m.card_want END
       WHERE m.id = $2 AND (m.account_want = $1 OR m.account_have = $1)`,
     [viewer, matchId],
   );
@@ -320,6 +334,12 @@ export async function readStoryFacts(
         account_have: m.account_have,
       },
       ...(names ? { theirName: names.firstName } : {}),
+      ...(sharesIdentifier(
+        screenedContentOf({ screened_content: m.own_screened })?.identifiers,
+        screenedContentOf({ screened_content: m.their_screened })?.identifiers,
+      )
+        ? { sharedIdentifier: true }
+        : {}),
       optIns: optIns.rows,
       photos: photos.rows,
       messages: messages.rows,

@@ -1365,7 +1365,7 @@ describe('the manual says the general rules', () => {
   // in a message twice and never asked it as a line, because every sentence
   // said a line was for something "the other side has said".
   it('widens the trigger at version 86: what their human needs to be true, whoever has said it', () => {
-    expect(MANUAL.version).toBe(86);
+    expect(MANUAL.version).toBeGreaterThanOrEqual(86);
     const note = MANUAL_CHANGELOG.find((c) => c.version === 86)!.note;
     expect(note).toBe(
       'A line to confirm is for more than what the other side has said. Anything your human says has to be true of the thing for them to go ahead is a line to ask for with respond(ask_confirmation), whether the other side has said it or not. Asking it in a message does not put it on the record: ask it as a line, and say it in the conversation too. Ask it as soon as your human says it, in the same turn: do not wait for a figure or a firm deal, and do not ask them for a go-ahead to ask, because nothing can be added once a figure is accepted.',

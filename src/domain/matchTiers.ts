@@ -41,6 +41,10 @@
  *   stores, where the geo and price hard rules live, and what a near miss is
  *   judged on.
  *
+ * AND ONE EXACT SIGNAL, where both postings carry it: an IDENTIFIER in common
+ * (domain/identifiers.ts; A SHARED IDENTIFIER below). It is never enough on
+ * its own, and it never counts against a pair.
+ *
  * PART AGAINST WHOLE defeats both signals (a chainsaw chain beside the
  * chainsaw, a bezel insert beside the watch): see isPartOrAccessoryOf on
  * PairFacts for where a pair judge would plug in.
@@ -721,6 +725,82 @@ export function wantCoveredBy(want: PostingWords, have: PostingWords, closeness:
   return { covered: true, why: 'covered' };
 }
 
+/**
+ * A SHARED IDENTIFIER (9 October 2026, migration 067).
+ *
+ * Two postings that carry the same identifier, compared as normalised
+ * (domain/identifiers.ts), have said the same model number, the same ISBN, the
+ * same printed number. That is the strongest single thing two postings can
+ * agree on, and it is still NEVER A SURE MATCH ALONE, because the same string
+ * means different things in different places: a short code that is a paper
+ * size on one shelf is a car on another, and a printed number repeats from
+ * one edition to the next. So the identifier is read beside what the rules
+ * already know, and it does two things and no more.
+ *
+ * SURE, where all of this holds:
+ *   - the two shelves are the same or neighbours (categoryCompatible: equal,
+ *     one above the other, or siblings under a shared parent below the top
+ *     level, which is the notion of a near shelf the prefilter and the near
+ *     miss already use);
+ *   - the names agree: the word agreement reaches IDENTIFIER_SURE_MIN_WORDS,
+ *     the two share a distinctive word besides their head nouns, and every
+ *     distinctive word of the posting that says less is in the one that says
+ *     more (coverage of IDENTIFIER_SURE_MIN_COVERAGE);
+ *   - nothing contradicts: no head, brand or model conflict, no stated detail
+ *     that differs, and neither side wrote that the thing is not this;
+ *   - and the cosine is not below IDENTIFIER_MIN_COSINE, the same floor THE
+ *     WANT IS COVERED uses, which says only that the two are not unrelated.
+ *
+ * WHY 0.30 ON THE WORDS, where the ordinary SURE line is 0.58. That line has
+ * to carry a pair on words and cosine alone, so it asks for most of the two
+ * postings' distinctive weight to be shared, and every word the fuller
+ * posting adds counts against it. Here the identifier has already said which
+ * product, and the words are asked a smaller question: are these two talking
+ * about the same thing at all? A thin posting ("Sony headphones", "cordless
+ * drill") beside a full one of the same product (make, model, colour, what
+ * comes with it) scores between 0.45 and 0.6 on the weighted Dice and was a
+ * maybe before today; 0.30 lets those through with room, and still refuses a
+ * name that is one word inside a long description.
+ *
+ * AND WHY THE THINNER NAME MUST BE WHOLLY INSIDE THE FULLER ONE. A low Dice
+ * line alone would be wrong. Two different things printed with the same
+ * number, named alike but for the one word that matters, score 0.67 and more:
+ * most of their words are shared and the word that tells them apart is one
+ * among several. No line on a bag of words separates that pair from two
+ * honest descriptions of one product. What does separate them is that each
+ * names something the other does not. So the names agree only where the
+ * posting that says less says nothing the other lacks. A pair that fails this
+ * is a maybe, the human sees it with the sentence about the identifier, and
+ * the borderline judge may still call it sure.
+ *
+ * Like every line in this file these are PROVISIONAL: fitted on the examples
+ * in test/unit/identifiers.test.ts and on nothing from a real run, to be
+ * re-tuned with the others.
+ *
+ * POSSIBLE, where the pair would otherwise have been a near miss or nothing:
+ * the shelves are the same or neighbours, or the names agree as above on any
+ * shelf; neither side wrote that the thing is not this; and the cosine clears
+ * the same floor. This is the pair the borderline judge is then asked about
+ * (jevJudge.ts), and where it answers that the two are the same specific
+ * item, the pair is sure.
+ *
+ * IT NEVER COUNTS AGAINST A PAIR. Both rules only ever lift: a pair with a
+ * shared identifier is in the tier it would have been in without one, or a
+ * higher one. And two postings that both carry identifiers and share none are
+ * treated exactly as two postings with none: nothing here demotes.
+ */
+export const IDENTIFIER_SURE_MIN_WORDS = 0.3;
+export const IDENTIFIER_SURE_MIN_COVERAGE = 1;
+export const IDENTIFIER_MIN_COSINE = COVERED_MIN_COSINE;
+
+/**
+ * What the other side's assistant is told where the two postings carry the
+ * same identifier. One sentence, the same on every tier, and it says nothing
+ * of what the identifier is: both people gave it, so both already know.
+ */
+export const IDENTIFIER_SHARED_SENTENCE =
+  'Both postings carry the same identifier, the number or code that tells one product or edition from another.';
+
 const round = (n: number) => Math.round(n * 10000) / 10000;
 
 // ---------------------------------------------------------------------------
@@ -750,6 +830,12 @@ export interface PairFacts {
    */
   wantIs?: 'a' | 'b';
   /**
+   * The two postings carry an identifier in common, compared as normalised
+   * (domain/identifiers.ts sharesIdentifier). Left out or false, nothing about
+   * the tier changes. See A SHARED IDENTIFIER above for the little it does.
+   */
+  sharedIdentifier?: boolean;
+  /**
    * THE HOOK FOR A PAIR JUDGE, NOT CALLED YET. Part against whole (a chainsaw
    * chain against the chainsaw, a bezel insert against the watch) defeats both
    * the cosine and the word overlap, and only something that reads the two
@@ -770,6 +856,8 @@ export interface TierParts {
   blend: number;
   hardRulesPass: boolean;
   failed?: PairEval['failed'];
+  /** The two postings carry the same identifier. A fact, whichever rule decided. */
+  sharedIdentifier: boolean;
   /** Which rule decided the tier, for a log line or a calibration table. */
   why: string;
   /** The same, as a fixed word a caller can branch on (jevJudge.ts reads it). */
@@ -782,8 +870,10 @@ export type TierRule =
   | 'hard-rule'
   | 'sure-close'
   | 'sure-covered'
+  | 'sure-identifier'
   | 'possible-meaning'
   | 'possible-words'
+  | 'possible-identifier'
   | 'near-miss'
   | 'nothing';
 
@@ -807,8 +897,13 @@ export interface TierResult {
  *     the thing in the have, heads agree, nothing contradicts. On any cosine
  *     over COVERED_MIN_COSINE, because a thin want and a rich have embed far
  *     apart even when the have is exactly what was asked for.
+ *   - SURE, too, on a shared identifier, where the shelves are near, the
+ *     names agree and nothing contradicts (A SHARED IDENTIFIER, 9 October
+ *     2026). Read first of the three, because it rests on something exact.
  *   - POSSIBLE: cosine >= POSSIBLE_MIN_COSINE, or any distinctive word in
  *     common with cosine >= POSSIBLE_WORDS_MIN_COSINE.
+ *   - POSSIBLE, too, on a shared identifier that fell short of sure, in place
+ *     of a near miss or nothing.
  *   - near miss: a compatible shelf and the old floor on the blend.
  *   - nothing.
  *
@@ -831,7 +926,7 @@ export interface TierResult {
  * any other person. Where a signal cannot be said without a figure, it is left
  * out. It is pure and it reads nothing but the agreement it is handed.
  */
-export function agreementSentence(w: WordAgreement): string {
+export function agreementSentence(w: WordAgreement, opts: { sharedIdentifier?: boolean } = {}): string {
   const LABELS: [keyof WordAgreement, string][] = [
     ['brand', 'the make'],
     ['model', 'the model or part number'],
@@ -865,6 +960,9 @@ export function agreementSentence(w: WordAgreement): string {
   if (w.negated) {
     sentence += ' One of you wrote down that the thing is not this sort of thing.';
   }
+  // And the one exact thing two postings can have in common, said plainly and
+  // without saying what it is (IDENTIFIER_SHARED_SENTENCE).
+  if (opts.sharedIdentifier) sentence += ` ${IDENTIFIER_SHARED_SENTENCE}`;
   return sentence;
 }
 
@@ -891,6 +989,7 @@ export function tierFor(f: PairFacts): TierResult {
     categoryCloseness: categoryCloseness(f.categoryA, f.categoryB),
     blend: ev.score,
     hardRulesPass: ev.hardRulesPass,
+    sharedIdentifier: f.sharedIdentifier === true,
     ...(ev.failed ? { failed: ev.failed } : {}),
     ...(ev.weights ? { weights: ev.weights } : {}),
     ...(ev.thinness !== undefined ? { thinness: ev.thinness } : {}),
@@ -905,6 +1004,17 @@ export function tierFor(f: PairFacts): TierResult {
   const bump = Math.max(Number(f.bumpWant ?? 0), Number(f.bumpHave ?? 0));
   const conflict =
     words.head === 'conflict' || words.brand === 'conflict' || words.negated || words.attributes === 'conflict';
+  // A SHARED IDENTIFIER: see the block over IDENTIFIER_SURE_MIN_WORDS. Read
+  // before the other two sure rules, so a pair that rests on something exact
+  // is named for it and is not one the borderline judge is asked to reopen.
+  const shared = f.sharedIdentifier === true && semantic >= IDENTIFIER_MIN_COSINE + bump;
+  const namesAgree =
+    words.sharedBeyondHead &&
+    words.score >= IDENTIFIER_SURE_MIN_WORDS &&
+    words.coverage >= IDENTIFIER_SURE_MIN_COVERAGE;
+  if (shared && shelvesCompatible && namesAgree && !conflict && words.model !== 'conflict') {
+    return out('sure', 'the same identifier, a near shelf, the names agree, nothing contradicts', 'sure-identifier');
+  }
   if (!conflict && semantic >= SURE_MIN_COSINE + bump && words.score >= SURE_MIN_WORDS) {
     return out('sure', 'close in meaning, the words agree, nothing contradicts', 'sure-close');
   }
@@ -932,6 +1042,12 @@ export function tierFor(f: PairFacts): TierResult {
   }
   if (words.sharedDistinctive && semantic >= POSSIBLE_WORDS_MIN_COSINE + bump) {
     return out('possible', 'a distinctive word in common, close enough in meaning', 'possible-words');
+  }
+  // A shared identifier that fell short of sure lifts what would have been a
+  // near miss or nothing, and only that: every pair that reaches this line
+  // was below every possible line above.
+  if (shared && !words.negated && (shelvesCompatible || namesAgree)) {
+    return out('possible', 'the same identifier, short of sure', 'possible-identifier');
   }
   const nearMiss =
     shelvesCompatible && ev.score >= NEAR_MISS_MIN_BLEND

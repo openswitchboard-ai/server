@@ -21,6 +21,7 @@ import { decidingCheck, runIntake } from '../intake/pipe.js';
 import { promptSafePair } from '../intake/promptText.js';
 import type { CardRow } from './cards.js';
 import { snapshotOf, type ScreenableWords } from './screenedContent.js';
+import { identifiersOf } from './identifiers.js';
 import { heldBackReason } from '../denylist.js';
 import { NO_MONEY_REASON, shelfReasonSentence, shelfRuleRefusal } from './shelfRules.js';
 import type { Config } from '../config.js';
@@ -142,6 +143,7 @@ export function collectFreeText(
     kind?: string | null;
     also_called?: unknown;
     not_these?: unknown;
+    identifiers?: unknown;
   },
 ): string[] {
   const out: string[] = [];
@@ -169,6 +171,14 @@ export function collectFreeText(
   }
   for (const [k, v] of Object.entries(card.attributes ?? {})) {
     if (typeof v === 'string') out.push(promptSafePair(k, v));
+  }
+  // AND ITS IDENTIFIERS (migration 067). The door already turned back the
+  // shapes a pattern can see (domain/identifiers.ts); this is the check that
+  // reads what the words mean, and both the kind and the value are words the
+  // author chose. The label says what they are, so a product's own number is
+  // read as that.
+  for (const id of identifiersOf(card.identifiers)) {
+    out.push(promptSafePair(`product identifier (${id.kind})`, id.value));
   }
   return out;
 }
