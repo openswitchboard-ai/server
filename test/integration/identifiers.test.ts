@@ -3,7 +3,7 @@
  * (default dev). Run:
  *   AWS_PROFILE=openswitchboard npm run test:integration
  *
- * WRITTEN AND NOT YET RUN (9 October 2026): it needs a deployment with
+ * First run green against dev on 9 October 2026. It needs a deployment with
  * migration 067 applied, the dev database and AWS credentials. The unit suite
  * (test/unit/identifiers.test.ts) holds every rule against a board in memory;
  * this holds the parts only a real database and a real screen can show:
@@ -92,7 +92,6 @@ d('identifiers on a posting', () => {
         // Punctuated differently on each side: they are one identifier.
         identifiers: [{ kind: 'model number', value: MODEL.replace(/-/g, ' ') }],
       },
-      { answeredDetail: true },
     );
     expect(posted.isError, JSON.stringify(posted.result)).toBe(false);
     want = posted.result.intent_id;
@@ -108,7 +107,6 @@ d('identifiers on a posting', () => {
         }),
         identifiers: [{ kind: 'Model No.', value: MODEL }],
       },
-      { answeredDetail: true },
     );
     expect(offered.isError, JSON.stringify(offered.result)).toBe(false);
     have = offered.result.intent_id;
@@ -122,7 +120,9 @@ d('identifiers on a posting', () => {
       [{ name: 'id', value: have }],
     );
     expect(JSON.parse(rows[0][0])).toEqual([{ kind: 'Model No.', value: MODEL, norm: MODEL_NORM }]);
-    expect(rows[0][1]).toBe(MODEL_NORM);
+    // The plain form comes first; an unpadded form follows it only where the
+    // run tag happens to carry a padded run of digits.
+    expect(rows[0][1].split(',')[0]).toBe(MODEL_NORM);
     expect(rows[0][2]).toBe(MODEL_NORM);
 
     const mine = await mcpCall(beppe.accessToken, 'list_intents', {});
@@ -168,6 +168,52 @@ d('identifiers on a posting', () => {
       `SELECT array_to_string(identifier_norms, ',') FROM cards WHERE id = :id::uuid`,
       [{ name: 'id', value: have }],
     );
-    expect(rows[0][0]).toBe(`qr${runTag}17`);
+    expect(rows[0][0].split(',')[0]).toBe(`qr${runTag}17`);
+  });
+
+  it('(f) a padded number meets a bare one, and a thirteen-digit code passes the real screen', async () => {
+    const n = parseInt(runTag, 16);
+    const a = 100 + (n % 900);
+    const b = 1000 + (Math.floor(n / 900) % 9000);
+    const code13 = `978${String(n).padStart(10, '0')}`;
+    const wanted = await mcpCall(ana.accessToken, 'publish_intent', {
+      listing: listing('looking_for', { kind: 'Orlin studio headphones', attributes: { brand: 'Orlin' } }),
+      identifiers: [{ kind: 'catalogue number', value: `0${a}/${b}` }],
+    });
+    expect(wanted.isError, JSON.stringify(wanted.result)).toBe(false);
+    const offered = await mcpCall(beppe.accessToken, 'publish_intent', {
+      listing: listing('offering', {
+        kind: 'Orlin studio headphones',
+        attributes: { brand: 'Orlin', colour: 'silver', condition: 'good' },
+      }),
+      identifiers: [
+        { kind: 'catalogue number', value: `${a}/${b}` },
+        { kind: 'barcode', value: code13 },
+      ],
+    });
+    expect(offered.isError, JSON.stringify(offered.result)).toBe(false);
+    const w = wanted.result.intent_id;
+    const h = offered.result.intent_id;
+    expect(await waitForCardState(ana.accessToken, w, ['PUBLISHED', 'SCREENING_REJECTED'])).toBe('PUBLISHED');
+    expect(await waitForCardState(beppe.accessToken, h, ['PUBLISHED', 'SCREENING_REJECTED'])).toBe('PUBLISHED');
+
+    const forms = await dbExec(`SELECT array_to_string(identifier_norms, ',') FROM cards WHERE id = :id::uuid`, [
+      { name: 'id', value: w },
+    ]);
+    expect(forms[0][0]).toBe(`0${a}${b},${a}${b}`);
+
+    const match = await poll(async () => {
+      const rows = await dbExec(
+        `SELECT id, certainty FROM matches WHERE card_want = :w::uuid AND card_have = :h::uuid`,
+        [
+          { name: 'w', value: w },
+          { name: 'h', value: h },
+        ],
+      );
+      return rows[0];
+    }, 'the introduction between the padded and the bare number', 120_000);
+    expect(match[1]).toBe('sure');
+    const r = await mcpCall(ana.accessToken, 'check_in', { intro_id: match[0], step: 'details' });
+    expect(JSON.stringify(r.result)).toContain(SHARED_SENTENCE);
   });
 });
