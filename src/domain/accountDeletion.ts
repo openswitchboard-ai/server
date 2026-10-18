@@ -78,6 +78,12 @@
  *                             embedding, other words, not-these, as-posted
  *                             category, screened content, geo point and area
  *                             — except on a card that is held.
+ *   lists ................... Rows KEPT (their items point at them), every
+ *                             one marked withdrawn, and the shared fields
+ *                             ERASED: the place as sent and as resolved, the
+ *                             currency and the rest (migration 068). The
+ *                             items themselves are cards, and come down and
+ *                             lose their words with every other posting.
  *   near_misses ............. ERASE rows on this account's cards.
  *   jev_shadow .............. ERASE rows on this account's cards (eval data
  *                             that quotes the posting).
@@ -382,6 +388,15 @@ export async function deleteAccount(
         hashes.v1,
       ]);
     }
+    // Lists: every one taken down, and what they shared erased. Not held back
+    // for a safety hold: a hold keeps an introduction's postings, and those
+    // are the items, which the cards statement below keeps.
+    await q(
+      `UPDATE lists SET shared = '{}'::jsonb, state = 'withdrawn',
+              withdrawn_at = COALESCE(withdrawn_at, now()),
+              replace_pass = NULL, replace_parts = NULL, replace_next = NULL, updated_at = now()
+        WHERE account_id = $1`,
+    );
     await q(`UPDATE email_sends SET email_hash = 'erased' WHERE account_id = $1`);
     await q('UPDATE email_events SET recipient_hashes = NULL WHERE account_id = $1');
 

@@ -314,7 +314,7 @@ export function shelfUnclearAction(): string {
 // shelfInWords, the shelf the way a person would say it, lives beside the
 // shelf page now (domain/shelfPick.ts), because the page says it too.
 
-function filedUnderNote(decision: { changed: boolean; category: string }): string {
+export function filedUnderNote(decision: { changed: boolean; category: string }): string {
   // The shelf somebody asked for still needs WORDS. The first rehearsal-suite
   // run (19 September 2026): an assistant chose goods.electronics itself, so
   // nothing had moved and no sentence came back, only the dotted path, and it
@@ -337,7 +337,7 @@ function filedUnderNote(decision: { changed: boolean; category: string }): strin
  * area on their own page reaches their assistant already written in full
  * (area_resolved on the sweep), which is the form to copy.
  */
-function placeCard(geo: any): NormalisedGeo {
+export function placeCard(geo: any): NormalisedGeo {
   return normaliseGeo(geo);
 }
 
@@ -362,7 +362,7 @@ function keptPlacement(card: CardRow): NormalisedGeo {
   };
 }
 
-function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
+export function locationEcho(geo: NormalisedGeo): Pick<PublishResult, 'location_resolved'> {
   return geo.resolved
     ? { location_resolved: { display: geo.resolved.display, radius_km: geo.radius_km } }
     : {};
@@ -438,6 +438,13 @@ export async function assertCategoryOpen(
   category: string,
   accountId: string,
   kind?: unknown,
+  /**
+   * The list door (domain/lists.ts) asks the category once for a whole list,
+   * and every item there must carry its own words for the thing anyway, which
+   * that door checks item by item. So it asks for the gate and the deny list
+   * here and leaves the words to the items.
+   */
+  opts: { kindCheckedPerItem?: boolean } = {},
 ): Promise<{ known: boolean }> {
   const gate = categoryGate(category);
   if (!gate.ok) {
@@ -467,7 +474,7 @@ export async function assertCategoryOpen(
       human_action: screeningReasonInPlainWords(denied.reason_code),
     });
   }
-  if (!gate.known) assertKindPresent(kind);
+  if (!gate.known && !opts.kindCheckedPerItem) assertKindPresent(kind);
   return { known: gate.known };
 }
 
@@ -816,6 +823,27 @@ async function identifierKindsNoteFor(
   };
 }
 
+/**
+ * THE REACH QUESTIONS, word for word as the posting door has always asked
+ * them, named so the list door (domain/lists.ts) asks a list's shared reach in
+ * the same words.
+ */
+export const RADIUS_QUESTION_OFFERING = 'Would you post it to someone further away, or is it pick-up only?';
+export const RADIUS_QUESTION_LOOKING =
+  'Would you be happy to have it posted to you from further away, or will you only collect it?';
+export const REACH_ACTION_OFFERING =
+  'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.';
+export const REACH_ACTION_LOOKING =
+  'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they are happy to have it posted to them, "radius" with a distance if they will only collect it.';
+export const REACH_QUESTION_OFFERING =
+  'Would you post it to someone, or is it pick-up only? If pick-up, how far from you?';
+export const REACH_QUESTION_LOOKING =
+  'Are you happy to have it posted to you, or would you only collect it? If collecting, how far would you go?';
+export const RADIUS_ACTION_OFFERING =
+  'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.';
+export const RADIUS_ACTION_LOOKING =
+  'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.';
+
 /** What a publish attempt may carry beside the posting itself. */
 export interface PublishOpts {
   /**
@@ -1011,9 +1039,7 @@ async function runPublish(
   // Australia" without ever asking its human, and the rule is that how far a
   // thing reaches is the human's answer. The question rides with the others.
   const radiusToConfirm = isGoods && !!card.geo?.reach && !attempt.asked.has('reach');
-  const radiusQuestion = offering
-    ? 'Would you post it to someone further away, or is it pick-up only?'
-    : 'Would you be happy to have it posted to you from further away, or will you only collect it?';
+  const radiusQuestion = offering ? RADIUS_QUESTION_OFFERING : RADIUS_QUESTION_LOOKING;
   const shortfall = detailShortfall(card);
   if (shortfall) {
     const excused = attempt.asked.has('detail');
@@ -1067,14 +1093,8 @@ async function runPublish(
   if (isGoods && !card.geo?.reach) {
     throw new OsbError('NEEDS_DETAIL', {
       reference: await askOnce(accountId, attempt, 'reach'),
-      human_action: offering
-        ? 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they would post it, "radius" with a distance if it is pick-up only.'
-        : 'Ask your human how far this should reach, then post it again with `reach` filled in: "country" if they are happy to have it posted to them, "radius" with a distance if they will only collect it.',
-      questions: [
-        offering
-          ? 'Would you post it to someone, or is it pick-up only? If pick-up, how far from you?'
-          : 'Are you happy to have it posted to you, or would you only collect it? If collecting, how far would you go?',
-      ],
+      human_action: offering ? REACH_ACTION_OFFERING : REACH_ACTION_LOOKING,
+      questions: [offering ? REACH_QUESTION_OFFERING : REACH_QUESTION_LOOKING],
     });
   }
 
@@ -1119,8 +1139,8 @@ async function runPublish(
         human_action: card.geo.reach !== 'radius'
           ? 'You chose how far this reaches without asking. Ask your human the question below, then post again: "country" if they would post it, or "radius" with a distance if it is pick-up only.'
           : offering
-          ? 'You chose pick-up only. Ask your human the question below, then post again: "country" if they would post it, or the same radius if it really is pick-up only.'
-          : 'You chose collection only. Ask your human the question below, then post again: "country" if they are happy to have it posted, or the same radius if they really will only collect.',
+          ? RADIUS_ACTION_OFFERING
+          : RADIUS_ACTION_LOOKING,
         questions: [radiusQuestion],
       });
     }
@@ -1502,7 +1522,7 @@ export async function getCard(id: string): Promise<CardRow | undefined> {
  * their turn. Only open introductions count — a declined, closed or filed-away
  * one is nobody standing there.
  */
-async function peopleOnCards(
+export async function peopleOnCards(
   cardIds: string[],
 ): Promise<Map<string, { here: number; waiting: number }>> {
   const out = new Map<string, { here: number; waiting: number }>();
@@ -1574,11 +1594,15 @@ function peopleSentence(
 }
 
 export async function listIntents(accountId: string): Promise<any[]> {
+  // LIST ITEMS ARE READ THROUGH THEIR LIST (migration 068, domain/lists.ts).
+  // A collector's four hundred items would push every ordinary posting out of
+  // the hundred this returns, so they are left out here and read a page at a
+  // time with read_lists; the tool says so beside this answer.
   const r = await getPool().query(
     `SELECT id, schema_version, type, category, kind, geo, attributes, ask, urgency, visibility,
             protocol_status, lifecycle_state, ttl_days, expires_at, created_at, updated_at,
             screening, slots, sale, identifiers
-     FROM cards WHERE account_id = $1 ORDER BY created_at DESC LIMIT 100`,
+     FROM cards WHERE account_id = $1 AND list_id IS NULL ORDER BY created_at DESC LIMIT 100`,
     [accountId],
   );
   // The expiry as the human would say it, beside the UTC instant, so an agent
@@ -1929,49 +1953,20 @@ export async function amendIntent(
         : null
       : card.price_enc;
 
-  const amended = await getPool().query(
-    // category_as_posted is only ever written where it is empty: the original
-    // path is the one thing here that must never be overwritten, and on a row
-    // that predates the column the pre-amend category IS the original.
-    //
-    // THE WORDS CHANGE, SO THEIR VERSION DOES, in this same statement
-    // (migration 055). The screening message below carries the new number, and
-    // a verdict still in flight on the old words can no longer land on these.
-    // screened_content is left exactly as it was: the other side goes on
-    // seeing the last words that passed until these pass as well.
-    `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
-        attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
-        ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
-        renewal_notified_at = NULL, slots=$13::int, sale=$14,
-        category=$15, category_as_posted = COALESCE(category_as_posted, $16),
-        price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL,
-        identifiers = CASE WHEN $17::boolean THEN $18::jsonb ELSE identifiers END,
-        identifier_norms = CASE WHEN $17::boolean THEN $19::text[] ELSE identifier_norms END,
-        content_version = content_version + 1, updated_at=now()
-     WHERE id=$1
-     RETURNING content_version`,
-    [
-      intentId,
-      JSON.stringify(geo.geo),
-      JSON.stringify(attributes),
-      next.ask ? JSON.stringify(next.ask) : null,
-      next.urgency ?? 'none',
-      next.status ?? 'active',
-      next.ttl_days ?? 60,
-      priceEnc,
-      geo.lat,
-      geo.lon,
-      geo.radius_km,
-      geo.country,
-      slotsOf(next),
-      saleOf(next),
-      filed.category,
-      filed.from,
-      // Whether this amend replaces the identifiers, and with what.
-      identifiers !== undefined,
-      ...identifierColumns(identifiers ?? []),
-    ],
-  );
+  const contentVersion = await writeAmendment(intentId, {
+    geo,
+    attributes,
+    ask: next.ask ?? null,
+    urgency: next.urgency ?? 'none',
+    status: next.status ?? 'active',
+    ttlDays: next.ttl_days ?? 60,
+    priceEnc,
+    slots: slotsOf(next),
+    sale: saleOf(next),
+    category: filed.category,
+    categoryFrom: filed.from,
+    identifiers,
+  });
   await recordPublishWithinQuota(accountId, intentId, cfg.quotas);
   // The attempt is over: what it was asked is forgotten, so the NEXT amend with
   // a different figure on it is a question that gets asked. See the note on
@@ -1983,7 +1978,7 @@ export async function amendIntent(
       MessageBody: JSON.stringify({
         kind: 'screen-card',
         card_id: intentId,
-        content_version: amended.rows[0]?.content_version,
+        content_version: contentVersion,
       }),
     }),
   );
@@ -2012,6 +2007,89 @@ export async function amendIntent(
       arrangement: amendFacts.arrangement,
     })),
   };
+}
+
+/**
+ * THE ONE STATEMENT THAT CHANGES A POSTING'S WORDS AND SENDS IT BACK TO THE
+ * SCREEN, shared by amend_intent above and by a list sent again with changes
+ * (domain/lists.ts), so an item changed on a list is changed exactly the way
+ * an amend changes a posting: new content version, PENDING_SCREENING, the
+ * verdict cleared, and the screened snapshot left as it was until the new
+ * words pass.
+ *
+ * `kind` is changed only where the caller says so. amend_intent never does:
+ * what a posting IS is what it was. A list item matched to its new line by a
+ * shared identifier is the same product under a tidier name, and only that
+ * caller passes it. Returns the new content version, for the screening message.
+ */
+export async function writeAmendment(
+  intentId: string,
+  w: {
+    geo: NormalisedGeo;
+    attributes: Record<string, unknown>;
+    ask: unknown;
+    urgency: string;
+    status: string;
+    ttlDays: number;
+    priceEnc: Buffer | null;
+    slots: number;
+    sale: string;
+    category: string;
+    categoryFrom: string;
+    /** Undefined leaves the identifiers on the row; an array replaces them. */
+    identifiers?: Identifier[];
+    /** Undefined leaves the poster's words for the thing as they are. */
+    kind?: string;
+  },
+): Promise<number | undefined> {
+  const amended = await getPool().query(
+    // category_as_posted is only ever written where it is empty: the original
+    // path is the one thing here that must never be overwritten, and on a row
+    // that predates the column the pre-amend category IS the original.
+    //
+    // THE WORDS CHANGE, SO THEIR VERSION DOES, in this same statement
+    // (migration 055). The screening message carries the new number, and a
+    // verdict still in flight on the old words can no longer land on these.
+    // screened_content is left exactly as it was: the other side goes on
+    // seeing the last words that passed until these pass as well.
+    `UPDATE cards SET geo=$2, geo_lat=$9, geo_lon=$10, geo_radius_km=$11, geo_country=$12,
+        attributes=$3, ask=$4, urgency=$5, protocol_status=$6,
+        ttl_days=$7::int, expires_at = created_at + make_interval(days => $7::int),
+        renewal_notified_at = NULL, slots=$13::int, sale=$14,
+        category=$15, category_as_posted = COALESCE(category_as_posted, $16),
+        price_enc=$8, lifecycle_state='PENDING_SCREENING', screening=NULL,
+        identifiers = CASE WHEN $17::boolean THEN $18::jsonb ELSE identifiers END,
+        identifier_norms = CASE WHEN $17::boolean THEN $19::text[] ELSE identifier_norms END,
+        kind = CASE WHEN $20::boolean THEN $21 ELSE kind END,
+        content_version = content_version + 1, updated_at=now()
+     WHERE id=$1
+     RETURNING content_version`,
+    [
+      intentId,
+      JSON.stringify(w.geo.geo),
+      JSON.stringify(w.attributes),
+      w.ask ? JSON.stringify(w.ask) : null,
+      w.urgency,
+      w.status,
+      w.ttlDays,
+      w.priceEnc,
+      w.geo.lat,
+      w.geo.lon,
+      w.geo.radius_km,
+      w.geo.country,
+      w.slots,
+      w.sale,
+      w.category,
+      w.categoryFrom,
+      // Whether this amend replaces the identifiers, and with what.
+      w.identifiers !== undefined,
+      ...identifierColumns(w.identifiers ?? []),
+      // And whether it renames the thing (list items only, above).
+      w.kind !== undefined,
+      w.kind ?? null,
+    ],
+  );
+  return amended.rows[0]?.content_version;
 }
 
 /**

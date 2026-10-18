@@ -237,6 +237,12 @@ const MUST_SAY: [string, RegExp][] = [
   ['standing_arrangement', /RUN BETWEEN CONVERSATIONS/],
   ['settle', /ONLY EVER STARTS ON THE BUYER'S OWN PAGE/],
   ['wait_for_press', /never wait on a page your human has not been given/i],
+  // Lists (migration 068): the assistant does the converting, and keeps only
+  // what each item needs; reading lists names nothing aloud; and a whole list
+  // comes down only on the human's word, as one posting does.
+  ['publish_list', /CONVERT WHAT YOUR HUMAN HAS YOURSELF/],
+  ['read_lists', /never read a field name, an id or a dotted path aloud/i],
+  ['withdraw_list', /ONLY WHEN THEY ASK YOU TO/],
 ];
 
 describe('the tool descriptions carry the rules and stay inside the budget', () => {

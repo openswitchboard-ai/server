@@ -14,6 +14,7 @@ import { countryOfTimeZone } from '../geo/homeCountry.js';
 import * as arrangement from '../domain/arrangement.js';
 import * as lanes from '../domain/lanes.js';
 import * as cards from '../domain/cards.js';
+import * as lists from '../domain/lists.js';
 import * as channel from '../domain/channel.js';
 import * as conversationWindow from '../domain/conversationWindow.js';
 import * as humanLinks from '../domain/humanLinks.js';
@@ -450,6 +451,72 @@ const IDENTIFIERS_REPLACE =
   'The identifiers for the product or edition, as publish_intent describes them. Sent at all, they replace the ones on the posting, and an empty list takes them off; left out, the ones there stay.';
 
 /**
+ * A LIST, AS publish_list TAKES IT (domain/lists.ts, migration 068). The
+ * shared fields reuse the posting's own shapes for the shelf and the place,
+ * with the prose taken off (publish_intent's copy is already in the payload).
+ * The handler reads every item itself, one at a time, so one bad item comes
+ * back on its own and never sinks the call: the shape check below is opened up
+ * for `items` (checkedSchemaFor).
+ */
+const listItemSchema = {
+  type: 'object',
+  properties: {
+    name: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 60,
+      description: 'What the item is, in a few plain words, no figures: its name as a person would say it.',
+    },
+    identifiers: identifiersField('Up to three identifiers for its product or edition, as publish_intent describes them.'),
+    details: {
+      type: 'object',
+      maxProperties: lists.LIST_ITEM_MAX_DETAILS,
+      description: 'A few short facts such as condition, keys in lower_snake_case. No description, no money.',
+      additionalProperties: { type: ['string', 'number', 'boolean'], maxLength: lists.LIST_DETAIL_VALUE_MAX },
+    },
+    quantity: { type: 'integer', minimum: 1, maximum: lists.LIST_ITEM_MAX_QUANTITY },
+    price: {
+      type: 'number',
+      exclusiveMinimum: 0,
+      description: 'On a list of haves for sale: the asking price your human said, shown to the other side.',
+    },
+    open_to_offers: {
+      type: 'boolean',
+      description: 'On a list of haves for sale: true in place of an asking price.',
+    },
+    price_limit: {
+      type: 'number',
+      exclusiveMinimum: 0,
+      description: 'On a want list for sale: the most your human would pay. Never shown to anybody.',
+    },
+  },
+  required: ['name'],
+  additionalProperties: false,
+};
+
+const listSharedSchema = {
+  type: 'object',
+  description: 'What every item shares. Needed for a new list; on a list already up, leave it out.',
+  properties: {
+    side: { type: 'string', enum: ['looking_for', 'offering'] },
+    category: constraintsOnly(intentCardSchema.properties.category),
+    geo: {
+      ...constraintsOnly(intentCardSchema.properties.geo),
+      description: 'The place written in full and how far it reaches, as publish_intent takes them.',
+    },
+    deal: {
+      type: 'string',
+      enum: ['sale', 'trade', 'free'],
+      description: 'One kind of deal for the whole list.',
+    },
+    currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'The money any prices are in.' },
+    ttl_days: { type: 'integer', minimum: 1, maximum: 90 },
+  },
+  required: ['side', 'category', 'geo', 'deal'],
+  additionalProperties: false,
+};
+
+/**
  * WHERE SEALED CONTACT DETAILS ARE SWITCHED OFF (config.sealedContact), the
  * two descriptions that speak of them are served as they were before, so an
  * assistant on that deployment is taught exactly the rules it runs under.
@@ -737,6 +804,65 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'publish_list',
+    description:
+      `FOR MANY THINGS AT ONCE: a collection, a stock list, a want list. CONVERT WHAT YOUR HUMAN HAS YOURSELF (an export file, a spreadsheet, a typed list, a photo of their shelves), keep only what each item needs, and post it here as one list. \`shared\` is what every item has in common: the side, the shelf, the place written in full with its reach, and the deal (sale, trade or free). Each item carries only a \`name\` in plain words, up to three \`identifiers\`, a few \`details\` such as condition, a \`quantity\`, and on a sale an asking \`price\` or \`open_to_offers\` (on a want, a private \`price_limit\`). No descriptions and no photos. Good items go up even where others do not: each one that did not comes back with its place in your list, the reason and the one thing to fix. Prices are read back once for the whole call, as a summary: say it to your human, and post again with the \`reference\` only if those are their figures. Up to ${lists.LIST_CALL_MAX_ITEMS} items a call; send more to the same \`list_id\`. To send an updated list, give its \`list_id\` with \`replace\`, in \`part\` of \`parts\` if it is long: unchanged items keep their introductions, and items no longer on it come down after the last part. Read the results to your human plainly, and never say an id aloud. read_manual("lists").`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        list_id: {
+          type: 'string',
+          format: 'uuid',
+          description: 'Leave out for a new list. Give it to add to a list already up, or with replace to send it again.',
+        },
+        shared: listSharedSchema,
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: lists.LIST_CALL_MAX_ITEMS,
+          items: listItemSchema,
+        },
+        replace: {
+          type: 'boolean',
+          description: 'With list_id: these items, with the other parts, are now the whole list.',
+        },
+        part: { type: 'integer', minimum: 1, maximum: lists.LIST_MAX_PARTS },
+        parts: { type: 'integer', minimum: 1, maximum: lists.LIST_MAX_PARTS },
+        reference: {
+          type: 'string',
+          format: 'uuid',
+          description: 'The `reference` the last answer about this same list handed you. Machinery: never say it.',
+        },
+      },
+      required: ['items'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_lists',
+    description:
+      `Read your human's own lists. With no \`list_id\`: one entry per list, with how many items are up, being checked and turned away, and a ready sentence to say. With \`list_id\`: that list and its items, ${lists.LIST_PAGE_SIZE} a page (\`page\` from 1), each with its state, its own words and how many people have come forward on it, and the reason in plain words for one turned away. One item can still be changed with amend_intent or taken down with withdraw_intent. Lead with the sentences, and never read a field name, an id or a dotted path aloud.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        list_id: { type: 'string', format: 'uuid' },
+        page: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'withdraw_list',
+    description:
+      "Take one of your human's lists down ONLY WHEN THEY ASK YOU TO, or say yes when you ask. Every item on it comes down the way withdraw_intent takes one down: nobody new is introduced, introductions that never reached a conversation are filed away, and a conversation already open stays open. To take down one item, use withdraw_intent on it. Answers items_withdrawn, introductions_archived and conversations_kept.",
+    inputSchema: {
+      type: 'object',
+      properties: { list_id: { type: 'string', format: 'uuid' } },
+      required: ['list_id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'standing_arrangement',
     description:
       "Read or write your human's standing arrangement: the account-level note saying how they want their agents to behave. `get` returns it; `set` replaces the whole of it, so re-send every field you want kept. SAY `runs_on_its_own` TRUE ONLY IF YOU GENUINELY RUN BETWEEN CONVERSATIONS — you can wake yourself and reach your human without being spoken to first. If you only exist while they are typing to you, leave it out: that is the true answer, and the switchboard emails them instead. `check_every_minutes` goes only alongside it: propose about once an hour (60), take their answer, never assume it, and the floor is 30. A cadence without `runs_on_its_own` is refused, because a schedule nobody keeps leaves a human waiting on nothing. The sentences you are handed already know which sort you are: say them as given. Set it only from what your human has told you — what is worth interrupting them for, what waits for a summary, when to stay quiet, how bold to be. Preferences only: no names, contact details, addresses or the content of a want or have. It rides every check_in sweep, so it survives a restart, a change of model and any other client they connect, and your human can change it on their own page. An arrangement never pre-approves a gate: sharing their details, accepting an offer and confirming a payment go to them every time. read_manual(\"checking_rhythm\").",
@@ -898,6 +1024,7 @@ const ID_ARGS = [
   'settlement_id',
   'press_id',
   'confirmation_id',
+  'list_id',
 ] as const;
 
 /** A written schema with every uuid format taken off: ids are checked by
@@ -961,6 +1088,17 @@ function checkedSchemaFor(name: string, written: any): any {
       props.also_called = OPEN_FIELD;
       props.not_these = OPEN_FIELD;
       props.identifiers = OPEN_FIELD;
+      break;
+    case 'publish_list':
+      // Every item is read by the handler, one at a time, so a bad one comes
+      // back on its own with the one move that fixes it (domain/lists.ts), and
+      // the shared fields and the parts are answered there in plain words.
+      props.items = OPEN_FIELD;
+      props.shared = OPEN_FIELD;
+      props.part = OPEN_FIELD;
+      props.parts = OPEN_FIELD;
+      props.replace = OPEN_FIELD;
+      dropRequired('items');
       break;
   }
   return schema;
@@ -1249,7 +1387,7 @@ function invalidInput(
  * which is backwards. The hourly ceiling still stands over check_in, so an
  * agent that waits and then sweeps is charged for the sweep as it always was.
  */
-const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents']);
+const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents', 'read_lists']);
 
 /**
  * THE WRITE SURFACE, AND THE CEILING THAT WAS MISSING (2026-09-17 audit).
@@ -1268,9 +1406,12 @@ const READ_TOOLS = new Set(['check_in', 'collect_messages', 'list_intents']);
 // `refine_intent` is on it too, and for the ordinary reason: each call puts the
 // posting back through the screen and buys it a fresh embedding, so it costs
 // the switchboard real money and must cost the account something as well.
+// `publish_list` too: one call can put two hundred items through the screen.
+// It is one write here, as it is one publish against the day.
 const WRITE_TOOLS = new Set([
   'send_message',
   'publish_intent',
+  'publish_list',
   'respond',
   'settle',
   'refine_intent',
@@ -1448,6 +1589,10 @@ export const MANUAL_REPEAT_WINDOW_MS = 24 * 60 * 60 * 1000;
  * sentence beside them. The rule is in the manual; this is the rule at the
  * moment it is broken.
  */
+/** Beside list_intents where the human has lists up: their items are read there. */
+export const LISTS_NOTE =
+  'Your human also has lists up. Their items are read with read_lists, a page at a time; each list here has its own sentence to say.';
+
 export const SAY_NOTE = {
   text: "Say it in the thing's own words — what went up, where it was filed in the sentence beside it, and how far it reaches. The id and the dotted path are yours to work with and are never said aloud, and any figure in it is your human's own words.",
   provenance: 'switchboard-system' as const,
@@ -1604,8 +1749,54 @@ async function dispatchToolInner(
           },
         });
       }
-      case 'list_intents':
-        return ok({ intents: await cards.listIntents(accountId) });
+      case 'list_intents': {
+        // List items are read through their lists (domain/lists.ts); the lists
+        // themselves ride beside the postings, one line each, so "what do I
+        // have up?" is still answered from here.
+        const intents = await cards.listIntents(accountId);
+        const open = await lists.listSummaries(accountId, true);
+        return ok({
+          intents,
+          ...(open.length
+            ? {
+                lists: open.map((l) => ({ list_id: l.list_id, side: l.side, items: l.items, note: l.note })),
+                lists_note: { text: LISTS_NOTE, provenance: 'switchboard-system' },
+              }
+            : {}),
+        });
+      }
+      case 'publish_list': {
+        const posted = await lists.publishList(cfg, accountId, {
+          list_id: args?.list_id,
+          shared: args?.shared,
+          items: args?.items,
+          replace: args?.replace,
+          part: args?.part,
+          parts: args?.parts,
+          reference: args?.reference,
+        });
+        const facts = await lanes.readLaneFacts(accountId);
+        return ok({
+          ...posted,
+          say_note: lists.LIST_SAY_NOTE,
+          ...(posted.added || posted.changed
+            ? {
+                note: {
+                  text: lanes.sayFor('list_posted', facts.arrangement, { hearsVia: facts.hearsVia }),
+                  provenance: 'switchboard-system',
+                },
+              }
+            : {}),
+        });
+      }
+      case 'read_lists': {
+        if (typeof args?.list_id === 'string') {
+          return ok(await lists.readList(accountId, args.list_id, args?.page ?? 1));
+        }
+        return ok({ lists: await lists.listSummaries(accountId) });
+      }
+      case 'withdraw_list':
+        return ok(await lists.withdrawList(cfg, accountId, args?.list_id));
       case 'check_in': {
         const one = introId(args);
         if (one && args?.step !== undefined) {

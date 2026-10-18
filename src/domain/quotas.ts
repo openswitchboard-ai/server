@@ -37,10 +37,23 @@ export function roughWait(seconds: number): string {
 
 /** Throws QUOTA_EXCEEDED when a publish would exceed newcomer quotas. */
 export async function checkPublishQuota(accountId: string, q: Quotas): Promise<void> {
-  const pool = getPool();
-  const open = await pool.query(
+  await checkOpenCardsQuota(accountId, q);
+  await checkDayQuota(accountId, q);
+}
+
+/**
+ * The twenty open postings, counted on their own.
+ *
+ * LIST ITEMS ARE NOT COUNTED HERE (migration 068). A person's list items have
+ * a ceiling of their own (maxListItems, domain/lists.ts), separate from and in
+ * addition to this one, so a collector with four hundred things on a list can
+ * still post an ordinary want tomorrow.
+ */
+export async function checkOpenCardsQuota(accountId: string, q: Quotas): Promise<void> {
+  const open = await getPool().query(
     `SELECT count(*)::int AS n FROM cards
-     WHERE account_id = $1 AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED')`,
+     WHERE account_id = $1 AND list_id IS NULL
+       AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED')`,
     [accountId],
   );
   if (open.rows[0].n >= q.maxOpenCards) {
@@ -56,7 +69,15 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
       human_action: `You have ${open.rows[0].n} open wants and haves (limit ${q.maxOpenCards}). Withdraw one to post another.`,
     });
   }
-  const day = await pool.query(
+}
+
+/**
+ * The day's publishes, counted on their own. A list call is one publish
+ * however many items it carries (domain/lists.ts), so the list door asks this
+ * and never the open-postings count above.
+ */
+export async function checkDayQuota(accountId: string, q: Quotas): Promise<void> {
+  const day = await getPool().query(
     `SELECT count(*)::int AS n FROM publish_events
      WHERE account_id = $1 AND created_at > now() - interval '24 hours'`,
     [accountId],
@@ -80,8 +101,31 @@ export async function checkPublishQuota(accountId: string, q: Quotas): Promise<v
  */
 export const OPEN_CARDS_GUARD_SQL = (limitParam: string) =>
   `(SELECT count(*) FROM cards
-      WHERE account_id = $1 AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED'))
+      WHERE account_id = $1 AND list_id IS NULL
+        AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED'))
    < ${limitParam}`;
+
+/**
+ * THE LIST CEILING (migration 068): a person's list items that are pending or
+ * up, across every list they hold. Asked in the transaction that inserts list
+ * items, under the account's advisory lock (domain/lists.ts), and here as the
+ * courtesy in front of it. `$1` is the account.
+ */
+export const LIST_ITEMS_HELD_SQL = `SELECT count(*)::int AS n FROM cards
+      WHERE account_id = $1 AND list_id IS NOT NULL
+        AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED')`;
+
+/** The sentence for a full list ceiling: what the human holds, the most there is, and the move. */
+export function listCeilingSentence(held: number, limit: number): string {
+  return `Your human already holds ${held} items on lists, and ${limit} is the most there is room for. Take some down, a whole list or single items, to post more.`;
+}
+
+/** How many more list items this account has room for, as the courtesy before the work. */
+export async function listItemsRoom(accountId: string, q: Quotas): Promise<{ held: number; room: number }> {
+  const r = await getPool().query(LIST_ITEMS_HELD_SQL, [accountId]);
+  const held = Number(r.rows[0]?.n ?? 0);
+  return { held, room: Math.max(0, q.maxListItems - held) };
+}
 
 /**
  * The day's posting, recorded and capped in one statement. A publish (and an

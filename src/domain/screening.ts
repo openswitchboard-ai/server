@@ -17,8 +17,18 @@
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
-import { decidingCheck, runIntake } from '../intake/pipe.js';
+import { CHECKS, decidingCheck, runIntake, type Check, type CheckResult, type Verdict } from '../intake/pipe.js';
+import {
+  SCREEN_BATCH_MAX,
+  modelScreen,
+  screenResultFromFlags,
+  screenTextWithBedrock,
+  screenTextsWithBedrock,
+  shelfForScreen,
+  type ModelFlags,
+} from '../intake/checks/modelScreen.js';
 import { promptSafePair } from '../intake/promptText.js';
+import { categoryLabelsForScreen } from './matchRules.js';
 import type { CardRow } from './cards.js';
 import { snapshotOf, type ScreenableWords } from './screenedContent.js';
 import { identifiersOf } from './identifiers.js';
@@ -200,6 +210,13 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
   // The door already asked them at publish and amend; this is the backstop
   // for anything that reached the queue another way, and it costs no model
   // call. A band on the row is never decrypted here: that it exists is enough.
+  const shelf = shelfBackstop(card);
+  if (shelf) return shelf;
+  return verdictOf(await runIntake(cfg, postingItem(card)));
+}
+
+/** The shelf rules on the row as it stands, as a verdict, or nothing where they let it by. */
+function shelfBackstop(card: CardRow): ScreeningVerdict | undefined {
   const shelf = shelfRuleRefusal({
     category: card.category,
     kind: card.kind,
@@ -209,9 +226,13 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
     sale: card.sale,
     price: card.price_enc ? true : undefined,
   });
-  if (shelf) return { pass: false, reason_code: shelf.reason_code, detail: 'shelf rule' };
-  const verdict = await runIntake(cfg, {
-    door: 'posting',
+  return shelf ? { pass: false, reason_code: shelf.reason_code, detail: 'shelf rule' } : undefined;
+}
+
+/** A posting row as the pipe's posting door is handed it, off the queue. */
+function postingItem(card: CardRow) {
+  return {
+    door: 'posting' as const,
     sender_account: card.account_id,
     intent_id: card.id,
     fields: {
@@ -219,7 +240,11 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
       ...(card.kind ? { kind: card.kind } : {}),
     },
     text: collectFreeText(card).join('\n'),
-  });
+  };
+}
+
+/** The pipe's verdict in the shape the worker and the stored record use. */
+function verdictOf(verdict: Verdict): ScreeningVerdict {
   const deciding = decidingCheck(verdict);
   if (verdict.outcome === 'hold') {
     throw deciding?.error ?? new Error(`screening could not finish: ${deciding?.detail ?? deciding?.name}`);
@@ -234,6 +259,90 @@ export async function screenCard(cfg: Config, card: CardRow): Promise<ScreeningV
   }
   const modelId = verdict.checks.find((c) => c.name === 'modelScreen')?.model_id;
   return { pass: true, ...(modelId ? { model_id: modelId } : {}) };
+}
+
+/**
+ * A LIST'S ITEMS, SCREENED TOGETHER (domain/lists.ts, migration 068).
+ *
+ * Every item is screened exactly as a posting is: the shelf rules on the row,
+ * then the pipe's posting door with all its checks in their order (the
+ * suspension check, the deny list, the model screen, the money check), its
+ * verdict written to the ledger one item at a time. The one difference is
+ * where the model's answer comes from. Rather than one model call per item,
+ * the items' words go to the model SCREEN_BATCH_MAX at a time
+ * (intake/checks/modelScreen.ts, screenTextsWithBedrock), and each item's
+ * pipe run is handed its own verdict out of that batch in place of a call of
+ * its own. So the fold, the order, the reason codes and the ledger are the
+ * ones every posting gets, and the model is paid once per ten items.
+ *
+ * Batches never mix accounts or shelves: items are grouped by both first, so
+ * one person's words never sit in a prompt beside another's.
+ *
+ * An item whose batch verdict could not be read is screened again alone, with
+ * the single-posting call. A model call that fails outright throws, so the
+ * queue message redelivers and every item stays pending, as one would.
+ */
+export async function screenCardsTogether(
+  cfg: Config,
+  cards: CardRow[],
+  opts: {
+    /** For the suite: the two model calls, stood in for. */
+    batch?: typeof screenTextsWithBedrock;
+    single?: typeof screenTextWithBedrock;
+  } = {},
+): Promise<Map<string, ScreeningVerdict>> {
+  const batch = opts.batch ?? screenTextsWithBedrock;
+  const single = opts.single ?? screenTextWithBedrock;
+  const out = new Map<string, ScreeningVerdict>();
+  // The shelf rules first, item by item, and at no model's expense.
+  const toModel: CardRow[] = [];
+  for (const card of cards) {
+    const shelf = shelfBackstop(card);
+    if (shelf) out.set(card.id, shelf);
+    else toModel.push(card);
+  }
+  // One person, one shelf, per batch.
+  const groups = new Map<string, CardRow[]>();
+  for (const card of toModel) {
+    const key = `${card.account_id}|${card.category}`;
+    groups.set(key, [...(groups.get(key) ?? []), card]);
+  }
+  const flagsFor = new Map<string, ModelFlags>();
+  for (const group of groups.values()) {
+    const category = group[0].category;
+    const shelf = categoryLabelsForScreen(category);
+    const labels = shelfForScreen(shelf.labels, category);
+    // The same lines a single screen reads, with the same note where the leaf
+    // is one the catalogue has never heard of.
+    const linesOf = (card: CardRow): string[] => [
+      ...collectFreeText(card),
+      ...(shelf.unlisted ? [promptSafePair('unlisted_kind_filed_as', shelf.unlisted)] : []),
+    ];
+    for (let i = 0; i < group.length; i += SCREEN_BATCH_MAX) {
+      const slice = group.slice(i, i + SCREEN_BATCH_MAX);
+      const verdicts = await batch(cfg, slice.map(linesOf), labels);
+      for (const [j, card] of slice.entries()) {
+        const flags = verdicts[j] ?? (await single(cfg, linesOf(card), labels));
+        flagsFor.set(card.id, flags);
+      }
+    }
+  }
+  // Each item through the pipe, with the model's answer it already has.
+  for (const card of toModel) {
+    const flags = flagsFor.get(card.id)!;
+    const answered: Check = {
+      name: modelScreen.name,
+      doors: modelScreen.doors,
+      async run(item): Promise<CheckResult> {
+        if (!item.text) return { name: modelScreen.name, outcome: 'pass' };
+        return screenResultFromFlags(flags, item.fields?.category, cfg.bedrockModelId);
+      },
+    };
+    const checks = CHECKS.map((c) => (c.name === modelScreen.name ? answered : c));
+    const verdict = verdictOf(await runIntake(cfg, postingItem(card), { checks }));
+    out.set(card.id, verdict);
+  }
+  return out;
 }
 
 /**
@@ -272,6 +381,15 @@ export async function applyVerdict(
   cfg: Config,
   card: ScreenedCard,
   verdict: ScreeningVerdict,
+  opts: {
+    /**
+     * Seconds the matching message waits before it can be read. Nothing but a
+     * list's items set it: their matching passes are spaced out so a list
+     * clearing the screen does not land on the matcher all at once
+     * (workers/screeningWorker.ts).
+     */
+    matchDelaySeconds?: number;
+  } = {},
 ): Promise<AppliedVerdict> {
   const screening: StoredScreening = { ...verdict, at: new Date().toISOString() };
   const version = Number(card.content_version ?? 1);
@@ -307,6 +425,7 @@ export async function applyVerdict(
         new SendMessageCommand({
           QueueUrl: cfg.matchingQueueUrl,
           MessageBody: JSON.stringify({ kind: 'card-published', card_id: card.id }),
+          ...(opts.matchDelaySeconds ? { DelaySeconds: Math.min(900, Math.max(0, Math.round(opts.matchDelaySeconds))) } : {}),
         }),
       );
     }

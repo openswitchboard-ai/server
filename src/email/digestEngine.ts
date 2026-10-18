@@ -375,10 +375,13 @@ async function assembleDigestItems(
 ): Promise<DigestItem[]> {
   const pool = getPool();
   const cards = await pool.query(
+    // A list's items are left out (migration 068): a line and four statements
+    // per item would make a digest of five hundred lines. Grouping them by
+    // list is a later build.
     `SELECT id, type, category, geo->>'bucket' AS geo_bucket
      FROM cards
      WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
-       AND NOT paused_by_kill_switch
+       AND NOT paused_by_kill_switch AND list_id IS NULL
      ORDER BY created_at`,
     [accountId],
   );
@@ -482,8 +485,10 @@ export async function runDigestTick(
 export async function runRenewalTick(cfg: Config, after?: string): Promise<TickPass> {
   const pool = getPool();
   const due = await pool.query(
+    // List items renew with their list (sending it again), so they are not
+    // listed one by one in a renewal email (migration 068).
     `SELECT DISTINCT account_id FROM cards
-     WHERE lifecycle_state = 'PUBLISHED'
+     WHERE lifecycle_state = 'PUBLISHED' AND list_id IS NULL
        AND expires_at > now()
        AND expires_at <= now() + make_interval(days => ${RENEWAL_LEAD_DAYS})
        AND renewal_notified_at IS NULL
@@ -502,6 +507,7 @@ export async function runRenewalTick(cfg: Config, after?: string): Promise<TickP
                 (expires_at <= now() + make_interval(days => ${RENEWAL_LEAD_DAYS})) AS expiring_soon
          FROM cards
          WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
+           AND list_id IS NULL
          ORDER BY expires_at`,
         [accountId],
       );
@@ -527,7 +533,7 @@ export async function runRenewalTick(cfg: Config, after?: string): Promise<TickP
       if (outcome.status !== 'failed') {
         await pool.query(
           `UPDATE cards SET renewal_notified_at = now()
-           WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED'
+           WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND list_id IS NULL
              AND expires_at > now()
              AND expires_at <= now() + make_interval(days => ${RENEWAL_LEAD_DAYS})
              AND renewal_notified_at IS NULL`,

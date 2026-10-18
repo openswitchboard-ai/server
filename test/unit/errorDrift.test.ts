@@ -25,6 +25,8 @@ import { NAMES_GATE_ACTION, SHARED_PROFILE_ACTION, COUNTERPARTY_PROFILE_ACTION }
 import { RELAY_ACTION, NO_MANDATE_ACTION } from '../../src/domain/negotiation.js';
 import { OFFER_EXPIRED_WORDS } from '../../src/domain/offers.js';
 import { REPORT_CEILING_WORDS } from '../../src/safety/reports.js';
+import { listCeilingSentence } from '../../src/domain/quotas.js';
+import * as lists from '../../src/domain/lists.js';
 
 const REF = '7f0c2a4e-1b9d-4c55-9a8e-3d2f6b1c0e91';
 // As long as a real link: origin, /a/, a uuid, a dot and a 43-character MAC.
@@ -50,6 +52,8 @@ const BUILDS: Record<string, () => OsbError[]> = {
       human_action: "That is the day's posting done. Try again in about an hour — nothing your human needs to do, and no clock time to pass on.",
     }),
     new OsbError('QUOTA_EXCEEDED', { retry_after: 3600, human_action: REPORT_CEILING_WORDS }),
+    // The list ceiling (domain/lists.ts), at the widest figures it can carry.
+    new OsbError('QUOTA_EXCEEDED', { human_action: listCeilingSentence(100_000, 100_000) }),
   ],
   CATEGORY_PROHIBITED: () => [
     new OsbError('CATEGORY_PROHIBITED', {
@@ -111,6 +115,17 @@ const BUILDS: Record<string, () => OsbError[]> = {
         }),
     ),
   CONFIRM_FIGURE: () => [
+    // A list's figures, read back once as a summary (domain/lists.ts), with
+    // the shared reach riding along.
+    (() => {
+      const f = { what: 'asking price' as const, count: 200, lowest: 0.5, highest: 99_999_999_999, currency: 'AUD' };
+      return new OsbError('CONFIRM_FIGURE', {
+        human_action: `${lists.LIST_FIGURE_HUMAN_ACTION}${cards.FIGURE_RADIUS_TAIL}`,
+        questions: [lists.listFigureQuestion(f), cards.RADIUS_QUESTION_LOOKING],
+        figures: lists.listFigureEntries(f),
+        reference: REF,
+      });
+    })(),
     new OsbError('CONFIRM_FIGURE', {
       human_action: `${FIGURE_HUMAN_ACTION}${cards.FIGURE_RADIUS_TAIL}`,
       questions: figureQuestions([

@@ -534,6 +534,15 @@ describe('the wordings themselves, one sentence at a time', () => {
       /check with you whenever they like/,
       /emails them when somebody comes forward/,
     ],
+    // Added with lists (migration 068): a long list takes minutes to be
+    // fully up, which is when "I'll let you know when it's all up" is said.
+    [
+      'list_posted',
+      /bring them anyone who comes forward on it/,
+      /Confirm with your human how often/,
+      /never say you will come back on your own/,
+      /emails them when somebody comes forward/,
+    ],
     [
       'nothing_waiting',
       /bring them whatever arrives/,

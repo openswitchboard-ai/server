@@ -340,6 +340,21 @@ export const SENTENCES = {
     emails: 'when somebody comes forward',
   }),
 
+  /**
+   * Said once a list call is answered (domain/lists.ts). A list's items are
+   * checked a few at a time and spaced out on purpose, so a long one is fully
+   * up some minutes later rather than in seconds, and that is the moment an
+   * assistant reaches for "I'll let you know when it's all up". The tail is
+   * the ordinary one for this agent's lane.
+   */
+  list_posted: waitingOn({
+    about: 'A list has gone to be checked; a long one takes some minutes to be fully up.',
+    budget: 460,
+    head: 'Each item is checked before it goes up, ten at a time, so a long list takes some minutes to be fully up.',
+    thing: 'anyone who comes forward on it',
+    emails: 'when somebody comes forward',
+  }),
+
   /** An open conversation with nothing waiting on it. */
   nothing_waiting: waitingOn({
     about: 'Nothing has come through on an open conversation.',

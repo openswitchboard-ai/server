@@ -5178,6 +5178,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
                 (expires_at <= now() + interval '7 days') AS expiring_soon
          FROM cards
          WHERE account_id = $1 AND lifecycle_state = 'PUBLISHED' AND expires_at > now()
+           AND list_id IS NULL
          ORDER BY expires_at`,
         [v.accountId],
       );

@@ -43,6 +43,13 @@ export interface Quotas {
    *  hour: send_message, publish_intent, respond, settle and refine_intent. It
    *  sits above the per-thing limits rather than replacing them. */
   maxWritesPerHour: number;
+  /**
+   * Max list items one account may hold, pending or up, across all its lists
+   * (domain/lists.ts). Separate from and in addition to maxOpenCards: a list
+   * item never counts against the open postings, and a posting never counts
+   * against this.
+   */
+  maxListItems: number;
 }
 
 export interface Config {
@@ -268,6 +275,7 @@ export function loadConfig(): Config {
       maxPublishesPerDay: Number(process.env.QUOTA_MAX_PUBLISHES_PER_DAY ?? 10),
       maxOffersPerHour: Number(process.env.QUOTA_MAX_OFFERS_PER_HOUR ?? 6),
       maxWritesPerHour: Number(process.env.QUOTA_MAX_WRITES_PER_HOUR ?? 300),
+      maxListItems: inRange(process.env.QUOTA_MAX_LIST_ITEMS, 500, 0, 100000, 'QUOTA_MAX_LIST_ITEMS'),
     },
     maxReportsPerDay: Number(process.env.MAX_REPORTS_PER_DAY ?? 5),
     conversationBudgetMessages: inRange(

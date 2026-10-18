@@ -793,7 +793,7 @@ function fakePool() {
       const refs = world.refs.handle(sql, params);
       if (refs) return refs;
       if (/SELECT \* FROM cards WHERE id/.test(sql)) return { rows: [world.card], rowCount: 1 };
-      if (/FROM cards WHERE account_id = \$1 ORDER BY created_at DESC/.test(sql)) {
+      if (/FROM cards WHERE account_id = \$1 AND list_id IS NULL ORDER BY created_at DESC/.test(sql)) {
         return { rows: [world.card], rowCount: 1 };
       }
       if (/UPDATE cards/.test(sql)) return { rows: [{ content_version: 2 }], rowCount: 1 };
@@ -1058,8 +1058,8 @@ describe('the sentences and the manual', () => {
     expect(kindsInWords([])).toBe('');
   });
 
-  it('is at version 87, with one general rule and nothing about any sort of goods in the rule itself', () => {
-    expect(MANUAL.version).toBe(87);
+  it('is at version 87 or later, with one general rule and nothing about any sort of goods in the rule itself', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(87);
     const note = MANUAL_CHANGELOG.find((c) => c.version === 87)!.note;
     expect(note).toContain('give it in identifiers when you post');
     expect(note).toContain('the most specific one that names a product or an edition');

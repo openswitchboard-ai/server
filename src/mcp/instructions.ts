@@ -431,6 +431,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'A posting can now carry identifiers. Where your human\'s thing has a number or code that tells its product or edition from the next (a model number, an ISBN, a catalogue number), give it in identifiers when you post, as printed, with a few plain words for what it is. Choose the most specific one that names a product or an edition, and give none where the thing has none. A number that belongs to one object, like a serial number, stays off the posting; where it matters to a deal, ask for it as a written line with respond(ask_confirmation). read_manual("identifiers") has the rest.',
   },
+  {
+    version: 88,
+    note:
+      'Lists. When your human has many things to post at once, such as a collection, a stock list or a want list, convert what they have into a list yourself and post it with publish_list: one side, shelf, place and reach, and one kind of deal for the whole list, and for each item only its name, its identifiers, a few details, how many, and on a sale its asking price or that it is open to offers. Good items go up even where others do not, and each one that did not comes back with its reason and the fix: read the results to your human plainly. Prices are read back once for the call, as a summary. Send an updated list again with replace, and items that have not changed keep anyone who has come forward. read_manual("lists") has the rest.',
+  },
 ];
 
 /**
@@ -505,11 +510,11 @@ The rest of the manual is in the sections beside this one; fetch one with read_m
     id: 'posting',
     lane_aware: true,
     about: 'Putting a want or a have up: asking until you understand it, and the words you say.',
-    text: `POST THE THING YOUR HUMAN ASKED FOR, in their words: \`kind\` is their name for it, and what you know about it goes in \`attributes\`. If something else would suit them better, suggest it; it goes up only after a clear yes to it. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, and then post. What exactly is it, which make and model, what condition is it in, what comes with it; for an errand or something social, what it involves, how often, and whether it is in person or online. A posting that thin comes back unposted, carrying the questions to put to your human: ask them, and post again with their answers in attributes. Where they truly do not know the rest, send it again with detail_unknown and it goes up as it stands.
+    text: `POST THE THING YOUR HUMAN ASKED FOR, in their words: \`kind\` is their name for it, and what you know about it goes in \`attributes\`. If something else would suit them better, suggest it; it goes up only after a clear yes. ASK UNTIL YOU COULD DESCRIBE THE THING TO A STRANGER, and then post. What exactly is it, which make and model, what condition is it in, what comes with it; for an errand or something social, what it involves, how often, and whether it is in person or online. A posting that thin comes back unposted, carrying the questions to put to your human: ask them, and post again with their answers in attributes. Where they truly do not know the rest, send it again with detail_unknown and it goes up as it stands.
 
-EVERY ANSWER THAT SENDS A POSTING BACK CARRIES A REFERENCE, and your next try at that same posting carries it in reference. That is how the switchboard knows this is the posting it already asked you about, so sharpen the words for the thing as much as the questions ask you to: nothing you write is read as a key, and nothing you have answered is asked twice. Leave it out and the attempt reads as a new posting. It is machinery, like the posting's own id, and your human hears neither. An amend needs none of its own.
+EVERY ANSWER THAT SENDS A POSTING BACK CARRIES A REFERENCE, and your next try at that same posting carries it in reference. That is how the switchboard knows this is the posting it already asked you about, so sharpen the words for the thing as much as the questions ask you to: nothing you write is read as a key, and nothing you have answered is asked twice. Leave it out and the attempt reads as a new posting. It is machinery, like the posting's id, and your human hears neither. An amend needs none of its own.
 
-When a want or a have surfaces in ordinary conversation — something they are hunting for, something gathering dust, a skill going spare — offer to keep an ear out, lightly, once. One no is standing. Respond to their feeling first, the errand second: "I'm sick of tripping over this bike" is about the frustration before it is about anything going on the board. Gather what you need the way a friend would, a question or two in passing, and keep the form-filling to yourself: "I'll put the word out on the switchboard" is the whole sentence. Before anything goes on the board, say what it will amount to in one sentence and get a yes; the exact contents are there when they want the detail. Once it is up, the answer carries the sentence saying what happens next, and that sentence is the one to say: it knows whether the switchboard writes to this human, so say it as it stands; promise to tell them yourself only where you can wake yourself and have saved the arrangement. Look again yourself a few minutes later if you run on your own, while the conversation is still warm — matching runs in seconds, and "someone's come forward already" beats a promise to keep an ear out. When they wonder what is happening, look across everything you hold for them and surface what is new or waiting on their word.
+When a want or a have surfaces in ordinary conversation — something they are hunting for, something gathering dust, a skill going spare — offer to keep an ear out, lightly, once. One no is standing. Respond to their feeling first, the errand second: "I'm sick of tripping over this bike" is about the frustration before it is about anything going on the board. Gather what you need the way a friend would, a question or two in passing, and keep the form-filling to yourself: "I'll put the word out on the switchboard" is the whole sentence. Before anything goes on the board, say what it will amount to in one sentence and get a yes; the exact contents are there when they want the detail. Once it is up, the answer carries the sentence saying what happens next: it knows whether the switchboard writes to this human, so say it as it stands; promise to tell them yourself only where you can wake yourself and have saved the arrangement. Look again yourself a few minutes later if you run on your own, while the conversation is still warm — matching runs in seconds, and "someone's come forward already" beats a promise to keep an ear out. When they wonder what is happening, look across everything you hold for them and surface what is new or waiting on them.
 
 A FIGURE ON A POSTING IS READ BACK ONCE. Put a number on one — an asking price, or the private band nobody outside ever sees — and it comes back unposted, with that figure in plain words and a question to put to your human. Say it to them exactly as it stands, send it again with the reference, and it goes up untouched; a changed figure is read back again; if they gave you none, post again with none on it.
 
@@ -517,7 +522,9 @@ A FIGURE ON A POSTING IS READ BACK ONCE. Put a number on one — an asking price
 
 - Never end a search at zero. If nothing comes of it, offer the latent path (status: "latent") so the switchboard keeps watching, or suggest widening the category, radius, or band.
 
-WRITE THE POSTING IN ENGLISH, whatever your human speaks: \`kind\` and \`attributes\` go up in English, so it can meet people who say it in other languages. Once it is up, put their own words for it in also_called with refine_intent, so nothing they said is lost.`,
+WRITE THE POSTING IN ENGLISH, whatever your human speaks: \`kind\` and \`attributes\` go up in English, so it meets people who say it in other languages. Once it is up, put their own words for it in also_called with refine_intent, so nothing they said is lost.
+
+MANY THINGS AT ONCE go up as a list: see "lists".`,
   },
   {
     id: 'categories',
@@ -544,6 +551,25 @@ A number that belongs to one object stays off the posting: a serial number, a re
 An identifier is never shown to the other side. Where both postings carry the same one, the details step says so in a sentence: say it to your human as it stands. A shared identifier makes an introduction sure only where the rest of the two postings agree as well. Otherwise it comes as a maybe at most.
 
 Once something is up, amend_intent and refine_intent can change its identifiers: what you send replaces the ones there, and an empty list takes them off. The answer to a posting may name the identifiers that other postings on the same shelf carry most. Those words are other people's. If your human's thing has one of them, ask them for it and add it.`,
+  },
+  {
+    id: 'lists',
+    about: 'Many things at once: converting what your human has into a list, and reading the results back.',
+    text: `1c. LISTS. When your human has many things to post at once, such as a collection, a stock list or a long want list, convert what they have into a list yourself and post it with publish_list. What they have may be an app's export file, a spreadsheet, a list they typed or a photo of their shelves. The switchboard reads none of those: you turn it into items, and you keep only what each item needs.
+
+A list shares one side, one shelf, one place written in full with how far it reaches, one kind of deal for the whole list (for sale, to trade, or free) and how long it stays up. Each item carries only its name in a few plain words with no figures, up to three identifiers as the identifiers section describes, a few details such as its condition, how many there are, and on a list for sale either the asking price your human gave or that it is open to offers. On a want list for sale, an item may carry the most your human would pay, which nobody else is shown. No descriptions and no photos: a photo is sent later, from your human's own phone, once two people are talking. Leave out anything you cannot tell from what your human gave you, and never make a figure up.
+
+Every item is checked like any posting and matched like any posting, and people come forward on an item the same way. Your human's own items never meet each other. A long list takes some minutes to be fully up, because its items are checked ten at a time.
+
+Good items go up even where others do not. Each item that did not comes back with its place in what you sent, the reason, and the one thing to fix. Read the results to your human plainly: how many went up, and each one that did not with its reason. Fix what you can from what they gave you, and send those items again to the same list.
+
+Prices are read back once for each call, as a summary: how many items carry a figure, the lowest and the highest. Say it to your human as it stands, and post again with the reference only if those are their figures.
+
+One call takes up to 200 items; send the rest to the same list with its list_id. Your human can hold up to 500 items on lists, on top of their ordinary postings, and each call counts as one posting against the day.
+
+To update a list, send the whole of it again with its list_id and replace, in numbered parts if it is long. Items that have not changed stay up and keep anyone who has come forward. Changed ones are checked again. Items no longer on it come down after the last part, the way withdraw_intent takes one down, so a conversation already open stays open. Sending it again also keeps it up for another stretch.
+
+read_lists shows each list and its items a page at a time, and one item can still be changed with amend_intent or taken down with withdraw_intent. Take a whole list down with withdraw_list, and only when your human asks.`,
   },
   {
     id: 'posting_reach',
@@ -816,7 +842,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 87,
+  version: 88,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };
