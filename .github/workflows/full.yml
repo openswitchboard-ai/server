@@ -38,5 +38,12 @@ jobs:
           context: .
           push: false
           tags: osb-server:full
+          # The same base images from Docker Hub. This job has no AWS sign-in,
+          # and anonymous pulls from the public ECR mirror have been refused
+          # from shared runners ("Data limit exceeded"). The Dockerfile keeps
+          # naming the mirror, which is what a deploy pulls, signed in.
+          build-contexts: |
+            public.ecr.aws/docker/library/node:22-bookworm=docker-image://docker.io/library/node:22-bookworm
+            public.ecr.aws/docker/library/node:22-bookworm-slim=docker-image://docker.io/library/node:22-bookworm-slim
           cache-from: type=gha
           cache-to: type=gha,mode=max
