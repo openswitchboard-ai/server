@@ -68,6 +68,16 @@ change. It is also the honest test: the manual-delivery faults this suite
 exists to find are the ones a smaller model hits first, and most people will
 not arrive on the largest model.
 
+**The switchboard's tools and nothing else.** A person's chat assistant has no
+shell, so the driver passes `--tools ""` (no built-in tool at all; the MCP
+server's tools are not built-in and stay), sets `ENABLE_TOOL_SEARCH=false` so
+those tools are given to the model up front rather than deferred behind a
+search step, and sets `MCP_CONNECTION_NONBLOCKING=0` so each turn (a fresh
+process, resumed) waits for the switchboard's server to connect before it
+starts. Checked locally against a stub MCP server on CLI 2.1.285: the session's
+tool list is exactly the server's tools, and the debug log reads
+`[ToolSearch:optimistic] mode=standard, ENABLE_TOOL_SEARCH=false, result=false`.
+
 Everything else stays isolated: empty working directory, `--strict-mcp-config`
 so the only MCP server is the one the run writes, and `--setting-sources ''`.
 

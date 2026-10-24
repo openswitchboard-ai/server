@@ -23,6 +23,19 @@
  *     question in PLAIN TEXT where the simulated human can answer it. A
  *     structured question tool in a headless run is a deadlock: the harness
  *     never sees the options and the turn never ends.
+ *   - `--tools ""`: no built-in tool at all, so the switchboard's MCP tools
+ *     are the whole of what the assistant can do. A person's chat assistant
+ *     has no shell and no files, and in a run of 24 October 2026 this one,
+ *     unable to see the switchboard's tools, talked to its human through
+ *     `Bash` echo commands instead. `--allowedTools` only says what runs
+ *     without asking; it never took a tool away.
+ *   - ENABLE_TOOL_SEARCH=false in the environment: the MCP tools are given to
+ *     the model up front rather than deferred behind a tool-search step. In
+ *     that same run Haiku read the manual and then said it had no posting
+ *     tools: they were deferred, and it never searched for them. Read off the
+ *     installed CLI (2.1.285): the variable decides the tool-search mode, and
+ *     a false value is the "standard" mode in which nothing is deferred; its
+ *     own notes name `ENABLE_TOOL_SEARCH=false` as the way to turn it off.
  *
  * WHAT IS NOT ISOLATED, SAID PLAINLY: authentication. The CLI signs in as
  * whoever this machine is signed in as, and a managed/policy settings file
@@ -90,6 +103,23 @@ const REHEARSAL_CLAUDE_MODEL =
  */
 const USE_BEDROCK = (process.env.REHEARSAL_CLAUDE_BEDROCK ?? '1') !== '0';
 
+/**
+ * The environment every turn runs with, beside the config dir and the provider.
+ * Bare mode (see USE_BEDROCK), and the switchboard's tools given up front
+ * rather than behind a tool-search step (see the header).
+ */
+export const CLAUDE_ENV: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_SIMPLE: '1',
+  ENABLE_TOOL_SEARCH: 'false',
+  // EVERY TURN IS A FRESH PROCESS (--resume), so every turn connects to the
+  // switchboard's MCP server again, and by default the CLI starts the turn
+  // without waiting for that connection. A slow connect is then a turn with
+  // no switchboard tools in it. Read off the installed CLI (2.1.285): MCP
+  // servers connect non-blocking unless this is set false, and set false the
+  // turn waits for them, up to MCP_CONNECT_TIMEOUT_MS.
+  MCP_CONNECTION_NONBLOCKING: '0',
+};
+
 export interface ClaudeArgsInput {
   utterance: string;
   mcpConfigPath: string;
@@ -125,6 +155,10 @@ export function buildClaudeArgs(input: ClaudeArgsInput): string[] {
     'mcp__openswitchboard__*',
     '--disallowedTools',
     'AskUserQuestion',
+    // No built-in tool: no shell, no files, no web. The MCP server's tools
+    // are not built-in and stay.
+    '--tools',
+    '',
     '--permission-mode',
     'bypassPermissions',
     // Nothing of this machine's own configuration.
@@ -283,7 +317,7 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
         {
           ...process.env,
           CLAUDE_CONFIG_DIR: configDir,
-          CLAUDE_CODE_SIMPLE: '1',
+          ...CLAUDE_ENV,
           ...(USE_BEDROCK ? { CLAUDE_CODE_USE_BEDROCK: '1' } : {}),
         },
         workDir,

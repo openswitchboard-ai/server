@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, claudeCodeDriver, readClaudeJson } from '../../rehearsal/drivers/claudeCode.js';
+import { CLAUDE_ENV, buildClaudeArgs, claudeCodeDriver, readClaudeJson } from '../../rehearsal/drivers/claudeCode.js';
 
 describe('the argv', () => {
   const args = buildClaudeArgs({ utterance: 'hello', mcpConfigPath: '/tmp/mcp.json' });
@@ -44,6 +44,12 @@ describe('the argv', () => {
       '--permission-mode',
       'bypassPermissions',
     ]);
+  });
+
+  it('gives the assistant no built-in tool at all: no shell, no files', () => {
+    // A person's chat assistant has no shell. With Bash available, one run's
+    // assistant talked to its human through echo commands (24 October 2026).
+    expect(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2)).toEqual(['--tools', '']);
   });
 
   it('puts the human’s words last, behind --, so nothing in them reads as a flag', () => {
@@ -86,17 +92,23 @@ describe('the driver, with a stubbed spawn', () => {
   it('writes a 0600 MCP config, resumes on later turns, and deletes the key at teardown', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rehearsal-cc-'));
     const seen: string[][] = [];
+    const envs: NodeJS.ProcessEnv[] = [];
     const driver = claudeCodeDriver({
       privateDir: dir,
       mcpUrl: 'https://mcp-dev.openswitchboard.ai',
-      spawn: async (args) => {
+      spawn: async (args, env) => {
         seen.push(args);
+        envs.push(env);
         return JSON.stringify({ result: `turn ${seen.length}`, session_id: 'sess-9' });
       },
     });
 
     await driver.prepare('osb_ak_secret', 'run1');
     const first = await driver.ask('track-a', 'hello');
+    // The switchboard's tools up front, never behind a tool-search step, and
+    // each turn waits for the server to connect.
+    expect(envs[0]).toMatchObject({ ENABLE_TOOL_SEARCH: 'false', MCP_CONNECTION_NONBLOCKING: '0', CLAUDE_CODE_SIMPLE: '1' });
+    expect(CLAUDE_ENV.ENABLE_TOOL_SEARCH).toBe('false');
     expect(first.text).toBe('turn 1');
     expect(seen[0]).not.toContain('--resume');
 
