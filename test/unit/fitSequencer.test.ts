@@ -315,16 +315,20 @@ function fakePool() {
       }
 
       // --- how many are in line (the holder's own count) ---------------------
-      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) {
-        const isHave = params[0] === HAVE;
-        return rows([
-          {
-            n: world.intros.filter(
-              (i) =>
-                i.state === 'open' && !i.live && (isHave ? true : wantCard(i.n) === params[0]),
-            ).length,
-          },
-        ]);
+      // One row per open introduction, read from each posting asked about,
+      // with the account on the other side (sequencer.ts lineRows).
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) {
+        const ids: string[] = params[0] ?? [];
+        const out: any[] = [];
+        for (const i of world.intros.filter((x) => x.state === 'open')) {
+          if (ids.includes(HAVE)) {
+            out.push({ cid: HAVE, live: i.live, other: buyer(i.n), slots: world.slots, gather_open: gatherOpen() });
+          }
+          if (ids.includes(wantCard(i.n))) {
+            out.push({ cid: wantCard(i.n), live: i.live, other: SELLER, slots: 1, gather_open: false });
+          }
+        }
+        return rows(out);
       }
 
       // --- the sweep ---------------------------------------------------------

@@ -92,8 +92,15 @@ function fakePool() {
         ]);
       }
       // The line behind this one, read for the holder only.
-      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) {
-        return rows([{ n: world.collecting ? 3 : 0 }]);
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) {
+        // The caller's own posting: this one live, and (when collecting) three
+        // other people in its own line behind it.
+        const cid = (params[0] as string[])[0];
+        const live = { cid, live: true, other: cid === CARD_W ? BEPPE : ANA, slots: 1, gather_open: false };
+        const behind = world.collecting
+          ? ['p1', 'p2', 'p3'].map((other) => ({ cid, live: false, other, slots: 1, gather_open: false }))
+          : [];
+        return rows([live, ...behind]);
       }
       if (/FROM cards c/.test(sql)) return rows([]);
       if (/^\s*SELECT \* FROM cards WHERE id/.test(sql)) {

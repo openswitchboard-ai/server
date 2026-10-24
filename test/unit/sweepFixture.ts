@@ -258,7 +258,7 @@ export function fakeSweepPool(world: SweepWorld, unknown: string[] = []) {
         const f = byMatch.get(params[0]);
         return rows(f ? [f.row] : []);
       }
-      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) return rows([{ n: 0 }]);
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) return rows([]);
       if (/free|slots/i.test(sql) && /FROM cards/.test(sql)) return rows([{ slots: 1, used: 0, n: 0 }]);
       if (/^\s*SELECT \* FROM cards WHERE id/.test(sql)) {
         const c = byCard.get(params[0]);

@@ -113,7 +113,7 @@ function fakePool() {
         ]);
       }
       // The line behind this one, on the caller's own want or have.
-      if (/count\(\*\)::int AS n FROM matches m/.test(q)) return rows([{ n: 0 }]);
+      if (/SELECT t\.cid, t\.live, t\.other/.test(q)) return rows([]);
       if (/count\(DISTINCT account_id\)::int AS n,/.test(q)) {
         return rows([{ n: world.optins.n, mine: world.optins.mine ? 1 : 0 }]);
       }

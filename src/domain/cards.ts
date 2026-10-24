@@ -79,6 +79,7 @@ import { DEFAULT_RADIUS_KM, NormalisedGeo, geoOf, normaliseGeo } from '../geo/no
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { NO_MONEY_REASON, shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
 import { categoryPhrase, theirThing } from '../email/templates.js';
+import { lineCounts, lineRows } from './sequencer.js';
 import type { Config } from '../config.js';
 
 /**
@@ -1521,32 +1522,21 @@ export async function getCard(id: string): Promise<CardRow | undefined> {
  * for thirteen minutes and somebody else was waiting behind that. The list
  * said nothing either way, so the wrong answer was the easy one.
  *
- * One grouped statement for every want and have returned, never one per row:
- * how many people are with each of them right now, and how many are waiting
- * their turn. Only open introductions count — a declined, closed or filed-away
- * one is nobody standing there.
+ * One statement for every want and have returned, never one per row: how
+ * many people are with each of them right now, and how many are waiting their
+ * turn in its own line. Only open introductions count — a declined, closed or
+ * filed-away one is nobody standing there. Counted as people, not
+ * introductions (sequencer.ts lineCounts).
  */
 export async function peopleOnCards(
   cardIds: string[],
 ): Promise<Map<string, { here: number; waiting: number }>> {
-  const out = new Map<string, { here: number; waiting: number }>();
-  if (!cardIds.length) return out;
-  const r = await getPool().query(
-    `SELECT t.cid,
-            count(*) FILTER (WHERE t.live)::int     AS here,
-            count(*) FILTER (WHERE NOT t.live)::int AS waiting
-       FROM (SELECT unnest(ARRAY[m.card_want, m.card_have]) AS cid, m.live
-               FROM matches m
-              WHERE m.state = 'open'
-                AND (m.card_want = ANY($1::uuid[]) OR m.card_have = ANY($1::uuid[]))) t
-      WHERE t.cid = ANY($1::uuid[])
-      GROUP BY t.cid`,
-    [cardIds],
-  );
-  for (const row of r.rows as { cid: string; here: number; waiting: number }[]) {
-    out.set(row.cid, { here: Number(row.here ?? 0), waiting: Number(row.waiting ?? 0) });
-  }
-  return out;
+  // PEOPLE, NOT INTRODUCTIONS, and only this posting's own line
+  // (sequencer.ts lineCounts): several items on one person's list are one
+  // person, and a row waiting on the other side's full posting is nobody in
+  // this one's line.
+  if (!cardIds.length) return new Map();
+  return lineCounts(await lineRows(cardIds));
 }
 
 /** People, counted and conjugated the way a person says it out loud. */

@@ -332,14 +332,94 @@ export async function noteMovement(matchId: string): Promise<void> {
   }
 }
 
-/** How many people are waiting behind the live ones. HOLDER'S OWN VIEW ONLY. */
-export async function inLineCount(cardId: string): Promise<number> {
+// ---------------------------------------------------------------------------
+// WHO IS WITH A WANT OR A HAVE, AND WHO IS WAITING BEHIND THEM: PEOPLE, NOT
+// INTRODUCTIONS (rehearsal, 24 October 2026).
+//
+// These counts used to be counts of introductions. A buyer's assistant was
+// told "One more person is in line for this" when the row in line was the
+// SAME seller's second item on a list, and said "there's one other person
+// behind them". Two things were wrong, and both are fixed here:
+//
+//   1. PEOPLE, NOT ROWS. Each count is of distinct other accounts. Several
+//      items on one person's list are one person, and someone already live on
+//      this want or have is never also counted as waiting behind themselves.
+//   2. ONLY THE CALLER'S OWN LINE. An introduction is in line on THIS posting
+//      only when this posting is full (no slot free, and no gathering window
+//      open). A row that is not live while this posting has room is waiting
+//      on the OTHER side's full posting: there the caller is the one waiting,
+//      and it is nobody in their line.
+//
+// The rule is lineCounts, pure; the one statement that feeds it is lineRows.
+// ---------------------------------------------------------------------------
+
+/** One open introduction as seen from one of its two postings. */
+export interface OwnLineRow {
+  /** The posting it is read from. */
+  cid: string;
+  live: boolean;
+  /** The account on the other side. */
+  other: string;
+  /** That posting's slots and whether its gathering window is open. */
+  slots: number | null;
+  gather_open: boolean;
+}
+
+/** People with each posting now, and people waiting in its own line. Pure. */
+export function lineCounts(rows: OwnLineRow[]): Map<string, { here: number; waiting: number }> {
+  const byCard = new Map<string, OwnLineRow[]>();
+  for (const r of rows) {
+    if (!r || !r.cid) continue;
+    const list = byCard.get(r.cid) ?? [];
+    list.push(r);
+    byCard.set(r.cid, list);
+  }
+  const out = new Map<string, { here: number; waiting: number }>();
+  for (const [cid, list] of byCard) {
+    const live = list.filter((r) => r.live);
+    const here = new Set(live.map((r) => r.other));
+    const head = list[0];
+    // Full exactly as freeSlots reads it: live introductions against slots.
+    const full = !head.gather_open && live.length >= Number(head.slots ?? 1);
+    const waiting = new Set(
+      full ? list.filter((r) => !r.live && !here.has(r.other)).map((r) => r.other) : [],
+    );
+    out.set(cid, { here: here.size, waiting: waiting.size });
+  }
+  return out;
+}
+
+/** Every open introduction on these postings, read from each, in one statement. */
+export async function lineRows(cardIds: string[]): Promise<OwnLineRow[]> {
+  if (!cardIds.length) return [];
   const r = await getPool().query(
-    `SELECT count(*)::int AS n FROM matches m
-      WHERE (m.card_want = $1 OR m.card_have = $1) AND m.state = 'open' AND NOT m.live`,
-    [cardId],
+    `SELECT t.cid, t.live, t.other, c.slots,
+            (c.sale = 'best-offer' AND c.gather_until IS NOT NULL AND c.gather_until > now()) AS gather_open
+       FROM (SELECT unnest(ARRAY[m.card_want, m.card_have]) AS cid,
+                    unnest(ARRAY[m.account_have, m.account_want]) AS other,
+                    m.live
+               FROM matches m
+              WHERE m.state = 'open'
+                AND (m.card_want = ANY($1::uuid[]) OR m.card_have = ANY($1::uuid[]))) t
+       JOIN cards c ON c.id = t.cid
+      WHERE t.cid = ANY($1::uuid[])`,
+    [cardIds],
   );
-  return Number(r.rows[0]?.n ?? 0);
+  return (r.rows as any[]).map((row) => ({
+    cid: String(row.cid),
+    live: row.live === true,
+    other: String(row.other),
+    slots: row.slots === null || row.slots === undefined ? null : Number(row.slots),
+    gather_open: row.gather_open === true,
+  }));
+}
+
+/**
+ * How many OTHER PEOPLE are waiting in this want's or have's own line, behind
+ * the ones live on it. HOLDER'S OWN VIEW ONLY. See lineCounts.
+ */
+export async function inLineCount(cardId: string): Promise<number> {
+  return lineCounts(await lineRows([cardId])).get(cardId)?.waiting ?? 0;
 }
 
 /**

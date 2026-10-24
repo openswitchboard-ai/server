@@ -302,7 +302,7 @@ function fakePool() {
       return rows([MATCH, OTHER_MATCH].includes(params[0]) ? [matchRow(params[0])] : []);
     }
     if (/^\s*SELECT m\.\*[^;]*FROM matches m/.test(sql)) return rows([matchRow(MATCH)]);
-    if (/count\(\*\)::int AS n FROM matches m/.test(sql)) return rows([{ n: 0 }]);
+    if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) return rows([]);
     if (/INSERT INTO approval_links/.test(sql)) return rows([{ id: lineId() }]);
     if (/SELECT \* FROM cards WHERE id/.test(sql)) {
       return rows(

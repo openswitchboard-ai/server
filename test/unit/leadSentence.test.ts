@@ -110,7 +110,7 @@ function fakePool() {
       if (/SELECT timezone FROM accounts/.test(sql)) return rows([{ timezone: 'Australia/Perth' }]);
       if (/^\s*SELECT m\.\*/.test(sql) && /FROM matches m/.test(sql)) return rows([theMatch()]);
       if (/^\s*SELECT \* FROM matches WHERE id/.test(sql)) return rows([theMatch()]);
-      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) return rows([{ n: 0 }]);
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) return rows([]);
       if (/count\(DISTINCT account_id\)/.test(sql)) return rows([{ n: 0 }]);
       if (/collect_until > now\(\)/.test(sql)) return rows([]);
       if (/FROM cards c/.test(sql)) return rows([]);

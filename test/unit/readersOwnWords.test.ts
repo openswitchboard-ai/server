@@ -101,6 +101,14 @@ function fakePool() {
     query: async (sql: string, params: any[] = []) => {
       const rows = (r: any[]) => ({ rows: r, rowCount: r.length });
       if (/SELECT count\(\*\)::int AS n FROM matches/.test(sql)) return rows([{ n: 1 }]);
+      // The holder's own line (sequencer.ts lineRows): this one live, one other person behind it.
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) {
+        const cid = (params[0] as string[])[0];
+        return rows([
+          { cid, live: true, other: cid === CARD_WANT ? BEPPE : ANA, slots: 1, gather_open: false },
+          { cid, live: false, other: 'someone-else', slots: 1, gather_open: false },
+        ]);
+      }
       if (/FROM matches/.test(sql) && /^\s*SELECT/.test(sql)) return rows([theMatch()]);
       if (/SELECT category, kind FROM cards WHERE id/.test(sql)) {
         const c = CARDS[params[0] as string];

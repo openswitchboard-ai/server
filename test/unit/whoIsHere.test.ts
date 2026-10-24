@@ -41,6 +41,8 @@ interface Intro {
   card: string;
   live: boolean;
   state: 'open' | 'declined' | 'closed' | 'archived';
+  /** The account on the other side. Each introduction a different person unless a test says otherwise. */
+  other: string;
 }
 
 interface World {
@@ -77,10 +79,12 @@ const card = (over: Record<string, any> = {}) => ({
   ...over,
 });
 
+let nextPerson = 0;
 const intro = (over: Partial<Intro> = {}): Intro => ({
   card: BIKE,
   live: false,
   state: 'open',
+  other: `person-${++nextPerson}`,
   ...over,
 });
 
@@ -103,17 +107,14 @@ function fakePool() {
         return { rows: world.cards, rowCount: world.cards.length };
       }
       if (s.startsWith('SELECT t.cid,')) {
+        // One row per open introduction, read from the posting it is on.
         const ids: string[] = params[0] ?? [];
-        const rows = ids
-          .map((id) => {
-            const mine = world.intros.filter((m) => m.card === id && m.state === 'open');
-            return {
-              cid: id,
-              here: mine.filter((m) => m.live).length,
-              waiting: mine.filter((m) => !m.live).length,
-            };
-          })
-          .filter((r) => r.here + r.waiting > 0);
+        const rows = world.intros
+          .filter((m) => ids.includes(m.card) && m.state === 'open')
+          .map((m) => {
+            const c = world.cards.find((x) => x.id === m.card);
+            return { cid: m.card, live: m.live, other: m.other, slots: c?.slots ?? 1, gather_open: false };
+          });
         return { rows, rowCount: rows.length };
       }
       return { rows: [], rowCount: 0 };
@@ -286,7 +287,8 @@ describe('the one sentence the agent leads with', () => {
   });
 
   it('several at once, where the human asked for several: phrases it for the count', async () => {
-    world.cards = [card({ slots: 3 })];
+    // Two slots, both taken, so the third is in this posting's own line.
+    world.cards = [card({ slots: 2 })];
     world.intros = [intro({ live: true }), intro({ live: true }), intro()];
     const e = await only();
     expect(e.note.text).toBe(
@@ -305,13 +307,42 @@ describe('the one sentence the agent leads with', () => {
     clean(e.note.text);
   });
 
-  it('says who is waiting even in the moment when nobody is live', async () => {
+  // PEOPLE, NOT INTRODUCTIONS, AND ONLY THIS POSTING'S OWN LINE (24 October
+  // 2026). Rows that are not live while this posting has a slot free are
+  // waiting on the OTHER side's full posting: the owner is the one waiting
+  // there, and nobody is in their line. This used to say "2 people are
+  // waiting their turn on your mountain bike".
+  it('counts nobody in its line when the rows wait on the other side’s full posting', async () => {
     world.intros = [intro(), intro()];
     const e = await only();
+    expect(e.people_here).toBe(0);
+    expect(e.in_line).toBe(0);
+  });
+
+  it('counts two introductions from one person’s list as one person', async () => {
+    world.intros = [intro({ live: true }), intro({ other: 'lister' }), intro({ other: 'lister' })];
+    const e = await only();
+    expect(e.in_line).toBe(1);
     expect(e.note.text).toBe(
-      '2 people are waiting their turn on your mountain bike. Check in for what to do next.',
+      'One person has come forward about your mountain bike, and one more person is waiting their turn behind them. Check in for what to do next.',
     );
-    clean(e.note.text);
+  });
+
+  it('never counts the person already live as waiting behind themselves', async () => {
+    world.intros = [intro({ live: true, other: 'seller' }), intro({ other: 'seller' })];
+    const e = await only();
+    expect(e.people_here).toBe(1);
+    expect(e.in_line).toBe(0);
+    expect(e.note.text).toBe(
+      'One person has come forward about your mountain bike. Check in for what to do next.',
+    );
+  });
+
+  it('counts two live introductions from one person as one person with it', async () => {
+    world.cards = [card({ slots: 2 })];
+    world.intros = [intro({ live: true, other: 'lister' }), intro({ live: true, other: 'lister' })];
+    const e = await only();
+    expect(e.people_here).toBe(1);
   });
 });
 

@@ -124,7 +124,7 @@ function fakePool() {
         world.state = 'declined';
         return rows([{ id: MATCH }]);
       }
-      if (/count\(\*\)::int AS n FROM matches m/.test(sql)) return rows([{ n: 0 }]);
+      if (/SELECT t\.cid, t\.live, t\.other/.test(sql)) return rows([]);
       if (/count\(DISTINCT account_id\)/.test(sql)) {
         return rows([{ n: world.myOptin ? 1 : 0, mine: world.myOptin ? 1 : 0 }]);
       }
