@@ -35,7 +35,7 @@ import {
   type CardFacts,
   type JevSlip,
 } from '../../rehearsal/checks.js';
-import { cannedSimulator, humanSystemPrompt } from '../../rehearsal/human.js';
+import { cannedSimulator, humanSystemPrompt, leaveOffFact, sheetWithLeaveOff } from '../../rehearsal/human.js';
 import { loadScenario, missingData } from '../../rehearsal/data.js';
 
 // The scenario is evaluation data kept outside this repository (see
@@ -152,6 +152,36 @@ describe('the simulated human and a figure read back to them', () => {
     const buyer = cannedSimulator(scenario!.TONY);
     const asked = 'Is $45 AUD the figure you gave as the most you would pay, or is it one I put there myself?';
     expect(await buyer.reply([], asked)).toBe('I never gave a figure.');
+  });
+});
+
+describe('the simulated human gives no instruction its sheet does not give', () => {
+  const sheet = {
+    name: 'Sam',
+    side: 'seller' as const,
+    firstName: 'Sam',
+    locality: 'Town, State',
+    opening: 'can you put these up?',
+    facts: ['You have two lamps.'],
+    figuresTheyMayGive: [],
+  };
+  it('is told never to tell its assistant to skip or drop anything on its own, and to keep everything up when asked', () => {
+    const prompt = humanSystemPrompt(sheet);
+    expect(prompt).toMatch(/never give your assistant an instruction or a preference the list above does not give you/i);
+    expect(prompt).toMatch(/put everything up as you gave it/i);
+  });
+  it('is given one line naming the rows it may leave off, only where the scenario names them', () => {
+    const rows = [
+      { name: 'Lamp', identifier: 'L-1' },
+      { name: 'Bulb', identifier: 'B-2' },
+    ];
+    expect(leaveOffFact(rows, [])).toBeUndefined();
+    expect(sheetWithLeaveOff(sheet, { rows })).toBe(sheet);
+    const withLine = sheetWithLeaveOff(sheet, { rows, leaveOffWhenAsked: [1] });
+    expect(withLine.facts).toHaveLength(2);
+    expect(withLine.facts[1]).toContain('Bulb B-2');
+    expect(withLine.facts[1]).not.toContain('Lamp L-1');
+    expect(withLine.facts[1]).toMatch(/only if your assistant asks/i);
   });
 });
 

@@ -146,6 +146,16 @@ export interface ListErrand {
   askingPrices: Readonly<Record<number, number>>;
   /** Numbers in what they handed over that belong to one object and must stay off every posting. */
   singleObjectNumbers?: readonly string[];
+  /**
+   * Rows the human is content to leave off the list IF THEIR ASSISTANT ASKS or
+   * suggests it, by index. Left out, the human wants every row up. The seller's
+   * fact sheet is given one line saying so (human.ts leaveOffFact), so the
+   * simulated person never has to make that answer up; and the coverage and
+   * results checks forgive exactly these rows, and only where the human's own
+   * words in stage 1 did ask for things to be left off (meaning.ts,
+   * asked_to_leave_off).
+   */
+  leaveOffWhenAsked?: readonly number[];
 }
 
 export type Reach = 'country' | 'radius';

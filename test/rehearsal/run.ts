@@ -148,6 +148,9 @@ import {
   askOn,
   checkBuyerIdentifier,
   checkListCoverage,
+  LEAVE_OFF,
+  splitMissing,
+  type LeftOffByHuman,
   checkListDetails,
   checkListFigureReadBack,
   checkListFigures,
@@ -166,7 +169,14 @@ import { acceptEventFor } from './consentLog.js';
 import { loadRecordBuilders, recordCandidates, type RecordCandidate } from './record.js';
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
-import { bedrockSimulator, cannedSimulator, extractPresses, type HumanTurn, type Simulator } from './human.js';
+import {
+  bedrockSimulator,
+  cannedSimulator,
+  extractPresses,
+  sheetWithLeaveOff,
+  type HumanTurn,
+  type Simulator,
+} from './human.js';
 import { scoreTranscript, splitSlips, type ScoreResult } from './jev.js';
 import {
   configureMeaning,
@@ -582,7 +592,9 @@ async function oneRun(
     }
 
     for (const [id, sheet] of [
-      ['seller', ALEX],
+      // The seller's sheet gains one line where the scenario names rows they
+      // are content to leave off when asked (human.ts sheetWithLeaveOff).
+      ['seller', sheetWithLeaveOff(ALEX, LIST)],
       ['buyer', TONY],
     ] as [SideId, FactSheet][]) {
       const driverName = cast[id];
@@ -741,6 +753,17 @@ async function oneRun(
         next = reply.trim() ? reply : NUDGE;
         if (!DRY) await sleep(GAP_MS);
       }
+      // A PERSON HANDED A PAGE PRESSES IT, EVEN ON THE LAST ROUND. The round
+      // cap used to fall between the assistant handing over a page and the
+      // person answering it: in a run of 24 October 2026 the buyer said "I'll
+      // accept $18", was handed the accept page, and the stage ended there, so
+      // nothing was accepted and every record check after it failed. Stage 3
+      // already lets the buyer finish what he started; this does it for every
+      // conversation. The person is asked once more, and only a press is acted
+      // on: anything else they would have said waits for the next stage.
+      if (next !== NUDGE && /\[\[PRESS\s/i.test(next)) {
+        await drive(side, next, stage);
+      }
     };
 
     const presses: { side: SideId; status: number; recorded: boolean; at: number }[] = [];
@@ -858,7 +881,30 @@ async function oneRun(
     if (LIST && TARGET_ROW) {
       const items = sellerCardsNow.filter((c) => c.listId);
       record(checkListUsed(sellerCardsNow));
-      record(checkListCoverage(sellerCardsNow, LIST.rows, assigned));
+      // ROWS THE HUMAN ASKED TO LEAVE OFF. Asked only where a row is missing:
+      // did the human's own words, after the opening, ask for things to be
+      // left off? Which rows is the scenario's (leaveOffWhenAsked).
+      const leftOff: LeftOffByHuman | undefined = await (async () => {
+        if (!assigned.some((a) => !a.card)) return undefined;
+        const upTo = sellerUpAt === undefined ? turns.length : sellerUpAt + 1;
+        const humanSaid = turnsText(turns.slice(0, upTo), { stage: 1, side: 'seller', role: 'human' }).slice(1);
+        const assistantSaid = turnsText(turns.slice(0, upTo), { stage: 1, side: 'seller', role: 'assistant' });
+        const regex = humanSaid.some((t) => LEAVE_OFF.test(t));
+        const m = humanSaid.length
+          ? await meaningOf(
+              [['asked_to_leave_off', regex]],
+              assistantSaid,
+              'The human handed their assistant many things to post at once, as one list. These are the assistant\u2019s words to them, and human_said_last is everything the human said back before the list went up.',
+              humanSaid.join('\n'),
+            )
+          : {};
+        return {
+          declared: LIST.leaveOffWhenAsked ?? [],
+          humanAsked: holds(m.asked_to_leave_off, regex),
+          ...(m.asked_to_leave_off ? { decision: m.asked_to_leave_off } : {}),
+        };
+      })();
+      record(checkListCoverage(sellerCardsNow, LIST.rows, assigned, leftOff));
       record(checkListIdentifiers(sellerCardsNow, LIST.rows, assigned, LIST.singleObjectNumbers ?? []));
       record(checkListDetails(LIST.rows, assigned));
       const figuresCheck = record(checkListFigures(LIST.rows, assigned, LIST.askingPrices, sides.seller.statedFigures));
@@ -883,19 +929,28 @@ async function oneRun(
       // the first run of this errand passed on exactly that.
       const beforeUp =
         sellerUpAt === undefined ? [] : turnsText(turns.slice(0, sellerUpAt), { stage: 1, side: 'seller', role: 'assistant' });
-      record(checkListFigureReadBack(beforeUp, prices));
+      // The human's own turn right before the list appeared: where it states
+      // every figure on the list, reading them back adds nothing.
+      const humanBeforeUp =
+        sellerUpAt === undefined
+          ? undefined
+          : [...turns.slice(0, sellerUpAt)].reverse().find((t) => t.stage === 1 && t.side === 'seller' && t.role === 'human')?.text;
+      record(checkListFigureReadBack(beforeUp, prices, humanBeforeUp));
       const upCount = items.filter((c) => ['PENDING_SCREENING', 'PUBLISHED'].includes(c.state)).length;
-      const missing = assigned.filter((a) => !a.card).map((a) => LIST.rows[a.row]);
+      const split = splitMissing(assigned, leftOff);
+      const missing = split.missing.map((r) => LIST.rows[r]);
       const replies =
         sellerUpAt === undefined ? [] : turnsText(turns.slice(sellerUpAt), { stage: 1, side: 'seller', role: 'assistant' });
       const resultsMeaning = replies.length
         ? await meaningOf(
             [['told_list_results', replies.some((t) => new RegExp(`\\b${upCount}\\b`).test(t))]],
             replies,
-            `The assistant has just posted many things at once for its human, as one list. ${upCount} went up and ${missing.length} did not. These are its replies from then on.`,
+            `The assistant has just posted many things at once for its human, as one list. ${upCount} went up and ${missing.length} did not` +
+              (split.forgiven.length ? `; ${split.forgiven.length} more were left off because the human asked, and need no naming` : '') +
+              '. These are its replies from then on.',
           )
         : {};
-      record(checkListResultsRead(replies, upCount, missing, resultsMeaning));
+      record(checkListResultsRead(replies, upCount, missing, resultsMeaning, split.forgiven.length));
     }
 
     // The buyer: the advice question first, then the want in his own words.
@@ -1587,24 +1642,58 @@ async function oneRun(
     // and the harness then tried to accept a second time and was told "this
     // offer is no longer open to accept (it is accepted-by-human)" — a 409 that
     // read as the human failing to accept (24 September 2026).
-    const alreadyAccepted = DRY
-      ? []
-      : (await db.offersOn(match.id)).filter((o) => o.state === 'accepted-by-human');
-    const accepted = DRY
-      ? { status: 200, body: 'dry' }
-      : alreadyAccepted.length
-        ? { status: 200, body: 'already accepted on his own page' }
-        : await acceptOffer(sides.seller.actor, offers[offers.length - 1]?.id ?? '');
+    //
+    // AND ACCEPT WHAT IS THERE TO ACCEPT, BY WHOEVER CAN. The harness used to
+    // press accept as the seller on the newest offer, whatever it was. In a
+    // run of 24 October 2026 the seller's human countered at $18 by his own
+    // press, so the newest offer was his own: the page answered 200 with a
+    // refusal, the check read 200 as a pass, and the buyer, who was the only
+    // one who could accept it, said "I'll accept $18", was handed the page and
+    // never got the turn to press it. Now: an open offer the BUYER made is the
+    // seller's to accept, pressed here as before; an open counter the SELLER
+    // made is the buyer's, and the buyer's human is given his turn to hear it
+    // and press the page his own assistant hands him. Either way the check
+    // reads the offer row, not the page's status.
+    const sellerAccount = sides.seller.actor.accountId;
+    const offersNow = DRY ? offers : await db.offersOn(match.id);
+    const alreadyAccepted = offersNow.filter((o) => o.state === 'accepted-by-human');
+    const openOffers = offersNow.filter((o) => o.state === 'proposed' || o.state === 'awaiting-human');
+    const newestOpen = openOffers[openOffers.length - 1];
+    const acceptor: SideId = newestOpen && newestOpen.proposer === sellerAccount ? 'buyer' : 'seller';
+    let pressed: { status: number; body: string } | undefined;
+    if (DRY) pressed = { status: 200, body: 'dry' };
+    else if (!alreadyAccepted.length && newestOpen && acceptor === 'seller') {
+      pressed = await acceptOffer(sides.seller.actor, newestOpen.id);
+    } else if (!alreadyAccepted.length && newestOpen && acceptor === 'buyer') {
+      await converse(sides.buyer, 5, {
+        rounds: 3,
+        done: async () => (await db.offersOn(match.id)).some((o) => o.state === 'accepted-by-human'),
+      });
+    }
+    const acceptedRow = DRY
+      ? { ...(offers[0] ?? {}), amount: offers[0]?.amount ?? figure }
+      : (await db.offersOn(match.id)).find((o) => o.state === 'accepted-by-human');
+    const acceptedSays = "acceptance was a human's own press, by the side the open offer was made to.";
     record(
-      accepted.status === 200
+      acceptedRow
         ? pass(
             'S5.human_accepted',
-            "acceptance was the seller human's own press.",
+            acceptedSays,
             alreadyAccepted.length
-              ? `$${alreadyAccepted[0].amount} was already accepted, by the human on his own page`
-              : `HTTP ${accepted.status}`,
+              ? `$${alreadyAccepted[0].amount} was already accepted, by a human on their own page`
+              : pressed
+                ? `$${acceptedRow.amount} accepted by the seller's human, HTTP ${pressed.status}`
+                : `$${acceptedRow.amount}, a counter from the seller, accepted by the buyer's human on the page his assistant handed him`,
           )
-        : fail('S5.human_accepted', "acceptance was the seller human's own press.", `HTTP ${accepted.status}: ${accepted.body}`),
+        : fail(
+            'S5.human_accepted',
+            acceptedSays,
+            !newestOpen
+              ? `no open offer to accept (${offersNow.map((o) => `$${o.amount} ${o.state}`).join(', ') || 'none on the table'})`
+              : pressed
+                ? `no offer is accepted; the seller's press came back HTTP ${pressed.status}: ${pressed.body}`
+                : `no offer is accepted; the open offer was the seller's own $${newestOpen.amount}, and the buyer's human never pressed an accept page`,
+          ),
     );
     // -----------------------------------------------------------------
     // THE RECORD OF THE DEAL, AND THE WRITTEN LINE ON IT (migration 066).

@@ -68,6 +68,14 @@ export function humanSystemPrompt(sheet: FactSheet): string {
     // polite would teach an assistant that inventing one is safe.
     '- If you are asked whether a figure is one you gave, answer truthfully from the list: confirm it if the list gives that exact number, and say "I never gave a figure" if it does not.',
     '- If you are offered a choice, choose the one the list points at; if the list is silent, say you do not mind.',
+    // NO INSTRUCTIONS OF YOUR OWN. In a run of 24 October 2026 the person was
+    // asked about the low-value rows of what they had handed over and said
+    // "skip them — just list the ones actually worth selling", which nothing
+    // on the sheet said; the assistant did as it was told and the coverage
+    // check failed it. A person who handed over a list wants it all up unless
+    // the sheet says otherwise.
+    '- Never give your assistant an instruction or a preference the list above does not give you: do not tell it to skip, drop, leave out, change or add anything on your own.',
+    '- If it asks whether to leave out, drop or change something you handed over and the list above does not say, tell it to put everything up as you gave it.',
     `- If you are handed a link to press, reply with exactly: [[PRESS <the url>]] and nothing else.`,
     // A PERSON WHO IS TOLD TO PRESS SOMETHING THEY CANNOT SEE SAYS SO. Without
     // this the simulated human answered "ok, thanks" to "send it whenever you
@@ -81,6 +89,29 @@ export function humanSystemPrompt(sheet: FactSheet): string {
     '',
     'If the assistant said nothing that needs an answer, say something short and ordinary like "ok, thanks".',
   ].join('\n');
+}
+
+/**
+ * The one line a seller's sheet gains where the scenario says which rows the
+ * person is content to leave off (data.ts, ListErrand.leaveOffWhenAsked). An
+ * answer, never a suggestion: they say it only when their assistant asks.
+ */
+export function leaveOffFact(rows: readonly { name: string; identifier: string }[], indices: readonly number[]): string | undefined {
+  const named = indices.map((i) => rows[i]).filter(Boolean).map((r) => `${r.name} ${r.identifier}`);
+  if (!named.length) return undefined;
+  return (
+    'Only if your assistant asks or suggests leaving some things off: you are happy for these to stay off, and only these: ' +
+    `${named.join('; ')}. Never bring it up yourself.`
+  );
+}
+
+/** The sheet as the simulated person is given it: the scenario's lines, and the leave-off line where there is one. */
+export function sheetWithLeaveOff(
+  sheet: FactSheet,
+  list: { rows: readonly { name: string; identifier: string }[]; leaveOffWhenAsked?: readonly number[] } | undefined,
+): FactSheet {
+  const line = list?.leaveOffWhenAsked?.length ? leaveOffFact(list.rows, list.leaveOffWhenAsked) : undefined;
+  return line ? { ...sheet, facts: [...sheet.facts, line] } : sheet;
 }
 
 export interface HumanTurn {

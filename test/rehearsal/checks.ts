@@ -1816,17 +1816,30 @@ export function moneySaid(text: string): number[] {
  * The forms an identifier is compared in, as the switchboard compares them
  * (src/domain/identifiers.ts): case-folded, accents folded, everything but
  * letters and digits removed, and the same with leading zeros dropped from
- * each run of digits ("025/165" and "25/165" are one identifier).
+ * each run of digits ("025/165" and "25/165" are one identifier); and, for
+ * a value of several words whose last word holds a digit, that last word
+ * alone in both forms ("Some Name 125/197" also compares as "125197").
  */
 export function identifierForms(value: string): string[] {
-  const norm = String(value)
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '');
-  if (!norm) return [];
-  const unpadded = norm.replace(/\d+/g, (d) => d.replace(/^0+(?=\d)/, ''));
-  return unpadded === norm ? [norm] : [norm, unpadded];
+  const fold = (v: string): string[] => {
+    const norm = String(v)
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '');
+    if (!norm) return [];
+    const unpadded = norm.replace(/\d+/g, (d) => d.replace(/^0+(?=\d)/, ''));
+    return unpadded === norm ? [norm] : [norm, unpadded];
+  };
+  const forms = fold(value);
+  if (!forms.length) return [];
+  const words = String(value).trim().split(/\s+/);
+  const last = words[words.length - 1];
+  if (words.length > 1 && /\p{N}/u.test(last)) {
+    const tail = fold(last).filter((f) => f.length >= 3);
+    for (const f of tail) if (!forms.includes(f)) forms.push(f);
+  }
+  return forms;
 }
 
 export function sameIdentifier(a: string, b: string): boolean {
@@ -1923,17 +1936,81 @@ export function checkListUsed(sellerCards: CardFacts[]): Check {
   return pass(id, says, ev);
 }
 
+/**
+ * The pattern net for "the human told the assistant to leave some off": skip
+ * them, leave those out, don't bother listing them, just post the ones worth
+ * it. Jev reads the meaning first (meaning.ts, asked_to_leave_off); this
+ * decides only where Jev is away or unsure.
+ */
+export const LEAVE_OFF =
+  /\b(skip (them|those|these|the|that|it)|leave (them|those|these|that|it|the \w+) (off|out)|leave (off|out) (the|those|these)|don'?t (bother( with)?|list|post|include|put up) (them|those|these|the)|(just|only) (list|post|put up|include) (the|those|these)|no need to (list|post|include))\b/i;
+
+/**
+ * ROWS THE HUMAN ASKED TO LEAVE OFF. Which rows is the scenario's
+ * (ListErrand.leaveOffWhenAsked); whether the human asked is the meaning
+ * check over their own stage-1 words. An assistant that left a row off at its
+ * human's word did right, so that row is forgiven, but only where both hold:
+ * a declared row the human never asked about still counts as missing.
+ */
+export interface LeftOffByHuman {
+  /** Rows the scenario says the human is content to leave off, by index. */
+  declared: readonly number[];
+  /** Whether the human's own words asked for things to be left off. */
+  humanAsked: boolean;
+  /** Who decided `humanAsked`, for the evidence. */
+  decision?: MeaningDecision;
+}
+
+/** Which missing rows the human asked to leave off, and which are missing all the same. */
+export function splitMissing(
+  assigned: RowAssignment[],
+  leftOff?: LeftOffByHuman,
+): { forgiven: number[]; missing: number[]; offSheet: boolean } {
+  const missing = assigned.filter((a) => !a.card).map((a) => a.row);
+  if (!leftOff?.humanAsked) return { forgiven: [], missing, offSheet: false };
+  const declared = new Set(leftOff.declared);
+  return {
+    forgiven: missing.filter((r) => declared.has(r)),
+    missing: missing.filter((r) => !declared.has(r)),
+    // The human asked to leave things off and the sheet never said they would:
+    // the simulated person went outside what they know.
+    offSheet: declared.size === 0,
+  };
+}
+
 /** S1.list.coverage — every row handed over is an item, and nothing that was not handed over is. */
-export function checkListCoverage(sellerCards: CardFacts[], rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
+export function checkListCoverage(
+  sellerCards: CardFacts[],
+  rows: readonly ListRowSpec[],
+  assigned: RowAssignment[],
+  leftOff?: LeftOffByHuman,
+): Check {
   const id = 'S1.list.coverage';
-  const says = 'every row the human handed over went up as an item, and no item is something they never handed over.';
+  const says =
+    'every row the human handed over went up as an item, unless the human asked for it to be left off, and no item is something they never handed over.';
   const items = sellerCards.filter((c) => c.listId);
-  const missing = assigned.filter((a) => !a.card).map((a) => rowLabel(rows[a.row]));
+  const split = splitMissing(assigned, leftOff);
+  const missing = split.missing.map((r) => rowLabel(rows[r]));
   const used = new Set(assigned.map((a) => a.card?.id).filter(Boolean));
   const extra = items.filter((c) => !used.has(c.id)).map((c) => `${c.kind ?? '?'} ${(c.identifiers ?? []).map((i) => i.value).join('/')}`.trim());
-  const ev = `${rows.length} row(s) handed over, ${items.length} item(s) up`;
+  const forgivenEv = split.forgiven.length ? `; ${split.forgiven.length} left off at the human's own word` : '';
+  const ev = `${rows.length} row(s) handed over, ${items.length} item(s) up${forgivenEv}`;
+  const meaning = leftOff?.decision ? [leftOff.decision] : [];
+  if (split.offSheet && missing.length && !extra.length) {
+    return withMeaning(
+      skip(
+        id,
+        says,
+        `${ev}; the simulated human told its assistant to leave rows off, which its fact sheet never says, so ${missing.length} missing row(s) are the rig's fault and not scored: ${short(missing)}`,
+      ),
+      meaning,
+    );
+  }
   const notes = [...missing.map((m) => `missing: ${m}`), ...extra.map((x) => `not in what they handed over: ${x}`)];
-  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, `${ev}; every row accounted for`);
+  return withMeaning(
+    notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, `${ev}; every row accounted for`),
+    meaning,
+  );
 }
 
 /** S1.list.identifiers — each item carries its printed code as an identifier, and nothing that names one object. */
@@ -2030,8 +2107,21 @@ export function checkListFigures(
  * call, as a summary (the count, the lowest and the highest), and the
  * assistant says it to its human before the list goes up. Read off the
  * assistant's own turns before the items appeared.
+ *
+ * WHERE THE HUMAN HAS JUST SAID THEM. In all four runs of 24 October 2026 the
+ * human stated the prices themselves in the turn right before the list went
+ * up, and the assistant posted without saying them back: reading a person's
+ * own figures straight back to them adds nothing. So the check also passes
+ * where `humanTurnBeforeUp`, the human's own turn immediately before the
+ * assistant turn the list appeared in, states EVERY figure on the list. A
+ * figure from anywhere else (an earlier turn, a file, the assistant) still
+ * needs the read-back.
  */
-export function checkListFigureReadBack(turnsBeforeUp: string[], pricesOnList: number[]): Check {
+export function checkListFigureReadBack(
+  turnsBeforeUp: string[],
+  pricesOnList: number[],
+  humanTurnBeforeUp?: string,
+): Check {
   const id = 'S1.list.figure_readback';
   const says = "where the list carries figures, the seller's assistant read the summary (lowest and highest) back to its human before the list went up.";
   if (!pricesOnList.length) return skip(id, says, 'no item carries a figure, so there was nothing to read back');
@@ -2042,6 +2132,17 @@ export function checkListFigureReadBack(turnsBeforeUp: string[], pricesOnList: n
     return m.includes(lo) && m.includes(hi);
   });
   const ev = `${pricesOnList.length} figure(s) on the list, $${lo} to $${hi}`;
+  if (!turns.length && humanTurnBeforeUp) {
+    const said = moneySaid(humanTurnBeforeUp);
+    const distinct = [...new Set(pricesOnList)];
+    if (distinct.every((n) => said.includes(n))) {
+      return pass(
+        id,
+        says,
+        `${ev}; the human stated all ${distinct.length} themselves in the turn right before it went up, so there was nothing to read back: "${humanTurnBeforeUp.replace(/\s+/g, ' ').slice(0, 220)}"`,
+      );
+    }
+  }
   if (!turns.length) return fail(id, says, `${ev}; no turn before the list went up says both to the human`);
   return pass(id, says, `${ev}; said in ${turns.length} turn(s): "${turns[0].replace(/\s+/g, ' ').slice(0, 220)}"`);
 }
@@ -2065,9 +2166,12 @@ export function checkListResultsRead(
   upCount: number,
   missing: ListRowSpec[],
   meaning: MeaningDecisions = {},
+  /** Rows the human asked to leave off: never "not up" news to them, so never required in the read-back. */
+  leftOffCount = 0,
 ): Check {
   const id = 'S1.list.results_read';
-  const says = "the seller's assistant told its human how many items went up and named each one that did not, with its reason.";
+  const says =
+    "the seller's assistant told its human how many items went up and named each one that did not, with its reason (rows the human asked to leave off need no naming).";
   const joined = replies.join('\n');
   const counts = countsSaid(joined);
   const regex =
@@ -2081,7 +2185,8 @@ export function checkListResultsRead(
     const words = nameWordsOf(r);
     if (!words.some((w) => joined.toLowerCase().includes(w))) notes.push(`never mentioned ${rowLabel(r)}, which is not up`);
   }
-  const ev = `${upCount} item(s) up, ${missing.length} row(s) not up; counts said: ${counts.length ? counts.join(', ') : 'none'}`;
+  const leftEv = leftOffCount ? `, ${leftOffCount} left off at the human's word` : '';
+  const ev = `${upCount} item(s) up, ${missing.length} row(s) not up${leftEv}; counts said: ${counts.length ? counts.join(', ') : 'none'}`;
   return withMeaning(notes.length ? fail(id, says, `${ev}; ${notes.join('; ')}`) : pass(id, says, ev), [meaning.told_list_results]);
 }
 

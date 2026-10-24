@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignRows,
   checkBuyerIdentifier,
+  checkListCoverage,
   checkListFigureReadBack,
   checkListFigures,
   checkListIdentifiers,
@@ -10,6 +11,8 @@ import {
   checkMeetsOnItem,
   countsSaid,
   identifierForms,
+  LEAVE_OFF,
+  splitMissing,
   sameIdentifier,
   type CardFacts,
 } from '../../rehearsal/checks.js';
@@ -48,6 +51,10 @@ describe('identifiers compared as the switchboard compares them', () => {
     expect(identifierForms('025/165')).toEqual(['025165', '25165']);
     expect(sameIdentifier('025/165', '25 / 165')).toBe(true);
     expect(sameIdentifier('125', '125/197')).toBe(false);
+    // A name in front of the code: the code alone is a form too, as on the switchboard.
+    expect(sameIdentifier('Some Name 125/197', '125/197')).toBe(true);
+    expect(sameIdentifier('Some Name 125/197', '126/197')).toBe(false);
+    expect(identifierForms('WH-1000XM4')).toEqual(['wh1000xm4']);
   });
 });
 
@@ -98,6 +105,52 @@ describe('figures on a list', () => {
     expect(checkListFigureReadBack(['Two items carry a price, from $40 to $90. Are those yours?'], [40, 90]).verdict).toBe('pass');
     expect(checkListFigureReadBack(['All done.'], [40, 90]).verdict).toBe('fail');
     expect(checkListFigureReadBack([], []).verdict).toBe('skip');
+  });
+  it('counts it read back where the human had just said every figure themselves', () => {
+    const human = 'Two have prices: the first lamp shade for $40 and the teapot for $90. The rest are open to offers.';
+    const c = checkListFigureReadBack(['Got it, posting now.'], [40, 90], human);
+    expect(c.verdict).toBe('pass');
+    expect(c.evidence).toMatch(/stated all 2 themselves/);
+  });
+  it('still wants the read-back where the human named only some of the figures, or none', () => {
+    expect(checkListFigureReadBack(['Posting now.'], [40, 90, 120], 'the lamp shade is $40 and the teapot $90').verdict).toBe('fail');
+    expect(checkListFigureReadBack(['Posting now.'], [40, 90], 'yes, go ahead').verdict).toBe('fail');
+  });
+});
+
+describe('rows the human asked to leave off', () => {
+  const four = [
+    item('c1', 'Lamp shade', 'AB-0012/3', { condition: 'good' }),
+    item('c2', 'Lamp shade', 'AB-0099/3', { condition: 'good' }),
+  ];
+  const assigned = () => assignRows(four, ROWS);
+  it('reads an instruction to leave things off, in a few wordings, and not an ordinary answer', () => {
+    expect(LEAVE_OFF.test('skip them — just list the ones worth selling')).toBe(true);
+    expect(LEAVE_OFF.test("don't bother with those, leave them off")).toBe(true);
+    expect(LEAVE_OFF.test('only post the first two')).toBe(true);
+    expect(LEAVE_OFF.test('yes, put everything up')).toBe(false);
+  });
+  it('forgives exactly the declared rows, and only where the human asked', () => {
+    const asked = checkListCoverage(four, ROWS, assigned(), { declared: [2, 3], humanAsked: true });
+    expect(asked.verdict).toBe('pass');
+    expect(asked.evidence).toMatch(/2 left off at the human's own word/);
+    // Declared, but the human never asked: the assistant left them off on its own.
+    expect(checkListCoverage(four, ROWS, assigned(), { declared: [2, 3], humanAsked: false }).verdict).toBe('fail');
+    // The human asked, but a row outside what they would leave off is missing too.
+    expect(checkListCoverage(four, ROWS, assigned(), { declared: [3], humanAsked: true }).verdict).toBe('fail');
+    // No declaration at all reads as before.
+    expect(checkListCoverage(four, ROWS, assigned()).verdict).toBe('fail');
+  });
+  it('does not score rows the simulated human asked to drop when its sheet never said so', () => {
+    const c = checkListCoverage(four, ROWS, assigned(), { declared: [], humanAsked: true });
+    expect(c.verdict).toBe('skip');
+    expect(c.evidence).toMatch(/fact sheet never says/);
+  });
+  it('leaves forgiven rows out of what the results must name', () => {
+    expect(splitMissing(assigned(), { declared: [2, 3], humanAsked: true })).toEqual({ forgiven: [2, 3], missing: [], offSheet: false });
+    const r = checkListResultsRead(['Both lamp shades are up, 2 items live.'], 2, [], {}, 2);
+    expect(r.verdict).toBe('pass');
+    expect(r.evidence).toMatch(/2 left off at the human's word/);
   });
 });
 
