@@ -33,7 +33,7 @@
  * private directory, it is deleted at teardown, and it is never logged.
  */
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentReply, Driver } from '../types.js';
@@ -296,6 +296,28 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       // The model by name: "claude-code" told a reader nothing about what was
       // actually on the other end of the conversation.
       return { text: read.text, toolActivity: read.toolActivity, model: REHEARSAL_CLAUDE_MODEL };
+    },
+
+    async trace(): Promise<string | undefined> {
+      // The CLI keeps each session's messages, tool calls and tool answers as
+      // jsonl under its config dir. Read before teardown deletes the dir.
+      const root = configDir ? join(configDir, 'projects') : '';
+      if (!root || !existsSync(root)) return undefined;
+      const files: string[] = [];
+      const walk = (d: string): void => {
+        for (const f of readdirSync(d)) {
+          const p = join(d, f);
+          if (statSync(p).isDirectory()) walk(p);
+          else if (f.endsWith('.jsonl')) files.push(p);
+        }
+      };
+      walk(root);
+      const want = new Set(sessions.values());
+      return files
+        .filter((f) => !want.size || [...want].some((id) => f.includes(id)))
+        .map((f) => `=== ${f.split('/').pop()}\n${readFileSync(f, 'utf8')}`)
+        .join('\n')
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [cut]');
     },
 
     async teardown(): Promise<void> {

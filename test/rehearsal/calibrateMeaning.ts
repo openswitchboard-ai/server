@@ -34,6 +34,7 @@ import {
   pinPattern,
   KEEP_RECORD,
   QUIZZED_FOR_REQUIREMENTS,
+  countsSaid,
   RECORD_EMAILED,
   plainWordsOverlap,
 } from './checks.js';
@@ -251,6 +252,7 @@ function regexFor(id: MeaningId, said: string[], humanLast?: string): boolean {
     // which a calibration example does not carry: shared words stand in.
     case 'line_says_requirement': return !!humanLast && plainWordsOverlap(j, humanLast);
     case 'quizzed_for_requirements': return QUIZZED_FOR_REQUIREMENTS.test(j);
+    case 'told_list_results': return countsSaid(j).length > 0;
   }
 }
 
@@ -286,6 +288,8 @@ function situationFor(id: MeaningId): string {
       return 'The assistant wrote one short line for the other person to confirm in writing. human_said_last is what its own human had said mattered.';
     case 'quizzed_for_requirements':
       return 'The human told the assistant one thing they are relying on about what they are buying. These are the assistant’s replies to its human from then until the deal was agreed.';
+    case 'told_list_results':
+      return 'The assistant has just posted many things at once for its human, as one list. These are its replies from then on.';
   }
 }
 

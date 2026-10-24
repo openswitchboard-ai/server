@@ -173,4 +173,6 @@ export interface Driver {
   ask(sessionId: string, utterance: string): Promise<AgentReply>;
   /** Delete anything the run wrote for this client. Never throws. */
   teardown?(): Promise<void>;
+  /** The client's own record of the run's tool calls and answers, where it keeps one. */
+  trace?(): Promise<string | undefined>;
 }

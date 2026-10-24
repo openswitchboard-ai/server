@@ -129,3 +129,31 @@ export async function deepCleanAndBind(
 
   return `${agent}: deep-clean ${cleaned || 'done'}, gateway ${active}, key probe HTTP ${probe.status}`;
 }
+
+/**
+ * WHAT THE ASSISTANT ACTUALLY SENT AND WAS SENT BACK, for the run's record.
+ *
+ * The tool-call log on the server carries names only, by design, and the
+ * gateway's reply carries the words and a list of tool names. Which arguments
+ * an assistant put in a call (the items of a list, the identifiers on a want)
+ * and what the switchboard answered (an item turned away and why) live only in
+ * the profile's own session files on the box, and the next run's restore
+ * deletes them. So they are read once at the end of a run. Anything shaped
+ * like a bearer credential is cut out before it leaves the box's answer.
+ */
+export async function sessionTrace(agent: AgentName, host: string, key: string): Promise<string> {
+  const home = AGENT_HOMES[agent];
+  const out = await ssh(
+    host,
+    key,
+    // OpenClaw 2026.8 keeps a session's transcript in the agent database
+    // (transcript_events), no longer as jsonl files under sessions/; both are
+    // read, so an older install still answers.
+    [
+      `cd ~/${home.dir}/agents/main/sessions 2>/dev/null && for f in $(ls -tr 2>/dev/null); do [ -f "$f" ] && { echo "=== $f"; cat "$f"; echo; }; done`,
+      `python3 -c 'import sqlite3,os,sys;p=os.path.expanduser("~/${home.dir}/agents/main/agent/openclaw-agent.sqlite");c=sqlite3.connect("file:"+p+"?mode=ro",uri=True);[sys.stdout.write(r[0]+"\\t"+r[1]+"\\n") for r in c.execute("select session_id, event_json from transcript_events order by created_at, seq")]' 2>/dev/null || true`,
+    ].join('; '),
+    120_000,
+  );
+  return out.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [cut]').replace(/osb_[A-Za-z0-9_-]{16,}/g, '[cut]');
+}

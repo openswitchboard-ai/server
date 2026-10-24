@@ -113,6 +113,39 @@ export interface Scenario {
     /** Words any one of which shows a line is about it. */
     words: readonly string[];
   };
+  /**
+   * WHERE THE OFFERING SIDE HAS MANY THINGS AT ONCE (manual v88, "lists").
+   * The seller's opening hands over what they hold (an export, a typed list)
+   * and their assistant is expected to post it as one list with
+   * `publish_list`; the buyer wants ONE of the rows. Left out, the errand is
+   * one thing, posted once, as it always was. The rows are the scenario's
+   * data; every check that reads them is written in general words.
+   */
+  LIST?: ListErrand;
+}
+
+/** One row of what the offering side holds, as the scenario wrote it into the opening. */
+export interface ListRowSpec {
+  /** What it is, in the words a person would say (no figures in it). */
+  name: string;
+  /** The code printed on it that names the product or edition, as written. */
+  identifier: string;
+  /** The state it is in, as the human's own export says it. */
+  condition?: string;
+  /** How many of it. Default 1. */
+  quantity?: number;
+  /** Other words that tell this row from a neighbour with the same name (a set, an edition). */
+  words?: readonly string[];
+}
+
+export interface ListErrand {
+  rows: readonly ListRowSpec[];
+  /** Which row the looking side wants, as an index into `rows`. */
+  target: number;
+  /** The asking prices the human gives, by row index. Every other row is open to offers. */
+  askingPrices: Readonly<Record<number, number>>;
+  /** Numbers in what they handed over that belong to one object and must stay off every posting. */
+  singleObjectNumbers?: readonly string[];
 }
 
 export type Reach = 'country' | 'radius';

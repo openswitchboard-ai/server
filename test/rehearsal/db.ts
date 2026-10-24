@@ -33,7 +33,8 @@ export async function cardsFor(accountIds: string[], sinceIso: string): Promise<
     `SELECT id::text, account_id::text, type, category, kind,
             attributes::text, ask::text, sale, geo_radius_km, geo_country,
             lifecycle_state, created_at::text, geo->>'reach',
-            (price_enc IS NOT NULL) AS has_band
+            (price_enc IS NOT NULL) AS has_band,
+            identifiers::text, list_id::text
        FROM cards
       WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
         AND created_at > :since::timestamptz
@@ -55,7 +56,73 @@ export async function cardsFor(accountIds: string[], sinceIso: string): Promise<
     createdAt: String(r[11]),
     geoReach: r[12] === null || r[12] === undefined ? null : String(r[12]),
     hasBand: r[13] === true || String(r[13]) === 'true',
+    identifiers: Array.isArray(safeJson(r[14]))
+      ? (safeJson(r[14]) as { kind?: unknown; value?: unknown }[]).map((i) => ({
+          kind: String(i?.kind ?? ''),
+          value: String(i?.value ?? ''),
+        }))
+      : [],
+    listId: r[15] === null || r[15] === undefined ? null : String(r[15]),
   }));
+}
+
+/**
+ * EVERY INTRODUCTION BETWEEN THE TWO ACCOUNTS, not only the first. Where one
+ * side posted a list, the other side's want can meet more than one of its
+ * items (two editions with the same name), and which item it met is the
+ * finding.
+ */
+export async function matchesBetween(accountIds: string[], sinceIso: string): Promise<MatchFacts[]> {
+  const rows = await dbExec(
+    `SELECT id::text, card_want::text, card_have::text, account_want::text, account_have::text,
+            stage, state, score, channel_id, created_at::text, severed_at::text,
+            certainty
+       FROM matches
+      WHERE account_want = ANY(string_to_array(:ids, ',')::uuid[])
+        AND account_have = ANY(string_to_array(:ids, ',')::uuid[])
+        AND created_at > :since::timestamptz
+      ORDER BY created_at`,
+    [{ name: 'ids', value: ids(accountIds) }, { name: 'since', value: sinceIso }],
+  );
+  return rows.map((r) => ({
+    id: String(r[0]),
+    cardWant: String(r[1]),
+    cardHave: String(r[2]),
+    accountWant: String(r[3]),
+    accountHave: String(r[4]),
+    stage: Number(r[5]),
+    state: String(r[6]),
+    score: Number(r[7]),
+    channelId: r[8] ? String(r[8]) : undefined,
+    createdAt: String(r[9]),
+    severedAt: r[10] ? String(r[10]) : undefined,
+    certainty: r[11] ? String(r[11]) : undefined,
+  }));
+}
+
+/** This account's lists, newest last: what the list rows say, never an item. */
+export async function listsOf(accountId: string, sinceIso: string): Promise<
+  { id: string; type: string; deal: string; state: string; category: string }[]
+> {
+  const rows = await dbExec(
+    `SELECT id::text, type, deal, state, category FROM lists
+      WHERE account_id = :a::uuid AND created_at > :since::timestamptz ORDER BY created_at`,
+    [{ name: 'a', value: accountId }, { name: 'since', value: sinceIso }],
+  );
+  return rows.map((r) => ({ id: String(r[0]), type: String(r[1]), deal: String(r[2]), state: String(r[3]), category: String(r[4]) }));
+}
+
+/** Teardown: mark this suite's own accounts' lists withdrawn once their items are down. */
+export async function retireLists(accountIds: (string | undefined)[]): Promise<number> {
+  const list = ids(accountIds);
+  if (!list) return 0;
+  const rows = await dbExec(
+    `UPDATE lists SET state = 'withdrawn', withdrawn_at = now(), updated_at = now()
+      WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[]) AND state = 'open'
+      RETURNING id::text`,
+    [{ name: 'ids', value: list }],
+  );
+  return rows.length;
 }
 
 function safeJson(v: unknown): unknown {

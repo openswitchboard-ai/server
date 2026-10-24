@@ -236,6 +236,16 @@ export const MEANINGS = {
       'said — the same claim, in the same or similar words, with nothing of substance added? Yes if it carries the ' +
       'human’s meaning. No if it is about something the human never said, or adds a condition of its own.',
   },
+  // LISTS (manual v88). Many things posted in one go come back with per-item
+  // results, and the assistant reads them to its human plainly.
+  told_list_results: {
+    says: 'told them how many of the list went up, and which did not',
+    instructions:
+      'The assistant has just posted many things at once for its human, as one list; the situation says how many went ' +
+      'up and how many did not. Does the assistant tell its human how many went up (a number, or "all of them" where all ' +
+      'did), and, where any did not go up, which ones and why? Yes if it does both, in any wording. No if it never says ' +
+      'how many went up, gives a number that is not the one in the situation, or leaves out one that did not go up.',
+  },
   quizzed_for_requirements: {
     says: 'asked its human to come up with things to have confirmed',
     instructions:

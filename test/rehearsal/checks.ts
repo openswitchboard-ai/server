@@ -14,7 +14,7 @@
 import { isCritical } from './levels.js';
 import { describeDecisions, holds, type MeaningDecision, type MeaningDecisions, type MeaningId } from './meaning.js';
 import { fail, pass, skip, type Check, type TranscriptTurn } from './types.js';
-import type { AskBeforePosting, Reach } from './data.js';
+import type { AskBeforePosting, ListRowSpec, Reach } from './data.js';
 
 /**
  * Attach the meaning decisions a check used, and name them in its evidence,
@@ -56,6 +56,10 @@ export interface CardFacts {
   geoCountry: string | null;
   state: string;
   createdAt: string;
+  /** The identifiers as the owner gave them (migration 067). Empty where none. */
+  identifiers?: { kind: string; value: string }[];
+  /** The list this posting is an item of, or null for an ordinary posting (068). */
+  listId?: string | null;
 }
 
 /**
@@ -1797,4 +1801,405 @@ export function moneySaid(text: string): number[] {
     if (n) out.push(n);
   }
   return [...new Set(out)];
+}
+
+// ---------------------------------------------------------------------------
+// LISTS (manual v88): many things at once, and one of them wanted.
+//
+// Everything below reads the rows the scenario handed the human (data.ts,
+// ListErrand) against the postings the database holds. Nothing here knows
+// what sort of thing the rows are: a row is a name, a printed code, a state
+// and a count, and an item is a posting with a list id.
+// ---------------------------------------------------------------------------
+
+/**
+ * The forms an identifier is compared in, as the switchboard compares them
+ * (src/domain/identifiers.ts): case-folded, accents folded, everything but
+ * letters and digits removed, and the same with leading zeros dropped from
+ * each run of digits ("025/165" and "25/165" are one identifier).
+ */
+export function identifierForms(value: string): string[] {
+  const norm = String(value)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+  if (!norm) return [];
+  const unpadded = norm.replace(/\d+/g, (d) => d.replace(/^0+(?=\d)/, ''));
+  return unpadded === norm ? [norm] : [norm, unpadded];
+}
+
+export function sameIdentifier(a: string, b: string): boolean {
+  const fa = identifierForms(a);
+  return identifierForms(b).some((f) => fa.includes(f));
+}
+
+/** Letters and digits only, lowercased: "Near Mint" and "near-mint" are one state. */
+const squash = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+function carriesIdentifier(card: CardFacts, value: string): boolean {
+  return (card.identifiers ?? []).some((i) => sameIdentifier(i.value, value));
+}
+
+function nameWordsOf(row: ListRowSpec): string[] {
+  return row.name
+    .toLowerCase()
+    .split(/[^\p{L}]+/u)
+    .filter((w) => w.length >= 4);
+}
+
+/** Does this posting's own name say what the row is? One telling word of the row's name is enough. */
+export function nameSaysRow(card: CardFacts, row: ListRowSpec): boolean {
+  const kind = (card.kind ?? '').toLowerCase();
+  const words = nameWordsOf(row);
+  return words.length === 0 ? kind.includes(row.name.toLowerCase()) : words.some((w) => kind.includes(w));
+}
+
+function conditionOn(card: CardFacts, row: ListRowSpec): boolean {
+  return !row.condition || squash(cardWords(card)).includes(squash(row.condition));
+}
+
+export interface RowAssignment {
+  row: number;
+  card?: CardFacts;
+  /** How the item was found: by its printed code, or only by its words. */
+  by?: 'identifier' | 'words';
+}
+
+/**
+ * WHICH ITEM IS WHICH ROW. By the printed code first; where two rows share a
+ * code (the same thing in two states) the one whose state matches; and only
+ * where an item carries no code, by its name and the row's telling words.
+ * Each item answers for one row at most.
+ */
+export function assignRows(cards: CardFacts[], rows: readonly ListRowSpec[]): RowAssignment[] {
+  const taken = new Set<string>();
+  const out: RowAssignment[] = rows.map((_, i) => ({ row: i }));
+  // Rows that share a code with another row go last within the identifier pass,
+  // so a row with a code of its own is never robbed by its neighbour.
+  const order = rows.map((_, i) => i);
+  for (const i of order) {
+    const row = rows[i];
+    const cands = cards.filter((c) => !taken.has(c.id) && carriesIdentifier(c, row.identifier));
+    if (!cands.length) continue;
+    const pick = cands.find((c) => conditionOn(c, row)) ?? cands[0];
+    taken.add(pick.id);
+    out[i] = { row: i, card: pick, by: 'identifier' };
+  }
+  for (const i of order) {
+    if (out[i].card) continue;
+    const row = rows[i];
+    const extra = (row.words ?? []).map((w) => w.toLowerCase());
+    const cands = cards.filter(
+      (c) =>
+        !taken.has(c.id) &&
+        nameSaysRow(c, row) &&
+        extra.every((w) => cardWords(c).includes(w)) &&
+        !(c.identifiers ?? []).some((id) => rows.some((r, j) => j !== i && sameIdentifier(id.value, r.identifier))),
+    );
+    if (!cands.length) continue;
+    const pick = cands.find((c) => conditionOn(c, row)) ?? cands[0];
+    taken.add(pick.id);
+    out[i] = { row: i, card: pick, by: 'words' };
+  }
+  return out;
+}
+
+const rowLabel = (row: ListRowSpec): string => `${row.name} ${row.identifier}`;
+const short = (notes: string[], n = 8): string =>
+  notes.length <= n ? notes.join('; ') : `${notes.slice(0, n).join('; ')}; and ${notes.length - n} more`;
+
+/** S1.list.used — many things went up as one list, not as a pile of single postings. */
+export function checkListUsed(sellerCards: CardFacts[]): Check {
+  const id = 'S1.list.used';
+  const says = "the seller's assistant put the many things up as a list with publish_list, not as one posting each.";
+  const items = sellerCards.filter((c) => c.listId);
+  const single = sellerCards.filter((c) => !c.listId);
+  const lists = new Set(items.map((c) => c.listId)).size;
+  const ev = `${items.length} item(s) on ${lists} list(s); ${single.length} ordinary posting(s)`;
+  if (!items.length && !single.length) return fail(id, says, 'nothing of the seller’s went up');
+  if (!items.length) return fail(id, says, `${ev}: every thing went up as a posting of its own`);
+  if (single.length) return fail(id, says, `${ev}: some went up as a list and some one at a time (${single.map((c) => c.kind).join(', ')})`);
+  return pass(id, says, ev);
+}
+
+/** S1.list.coverage — every row handed over is an item, and nothing that was not handed over is. */
+export function checkListCoverage(sellerCards: CardFacts[], rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
+  const id = 'S1.list.coverage';
+  const says = 'every row the human handed over went up as an item, and no item is something they never handed over.';
+  const items = sellerCards.filter((c) => c.listId);
+  const missing = assigned.filter((a) => !a.card).map((a) => rowLabel(rows[a.row]));
+  const used = new Set(assigned.map((a) => a.card?.id).filter(Boolean));
+  const extra = items.filter((c) => !used.has(c.id)).map((c) => `${c.kind ?? '?'} ${(c.identifiers ?? []).map((i) => i.value).join('/')}`.trim());
+  const ev = `${rows.length} row(s) handed over, ${items.length} item(s) up`;
+  const notes = [...missing.map((m) => `missing: ${m}`), ...extra.map((x) => `not in what they handed over: ${x}`)];
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, `${ev}; every row accounted for`);
+}
+
+/** S1.list.identifiers — each item carries its printed code as an identifier, and nothing that names one object. */
+export function checkListIdentifiers(
+  sellerCards: CardFacts[],
+  rows: readonly ListRowSpec[],
+  assigned: RowAssignment[],
+  singleObjectNumbers: readonly string[] = [],
+): Check {
+  const id = 'S1.list.identifiers';
+  const says =
+    'each item carries the code printed on it as an identifier (never in its name), and no number that belongs to one object is on any item.';
+  const notes: string[] = [];
+  let carried = 0;
+  for (const a of assigned) {
+    if (!a.card) continue;
+    if (carriesIdentifier(a.card, rows[a.row].identifier)) carried++;
+    else {
+      const has = (a.card.identifiers ?? []).map((i) => `${i.kind}: ${i.value}`).join(', ');
+      notes.push(`${rowLabel(rows[a.row])} carries ${has ? `only ${has}` : 'no identifier'}`);
+    }
+  }
+  for (const c of sellerCards) {
+    const digitsOnCard = `${(c.identifiers ?? []).map((i) => i.value).join(' ')} ${cardWords(c)}`.replace(/\D+/g, ' ');
+    for (const n of singleObjectNumbers) {
+      const d = n.replace(/\D+/g, '');
+      if (d && digitsOnCard.split(' ').some((x) => x.includes(d))) notes.push(`${c.kind ?? 'an item'} carries ${n}, which belongs to one object`);
+    }
+    if (/\d/.test(c.kind ?? '')) notes.push(`${c.kind} has a figure in its name`);
+  }
+  const found = assigned.filter((a) => a.card).length;
+  const ev = `${carried} of ${found} item(s) found carry their printed code`;
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
+}
+
+/** S1.list.details — each item's name says what it is in plain words, with the state and count the human gave. */
+export function checkListDetails(rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
+  const id = 'S1.list.details';
+  const says = "each item's name says what it is in plain words, and it carries the condition and the quantity the human's own list gives.";
+  const notes: string[] = [];
+  for (const a of assigned) {
+    if (!a.card) continue;
+    const row = rows[a.row];
+    if (!nameSaysRow(a.card, row)) notes.push(`${rowLabel(row)} went up named "${a.card.kind ?? ''}"`);
+    if (!conditionOn(a.card, row)) notes.push(`${rowLabel(row)}: condition "${row.condition}" not on the item`);
+    const q = Number((a.card.attributes as Record<string, unknown>)?.quantity ?? 1);
+    if (q !== (row.quantity ?? 1)) notes.push(`${rowLabel(row)}: quantity ${q}, the list says ${row.quantity ?? 1}`);
+  }
+  const found = assigned.filter((a) => a.card).length;
+  return notes.length
+    ? fail(id, says, `${notes.length} fault(s) across ${found} item(s): ${short(notes)}`)
+    : pass(id, says, `${found} item(s): names, conditions and quantities as the human gave them`);
+}
+
+/** The asking price a posting shows, where it has one. */
+export function askOn(card: CardFacts): number | undefined {
+  const a = card.ask as { amount?: unknown } | null;
+  const n = a && a.amount !== undefined ? Number(a.amount) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * S1.list.figures — every figure on the list is the human's own, on the item
+ * they gave it for, and every other item is open to offers.
+ */
+export function checkListFigures(
+  rows: readonly ListRowSpec[],
+  assigned: RowAssignment[],
+  askingPrices: Readonly<Record<number, number>>,
+  humanStated: number[],
+): Check {
+  const id = 'S1.list.figures';
+  const says =
+    "every asking price on the list is one the human gave, on the item they gave it for; every other item is open to offers, with no private band.";
+  const notes: string[] = [];
+  let priced = 0;
+  for (const a of assigned) {
+    if (!a.card) continue;
+    const row = rows[a.row];
+    const want = askingPrices[a.row];
+    const got = askOn(a.card);
+    if (got !== undefined) priced++;
+    if (want !== undefined && got === undefined) notes.push(`${rowLabel(row)}: the human gave $${want}, the item went up open to offers`);
+    else if (want !== undefined && got !== want) notes.push(`${rowLabel(row)}: $${got} on the item, the human gave $${want}`);
+    else if (want === undefined && got !== undefined) notes.push(`${rowLabel(row)}: $${got} on the item, the human never priced it`);
+    if (a.card.hasBand) notes.push(`${rowLabel(row)}: a private band is set`);
+  }
+  const ev = `${priced} item(s) carry an asking price; the human said ${humanStated.length ? humanStated.map((n) => `$${n}`).join(', ') : 'no figure'}`;
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
+}
+
+/**
+ * S1.list.figure_readback — the switchboard reads a list's figures back once a
+ * call, as a summary (the count, the lowest and the highest), and the
+ * assistant says it to its human before the list goes up. Read off the
+ * assistant's own turns before the items appeared.
+ */
+export function checkListFigureReadBack(turnsBeforeUp: string[], pricesOnList: number[]): Check {
+  const id = 'S1.list.figure_readback';
+  const says = "where the list carries figures, the seller's assistant read the summary (lowest and highest) back to its human before the list went up.";
+  if (!pricesOnList.length) return skip(id, says, 'no item carries a figure, so there was nothing to read back');
+  const lo = Math.min(...pricesOnList);
+  const hi = Math.max(...pricesOnList);
+  const turns = turnsBeforeUp.filter((t) => {
+    const m = moneySaid(t);
+    return m.includes(lo) && m.includes(hi);
+  });
+  const ev = `${pricesOnList.length} figure(s) on the list, $${lo} to $${hi}`;
+  if (!turns.length) return fail(id, says, `${ev}; no turn before the list went up says both to the human`);
+  return pass(id, says, `${ev}; said in ${turns.length} turn(s): "${turns[0].replace(/\s+/g, ' ').slice(0, 220)}"`);
+}
+
+/** A count said beside a word for things going up: "all 29 cards are up", "27 went up". */
+const UP_COUNT = /\b(\d{1,3})\s+(?:of\s+(?:your|the)\s+|(?:\w+\s+){0,2})?(?:cards?|items?|listings?|postings?|things|entries)\b[^.!?\n]{0,40}\b(?:up|live|posted|listed|went|on the board|in)\b|\b(?:all|every one of(?: the)?)\s+(\d{1,3})\b/gi;
+
+export function countsSaid(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.matchAll(UP_COUNT)) out.push(Number(m[1] ?? m[2]));
+  return out;
+}
+
+/**
+ * S1.list.results_read — the per-item results read back plainly: how many
+ * went up, and each one that did not with its reason. A count said that is
+ * not the count that went up is a misreading, whatever Jev thinks of the rest.
+ */
+export function checkListResultsRead(
+  replies: string[],
+  upCount: number,
+  missing: ListRowSpec[],
+  meaning: MeaningDecisions = {},
+): Check {
+  const id = 'S1.list.results_read';
+  const says = "the seller's assistant told its human how many items went up and named each one that did not, with its reason.";
+  const joined = replies.join('\n');
+  const counts = countsSaid(joined);
+  const regex =
+    counts.includes(upCount) || (missing.length === 0 && /\b(all|every one|everything)\b[^.!?\n]{0,40}\b(up|live|posted|listed)\b/i.test(joined));
+  const told = holds(meaning.told_list_results, regex);
+  const notes: string[] = [];
+  if (!told) notes.push('never said how many went up');
+  const wrong = counts.filter((n) => n !== upCount && n > 1);
+  if (counts.length && !counts.includes(upCount) && wrong.length) notes.push(`said ${[...new Set(wrong)].join(', ')}, and ${upCount} went up`);
+  for (const r of missing) {
+    const words = nameWordsOf(r);
+    if (!words.some((w) => joined.toLowerCase().includes(w))) notes.push(`never mentioned ${rowLabel(r)}, which is not up`);
+  }
+  const ev = `${upCount} item(s) up, ${missing.length} row(s) not up; counts said: ${counts.length ? counts.join(', ') : 'none'}`;
+  return withMeaning(notes.length ? fail(id, says, `${ev}; ${notes.join('; ')}`) : pass(id, says, ev), [meaning.told_list_results]);
+}
+
+/** S1.identifier.buyer — the want names the edition by the code printed on it. */
+export function checkBuyerIdentifier(card: CardFacts | undefined, target: ListRowSpec): Check {
+  const id = 'S1.identifier.buyer';
+  const says = "the buyer's want carries the code printed on the thing as an identifier, whole, so it can meet the very same item.";
+  if (!card) return fail(id, says, 'no buyer posting to read');
+  const ids = card.identifiers ?? [];
+  if (!ids.length) return fail(id, says, `the want carries no identifier (kind "${card.kind ?? ''}")`);
+  const whole = ids.find((i) => sameIdentifier(i.value, target.identifier));
+  const all = ids.map((i) => `${i.kind}: ${i.value}`).join(', ');
+  if (whole) return pass(id, says, `carries ${all}`);
+  return fail(id, says, `carries ${all}, which is not the printed code ${target.identifier} in any form the switchboard compares`);
+}
+
+/**
+ * S1.meets.item — the introduction is on the RIGHT item: the buyer's want and
+ * the list item for the row they asked for, as a sure introduction. Another
+ * item met as a maybe is reported and does not fail it; another item met as
+ * a sure introduction does.
+ */
+export function checkMeetsOnItem(
+  matches: { id: string; cardWant: string; cardHave: string; certainty?: string; score: number }[],
+  targetCardId: string | undefined,
+  buyerCardId: string | undefined,
+  describe: (cardId: string) => string,
+): Check {
+  const id = 'S1.meets.item';
+  const says = "the introduction links the buyer's want and the very item on the seller's list they asked for, as a sure introduction.";
+  if (!targetCardId) return fail(id, says, 'the item the buyer asked for is not on the list');
+  if (!buyerCardId) return fail(id, says, 'no buyer posting');
+  const mine = matches.filter((m) => m.cardWant === buyerCardId);
+  const onTarget = mine.find((m) => m.cardHave === targetCardId);
+  const others = mine.filter((m) => m.cardHave !== targetCardId);
+  const othersEv = others.length
+    ? `; also met ${others.map((m) => `${describe(m.cardHave)} (${m.certainty ?? '?'}, ${m.score})`).join(', ')}`
+    : '';
+  if (!onTarget) {
+    return fail(id, says, `no introduction on the item asked for${othersEv || '; no introduction on any item'}`);
+  }
+  const ev = `introduction ${onTarget.id.slice(0, 8)} on ${describe(targetCardId)}, ${onTarget.certainty ?? '?'} at ${onTarget.score}${othersEv}`;
+  if (onTarget.certainty !== 'sure') return fail(id, says, `${ev} — not a sure introduction`);
+  const wrongSure = others.filter((m) => m.certainty === 'sure');
+  if (wrongSure.length) return fail(id, says, `${ev} — and a sure introduction on an item that is not the one asked for`);
+  return pass(id, says, ev);
+}
+
+/**
+ * S6 on a list: the sold item comes down, and the rest of the list stays up
+ * unless the human asked for it to come down.
+ */
+export function checkSoldItemDown(finalCards: CardFacts[], targetCardId: string | undefined): Check {
+  const id = 'S6.item_taken_down';
+  const says = 'the item that was sold was taken down once the sale was done.';
+  const t = finalCards.find((c) => c.id === targetCardId);
+  if (!t) return fail(id, says, 'the sold item could not be read');
+  return ['PUBLISHED', 'PENDING_SCREENING'].includes(t.state)
+    ? fail(id, says, `the sold item is still ${t.state}`)
+    : pass(id, says, `the sold item is ${t.state}`);
+}
+
+export function checkListStaysUp(finalCards: CardFacts[], targetCardId: string | undefined, upBefore: number, humanAskedWholeList: boolean): Check {
+  const id = 'S6.list_stays_up';
+  const says = "the rest of the seller's list stayed up: only the sold item came down, unless the human asked for more.";
+  const rest = finalCards.filter((c) => c.listId && c.id !== targetCardId);
+  const up = rest.filter((c) => ['PUBLISHED', 'PENDING_SCREENING'].includes(c.state)).length;
+  const ev = `${up} of the other ${rest.length} item(s) still up (${upBefore} were up before the wrap-up)`;
+  if (up >= upBefore) return pass(id, says, ev);
+  return humanAskedWholeList ? pass(id, says, `${ev}; the human asked for more to come down`) : fail(id, says, `${ev}; the human never asked for them to come down`);
+}
+
+/**
+ * S1.list.figures_sent — every figure the assistant ever SENT on a list call
+ * was one its human said, read off the client's own record of its calls
+ * (trace.ts). A figure sent and caught by the switchboard's read-back, with
+ * the list clean in the end, is the door working: it is counted as a slip and
+ * printed, not gated. One that reached the list is S1.list.figures' failure.
+ */
+export function checkListFiguresSent(
+  sent: { call: number; name: string; amount: number }[] | undefined,
+  humanStated: number[],
+  listClean: boolean,
+): Check {
+  const id = 'S1.list.figures_sent';
+  const says = "every figure the seller's assistant put on a list call was one its human said.";
+  if (sent === undefined) return skip(id, says, 'this client keeps no record of its calls that the harness can read');
+  const invented = sent.filter((f) => !humanStated.includes(f.amount));
+  const calls = new Set(sent.map((f) => f.call)).size;
+  if (!invented.length) return pass(id, says, `${sent.length} figure(s) across ${calls} call(s), each one the human said`);
+  const eg = invented.slice(0, 4).map((f) => `${f.name} $${f.amount} (call ${f.call})`).join(', ');
+  const ev = `${invented.length} figure(s) the human never gave were sent: ${eg}${invented.length > 4 ? ', …' : ''}`;
+  if (!listClean) return fail(id, says, ev);
+  return {
+    ...pass(id, says, `${ev} — the switchboard read the figures back before anything went up, and the list that went up carries only the human's own; counted as a slip, not gated`),
+    countedSlip: 'sent figures its human never gave on a list call (caught by the read-back)',
+  };
+}
+
+/**
+ * S2.told_which — on a list, "somebody came forward" is not enough: the human
+ * holds many things, so the assistant says WHICH one, by its name and, where
+ * the list holds more than one thing of that name, by what tells it apart.
+ */
+export function checkToldWhichItem(side: 'seller' | 'buyer', said: string[], row: ListRowSpec, rows: readonly ListRowSpec[]): Check {
+  const id = `S2.told_which.${side}`;
+  const says = `${side}'s assistant said which item on the list somebody came forward for, so its human could tell it from the others.`;
+  const joined = said.join('\n').toLowerCase();
+  const words = nameWordsOf(row);
+  const named = words.some((w) => joined.includes(w));
+  const neighbours = rows.filter((r) => r !== row && nameWordsOf(r).some((w) => words.includes(w)));
+  const squashed = squash(joined);
+  const apart =
+    identifierForms(row.identifier).some((f) => squashed.includes(f)) ||
+    (row.words ?? []).some((w) => joined.includes(w.toLowerCase()));
+  if (!named) return fail(id, says, `no turn since the introduction names ${row.name}`);
+  if (neighbours.length && !apart) {
+    return fail(id, says, `named ${row.name} but not which one, with ${neighbours.length} other item(s) of that name on the list`);
+  }
+  return pass(id, says, neighbours.length ? `named ${row.name} and told it from ${neighbours.length} neighbour(s)` : `named ${row.name}`);
 }

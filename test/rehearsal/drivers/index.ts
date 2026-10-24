@@ -10,7 +10,7 @@ import { ask as askNagatha } from '../../realism/nagatha.js';
 // Bilby is agent B under another name: same `--profile` mechanism, same
 // `--local` runner. DUET_B_PROFILE=bilby is what makes it Bilby.
 import { ask as askB } from '../../duet/agentB.js';
-import { deepCleanAndBind } from '../box.js';
+import { deepCleanAndBind, sessionTrace } from '../box.js';
 import { askThroughGateway } from './openclawGateway.js';
 import { MCP_URL } from '../config.js';
 import type { Driver } from '../types.js';
@@ -53,6 +53,9 @@ export function nagathaDriver(): Driver {
         humanFirstName,
       );
     },
+    async trace() {
+      return sessionTrace('nagatha', requireEnv('NAGATHA_HOST'), requireEnv('NAGATHA_KEY'));
+    },
     async ask(sessionId, utterance) {
       const r = await withOneRetry('nagatha', () => askNagatha(sessionId, utterance));
       return {
@@ -80,6 +83,9 @@ export function bilbyDriver(): Driver {
         MCP_URL,
         humanFirstName,
       );
+    },
+    async trace() {
+      return sessionTrace('bilby', requireEnv('DUET_B_HOST'), requireEnv('DUET_B_KEY'));
     },
     async ask(sessionId, utterance) {
       // Through his running gateway, the way Nagatha is asked. duet's agentB
