@@ -50,8 +50,11 @@ import {
   namesOneObject,
   normaliseIdentifier,
   identifierNorms,
+  IDENTIFIER_FORMS_MAX,
+  differentByIdentifier,
   readIdentifiers,
   sharesIdentifier,
+  trailingCode,
 } from '../../src/domain/identifiers.js';
 import {
   IDENTIFIER_MIN_COSINE,
@@ -160,6 +163,53 @@ describe('an identifier is compared as normalised', () => {
     expect(sharesIdentifier(undefined, b)).toBe(false);
     // Anything on a row that did not come through readIdentifiers reads as none.
     expect(identifiersOf([{ kind: 'x', value: 'ab', norm: 'ab' }, 'junk', { norm: 'abc' }])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('a name with a code after it is compared by the code too', () => {
+  const ids = (...values: string[]) => {
+    const r = readIdentifiers(values.map((value, n) => ({ kind: n ? 'other code' : 'printed code', value })));
+    if (!r.ok) throw new Error(r.error);
+    return r.identifiers;
+  };
+
+  it('meets the bare code when a name is put in front of it', () => {
+    expect(sharesIdentifier(ids('Obsidian Flames 125/197'), ids('125/197'))).toBe(true);
+    expect(sharesIdentifier(ids('125/197'), ids('Obsidian Flames 125/197'))).toBe(true);
+    expect(sharesIdentifier(ids('Scarlet & Violet 151 199/165'), ids('199/165'))).toBe(true);
+    // The unpadded form of the trailing code is compared too.
+    expect(sharesIdentifier(ids('Some Name 025/165'), ids('25/165'))).toBe(true);
+    expect(identifierNorms(ids('Obsidian Flames 125/197'))).toEqual(['obsidianflames125197', '125197']);
+  });
+
+  it('never meets a different code behind the same name', () => {
+    expect(sharesIdentifier(ids('Obsidian Flames 125/197'), ids('126/197'))).toBe(false);
+    expect(sharesIdentifier(ids('Obsidian Flames 125/197'), ids('Obsidian Flames 126/197'))).toBe(false);
+    // The middle number is not the trailing code.
+    expect(sharesIdentifier(ids('Scarlet & Violet 151 199/165'), ids('151'))).toBe(false);
+  });
+
+  it('adds nothing for one word, a last word with no digit, or a last word too short', () => {
+    expect(trailingCode('WH-1000XM4')).toBeUndefined();
+    expect(identifierNorms(ids('WH-1000XM4'))).toEqual(['wh1000xm4']);
+    expect(trailingCode('Penguin Deluxe Edition')).toBeUndefined();
+    expect(trailingCode('Volume 2')).toBeUndefined();
+    expect(trailingCode('Obsidian Flames 125/197')).toBe('125/197');
+  });
+
+  it('keeps every posting within the forms the database allows', () => {
+    const most = ids('Name 025/165', 'Other 007/099', 'Third 0012/0150');
+    const forms = identifierNorms(most);
+    expect(forms.length).toBeLessThanOrEqual(IDENTIFIERS_MAX * IDENTIFIER_FORMS_MAX);
+    const sql = readFileSync(new URL('../../migrations/069_identifier_forms.sql', import.meta.url), 'utf8');
+    expect(sql).toContain(`cardinality(identifier_norms) <= ${IDENTIFIERS_MAX * IDENTIFIER_FORMS_MAX}`);
+  });
+
+  it('never calls a name with a code and the bare code different products', () => {
+    expect(differentByIdentifier(ids('Obsidian Flames 125/197'), ids('125/197'))).toBe(false);
+    // Same kind, different code: still different.
+    expect(differentByIdentifier(ids('Obsidian Flames 125/197'), ids('126/197'))).toBe(true);
   });
 });
 

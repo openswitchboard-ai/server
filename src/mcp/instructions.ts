@@ -441,6 +441,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Two rules for lists. A figure that arrives in a file, an export or a list your human hands you, such as a market value, a last sold price or a guide price, is not their asking price. Put a price on an item only where your human has said that is their price; otherwise mark it open to offers, or ask them. And when someone comes forward on an item in a list, tell your human which item it is, in plain words, before anything else about the introduction. Where items in a call were turned away before the prices are read back, the read-back now says how many and carries each with its reason: tell your human about those too.',
   },
+  {
+    version: 90,
+    note:
+      'Give an identifier as the code is printed, on its own. A series, set, edition or collection name goes in the details rather than in the identifier.',
+  },
 ];
 
 /**
@@ -549,7 +554,7 @@ Where the thing carries a number or code of its own, such as a model number, giv
     about: 'A number or code that names the product or edition, and when to give one.',
     text: `1b. IDENTIFIERS. Some things carry a number or code that tells one product or edition from the next: a model number on a laptop, an ISBN on a book, a catalogue number on a record. A cup has none. Where your human's thing has one, give it in identifiers when you post, as printed, with a few plain words for what it is. The switchboard uses it to find someone with the very same product, even on a crowded shelf, and to tell apart two editions with nearly the same name.
 
-Choose the most specific one that names a product or an edition. A posting takes up to three, so give a second where people commonly use more than one for the same thing. Give none where the thing has none, and never make one up: ask your human to read it off the thing, or leave it out.
+Give the code as it is printed, on its own: put a series, set, edition or collection name in the details rather than in the identifier. Choose the most specific one that names a product or an edition. A posting takes up to three, so give a second where people commonly use more than one for the same thing. Give none where the thing has none, and never make one up: ask your human to read it off the thing, or leave it out.
 
 A number that belongs to one object stays off the posting: a serial number, a registration, a certificate number. Where one of those matters to a deal, ask for it as a written line with respond(ask_confirmation), and the seller's human confirms it. Contact details never go in an identifier, and one that carries them comes back unposted.
 
@@ -849,7 +854,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 89,
+  version: 90,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

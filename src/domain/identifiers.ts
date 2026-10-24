@@ -22,7 +22,9 @@
  *      "199-165" are one identifier. Both forms are kept: the value as given
  *      is the owner's to read back, and the normalised form is what the engine
  *      compares. A normalised form under IDENTIFIER_MIN_NORM characters says
- *      too little to tell one product from another and is refused.
+ *      too little to tell one product from another and is refused. A value
+ *      of several words ending in a code is compared by that code alone as
+ *      well (trailingCode), so a name in front of a code never hides it.
  *
  *   2. IT NAMES A PRODUCT OR AN EDITION, NEVER ONE OBJECT. A serial number, a
  *      registration or a certificate number belongs to a single thing and
@@ -293,17 +295,59 @@ export function unpaddedForm(value: string): string {
 }
 
 /**
+ * THE CODE AT THE END OF A NAME. A value of several words whose last word
+ * holds a digit ("Obsidian Flames 125/197", "Scarlet & Violet 151 199/165")
+ * is most often a name with the printed code after it, while the other side
+ * gave the code alone ("125/197"). The whole value's forms never meet the bare
+ * code's, so the last word is compared on its own too. Undefined where the
+ * value is one word, where its last word has no digit, or where that word
+ * comes to under IDENTIFIER_MIN_NORM characters once normalised.
+ *
+ * Only the LAST word, and only one holding a digit: a name leads and the code
+ * follows far more often than the reverse, and a trailing word of letters
+ * alone ("Deluxe", "Edition") says nothing about which product it is.
+ */
+export function trailingCode(value: string): string | undefined {
+  const words = value.trim().split(/\s+/);
+  if (words.length < 2) return undefined;
+  const last = words[words.length - 1];
+  if (!/\p{N}/u.test(last)) return undefined;
+  return normaliseIdentifier(last).length >= IDENTIFIER_MIN_NORM ? last : undefined;
+}
+
+/**
+ * The most forms one identifier is compared in: its `norm`, its unpadded form,
+ * and the same two for a trailing code (trailingCode). Migration 069 holds
+ * identifier_norms to IDENTIFIERS_MAX times this.
+ */
+export const IDENTIFIER_FORMS_MAX = 4;
+
+/**
  * The forms a posting's identifiers are compared in: what the candidate query
- * binds and the index holds. Each identifier gives its `norm`, and its
- * unpadded form where that differs and is long enough to say anything. Two
- * postings share an identifier when any form of one is a form of the other.
+ * binds and the index holds. Each identifier gives its `norm`; its unpadded
+ * form where that differs and is long enough to say anything; and, where the
+ * value is a name with a code after it, the code alone in both those forms.
+ * Two postings share an identifier when any form of one is a form of the
+ * other.
+ *
+ * The trailing-code forms make the net wider, and that is safe: a shared
+ * identifier is never a sure match on its own. It brings a candidate in by
+ * the exact-match path, and the tiers still need a near shelf and agreeing
+ * names before they call it sure (matchTiers.ts). Two products that differ
+ * only in the name in front of one printed code still meet as candidates, and
+ * their own words decide the rest.
  */
 export function identifierNorms(ids: Identifier[]): string[] {
   const forms = new Set<string>();
-  for (const i of ids) {
-    forms.add(i.norm);
-    const bare = unpaddedForm(i.value);
+  const add = (value: string, norm: string) => {
+    forms.add(norm);
+    const bare = unpaddedForm(value);
     if (bare.length >= IDENTIFIER_MIN_NORM) forms.add(bare);
+  };
+  for (const i of ids) {
+    add(i.value, i.norm);
+    const tail = trailingCode(i.value);
+    if (tail) add(tail, normaliseIdentifier(tail));
   }
   return [...forms];
 }
@@ -324,6 +368,10 @@ export function sharesIdentifier(a: unknown, b: unknown): boolean {
  * Read only by the near-miss path (matcher.ts, nearMisses.ts): a near miss is
  * advisory, so leaving one out on this evidence costs nobody an introduction.
  * The tiers never read it.
+ *
+ * "No compared form is shared" reads every form identifierNorms gives, the
+ * trailing code included, so a name with a code after it and the bare code
+ * ("Obsidian Flames 125/197", "125/197") are never called different here.
  */
 export function differentByIdentifier(a: unknown, b: unknown): boolean {
   const mine = identifiersOf(a);
