@@ -56,6 +56,12 @@ import {
 import type { CardRow } from './cards.js';
 import { geoOf } from '../geo/normalise.js';
 import { identifierNorms, identifiersOf, sharesIdentifier } from './identifiers.js';
+import {
+  NEAR_MISS_WINDOW_DAYS,
+  introducedBetween,
+  nearMissesToWrite,
+  type NearMissPair,
+} from './nearMisses.js';
 import type { Config } from '../config.js';
 
 const CANDIDATE_LIMIT = 50;
@@ -661,6 +667,60 @@ export interface MatchingOutcome {
   promoted: string[];
 }
 
+/** A near miss this run would write, with what the keeping rules read. */
+interface NearCandidate extends NearMissPair {
+  want: string;
+  have: string;
+  category: string;
+}
+
+/**
+ * Of this run's near misses, the ones worth writing (domain/nearMisses.ts).
+ * Two statements, read after this run's introductions are written: every
+ * introduction touching the run's posting or a candidate, for rule 1, and
+ * every near miss already written in the window touching them, for rule 2.
+ */
+async function nearMissesWorthWriting(
+  source: { id: string; account_id: string },
+  fresh: NearCandidate[],
+): Promise<NearCandidate[]> {
+  const candIds = fresh.map((p) => p.b);
+  const ids = [source.id, ...candIds];
+  const intros = await getPool().query(
+    `SELECT card_want, card_have, account_want, account_have FROM matches
+      WHERE card_want = ANY($1::uuid[]) OR card_have = ANY($1::uuid[])`,
+    [ids],
+  );
+  const introRows = intros.rows as {
+    card_want: string;
+    card_have: string;
+    account_want: string;
+    account_have: string;
+  }[];
+  for (const p of fresh) {
+    p.introduced = introRows.some((m) => introducedBetween(m, p));
+  }
+  const prior = await getPool().query(
+    `SELECT nm.card_want, nm.card_have, nm.score, nm.created_at,
+            cw.account_id AS account_want, ch.account_id AS account_have
+       FROM near_misses nm
+       JOIN cards cw ON cw.id = nm.card_want
+       JOIN cards ch ON ch.id = nm.card_have
+      WHERE (nm.card_want = ANY($1::uuid[]) OR nm.card_have = ANY($1::uuid[]))
+        AND nm.created_at > now() - make_interval(days => $2::int)`,
+    [ids, NEAR_MISS_WINDOW_DAYS],
+  );
+  const stored: NearMissPair[] = (prior.rows as any[]).map((r) => ({
+    a: r.card_want,
+    aAccount: r.account_want,
+    b: r.card_have,
+    bAccount: r.account_have,
+    score: Number(r.score),
+    at: r.created_at,
+  }));
+  return nearMissesToWrite(fresh, stored);
+}
+
 export async function runMatchingForCard(
   cfg: Config,
   cardId: string,
@@ -913,6 +973,7 @@ export async function runMatchingForCard(
     not_these: (c as any).not_these,
     attributes: c.attributes,
   });
+  const nearCandidates: NearCandidate[] = [];
   const judgeRequests: JudgeRequest[] = jevMatchingEnabled()
     ? judgedPairs
         .filter((p) => !p.swap && jevJudgesTier(p.judged))
@@ -1076,12 +1137,37 @@ export async function runMatchingForCard(
         });
       }
     } else if (tier === 'near-miss') {
-      await getPool().query(
+      // Held until every pair in this run has its tier: whether a near miss is
+      // worth writing depends on the introductions this same run makes
+      // (domain/nearMisses.ts, WHICH NEAR MISSES ARE WORTH KEEPING).
+      nearCandidates.push({
+        a: source.id,
+        aAccount: source.account_id,
+        b: cand.id,
+        bAccount: cand.account_id,
+        score: judged.score,
+        aIdentifiers: sourceIdentifiers,
+        bIdentifiers: (cand as any).identifiers,
         // A swap's near miss is written in the same canonical order as its
         // introduction would have been, so it is kept once too.
+        want: want.id,
+        have: have.id,
+        category: swap ? swapCategory(want.category, have.category) : want.category,
+      });
+    }
+  }
+
+  // THE NEAR MISSES, written last. A posting with an introduction to someone
+  // (made in this run or before) records none against that person's other
+  // postings; one different number of the same kind is no near miss; and one
+  // per person at most, the best, counting what is already written so a long
+  // list matched one item at a time still leaves one.
+  if (nearCandidates.length) {
+    for (const p of await nearMissesWorthWriting(source, nearCandidates)) {
+      await getPool().query(
         `INSERT INTO near_misses (card_want, card_have, score, category)
          VALUES ($1,$2,$3,$4) ON CONFLICT (card_want, card_have) DO NOTHING`,
-        [want.id, have.id, judged.score, swap ? swapCategory(want.category, have.category) : want.category],
+        [p.want, p.have, p.score, p.category],
       );
       outcome.nearMisses++;
     }

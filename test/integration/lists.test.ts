@@ -185,6 +185,18 @@ d('lists', () => {
       return rows[0];
     }, 'the introduction between the want and the list item', 180_000);
     expect(match[0]).toBeDefined();
+    // Introduced to one item, the want records no near miss against any of
+    // that person's other postings, on this list or any other
+    // (domain/nearMisses.ts, found in the lists rehearsal).
+    const near = await dbExec(
+      `SELECT count(*) FROM near_misses nm JOIN cards h ON h.id = nm.card_have
+        WHERE nm.card_want = :w::uuid AND h.account_id = :a::uuid`,
+      [
+        { name: 'w', value: want.result.intent_id },
+        { name: 'a', value: ana.accountId },
+      ],
+    );
+    expect(Number(near[0][0])).toBe(0);
     const own = await dbExec(
       `SELECT count(*) FROM matches WHERE account_want = account_have AND account_want = :a::uuid`,
       [{ name: 'a', value: ana.accountId }],

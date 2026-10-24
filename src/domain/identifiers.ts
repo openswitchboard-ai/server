@@ -45,6 +45,7 @@
  * Everything in this file is pure: no I/O, no clock, no randomness.
  */
 import { contactDetailRule } from './contactInWords.js';
+import { isPlaceholderValue } from './placeholderValues.js';
 
 /** How many identifiers one posting takes. */
 export const IDENTIFIERS_MAX = 3;
@@ -147,7 +148,13 @@ export function namesOneObject(kind: string): boolean {
 }
 
 /** Why an identifier was turned back, as a word a caller or a test can branch on. */
-export type IdentifierRefusal = 'shape' | 'too_many' | 'too_short' | 'contact' | 'single_object';
+export type IdentifierRefusal =
+  | 'shape'
+  | 'too_many'
+  | 'too_short'
+  | 'contact'
+  | 'single_object'
+  | 'placeholder';
 
 /** What the assistant reads for each. Plain, and each says the one move that fixes it. */
 export const IDENTIFIER_SENTENCES: Record<IdentifierRefusal, string> = {
@@ -159,6 +166,8 @@ export const IDENTIFIER_SENTENCES: Record<IdentifierRefusal, string> = {
     'An identifier is the number or code printed on the product. A phone number, an email address, a link or a handle never goes on a posting. Where a product\'s own number reads like one of those, give another form of it or leave it off.',
   single_object:
     "That number belongs to one object, so it stays off the posting. Give the model or edition it belongs to here. Where the single number matters to a deal, ask for it as a written line with respond(ask_confirmation), and the seller's human confirms it.",
+  placeholder:
+    'That identifier is a mask or a placeholder. Give it as printed on the thing, or leave it off.',
 };
 
 /**
@@ -230,6 +239,9 @@ export function readIdentifiers(value: unknown): ReadIdentifiers {
       return no('contact');
     }
     if (namesOneObject(kind)) return no('single_object');
+    // A masked value ("XXXX-XXXX", "[redacted]") says nothing about which
+    // product it is (domain/placeholderValues.ts).
+    if (isPlaceholderValue(given)) return no('placeholder');
     const norm = normaliseIdentifier(given);
     if (norm.length < IDENTIFIER_MIN_NORM) return no('too_short');
     if (!out.some((i) => i.norm === norm)) out.push({ kind, value: given, norm });
@@ -301,6 +313,25 @@ export function sharesIdentifier(a: unknown, b: unknown): boolean {
   const mine = new Set(identifierNorms(identifiersOf(a)));
   if (!mine.size) return false;
   return identifierNorms(identifiersOf(b)).some((form) => mine.has(form));
+}
+
+/**
+ * Do two postings name DIFFERENT products by the same sort of identifier?
+ * True only where both carry identifiers, at least one kind is on both sides
+ * (compared as kindKey compares them), and no compared form is shared. Two
+ * different numbers of the same kind are two different products or editions.
+ *
+ * Read only by the near-miss path (matcher.ts, nearMisses.ts): a near miss is
+ * advisory, so leaving one out on this evidence costs nobody an introduction.
+ * The tiers never read it.
+ */
+export function differentByIdentifier(a: unknown, b: unknown): boolean {
+  const mine = identifiersOf(a);
+  const theirs = identifiersOf(b);
+  if (!mine.length || !theirs.length) return false;
+  const kinds = new Set(mine.map((i) => kindKey(i.kind)));
+  if (!theirs.some((i) => kinds.has(kindKey(i.kind)))) return false;
+  return !sharesIdentifier(mine, theirs);
 }
 
 /** An identifier as its owner is handed it back: the two fields they sent. */

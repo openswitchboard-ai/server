@@ -31,6 +31,7 @@ import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { getCard, supplyAskCarried } from './cards.js';
+import { isPlaceholderValue } from './placeholderValues.js';
 import { OsbError } from '../protocol.js';
 import { type Arrangement } from './arrangement.js';
 import { readLaneFacts, sayFor } from './lanes.js';
@@ -74,6 +75,8 @@ export function phraseComplaint(phrase: unknown): string | undefined {
   // sits inside a word ("TB-303", "ClubSport V3"). A phrase that is nothing but
   // figures is a figure, and figures do not belong in the words for a thing.
   if (/^[\d\s.,-]+$/.test(p)) return 'these take plain words rather than a bare figure';
+  // A mask or a placeholder says nothing about the thing (domain/placeholderValues.ts).
+  if (isPlaceholderValue(p)) return 'a mask or a placeholder says nothing here, so give the words or leave it off';
   return undefined;
 }
 

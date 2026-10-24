@@ -126,6 +126,18 @@ const BUILDS: Record<string, () => OsbError[]> = {
         reference: REF,
       });
     })(),
+    // The same, where items in the call were turned away: the summary says
+    // how many, and the items themselves ride beside the payload (extras).
+    (() => {
+      const f = { what: 'asking price' as const, count: 200, lowest: 0.5, highest: 99_999_999_999, currency: 'AUD' };
+      return new OsbError('CONFIRM_FIGURE', {
+        human_action: `${lists.LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY}${cards.FIGURE_RADIUS_TAIL}`,
+        questions: [lists.listFigureQuestion(f, 200), cards.RADIUS_QUESTION_LOOKING],
+        figures: lists.listFigureEntries(f),
+        reference: REF,
+        extras: { refused_items: [{ index: 0, reason: 'name', fix: 'Give this item a name.' }] },
+      });
+    })(),
     new OsbError('CONFIRM_FIGURE', {
       human_action: `${FIGURE_HUMAN_ACTION}${cards.FIGURE_RADIUS_TAIL}`,
       questions: figureQuestions([

@@ -52,6 +52,7 @@ import {
   LIST_DETAIL_KEY_MAX,
   LIST_DETAIL_VALUE_MAX,
   LIST_FIGURE_HUMAN_ACTION,
+  LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY,
   LIST_ITEM_MAX_DETAILS,
   LIST_SAY_NOTE,
   LIST_SCREEN_CHUNK,
@@ -91,7 +92,7 @@ import { screenCardsTogether } from '../../src/domain/screening.js';
 import { fairShare, screenListChunk } from '../../src/workers/screeningWorker.js';
 import { SENTENCES, say } from '../../src/domain/lanes.js';
 import { MANUAL, MANUAL_CHANGELOG, manualSection } from '../../src/mcp/instructions.js';
-import { TOOLS, argumentComplaint, dispatchTool } from '../../src/mcp/tools.js';
+import { TOOLS, argumentComplaint, dispatchTool, protocolAnswer } from '../../src/mcp/tools.js';
 import { OsbError } from '../../src/protocol.js';
 import { lintHumanCopy } from '../../src/email/lint.js';
 import type { Config } from '../../src/config.js';
@@ -499,6 +500,62 @@ describe('the list door', () => {
     expect(world.inserted.map((x) => x.ask?.amount ?? null)).toEqual([400, 15, null, 120]);
     // And the attempt is over: its memory is gone.
     expect(world.refs.rows.has(e.payload.reference)).toBe(false);
+  });
+
+  // Found in a rehearsal: 29 priced items sent, "these 14 items" read back,
+  // because 15 had been turned away and the read-back did not say so.
+  it('carries the items already turned away beside the read-back, and says how many are left out', async () => {
+    const e = await refusalOf(() =>
+      publishList(cfg(), ACCOUNT, {
+        shared: shared({ deal: 'sale', currency: 'AUD', geo: { bucket: 'r3gx', reach: 'country' } }),
+        items: [
+          { name: 'brake levers', price: 90 },
+          { name: 'saddle 2', price: 15 },
+          { name: 'chain', price: 420 },
+          { name: 'pedals', price: 30, details: { serial_ref: '***' } },
+        ],
+      }),
+    );
+    expect(e).toBeInstanceOf(OsbError);
+    expect(e.payload.code).toBe('CONFIRM_FIGURE');
+    // The summary still counts only what can go up, and never a figure from
+    // an item that was turned away.
+    expect(e.payload.figures).toEqual([
+      { what: 'lowest asking price on the list', amount: 90, currency: 'AUD' },
+      { what: 'highest asking price on the list', amount: 420, currency: 'AUD' },
+    ]);
+    expect(e.payload.questions[0]).toBe(
+      'Are the asking prices on these 2 items, from $90 to $420 AUD, figures you gave, or did I put any there myself? This leaves out 2 items that were turned away.',
+    );
+    // The shared reach rides along as on any first read-back.
+    expect(e.payload.human_action).toBe(`${LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY}${FIGURE_RADIUS_TAIL}`);
+    // Beside the refusal, never inside the published error document.
+    expect(e.payload.refused_items).toBeUndefined();
+    expect(e.extras.refused_items).toEqual([
+      expect.objectContaining({ index: 1, reason: 'name' }),
+      { index: 3, reason: 'details', fix: ITEM_FIXES.details_placeholder('serial_ref') },
+    ]);
+    for (const r of e.extras.refused_items) expect(r.fix.length).toBeGreaterThan(10);
+    // And the tool's answer carries them, after the refusal's own fields.
+    const answer = protocolAnswer(e.payload, 'publish_list', e.extras) as any;
+    expect(answer.structuredContent.nothing_happened).toBe(true);
+    expect(answer.structuredContent.code).toBe('CONFIRM_FIGURE');
+    expect(answer.structuredContent.refused_items).toEqual(e.extras.refused_items);
+    expect(statements(/INSERT INTO cards/)).toHaveLength(0);
+  });
+
+  it('reads back as before, with an empty list of turned-away items, where none were', async () => {
+    const e = await refusalOf(() =>
+      publishList(cfg(), ACCOUNT, {
+        shared: shared({ deal: 'sale', currency: 'AUD', geo: { bucket: 'r3gx', reach: 'country' } }),
+        items: [{ name: 'brake levers', price: 90 }],
+      }),
+    );
+    expect(e.payload.questions[0]).toBe(
+      'Is $90 AUD the asking price you gave for this item, or did I put it there myself?',
+    );
+    expect(e.payload.human_action).toBe(`${LIST_FIGURE_HUMAN_ACTION}${FIGURE_RADIUS_TAIL}`);
+    expect(e.extras.refused_items).toEqual([]);
   });
 
   it('never states a figure nobody sent, and keeps the private limit private', async () => {
@@ -1183,14 +1240,20 @@ describe('the sentences and the manual', () => {
     expect(`${LIST_FIGURE_HUMAN_ACTION}${FIGURE_RADIUS_TAIL}`.length).toBeLessThanOrEqual(300);
     expect(listFigureQuestion(f).length).toBeLessThanOrEqual(300);
     expect(listFigureQuestion({ ...f, lowest: 1 }).length).toBeLessThanOrEqual(300);
+    // With the most items a call can turn away, and the reach riding along.
+    expect(`${LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY}${FIGURE_RADIUS_TAIL}`.length).toBeLessThanOrEqual(300);
+    expect(listFigureQuestion({ ...f, lowest: 1 }, LIST_CALL_MAX_ITEMS).length).toBeLessThanOrEqual(300);
+    expect(listFigureQuestion({ ...f, count: 1, lowest: f.highest }, 1)).toContain('This leaves out 1 item that was turned away.');
     for (const e of listFigureEntries({ ...f, lowest: 1 })) expect(e.what.length).toBeLessThanOrEqual(80);
     expect(listCeilingSentence(100000, 100000).length).toBeLessThanOrEqual(300);
     const fixes = Object.values(ITEM_FIXES).map((v) => (typeof v === 'function' ? (v as any)('six words at most', 500) : v));
     for (const text of [
       ...fixes,
       LIST_FIGURE_HUMAN_ACTION,
+      LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY,
       LIST_SAY_NOTE.text,
       listFigureQuestion(f),
+      listFigureQuestion(f, 15),
       listSentence('HAVE', SHELF, 'open', { up: 3, checking: 2, turned_away: 1, taken_down: 0, ran_out: 0 }),
       listSentence('WANT', SHELF, 'expired', { up: 0, checking: 0, turned_away: 0, taken_down: 0, ran_out: 4 }),
       resultsSentence({ sent: 3, added: 1, changed: 1, unchanged: 0, withdrawn: 1, refused: 1 }, { finished: false, left: 2 }),
@@ -1247,6 +1310,23 @@ describe('the sentences and the manual', () => {
       // General: no app, no community and no sort of goods is named.
       expect(copy).not.toMatch(/pok[eé]mon|trading|tcg|vinyl|lego|stamp/i);
     }
+  });
+
+  // From the rehearsal: a market-value column posted as asking prices, and an
+  // assistant that went to the names step without saying for which item.
+  it('is at version 89, with the two general rules where lists and their introductions are described', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(89);
+    const note = MANUAL_CHANGELOG.find((c) => c.version === 89)!.note;
+    const section = manualSection('lists')!;
+    for (const copy of [note, section.text]) {
+      expect(copy).toContain('is not their asking price');
+      expect(copy).toContain('Put a price on an item only where your human has said that is their price');
+      expect(copy).toContain('tell your human which item it is, in plain words, before anything else about the introduction');
+      expect(lintHumanCopy(copy), copy).toEqual([]);
+      expect(copy).not.toMatch(/pok[eé]mon|trading|tcg|vinyl|lego|stamp|\bcards?\b/i);
+    }
+    expect(section.text).toContain('the summary says how many');
+    expect(readFileSync('docs/manual.md', 'utf8')).toContain(note);
   });
 
   it('and the public copy is rendered from it', () => {

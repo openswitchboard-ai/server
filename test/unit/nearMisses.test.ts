@@ -169,10 +169,35 @@ describe('what never travels', () => {
   it('asks the database for nothing it would have to leave out', async () => {
     await forMine();
     const q = sql[0];
-    expect(q).not.toMatch(/o\.account_id AS|o\.geo|o\.attributes|nm\.score/);
+    expect(q).not.toMatch(/o\.geo|o\.attributes|o\.ask|o\.price/);
     // The other posting's id is read, and only so that a pair seen twice is
     // counted once. It is never put in the answer.
     expect(q).toContain('t.other AS other_id');
+    // The other account, the closeness, whether an introduction already runs
+    // between the two people, and both sides' identifiers are read for the
+    // keeping rules (domain/nearMisses.ts) and nothing else. The other side's
+    // identifiers come off its screened snapshot.
+    expect(q).toContain('o.account_id AS other_account');
+    expect(q).toContain('nm.score');
+    expect(q).toContain('AS introduced');
+    expect(q).toContain("o.screened_content->'identifiers' AS other_identifiers");
+  });
+
+  it('never puts what the keeping rules read into the answer', async () => {
+    rows = [
+      {
+        ...row({ other_kind: 'sim racing rig' }),
+        other_account: 'dddddddd-4444-4444-8444-dddddddddddd',
+        score: 0.61,
+        introduced: false,
+        mine_identifiers: [{ kind: 'model number', value: 'AB-123', norm: 'ab123' }],
+        other_identifiers: [{ kind: 'part number', value: 'ZZ-999', norm: 'zz999' }],
+      } as any,
+    ];
+    const whole = JSON.stringify((await forMine())!);
+    for (const leak of ['dddddddd', '0.61', 'AB-123', 'ab123', 'ZZ-999', 'zz999', 'identifiers', 'other_account']) {
+      expect(whole.includes(leak), leak).toBe(false);
+    }
   });
 });
 

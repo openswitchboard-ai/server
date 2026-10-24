@@ -36,6 +36,7 @@
  */
 import { getPool } from '../db.js';
 import { categoryLeafLabel, quotedTheirWords } from './matchRules.js';
+import { differentByIdentifier } from './identifiers.js';
 
 /** How far back a near miss is worth mentioning. */
 export const NEAR_MISS_WINDOW_DAYS = 7;
@@ -97,6 +98,120 @@ export function nearMissGroupSentence(count: number): string {
   return `${head}. Nobody has been introduced and nothing has crossed either way. If any of these sound right, widening the area or loosening what your human asked for is what brings them within reach; a different heading means taking the posting down and putting it up again.`;
 }
 
+// ---------------------------------------------------------------------------
+// WHICH NEAR MISSES ARE WORTH KEEPING (October 2026).
+//
+// In a rehearsal of lists, one want whose identifier matched exactly one item
+// on a seller's 29-item list got a sure introduction on that item and twenty
+// near misses against almost every other item on the same list, each with an
+// identifier that differed from the want's. Both assistants were handed "a
+// pile of near-miss noise". Three rules, applied where a near miss is written
+// (matcher.ts) and again where one is read (below), so a near miss written
+// before the rules, or by another posting's run, is held to them too:
+//
+//   1. INTRODUCED ALREADY. Where a posting has an introduction, sure or maybe,
+//      with someone, nothing between that posting and that person's other
+//      postings is a near miss. Their whole attention is already on the one
+//      that fits. Any introduction counts, whatever has become of it since:
+//      one that was declined or went quiet has already been weighed by both.
+//   2. ONE PER PERSON. At most one near miss between a posting and any one
+//      other person's postings, the best of them, in both directions: a want
+//      near a hundred items on one list hears about one of them, and the list's
+//      owner hears about that want once.
+//   3. A DIFFERENT NUMBER OF THE SAME KIND. Where both postings carry
+//      identifiers, both have one of the same kind, and they share none, they
+//      name two different products or editions (identifiers.ts
+//      differentByIdentifier). That is no near miss.
+//
+// None of the three changes who is introduced: the tiers never read them. An
+// ordinary pair of postings, one each side, with no identifiers and no
+// introduction between them, is kept exactly as before.
+// ---------------------------------------------------------------------------
+
+/** One near miss as the keeping rules read it. Nothing here travels. */
+export interface NearMissPair {
+  /** One posting, and the account that holds it. */
+  a: string;
+  aAccount: string;
+  /** The other posting, and its account. */
+  b: string;
+  bAccount: string;
+  score: number;
+  /** Newest wins a tie on score. */
+  at?: Date | string;
+  /** True where either posting has an introduction with the other's account (rule 1). */
+  introduced?: boolean;
+  /** Each posting's identifiers, as stored (rule 3). */
+  aIdentifiers?: unknown;
+  bIdentifiers?: unknown;
+}
+
+/**
+ * Rule 1 for one introduction: is it between the two accounts of this pair,
+ * on either of its postings? Then the two postings are no near miss.
+ */
+export function introducedBetween(
+  m: { card_want: string; card_have: string; account_want: string; account_have: string },
+  p: Pick<NearMissPair, 'a' | 'aAccount' | 'b' | 'bAccount'>,
+): boolean {
+  const accounts =
+    (m.account_want === p.aAccount && m.account_have === p.bAccount) ||
+    (m.account_want === p.bAccount && m.account_have === p.aAccount);
+  if (!accounts) return false;
+  return [m.card_want, m.card_have].some((c) => c === p.a || c === p.b);
+}
+
+/** Does this one pair fail rule 1 or rule 3 on its own? */
+export function nearMissRuledOut(p: NearMissPair): boolean {
+  if (p.introduced) return true;
+  return differentByIdentifier(p.aIdentifiers, p.bIdentifiers);
+}
+
+const time = (at: Date | string | undefined): number => (at ? new Date(at).getTime() || 0 : 0);
+
+/**
+ * The near misses worth keeping, best first by score then newest: rules 1 and
+ * 3 drop a pair on its own, and rule 2 keeps at most one pair for each posting
+ * against each other account, in both directions, taking the best pairs first.
+ * Pure, and the same function the matcher writes by and the sweep reads by.
+ */
+export function keepNearMisses<T extends NearMissPair>(pairs: T[]): T[] {
+  const ranked = pairs
+    .filter((p) => !nearMissRuledOut(p))
+    .sort((x, y) => y.score - x.score || time(y.at) - time(x.at) || (x.a + x.b < y.a + y.b ? -1 : 1));
+  const used = new Set<string>();
+  const out: T[] = [];
+  for (const p of ranked) {
+    const fromA = `${p.a}|${p.bAccount}`;
+    const fromB = `${p.b}|${p.aAccount}`;
+    if (used.has(fromA) || used.has(fromB)) continue;
+    used.add(fromA);
+    used.add(fromB);
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Which of a matching run's near misses to write. `fresh` are this run's, all
+ * with the run's own posting on side a; `stored` are the near misses already
+ * written that involve the run's posting or one of the candidates, so a list's
+ * items, each matched in its own run, still leave one near miss per person
+ * between them. Only fresh pairs are ever returned: a stored one is never
+ * written twice, and one a fresh pair outranks stays where it is and is left
+ * out when read.
+ */
+export function nearMissesToWrite<T extends NearMissPair>(fresh: T[], stored: NearMissPair[]): T[] {
+  const freshSet = new Set<NearMissPair>(fresh);
+  // A stored row for the very pair a fresh one names is the same near miss:
+  // the fresh one stands for it.
+  const freshKeys = new Set(fresh.map((p) => [p.a, p.b].sort().join('|')));
+  const others = stored.filter((p) => !freshKeys.has([p.a, p.b].sort().join('|')));
+  return keepNearMisses<NearMissPair>([...fresh, ...others]).filter((p): p is T =>
+    freshSet.has(p),
+  );
+}
+
 interface Row {
   card_id: string;
   /** The other posting, used to dedupe here and never sent anywhere. */
@@ -105,6 +220,17 @@ interface Row {
   other_category: string;
   other_kind: string | null;
   created_at: Date;
+  /**
+   * Read only for the keeping rules above, and never put in the answer: the
+   * other posting's account (one per person), the closeness (the best one),
+   * whether the two people have an introduction on either posting, and both
+   * postings' identifiers (different numbers of one kind).
+   */
+  other_account?: string;
+  score?: number;
+  introduced?: boolean;
+  mine_identifiers?: unknown;
+  other_identifiers?: unknown;
 }
 
 /**
@@ -112,13 +238,16 @@ interface Row {
  *
  * The other posting's words are read off its screened snapshot (migration 055,
  * domain/screenedContent.ts) like everything else one person is shown about
- * another's posting, never off its live row.
+ * another's posting, never off its live row. So are its identifiers, which are
+ * only compared here and never sent.
  *
- * One statement for the whole sweep, never one per posting. A pair the
- * matcher wrote down twice — once from each side — is deduped to the newest,
- * and a pair whose other posting has since been taken down, expired or been
- * paused is dropped: there is no point offering a look at something that is
- * no longer there.
+ * One statement for the whole sweep, never one per posting. It reads every
+ * near miss on this account's postings still up, because one per person is a
+ * rule across all of them, and then keeps only the postings asked about. A
+ * pair the matcher wrote down twice — once from each side — is deduped to the
+ * newest, and a pair whose other posting has since been taken down, expired
+ * or been paused is dropped: there is no point offering a look at something
+ * that is no longer there.
  */
 export async function nearMissesForCards(
   accountId: string,
@@ -128,12 +257,21 @@ export async function nearMissesForCards(
   if (!cardIds.length) return out;
   const r = await getPool().query(
     `SELECT t.mine AS card_id, t.other AS other_id, o.type AS other_type,
-            o.category AS other_category, o.screened_content->>'kind' AS other_kind, nm.created_at
+            o.category AS other_category, o.screened_content->>'kind' AS other_kind, nm.created_at,
+            o.account_id AS other_account, nm.score,
+            m.identifiers AS mine_identifiers, o.screened_content->'identifiers' AS other_identifiers,
+            EXISTS (SELECT 1 FROM matches mx
+                     WHERE ((mx.account_want = $2::uuid AND mx.account_have = o.account_id)
+                         OR (mx.account_have = $2::uuid AND mx.account_want = o.account_id))
+                       AND (mx.card_want IN (t.mine, t.other) OR mx.card_have IN (t.mine, t.other)))
+              AS introduced
        FROM near_misses nm
        CROSS JOIN LATERAL (VALUES (nm.card_want, nm.card_have), (nm.card_have, nm.card_want))
                        AS t(mine, other)
+       JOIN cards m ON m.id = t.mine
        JOIN cards o ON o.id = t.other
-      WHERE t.mine = ANY($1::uuid[])
+      WHERE (t.mine = ANY($1::uuid[])
+             OR (m.account_id = $2::uuid AND m.lifecycle_state = 'PUBLISHED' AND m.expires_at > now()))
         AND nm.created_at > now() - make_interval(days => $3::int)
         AND o.account_id <> $2::uuid
         AND o.lifecycle_state = 'PUBLISHED'
@@ -143,11 +281,34 @@ export async function nearMissesForCards(
     [cardIds, accountId, NEAR_MISS_WINDOW_DAYS],
   );
 
+  // The keeping rules, over every row, before anything is put in an answer.
+  // A row with no account read (an older shape) keeps its own other posting
+  // as the person, which is the rule as it stood before: one per posting.
+  const rows = r.rows as Row[];
+  const kept = new Set(
+    keepNearMisses(
+      rows.map((row) => ({
+        row,
+        a: row.card_id,
+        aAccount: accountId,
+        b: row.other_id,
+        bAccount: row.other_account ?? `posting:${row.other_id}`,
+        score: typeof row.score === 'number' ? row.score : Number(row.score ?? 0),
+        at: row.created_at,
+        introduced: row.introduced === true,
+        aIdentifiers: row.mine_identifiers,
+        bIdentifiers: row.other_identifiers,
+      })),
+    ).map((p) => p.row),
+  );
+  const asked = new Set(cardIds);
+
   // Deduped by the other posting, per posting of this human's. The rows
   // arrive newest first, so the first sighting of a pair is the one kept.
   const seen = new Map<string, Set<string>>();
   const byCard = new Map<string, NearMissItem[]>();
-  for (const row of r.rows as Row[]) {
+  for (const row of rows) {
+    if (!kept.has(row) || !asked.has(row.card_id)) continue;
     const already = seen.get(row.card_id) ?? new Set<string>();
     if (already.has(row.other_id)) continue;
     already.add(row.other_id);

@@ -1295,12 +1295,20 @@ function linkIn(sentence?: string): string | undefined {
  * answers: the plain word first, then everything the payload already carried,
  * then the link if the sentence held one.
  */
-export function protocolAnswer(payload: ProtocolError, tool?: string): ToolResult {
+export function protocolAnswer(
+  payload: ProtocolError,
+  tool?: string,
+  extras?: Record<string, unknown>,
+): ToolResult {
   const word = EXPECTED_REFUSALS[payload.code];
   if (!word) {
+    const raw = {
+      ...Object.fromEntries(Object.entries(extras ?? {}).filter(([k]) => !(k in payload))),
+      ...payload,
+    };
     return {
-      content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
-      structuredContent: payload,
+      content: [{ type: 'text', text: JSON.stringify(raw, null, 2) }],
+      structuredContent: raw,
       isError: true,
     };
   }
@@ -1343,7 +1351,18 @@ export function protocolAnswer(payload: ProtocolError, tool?: string): ToolResul
   // So the denial is a field of its own, and it is FIRST, because an agent
   // that skims reads the top. It costs a line and it cannot be mistaken for a
   // success.
-  const body = { nothing_happened: true as const, what_happened: word, ...payload, ...(link ? { link } : {}) };
+  // Anything the refusal carries beside the published document (OsbError
+  // extras) comes after it, and never under one of its own field names.
+  const beside = Object.fromEntries(
+    Object.entries(extras ?? {}).filter(([k]) => !(k in payload) && k !== 'link'),
+  );
+  const body = {
+    nothing_happened: true as const,
+    what_happened: word,
+    ...payload,
+    ...beside,
+    ...(link ? { link } : {}),
+  };
   return {
     content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
     structuredContent: body,
@@ -2442,7 +2461,7 @@ async function dispatchToolInner(
         return invalidInput(`unknown tool '${name}'`);
     }
   } catch (e: any) {
-    if (e instanceof OsbError) return protocolAnswer(e.payload, name);
+    if (e instanceof OsbError) return protocolAnswer(e.payload, name, e.extras);
     if (e?.notFound) return invalidInput(e.message);
     // A refused identifier says which of its rules it broke, as a word beside
     // the sentence (domain/identifiers.ts identifierError).

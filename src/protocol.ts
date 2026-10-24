@@ -428,6 +428,13 @@ export interface ProtocolError {
 
 export class OsbError extends Error {
   readonly payload: ProtocolError;
+  /**
+   * What the tool's answer carries BESIDE the refusal, outside the published
+   * error document: on a list's CONFIRM_FIGURE, the items already turned away
+   * (domain/lists.ts). Never checked against the error document and never
+   * part of `payload`, so the document stays exactly what it says it is.
+   */
+  readonly extras?: Record<string, unknown>;
   constructor(
     code: ErrorCode,
     opts: {
@@ -443,9 +450,12 @@ export class OsbError extends Error {
       press_id?: string;
       /** The posting attempt's own number, to be sent back on the next try. */
       reference?: string;
+      /** Carried beside the refusal in the tool's answer, never in the payload. */
+      extras?: Record<string, unknown>;
     } = {},
   ) {
     super(code);
+    if (opts.extras && Object.keys(opts.extras).length) this.extras = opts.extras;
     const payload = {
       schema_version: SCHEMA_VERSION,
       code,

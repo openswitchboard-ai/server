@@ -81,6 +81,7 @@ import {
 } from '../../src/domain/matcher.js';
 import { amendIntent, listIntents, publishIntent } from '../../src/domain/cards.js';
 import { refineIntent } from '../../src/domain/refine.js';
+import { placeholderDetailSentence } from '../../src/domain/placeholderValues.js';
 import { collectFreeText } from '../../src/domain/screening.js';
 import { screenedContentOf, snapshotOf } from '../../src/domain/screenedContent.js';
 import { IDENTIFIER_STEP, buildSteps } from '../../src/domain/matchStory.js';
@@ -974,6 +975,37 @@ describe('the doors take identifiers, store both forms, and hand them back', () 
     expect(r.identifier_kinds_note!.text).toContain('"model number" and "ean"');
     expect(r.identifier_kinds_note!.text).not.toContain('"barcode"');
     expect(r.identifier_kinds_note!.provenance).toBe('switchboard-system');
+  });
+
+  // A MASK OR A PLACEHOLDER WHERE A VALUE SHOULD BE (domain/placeholderValues.ts).
+  // Found in a rehearsal: a client masked a detail as "***" and it was stored.
+  it('refuses a detail that is only a mask, on a publish and on an amend, before anything is written', async () => {
+    const e = await refusalOf(() =>
+      publishIntent(cfg, ACCOUNT, listing({ attributes: { ...rich, edition_number: '***' } })),
+    );
+    expect(e?.validation).toEqual(['attributes.edition_number']);
+    expect(e?.message).toBe(placeholderDetailSentence('edition_number'));
+    expect(statement(/INSERT INTO cards/)).toBeUndefined();
+    world.sql = [];
+    const a = await refusalOf(() =>
+      amendIntent(cfg, ACCOUNT, CARD, { attributes: { ...rich, edition_number: '[redacted]' } }),
+    );
+    expect(a?.validation).toEqual(['attributes.edition_number']);
+    expect(statement(/UPDATE cards SET geo=/)).toBeUndefined();
+    // Real values that look a little like masks go up as they always did.
+    const ok = await publishIntent(cfg, ACCOUNT, listing({ attributes: { ...rich, size: 'XL', warranty: 'N/A' } }));
+    expect(ok.state).toBe('PENDING_SCREENING');
+  });
+
+  it('refuses an identifier that is a mask, and other words that are a placeholder', async () => {
+    const e = await refusalOf(() =>
+      publishIntent(cfg, ACCOUNT, listing(), { identifiers: [{ kind: 'model number', value: 'XXXX-XXXX' }] }),
+    );
+    expect(e?.identifier_refusal).toBe('placeholder');
+    expect(e?.message).toBe(IDENTIFIER_SENTENCES.placeholder);
+    const r = await refusalOf(() => refineIntent(cfg, ACCOUNT, CARD, { also_called: ['[hidden]'] }));
+    expect(r?.validation).toEqual(['also_called']);
+    expect(r?.message).toContain('a mask or a placeholder');
   });
 
   it('says nothing about kinds where there are none to name, or the count could not be read', async () => {

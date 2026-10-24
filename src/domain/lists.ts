@@ -102,6 +102,7 @@ import {
 } from './quotas.js';
 import { closePostingRef, noteAsked, readPostingRef, type PostingGate } from './postingRef.js';
 import { rejectionInPlainWords } from './screening.js';
+import { isPlaceholderValue } from './placeholderValues.js';
 import type { NormalisedGeo } from '../geo/normalise.js';
 import type { Config } from '../config.js';
 
@@ -252,6 +253,8 @@ export const ITEM_FIXES = {
     `Give this item a name that says what it is, in a few plain words: ${complaint}. Numbers belong in its identifiers or details.`,
   details_count: `Keep this item to ${LIST_ITEM_MAX_DETAILS} details at most, each a short fact such as its condition. A description has no place on a list.`,
   details_shape: `Each detail has a short name in lower case with underscores, and a value of a word, a number or a short phrase of ${LIST_DETAIL_VALUE_MAX} characters at most.`,
+  details_placeholder: (key: string): string =>
+    `The \`${key}\` detail on this item holds a mask or a placeholder where its value would be. Give the value your human said, or leave that detail off.`,
   details_reserved:
     'The quantity and the deal have places of their own. Take quantity, free and trade out of the details, and give the quantity in quantity.',
   quantity: `Give the quantity as a whole number from 1 to ${LIST_ITEM_MAX_QUANTITY}, or leave it out for one.`,
@@ -436,6 +439,8 @@ export function readListItem(
       if (typeof v === 'string') {
         const t = v.trim().replace(/\s+/g, ' ');
         if (!t || t.length > LIST_DETAIL_VALUE_MAX) return no('details', ITEM_FIXES.details_shape);
+        // A mask or a placeholder where the value would be (domain/placeholderValues.ts).
+        if (isPlaceholderValue(t)) return no('details', ITEM_FIXES.details_placeholder(k));
         details[k] = t;
       } else if ((typeof v === 'number' && Number.isFinite(v)) || typeof v === 'boolean') {
         details[k] = v;
@@ -688,14 +693,36 @@ export function listFiguresKey(items: ListItem[], type: 'WANT' | 'HAVE', currenc
 export const LIST_FIGURE_HUMAN_ACTION =
   'Nothing has gone up yet. Tell your human how many items carry a figure and the lowest and highest, as they stand. Post again with the `reference` only if those are their figures; take off any they did not give.';
 
-/** The question to put to the human, in their own plain words. */
-export function listFigureQuestion(f: ListFigures): string {
+/**
+ * The same line where items in the call were already turned away. The summary
+ * counts only what can go up, so without this an assistant that sent 29 items
+ * read back "these 14 items" and neither it nor its human could see why
+ * (rehearsal, October 2026). The turned-away items ride beside the refusal in
+ * `refused_items`, each with its reason and fix.
+ */
+export const LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY =
+  'Nothing has gone up yet. Tell your human the summary as it stands, and each item turned away with its reason. Post again with the `reference` only if those are their figures; take off any they did not give.';
+
+/** The sentence saying how many items were turned away and are left out of the summary. */
+export function turnedAwaySentence(n: number): string {
+  return n === 1
+    ? 'This leaves out 1 item that was turned away.'
+    : `This leaves out ${n} items that were turned away.`;
+}
+
+/**
+ * The question to put to the human, in their own plain words. Where items in
+ * the same call were turned away, it says how many, so the count it gives is
+ * never mistaken for everything the human handed over.
+ */
+export function listFigureQuestion(f: ListFigures, turnedAway = 0): string {
   const said = f.what === 'asking price' ? 'asking prices' : 'most you would pay';
   const items = f.count === 1 ? 'this item' : `these ${f.count} items`;
+  const tail = turnedAway > 0 ? ` ${turnedAwaySentence(turnedAway)}` : '';
   if (f.lowest === f.highest) {
-    return `Is $${f.lowest} ${f.currency} the ${f.what === 'asking price' ? 'asking price' : 'most you would pay'} you gave for ${items}, or did I put it there myself?`;
+    return `Is $${f.lowest} ${f.currency} the ${f.what === 'asking price' ? 'asking price' : 'most you would pay'} you gave for ${items}, or did I put it there myself?${tail}`;
   }
-  return `Are the ${said} on ${items}, from $${f.lowest} to $${f.highest} ${f.currency}, figures you gave, or did I put any there myself?`;
+  return `Are the ${said} on ${items}, from $${f.lowest} to $${f.highest} ${f.currency}, figures you gave, or did I put any there myself?${tail}`;
 }
 
 /** The figures as the refusal carries them: the lowest and the highest, or the one. */
@@ -738,20 +765,32 @@ function figuresWillAsk(attempt: ListAttempt, key: string | undefined): boolean 
   return !(attempt.asked.has('figure') && attempt.amounts === key);
 }
 
+/**
+ * The read-back, thrown. It carries the items already turned away in this
+ * call beside it, in the same shape the ordinary answer gives them
+ * (`refused_items`: index, reason, fix), so the summary's count is never the
+ * only number the assistant sees. Those ride outside the published error
+ * document (OsbError extras), which has no field for them.
+ */
 async function confirmListFigures(
   accountId: string,
   attempt: ListAttempt,
   figures: ListFigures | undefined,
   key: string | undefined,
+  refused: ItemRefusal[],
   radiusQuestion?: string,
 ): Promise<void> {
   if (!figures || !key || !figuresWillAsk(attempt, key)) return;
   const reference = await askOnce(accountId, attempt, 'figure', key);
+  const turnedAway = refused.length;
+  const action = turnedAway ? LIST_FIGURE_HUMAN_ACTION_TURNED_AWAY : LIST_FIGURE_HUMAN_ACTION;
+  const question = listFigureQuestion(figures, turnedAway);
   throw new OsbError('CONFIRM_FIGURE', {
-    human_action: radiusQuestion ? `${LIST_FIGURE_HUMAN_ACTION}${FIGURE_RADIUS_TAIL}` : LIST_FIGURE_HUMAN_ACTION,
-    questions: radiusQuestion ? [listFigureQuestion(figures), radiusQuestion] : [listFigureQuestion(figures)],
+    human_action: radiusQuestion ? `${action}${FIGURE_RADIUS_TAIL}` : action,
+    questions: radiusQuestion ? [question, radiusQuestion] : [question],
     figures: listFigureEntries(figures),
     reference,
+    extras: { refused_items: [...refused].sort((a, b) => a.index - b.index) },
   });
 }
 
@@ -1075,7 +1114,7 @@ async function runPublishList(
       if (figuresWillAsk(attempt, figuresKey)) {
         // The reach question rides on the figure read-back, as on a posting.
         await askOnce(accountId, attempt, 'reach');
-        await confirmListFigures(accountId, attempt, figures, figuresKey, radiusQuestion);
+        await confirmListFigures(accountId, attempt, figures, figuresKey, refusals, radiusQuestion);
       } else if (reach === 'radius') {
         throw new OsbError('NEEDS_DETAIL', {
           reference: await askOnce(accountId, attempt, 'reach'),
@@ -1085,7 +1124,7 @@ async function runPublishList(
       }
     }
   }
-  await confirmListFigures(accountId, attempt, figures, figuresKey);
+  await confirmListFigures(accountId, attempt, figures, figuresKey, refusals);
 
   // 7. THE PLACE, once.
   let placed: SharedStored['placed'];

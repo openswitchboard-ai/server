@@ -74,6 +74,7 @@ import type { HearsVia } from './accounts.js';
 import { categoryLabelPath, theirOwnThing } from './matchRules.js';
 import { recordCategoryMiss } from './categoryMisses.js';
 import { nearMissesForCards } from './nearMisses.js';
+import { assertNoPlaceholderDetail } from './placeholderValues.js';
 import { DEFAULT_RADIUS_KM, NormalisedGeo, geoOf, normaliseGeo } from '../geo/normalise.js';
 import { rejectionInPlainWords, screeningReasonInPlainWords } from './screening.js';
 import { NO_MONEY_REASON, shelfRuleRefusal, type ShelfRuleCard } from './shelfRules.js';
@@ -936,6 +937,9 @@ async function runPublish(
     });
   }
   checkSchemaVersion(card.schema_version);
+  // A detail that is only a mask or a placeholder ("***", "[redacted]") is
+  // refused with the rest of the shape (domain/placeholderValues.ts).
+  assertNoPlaceholderDetail(card.attributes);
   // The identifiers are read with the rest of the shape: pure, and a refusal
   // of them is a refusal of what was sent, before anything is spent on it.
   const identifiers = identifiersOrRefuse(opts.identifiers);
@@ -1831,6 +1835,9 @@ export async function amendIntent(
       validation: v.reasons,
     });
   }
+  // A mask or a placeholder as a detail, read off the posting as it will
+  // stand, as the money check below is (domain/placeholderValues.ts).
+  assertNoPlaceholderDetail(next.attributes);
   // AND THE AMENDMENT DOOR OF THE PIPE, which had stood with its checks on it
   // and no caller (20 September 2026). `attributes` is amendable and `kind` is
   // not, so an amend is the one call that can put new free words on a posting
