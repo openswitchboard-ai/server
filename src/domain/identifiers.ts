@@ -142,9 +142,18 @@ const kindWords = (kind: string): string[] =>
     .filter(Boolean);
 
 /** Does this kind say the identifier names one physical object? */
+/**
+ * Word stems that say "one object" in any of their forms: certificate,
+ * certification and cert; serial and serials; registration, registered and
+ * rego; licence and license. Found in a rehearsal (24 October 2026), where
+ * "certification number" passed because only the exact words were listed.
+ */
+const SINGLE_OBJECT_STEMS = ['cert', 'serial', 'regist', 'licen'];
+
 export function namesOneObject(kind: string): boolean {
   const words = kindWords(kind);
   if (words.some((w) => SINGLE_OBJECT_WORDS.has(w))) return true;
+  if (words.some((w) => SINGLE_OBJECT_STEMS.some((stem) => w.startsWith(stem)))) return true;
   const joined = ` ${words.join(' ')} `;
   return SINGLE_OBJECT_PHRASES.some((p) => joined.includes(` ${p} `));
 }
@@ -411,4 +420,45 @@ export function kindsInWords(kinds: string[]): string {
   return quoted.length > 1
     ? `${quoted.slice(0, -1).join(', ')} and ${quoted[quoted.length - 1]}`
     : (quoted[0] ?? '');
+}
+
+// ---------------------------------------------------------------------------
+// ONE OBJECT'S NUMBER AS A DETAIL.
+//
+// The rule above guards identifiers, and a number that belongs to one object
+// got onto a posting by the other door: as a detail (`psa_cert: "104882913"`,
+// rehearsal of 24 October 2026). Details cross to the other side at the
+// details step, so the same rule holds there. A detail is refused when its
+// KEY names one object by the same words and its VALUE reads as a code: at
+// least five digits, or six or more letters and digits with a digit among
+// them. So `registration_year: 2019` and `serial_number: "unknown"` stand.
+// ---------------------------------------------------------------------------
+
+const CODE_LIKE = (v: string): boolean => {
+  const compact = v.replace(/[\s\-/.]/g, '');
+  const digits = (compact.match(/\d/g) ?? []).length;
+  return digits >= 5 || (compact.length >= 6 && digits >= 1 && /^[\p{L}\p{N}]+$/u.test(compact));
+};
+
+/** The first detail that carries one object's own number, by its key, or undefined. */
+export function oneObjectDetail(attributes: unknown): string | undefined {
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) return undefined;
+  for (const [k, v] of Object.entries(attributes as Record<string, unknown>)) {
+    if (typeof v !== 'string' && typeof v !== 'number') continue;
+    if (namesOneObject(k.replace(/_/g, ' ')) && CODE_LIKE(String(v))) return k;
+  }
+  return undefined;
+}
+
+/** What the assistant reads about such a detail. */
+export function oneObjectDetailSentence(key: string): string {
+  return `The \`${key}\` detail is a number that belongs to one object, so it stays off the posting. Where it matters to a deal, ask for it as a written line with respond(ask_confirmation), and the seller's human confirms it.`;
+}
+
+/** Throws the refusal where a detail carries one object's own number; otherwise does nothing. */
+export function assertNoOneObjectDetail(attributes: unknown): void {
+  const key = oneObjectDetail(attributes);
+  if (key !== undefined) {
+    throw Object.assign(new Error(oneObjectDetailSentence(key)), { validation: [`attributes.${key}`] });
+  }
 }

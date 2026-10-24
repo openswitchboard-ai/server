@@ -60,6 +60,7 @@ import { laneFor, readLaneFacts, sayAsk, sayFor, sayNote, type Lane } from './la
 import {
   IDENTIFIER_KINDS_SHOWN,
   IDENTIFIER_KIND_MIN_ACCOUNTS,
+  assertNoOneObjectDetail,
   identifierError,
   identifierNorms,
   identifiersOf,
@@ -941,6 +942,9 @@ async function runPublish(
   // A detail that is only a mask or a placeholder ("***", "[redacted]") is
   // refused with the rest of the shape (domain/placeholderValues.ts).
   assertNoPlaceholderDetail(card.attributes);
+  // One object's own number as a detail (a serial, a certificate) stays off
+  // a posting, as it does as an identifier (domain/identifiers.ts).
+  assertNoOneObjectDetail(card.attributes);
   // The identifiers are read with the rest of the shape: pure, and a refusal
   // of them is a refusal of what was sent, before anything is spent on it.
   const identifiers = identifiersOrRefuse(opts.identifiers);
@@ -1828,6 +1832,7 @@ export async function amendIntent(
   // A mask or a placeholder as a detail, read off the posting as it will
   // stand, as the money check below is (domain/placeholderValues.ts).
   assertNoPlaceholderDetail(next.attributes);
+  assertNoOneObjectDetail(next.attributes);
   // AND THE AMENDMENT DOOR OF THE PIPE, which had stood with its checks on it
   // and no caller (20 September 2026). `attributes` is amendable and `kind` is
   // not, so an amend is the one call that can put new free words on a posting

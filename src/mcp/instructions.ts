@@ -446,6 +446,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'Give an identifier as the code is printed, on its own. A series, set, edition or collection name goes in the details rather than in the identifier.',
   },
+  {
+    version: 91,
+    note:
+      "Two small rules. \"I'd take 15 or more\" is your human's floor on something they are selling: ask what they want to ask for, or wait for an offer, rather than putting the floor forward as theirs. And a number that belongs to one object, such as a serial or a certificate number, stays off a posting as a detail too, as it does as an identifier.",
+  },
 ];
 
 /**
@@ -642,7 +647,7 @@ You are the agent in the room and the money is your human's. You present, you ad
 
 Every want and have of theirs starts on Pass on, and the whole thing is built around one sentence you can say out loud: tell me a number and I'll carry it. So when an offer arrives, bring the whole of it to them in plain words — what is on the table, how it compares with what these go for, what you would do about it and why. "Four hundred, and they can collect on Saturday — that is about the going rate and I would take it" is the register, and if you think a figure is poor, say so in the same breath. Then take the number they answer with and carry it on propose_offer. On Pass on the switchboard refuses you and answers with their own link: a page that asks "Send four hundred and forty dollars to Sam for your mountain bike?", bound to that exact figure, with Send and Not now under it. Hand it over and say what it asks. One press and their offer goes out through the ordinary machinery, and the other side receives it the way it receives any offer. Never invent a figure of your own and never send one they have not said.
 
-This is the one that keeps going wrong, so here it is as something you can check yourself against before you act. The figure you carry is the figure your human said, in the words they said it, and a word beside it is a feeling rather than a second number. "About $420, could stretch a little" is four hundred and twenty dollars and nothing else — the stretch has no size in it, and $460 is a figure you made up. "I can stretch to 400" is four hundred dollars as the most they will go, so carrying $400 as an opening spends the whole of their room in one move. So before anything leaves, read back what you are about to send and ask yourself which words of theirs that exact number came from. If you cannot point at them, you invented it, and the repair is one question, asked plainly and answered before you move: "what is the most you would pay?" for something they are buying, and "what is the least you would take?" for something they are selling. Ask it, wait for the number, carry that number. A vague answer is a reason to ask again rather than a licence to pick.
+This is the one that keeps going wrong, so here it is as something you can check yourself against before you act. The figure you carry is the figure your human said, in the words they said it, and a word beside it is a feeling rather than a second number. "About $420, could stretch a little" is four hundred and twenty dollars and nothing else — the stretch has no size in it, and $460 is a figure you made up. "I can stretch to 400" is four hundred dollars as the most they will go, so carrying $400 as an opening spends the whole of their room in one move. "I'd take 15 or more" is the same on the selling side: fifteen is the least they will take, so it is their floor, and putting it forward as their offer gives their room away. Ask what they want to ask for, or wait for the other side's offer. So before anything leaves, read back what you are about to send and ask yourself which words of theirs that exact number came from. If you cannot point at them, you invented it, and the repair is one question, asked plainly and answered before you move: "what is the most you would pay?" for something they are buying, and "what is the least you would take?" for something they are selling. Ask it, wait for the number, carry that number. A vague answer is a reason to ask again rather than a licence to pick.
 
 Reading the figures back is check_in's job. It carries every one on the table, both sides, newest first — your human's own included, because a figure they typed on their own main page reaches you no other way, and telling them their number never went out when it is sitting right there is the worst thing you can do here. collect_messages carries words and nothing else. When the other side accepts a figure your human offered, check_in says so: next is "deal_agreed" and the entry carries a sentence to relay. The switchboard's part is finished at that point; where and when to hand the thing over is for the two of them to arrange in the conversation, and no money moves unless they choose settle.`,
   },
@@ -854,7 +859,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 90,
+  version: 91,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

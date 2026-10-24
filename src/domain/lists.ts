@@ -89,6 +89,8 @@ import {
   IDENTIFIER_SENTENCES,
   identifierNorms,
   identifiersOf,
+  oneObjectDetail,
+  oneObjectDetailSentence,
   ownIdentifiers,
   readIdentifiers,
   type Identifier,
@@ -253,6 +255,7 @@ export const ITEM_FIXES = {
     `Give this item a name that says what it is, in a few plain words: ${complaint}. Numbers belong in its identifiers or details.`,
   details_count: `Keep this item to ${LIST_ITEM_MAX_DETAILS} details at most, each a short fact such as its condition. A description has no place on a list.`,
   details_shape: `Each detail has a short name in lower case with underscores, and a value of a word, a number or a short phrase of ${LIST_DETAIL_VALUE_MAX} characters at most.`,
+  details_one_object: (key: string): string => oneObjectDetailSentence(key),
   details_placeholder: (key: string): string =>
     `The \`${key}\` detail on this item holds a mask or a placeholder where its value would be. Give the value your human said, or leave that detail off.`,
   details_reserved:
@@ -447,6 +450,8 @@ export function readListItem(
       } else {
         return no('details', ITEM_FIXES.details_shape);
       }
+      // One object's own number as a detail stays off (domain/identifiers.ts).
+      if (oneObjectDetail({ [k]: details[k] }) !== undefined) return no('details', ITEM_FIXES.details_one_object(k));
     }
   }
 

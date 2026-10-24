@@ -1185,3 +1185,33 @@ describe('the sentences and the manual', () => {
     expect(argumentComplaint('refine_intent', { intent_id: ID, identifiers: [{ kind: 'model', value: 'A1466' }] })).toBeUndefined();
   });
 });
+
+describe("one object's own number as a detail", () => {
+  it('refuses a serial or certificate number given as a detail, on every door', async () => {
+    const { oneObjectDetail, namesOneObject } = await import('../../src/domain/identifiers.js');
+    expect(oneObjectDetail({ grade: 'PSA 10', psa_cert: '104882913' })).toBe('psa_cert');
+    expect(oneObjectDetail({ serial_number: 'SN-48213-A' })).toBe('serial_number');
+    expect(oneObjectDetail({ vin: '1HGCM82633A004352' })).toBe('vin');
+    expect(namesOneObject('certification number')).toBe(true);
+    expect(namesOneObject('PSA certification')).toBe(true);
+    expect(namesOneObject('model number')).toBe(false);
+  });
+
+  it('leaves ordinary details alone, even with a one-object word in the key', async () => {
+    const { oneObjectDetail } = await import('../../src/domain/identifiers.js');
+    expect(oneObjectDetail({ registration_year: 2019 })).toBeUndefined();
+    expect(oneObjectDetail({ serial_number: 'unknown' })).toBeUndefined();
+    expect(oneObjectDetail({ certified: 'yes' })).toBeUndefined();
+    expect(oneObjectDetail({ condition: 'near mint', set: 'Base 1999' })).toBeUndefined();
+  });
+
+  it('a list item with one as a detail is turned back with the fix', async () => {
+    const { readListItem } = await import('../../src/domain/lists.js');
+    const r = readListItem({ name: 'trading figure', details: { cert_number: '104882913' } }, 3, { type: 'HAVE', deal: 'sale' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.refusal.reason).toBe('details');
+      expect(r.refusal.fix).toMatch(/belongs to one object/);
+    }
+  });
+});
