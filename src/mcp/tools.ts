@@ -46,6 +46,61 @@ export interface ToolDef {
   name: string;
   description: string;
   inputSchema: any;
+  annotations?: ToolAnnotations;
+}
+
+export interface ToolAnnotations {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  openWorldHint: boolean;
+  idempotentHint?: boolean;
+}
+
+/**
+ * WHAT EACH TOOL DOES TO THE WORLD, said the way the MCP spec asks: a plain
+ * title and three hints. Directories check the hints against what the tool
+ * really does (OpenAI's review rejects a wrong one), and a client may ask the
+ * human before it runs anything that is not read-only.
+ *
+ * The rules, applied to every tool alike:
+ * - readOnly: it changes nothing the human or anyone else could notice. The
+ *   bookkeeping a sweep keeps (what was delivered when) does not count.
+ * - destructive: something is gone or cannot be called back once it runs —
+ *   a message sent, an answer given, a posting or list item taken down, a
+ *   posting or arrangement overwritten, collected messages deleted.
+ * - openWorld: its effect reaches another person — what they see, what they
+ *   are sent, what they are matched against.
+ */
+export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
+  read_manual: { title: 'Read the manual', readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  publish_intent: { title: 'Post a want or a have', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  list_intents: { title: 'List my wants and haves', readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  check_in: { title: 'Check for news', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  respond: { title: 'Answer an introduction or offer', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  open_conversation: { title: 'Open the conversation', readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: true },
+  send_message: { title: 'Send a message', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  collect_messages: { title: 'Collect messages', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  refine_intent: { title: 'Add other words for a posting', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  amend_intent: { title: 'Change a posting', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  withdraw_intent: { title: 'Take a posting down', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  publish_list: { title: 'Post a list', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  read_lists: { title: 'Read my lists', readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  withdraw_list: { title: 'Take a list down', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  standing_arrangement: { title: 'Set the checking rhythm', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  settle: { title: 'Propose a protected payment', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  wait_for_press: { title: 'Wait for a press', readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+};
+
+/** A tool as tools/list and the server card show it. */
+export function listedTool(t: ToolDef) {
+  return {
+    name: t.name,
+    title: t.annotations?.title,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    annotations: t.annotations,
+  };
 }
 
 /**
@@ -964,10 +1019,16 @@ export const TOOLS: ToolDef[] = [
  * The tool list a deployment serves. Where sealed contact details are off,
  * respond has no request_send_contact and both descriptions read as they did
  * before the page existed.
+ *
+ * Where payments are off, settle is not listed at all: a tool whose only
+ * answer is SETTLEMENT_UNAVAILABLE is one a directory reviewer, or an
+ * assistant, would try for nothing. A client holding an older list can still
+ * call it and is still told payments are off (dispatchTool).
  */
-export function toolsFor(cfg: Pick<Config, 'sealedContact'>): ToolDef[] {
-  if (cfg.sealedContact) return TOOLS;
-  return TOOLS.map((t) => {
+export function toolsFor(cfg: Pick<Config, 'sealedContact' | 'stripeSecretArn' | 'evidenceBucket'>): ToolDef[] {
+  const listed = settlementsConfigured(cfg as Config) ? TOOLS : TOOLS.filter((t) => t.name !== 'settle');
+  if (cfg.sealedContact) return listed;
+  return listed.map((t) => {
     if (t.name === 'send_message') return { ...t, description: SEND_MESSAGE_WITHOUT_CONTACT };
     if (t.name !== 'respond') return t;
     const schema: any = JSON.parse(JSON.stringify(t.inputSchema));
@@ -983,7 +1044,10 @@ export function toolsFor(cfg: Pick<Config, 'sealedContact'>): ToolDef[] {
 // these (argumentComplaint).
 const WRITTEN_SCHEMAS = new Map(TOOLS.map((t) => [t.name, t.inputSchema]));
 
-for (const t of TOOLS) t.inputSchema = grammarFriendly(t.inputSchema);
+for (const t of TOOLS) {
+  t.inputSchema = grammarFriendly(t.inputSchema);
+  t.annotations = TOOL_ANNOTATIONS[t.name];
+}
 
 // ---------------------------------------------------------------------------
 // EVERY CALL'S ARGUMENTS, CHECKED IN ONE PLACE (28 September 2026 review).

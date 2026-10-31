@@ -128,7 +128,7 @@ describe('what the tools and the manual say', () => {
     expect(respond.description).not.toContain('request_send_contact');
     expect((respond.inputSchema as any).properties.action.enum).not.toContain('request_send_contact');
     expect(off.find((t) => t.name === 'send_message')!.description).not.toContain('request_send_contact');
-    expect(toolsFor({ sealedContact: true })).toBe(TOOLS);
+    expect(toolsFor({ sealedContact: true, stripeSecretArn: 'arn', evidenceBucket: 'b' } as any)).toBe(TOOLS);
     for (const t of off) expect(t.description.length, t.name).toBeLessThanOrEqual(1900);
   });
 

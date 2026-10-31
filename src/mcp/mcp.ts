@@ -13,7 +13,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { authenticate, recordManualVersion, unauthorized, type AuthContext } from '../auth/oauth.js';
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
-import { dispatchTool, internalError, toolsFor } from './tools.js';
+import { dispatchTool, internalError, listedTool, toolsFor } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
@@ -85,11 +85,7 @@ async function buildMcpServer(
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolsFor(cfg).map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-    })),
+    tools: toolsFor(cfg).map(listedTool),
   }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     // Which tool was called, and nothing else: no arguments, no account. It is
@@ -135,11 +131,7 @@ export function registerMcpRoutes(app: FastifyInstance, cfg: Config): void {
     return {
       serverInfo: { name: 'openswitchboard', version: '0.1.0' },
       authentication: { required: true, schemes: ['oauth2'] },
-      tools: toolsFor(cfg).map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-      })),
+      tools: toolsFor(cfg).map(listedTool),
       resources: [],
       prompts: [],
     };
