@@ -37,6 +37,7 @@ import {
   sendChannelWaitingNudge,
 } from '../email/digestEngine.js';
 import type { Config } from '../config.js';
+import { disableReviewer, enableReviewer } from '../counter/reviewerSignIn.js';
 
 /**
  * INTERNAL ops interface — an IAM-gated SQS queue with NO public route.
@@ -541,6 +542,25 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                   log('ops: accept-offer-by-human refused: an accept needs the human\'s own press', {
                     fields: Object.keys(body ?? {}),
                   });
+                  break;
+                }
+                case 'reviewer-sign-in': {
+                  // Mark an account as a directory reviewer's, or end it
+                  // (src/counter/reviewerSignIn.ts). Only a hash arrives here;
+                  // the log names the account and never the address.
+                  if (body.action === 'disable') {
+                    const ended = await disableReviewer(String(body.email ?? ''));
+                    log('ops: reviewer sign-in ended', { ended });
+                  } else {
+                    const r = await enableReviewer(
+                      String(body.email ?? ''),
+                      String(body.passphrase_hash ?? ''),
+                      String(body.label ?? 'directory review'),
+                      Number(body.days ?? 30),
+                    );
+                    if ('error' in r) log('ops: reviewer sign-in refused', { error: r.error });
+                    else log('ops: reviewer sign-in on', { account_id: r.accountId, days: Number(body.days ?? 30) });
+                  }
                   break;
                 }
                 default:

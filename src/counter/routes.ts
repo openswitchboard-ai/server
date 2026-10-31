@@ -25,6 +25,7 @@ import {
   rateLimitBypassed,
   verificationEmailLimiter,
 } from '../abuseLimit.js';
+import { checkReviewerPassphrase, REVIEWER_LOCK_MINUTES, reviewerFor } from './reviewerSignIn.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
 import { isValidTimeZone } from '../domain/localTime.js';
@@ -1515,6 +1516,9 @@ in on this device and lets you approve what is waiting.</p>
       if (!EMAIL_RE.test(email)) {
         return html(reply, pages.loginEmailPage('That does not look like an email address.'), 400);
       }
+      // A directory reviewer's account asks for its passphrase instead of
+      // sending a code (reviewerSignIn.ts). Every other address goes on below.
+      if (await reviewerFor(email)) return html(reply, pages.reviewerPassphrasePage(email));
       if (await verificationRateLimited(email)) {
         return html(
           reply,
@@ -1551,6 +1555,35 @@ in on this device and lets you approve what is waiting.</p>
         reply,
         pages.codeEntryPage({ verificationId: v.id, action: '/verify', heading: 'Check your email.', error: note }),
       );
+    });
+
+    counter.post('/login/reviewer', async (req, reply) => {
+      const b: any = req.body ?? {};
+      const email = String(b.email ?? '').trim();
+      const passphrase = String(b.passphrase ?? '');
+      if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await pinAttemptLimiter.limited(req.ip)) {
+        req.log.warn({ ip: req.ip }, 'reviewer-sign-in: per-IP attempt limit hit');
+        return html(reply, pages.reviewerPassphrasePage(email, 'Too many tries from this connection. Wait a minute.'), 429);
+      }
+      const reviewer = EMAIL_RE.test(email) ? await reviewerFor(email) : undefined;
+      if (!reviewer) {
+        return html(reply, pages.loginEmailPage('That sign-in is not open any more. Enter your address again.'), 401);
+      }
+      const check = await checkReviewerPassphrase(reviewer.accountId, passphrase);
+      if (!check.ok) {
+        req.log.warn({ account_id: reviewer.accountId, label: reviewer.label, reason: check.reason }, 'reviewer-sign-in: refused');
+        const msg =
+          check.reason === 'locked'
+            ? `Too many wrong passphrases. Wait ${REVIEWER_LOCK_MINUTES} minutes.`
+            : 'That passphrase is not right.';
+        return html(reply, pages.reviewerPassphrasePage(email, msg), 401);
+      }
+      req.log.info({ account_id: reviewer.accountId, label: reviewer.label }, 'reviewer-sign-in: signed in');
+      // A fresh row and cookie, as every sign-in takes; and no PIN window:
+      // the account's PIN still approves everything.
+      const existing = await sess.loadSession(req);
+      const s = (await sess.rotateSession(reply, existing, reviewer.accountId)) as Session;
+      return reply.redirect(await afterSignIn(req, reply, reviewer.accountId, s), 303);
     });
 
     counter.post('/login/passkey/options', async (req, reply) => {

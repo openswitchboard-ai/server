@@ -1009,6 +1009,23 @@ document.getElementById('pk').addEventListener('click', async () => {
 </script>`);
 }
 
+/**
+ * The passphrase step for a directory reviewer's account (reviewerSignIn.ts).
+ * Reached only by typing that account's address at the sign-in page.
+ */
+export function reviewerPassphrasePage(email: string, error?: string): string {
+  return layout('Sign in', `
+<h1>Sign in.</h1>
+${errBox(error)}
+<p>This is a reviewer account. Enter the passphrase you were given.</p>
+<form method="POST" action="/login/reviewer">
+  <input type="hidden" name="email" value="${esc(email)}">
+  <label for="passphrase">Passphrase</label>
+  <input id="passphrase" name="passphrase" type="password" autocomplete="current-password" required>
+  <button type="submit">Sign in</button>
+</form>`);
+}
+
 /** The one place safety can be written to about an account that was stopped. */
 export const SAFETY_ADDRESS = 'safety@openswitchboard.ai';
 

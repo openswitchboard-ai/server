@@ -60,9 +60,45 @@ switch (cmd) {
     // Place cards written before 0.3.0 and hand them back to the matcher.
     body = { op: 'backfill-geo', rematch: arg('rematch', 'true') !== 'false' };
     break;
+  case 'reviewer-sign-in': {
+    // A directory reviewer's account signs in with a passphrase instead of an
+    // emailed code (src/counter/reviewerSignIn.ts). The account must already
+    // exist. --disable ends it. Otherwise a fresh passphrase is made HERE,
+    // written to --out (owner-only) and never printed; only its argon2id hash
+    // is sent. Re-running renews it with a new passphrase.
+    //   ops.ts reviewer-sign-in --env prod --email reviewer@example.com --out ~/reviewer.txt [--days 30] [--label "OpenAI review"]
+    //   ops.ts reviewer-sign-in --env prod --email reviewer@example.com --disable
+    const email = arg('email');
+    if (process.argv.includes('--disable')) {
+      body = { op: 'reviewer-sign-in', action: 'disable', email };
+      break;
+    }
+    const out = arg('out');
+    const { randomBytes } = await import('node:crypto');
+    const { writeFileSync } = await import('node:fs');
+    const argon2 = (await import('argon2')).default;
+    const passphrase = `osb-rv-${randomBytes(24).toString('base64url')}`;
+    const passphrase_hash = await argon2.hash(passphrase, {
+      type: argon2.argon2id,
+      memoryCost: 19456,
+      timeCost: 2,
+      parallelism: 1,
+    });
+    writeFileSync(out, passphrase + '\n', { mode: 0o600, flag: 'wx' });
+    console.log(`passphrase written to ${out} (owner-only); it is not printed here`);
+    body = {
+      op: 'reviewer-sign-in',
+      action: 'enable',
+      email,
+      passphrase_hash,
+      label: arg('label', 'directory review'),
+      days: Number(arg('days', '30')),
+    };
+    break;
+  }
   default:
     console.error(
-      'usage: ops.ts <create-match|ttl-expiry|backfill-geo|snap-categories> [--env dev] ...',
+      'usage: ops.ts <create-match|ttl-expiry|backfill-geo|snap-categories|reviewer-sign-in> [--env dev] ...',
     );
     process.exit(1);
 }
