@@ -81,7 +81,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   open_conversation: { title: 'Open the conversation', readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: true },
   send_message: { title: 'Send a message', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   collect_messages: { title: 'Collect messages', readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  refine_intent: { title: 'Add other words for a posting', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  refine_intent: { title: 'Add other words for a posting', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   amend_intent: { title: 'Change a posting', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   withdraw_intent: { title: 'Take a posting down', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   publish_list: { title: 'Post a list', readOnlyHint: false, destructiveHint: true, openWorldHint: true },

@@ -553,6 +553,7 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     log('ops: reviewer sign-in ended', { ended });
                   } else {
                     const r = await enableReviewer(
+                      cfg.envName,
                       String(body.email ?? ''),
                       String(body.passphrase_hash ?? ''),
                       String(body.label ?? 'directory review'),

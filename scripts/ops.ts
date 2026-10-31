@@ -73,6 +73,15 @@ switch (cmd) {
       body = { op: 'reviewer-sign-in', action: 'disable', email };
       break;
     }
+    const days = Number(arg('days', '30'));
+    if (!Number.isInteger(days) || days < 1 || days > 60) {
+      console.error('--days must be a whole number from 1 to 60');
+      process.exit(1);
+    }
+    if (!/@openswitchboard\.ai$/i.test(email) && envName === 'prod') {
+      console.error('on prod a reviewer address must be on openswitchboard.ai');
+      process.exit(1);
+    }
     const out = arg('out');
     const { randomBytes } = await import('node:crypto');
     const { writeFileSync } = await import('node:fs');
@@ -86,13 +95,14 @@ switch (cmd) {
     });
     writeFileSync(out, passphrase + '\n', { mode: 0o600, flag: 'wx' });
     console.log(`passphrase written to ${out} (owner-only); it is not printed here`);
+    console.log('the switchboard confirms in its own log; try the address at the sign-in page to check it is on');
     body = {
       op: 'reviewer-sign-in',
       action: 'enable',
       email,
       passphrase_hash,
       label: arg('label', 'directory review'),
-      days: Number(arg('days', '30')),
+      days,
     };
     break;
   }

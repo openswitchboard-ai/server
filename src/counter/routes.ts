@@ -25,7 +25,7 @@ import {
   rateLimitBypassed,
   verificationEmailLimiter,
 } from '../abuseLimit.js';
-import { checkReviewerPassphrase, REVIEWER_LOCK_MINUTES, reviewerFor } from './reviewerSignIn.js';
+import { checkReviewerPassphrase, reviewerFor } from './reviewerSignIn.js';
 import { getPool } from '../db.js';
 import { getAccount, findAccountByEmail, getHearsVia, getTimezone, setHearsVia, setTimezone } from '../domain/accounts.js';
 import { isValidTimeZone } from '../domain/localTime.js';
@@ -1572,11 +1572,11 @@ in on this device and lets you approve what is waiting.</p>
       const check = await checkReviewerPassphrase(reviewer.accountId, passphrase);
       if (!check.ok) {
         req.log.warn({ account_id: reviewer.accountId, label: reviewer.label, reason: check.reason }, 'reviewer-sign-in: refused');
-        const msg =
-          check.reason === 'locked'
-            ? `Too many wrong passphrases. Wait ${REVIEWER_LOCK_MINUTES} minutes.`
-            : 'That passphrase is not right.';
-        return html(reply, pages.reviewerPassphrasePage(email, msg), 401);
+        return html(reply, pages.reviewerPassphrasePage(email, 'That passphrase is not right.'), 401);
+      }
+      if (await isSuspended(reviewer.accountId)) {
+        req.log.warn({ account_id: reviewer.accountId, label: reviewer.label }, 'reviewer-sign-in: account suspended');
+        return html(reply, pages.loginEmailPage('That account cannot sign in.'), 403);
       }
       req.log.info({ account_id: reviewer.accountId, label: reviewer.label }, 'reviewer-sign-in: signed in');
       // A fresh row and cookie, as every sign-in takes; and no PIN window:
