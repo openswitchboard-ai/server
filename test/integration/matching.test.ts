@@ -202,7 +202,7 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
     // Pulse cells: 9-member (ABSENT) and 10-member (present) - all WANTs so
     // the cells create no matches of their own.
     const kCard = (bucket: string) =>
-      card('WANT', 'goods.toys-games', bucket, { attributes: { condition: 'good' } });
+      card('WANT', 'goods.toys-games', bucket, { attributes: { condition: 'good', item: 'board game' } });
     const kPub: Promise<string>[] = [];
     for (let i = 0; i < 9; i++) kPub.push(publish(kAccounts[i < 5 ? 0 : 1], kCard(K9_B)));
     for (let i = 0; i < 10; i++) kPub.push(publish(kAccounts[i < 5 ? 2 : 3], kCard(K10_B)));
@@ -218,10 +218,21 @@ d('0.F matching engine gates against live deployment', { timeout: 420_000 }, () 
       ['goods.books-media', 'HAVE'], ['goods.books-media', 'WANT'],
       ['goods.tools.power', 'HAVE'], ['goods.tools.power', 'WANT'],
     ];
+    // Each says what it is: since manual v80 a goods posting that names only
+    // its condition is refused, even on the second try (domain/postingDetail.ts).
+    const FILLER_ITEM: Record<string, string> = {
+      'goods.furniture.table': 'dining table',
+      'goods.electronics.laptop': 'laptop',
+      'goods.appliances.kitchen': 'stand mixer',
+      'goods.clothing.adult': 'rain jacket',
+      'goods.sports.outdoor': 'camping tent',
+      'goods.books-media': 'cookbook',
+      'goods.tools.power': 'cordless drill',
+    };
     fillerCardIds = await Promise.all(
       fillerSpecs.map(([cat, type], i) =>
         publish(fillers[i], card(type, cat, FILL_B, {
-          attributes: { condition: 'good' },
+          attributes: { condition: 'good', item: FILLER_ITEM[cat] },
           ...(i % 3 === 0 ? { price: { band: { min: 10, max: 500 }, ccy: 'AUD' } } : {}),
         })),
       ),

@@ -180,10 +180,13 @@ test('register: email -> code -> PIN -> two confirmations -> one question -> mai
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
 
-  // The one onboarding question. Email is where a fresh account already sits,
-  // and the name boxes are left for the names step to ask when it matters.
+  // The one onboarding page. Email is where a fresh account already sits.
+  // Since 2 October the first name and suburb are asked here too, and the page
+  // will not let anyone past without them.
   await expect(page.getByRole('heading', { name: 'How do you hear about things?' })).toBeVisible();
   await page.locator('input[name="hears_via"][value="email"]').check();
+  await page.locator('#first_name').fill('Alice');
+  await page.locator('#locality').fill('Fremantle');
   await shot(page, '06b-hears-via');
   await page.getByRole('button', { name: 'Save and carry on' }).click();
 
@@ -289,7 +292,9 @@ test('assistant posts a want; nobody introduced yet; it shows on Your wants and 
       kind: 'mountain bike',
       geo: { ...(minimalWant().geo as object), reach: 'radius' },
       price: { band: { min: 0, max: 800 }, ccy: 'AUD' },
-      attributes: { condition: 'good' },
+      // What it is goes in the attributes: `kind` beside them is not read as
+      // saying what sort of thing it is (domain/postingDetail.ts).
+      attributes: { condition: 'good', item: 'mountain bike' },
     }),
   );
   expect(w.isError, JSON.stringify(w.result)).toBe(false);

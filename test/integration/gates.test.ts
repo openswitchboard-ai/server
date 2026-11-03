@@ -65,13 +65,13 @@ const form = (o: Record<string, string>) => ({
  *
  * The server's own default is 20 (src/config.ts), and neither dev nor prod
  * sets QUOTA_MAX_OPEN_CARDS today, so both run on 20. GATE (e) was written
- * when the default was 5, and the fallback below is still 5: a suite that
- * assumes 5 against a ceiling of 20 publishes six cards and is told yes six
- * times. So the number is named rather than assumed: export
- * OSB_MAX_OPEN_CARDS to match the deployment you are pointing at. At 20 the
- * gate is skipped, because that is past QUOTA_PUBLISH_BUDGET below.
+ * when the default was 5; a suite that assumes 5 against a ceiling of 20
+ * publishes six cards and is told yes six times. So the fallback is the
+ * server's own default, and a deployment set lower names its number: export
+ * OSB_MAX_OPEN_CARDS to match. At 20 the gate is skipped, because that is past
+ * QUOTA_PUBLISH_BUDGET below.
  */
-const MAX_OPEN_CARDS = Number(process.env.OSB_MAX_OPEN_CARDS ?? 5);
+const MAX_OPEN_CARDS = Number(process.env.OSB_MAX_OPEN_CARDS ?? 20);
 /**
  * Proving the ceiling costs one published want per attempt, and every one of
  * them goes on the shared board and through screening. Past this many the gate
@@ -105,7 +105,7 @@ d('integration gates against live deployment', () => {
     const w = await mcpCall(alice.accessToken, 'publish_intent', {
       listing: minimalWant({
         price: { band: { min: 0, max: 750 }, ccy: 'AUD' },
-        attributes: { condition: 'good' },
+        attributes: { condition: 'good', item: 'mountain bike' },
       }),
     });
     expect(w.isError).toBe(false);
@@ -152,7 +152,8 @@ d('integration gates against live deployment', () => {
     // (check_matches -> check_in, channel_send -> send_message) left this list
     // holding the right names in the old alphabetical places, and
     // wait_for_press (13 September 2026) took the count to twelve; read_manual
-    // and refine_intent make it fourteen.
+    // and refine_intent make it fourteen, and lists (publish_list, read_lists,
+    // withdraw_list; manual v88) seventeen.
     expect(names).toEqual([
       'amend_intent',
       'check_in',
@@ -160,6 +161,8 @@ d('integration gates against live deployment', () => {
       'list_intents',
       'open_conversation',
       'publish_intent',
+      'publish_list',
+      'read_lists',
       'read_manual',
       'refine_intent',
       'respond',
@@ -168,6 +171,7 @@ d('integration gates against live deployment', () => {
       'standing_arrangement',
       'wait_for_press',
       'withdraw_intent',
+      'withdraw_list',
     ]);
     const publish = tools.result.tools.find((t: any) => t.name === 'publish_intent');
     expect(JSON.stringify(publish.inputSchema)).toContain('MATCHING INPUT ONLY');
@@ -393,14 +397,14 @@ d('integration gates against live deployment', () => {
       listing: minimalWant({
         geo: island,
         price: { band: { min: 0, max: 900 }, ccy: 'AUD' },
-        attributes: { condition: 'good' },
+        attributes: { condition: 'good', item: 'mountain bike' },
       }),
     });
     const eh = await mcpCall(eli.accessToken, 'publish_intent', {
       listing: minimalHave({
         geo: island,
         price: { band: { min: 300, max: 300 }, ccy: 'AUD' },
-        attributes: { condition: 'good' },
+        attributes: { condition: 'good', item: 'mountain bike' },
       }),
     });
     expect(dw.isError).toBe(false);
@@ -624,7 +628,7 @@ d('integration gates against live deployment', () => {
     for (let i = 0; i <= MAX_OPEN_CARDS; i++) {
       results.push(
         await mcpCall(carol.accessToken, 'publish_intent', {
-          listing: minimalWant({ attributes: { year: 2020 + i } }),
+          listing: minimalWant({ attributes: { item: 'mountain bike', condition: 'good', year: 2020 + i } }),
         }),
       );
     }
@@ -649,7 +653,7 @@ d('integration gates against live deployment', () => {
     const tools = await mcpRpc(token, 'tools/list', {});
     expect(tools.result.tools.map((t: any) => t.name)).toContain('publish_intent');
     const published = await mcpCall(token, 'publish_intent', {
-      listing: minimalWant({ attributes: { condition: 'fair' } }),
+      listing: minimalWant({ attributes: { condition: 'fair', item: 'mountain bike' } }),
     });
     expect(published.isError).toBe(false);
     expect(published.result.intent_id).toBeTruthy();
@@ -694,7 +698,7 @@ d('integration gates against live deployment', () => {
     expect(alsoOver.result.code).toBe('RATE_LIMITED');
     // Nothing on the write surface is touched by it.
     const stillWrites = await mcpCall(greedy.accessToken, 'publish_intent', {
-      listing: minimalWant({ attributes: { condition: 'fair' } }),
+      listing: minimalWant({ attributes: { condition: 'fair', item: 'mountain bike' } }),
     });
     expect(stillWrites.result?.code).not.toBe('RATE_LIMITED');
   }, 300_000);
@@ -730,7 +734,7 @@ d('integration gates against live deployment', () => {
   });
 
   it('amend + withdraw lifecycle', async () => {
-    const c = await mcpCall(alice.accessToken, 'publish_intent', { listing: minimalWant() });
+    const c = await mcpCall(alice.accessToken, 'publish_intent', { listing: minimalWant({ attributes: { condition: 'good', item: 'mountain bike' } }) });
     const id = c.result.intent_id;
     await waitForCardState(alice.accessToken, id, ['PUBLISHED']);
     const amended = await mcpCall(alice.accessToken, 'amend_intent', {

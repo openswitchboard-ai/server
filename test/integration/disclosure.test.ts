@@ -62,11 +62,11 @@ d('stage-3 disclosure for accounts that came through registration', () => {
     [ana, beppe] = await Promise.all([registerActor(), registerActor()]);
 
     const w = await mcpCall(ana.accessToken, 'publish_intent', {
-      listing: minimalWant({ attributes: { condition: 'good' } }),
+      listing: minimalWant({ attributes: { condition: 'good', item: 'mountain bike' } }),
     });
     expect(w.isError).toBe(false);
     const h = await mcpCall(beppe.accessToken, 'publish_intent', {
-      listing: minimalHave({ attributes: { condition: 'good' } }),
+      listing: minimalHave({ attributes: { condition: 'good', item: 'mountain bike' } }),
     });
     expect(h.isError).toBe(false);
     await waitForCardState(ana.accessToken, w.result.intent_id, ['PUBLISHED']);
