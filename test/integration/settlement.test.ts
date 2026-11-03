@@ -135,11 +135,11 @@ const gateCards: { token: string; intentId: string }[] = [];
  */
 async function newIntroduction(): Promise<string> {
   const w = await mcpCall(buyer.accessToken, 'publish_intent', {
-    listing: minimalWant({ attributes: { condition: 'good' } }),
+    listing: minimalWant({ attributes: { condition: 'good', item: 'mountain bike' } }),
   });
   expect(w.isError).toBe(false);
   const h = await mcpCall(seller.accessToken, 'publish_intent', {
-    listing: minimalHave({ attributes: { condition: 'good' }, ask: { amount: 90, ccy: 'AUD' } }),
+    listing: minimalHave({ attributes: { condition: 'good', item: 'mountain bike' }, ask: { amount: 90, ccy: 'AUD' } }),
   });
   expect(h.isError).toBe(false);
   gateCards.push(

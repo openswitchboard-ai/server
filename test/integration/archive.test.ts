@@ -71,10 +71,10 @@ d('archiving a finished connection', () => {
     ]);
 
     const w = await mcpCall(ana.accessToken, 'publish_intent', {
-      listing: minimalWant({ attributes: { condition: 'good' } }),
+      listing: minimalWant({ attributes: { condition: 'good', item: 'mountain bike' } }),
     });
     const h = await mcpCall(beppe.accessToken, 'publish_intent', {
-      listing: minimalHave({ attributes: { condition: 'good' } }),
+      listing: minimalHave({ attributes: { condition: 'good', item: 'mountain bike' } }),
     });
     anaCardId = w.result.intent_id;
     await waitForCardState(ana.accessToken, w.result.intent_id, ['PUBLISHED']);

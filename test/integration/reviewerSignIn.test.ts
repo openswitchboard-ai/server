@@ -96,6 +96,9 @@ describe.skipIf(!RUN)('reviewer sign-in', () => {
     expect(new URL(withPin.headers.get('location')!).searchParams.get('code')).toBeTruthy();
 
     await sendOp({ op: 'reviewer-sign-in', action: 'disable', email: actor.email });
-    await poll(async () => (/name="verification_id"/.test(await loginPage(actor.email)) ? true : undefined), 'reviewer row gone');
+    // The passphrase page is what goes. The code page cannot stand in for it:
+    // by now this address has used up its codes for the quarter hour
+    // (VERIFICATIONS_PER_QUARTER_HOUR), so what comes back is the limit's page.
+    await poll(async () => (!(await loginPage(actor.email)).includes('/login/reviewer') ? true : undefined), 'reviewer row gone');
   }, 240_000);
 });
