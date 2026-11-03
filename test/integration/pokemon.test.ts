@@ -16,8 +16,11 @@
  *  (b) every item passes the real screen, and the certificate number is
  *      nowhere on the board;
  *  (c) a buyer after one card, named the way people name it ("the Charizard
- *      ex from Obsidian Flames, number 125"), is introduced to that card and
- *      to neither of the other two Charizard ex cards on the same list.
+ *      ex from Obsidian Flames, number 125"), is introduced to that card as
+ *      sure, on the strength of the number. Another Charizard ex on the list
+ *      may come through as possible, never as sure: an identifier only ever
+ *      lifts a pair and two different numbers do not count against one
+ *      (domain/matchTiers.ts, IT NEVER COUNTS AGAINST A PAIR).
  *
  * The cards are real cards, so their numbers are the same on every run. A
  * run keeps to its own list and its own buyer: every assertion is about this
@@ -133,7 +136,7 @@ d('Pokémon cards', () => {
     expect(Number(leaked[0][0])).toBe(0);
   });
 
-  it('(c) a buyer after one Charizard ex is introduced to that card, and to neither of the other two', async () => {
+  it('(c) a buyer after one Charizard ex is introduced to that card as sure, and to no other card as sure', async () => {
     const want = await mcpCall(dan.accessToken, 'publish_intent', {
       listing: {
         schema_version: SCHEMA_VERSION,
@@ -151,24 +154,26 @@ d('Pokémon cards', () => {
     danWant = want.result.intent_id;
     expect(await waitForCardState(dan.accessToken, danWant, ['PUBLISHED', 'SCREENING_REJECTED'])).toBe('PUBLISHED');
 
-    const matchedNumbers = async (): Promise<string[]> => {
+    /** Each introduction to an item on Mia's list: its printed number and how sure. */
+    const introductions = async (): Promise<[string, string][]> => {
       const rows = await dbExec(
-        `SELECT DISTINCT i->>'value' FROM matches m
-           JOIN cards h ON h.id = m.card_have,
-           LATERAL jsonb_array_elements(h.identifiers) i
+        `SELECT h.identifiers->0->>'value', m.certainty FROM matches m
+           JOIN cards h ON h.id = m.card_have
           WHERE m.card_want = :w::uuid AND h.list_id = :l::uuid`,
         [
           { name: 'w', value: danWant },
           { name: 'l', value: listId },
         ],
       );
-      return rows.map((r) => String(r[0]));
+      return rows.map((r) => [String(r[0]), String(r[1])]);
     };
-    const numbers = await poll(
-      async () => ((await matchedNumbers()).length ? await matchedNumbers() : undefined),
+    await poll(
+      async () => ((await introductions()).some(([n]) => n === '125/197') ? true : undefined),
       'the introduction between the want and the Charizard ex 125/197',
       180_000,
     );
-    expect(numbers).toEqual(['125/197']);
+    const got = await introductions();
+    expect(got).toContainEqual(['125/197', 'sure']);
+    expect(got.filter(([n, c]) => n !== '125/197' && c === 'sure')).toEqual([]);
   });
 });
