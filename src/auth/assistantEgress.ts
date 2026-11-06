@@ -15,25 +15,24 @@
  * Nothing else is loosened. The address only picks which registration cap
  * applies; signing in, consent and every tool call are the same for everyone.
  *
- * SOURCES.
+ * SOURCES, all in assistantEgress.json, which infra's WAF reads too (its
+ * per-IP rate rule has the same problem one level further out).
  * - Anthropic: the outbound ranges on
  *   https://platform.claude.com/docs/en/api/ip-addresses (read 2026-11-06).
- *   Short and published by hand there, so written by hand here.
- * - OpenAI: https://openai.com/chatgpt-connectors.json, regenerated into
- *   openaiConnectorEgress.ts by scripts/refresh-assistant-egress.ts.
+ *   Short and published by hand there, so written by hand in the JSON.
+ * - OpenAI: https://openai.com/chatgpt-connectors.json, regenerated into the
+ *   JSON by scripts/refresh-assistant-egress.ts.
  * A range that goes stale only means those callers fall back to the ordinary
  * cap; refresh both before a directory listing goes live and now and then
  * after.
  */
 import { BlockList, isIPv4, isIPv6 } from 'node:net';
-import { OPENAI_CONNECTOR_EGRESS } from './openaiConnectorEgress.js';
+import ranges from './assistantEgress.json' with { type: 'json' };
 
 export type AssistantPlatform = 'anthropic' | 'openai';
 
-export const ANTHROPIC_OUTBOUND: readonly string[] = [
-  '160.79.104.0/21',
-  '153.61.208.0/20',
-];
+export const ANTHROPIC_OUTBOUND: readonly string[] = ranges.anthropic.cidrs;
+export const OPENAI_CONNECTOR_EGRESS: readonly string[] = ranges.openai.cidrs;
 
 function blockListOf(cidrs: readonly string[]): BlockList {
   const list = new BlockList();
