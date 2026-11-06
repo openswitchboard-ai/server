@@ -11,8 +11,7 @@
  * passes without a model call, exactly as it did before. That is the same
  * `texts.length > 0` guard this check has always had, said in the one shape.
  */
-import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { bedrock } from '../../aws.js';
+import { askClaude, type ClaudeAsk } from '../../claude.js';
 import { heldBackFamilies, screeningReasonCodes } from '../../denylist.js';
 import { shelfPolicy } from '../../domain/shelfRules.js';
 import { promptSafe, promptSafePair } from '../promptText.js';
@@ -151,8 +150,7 @@ export async function screenTextWithBedrock(
   const system = categoryLabels
     ? `${SYSTEM_PROMPT}\n\nThe listing you are about to read is filed under: ${categoryLabels}`
     : SYSTEM_PROMPT;
-  const body = {
-    anthropic_version: 'bedrock-2023-05-31',
+  const body: ClaudeAsk = {
     max_tokens: 300,
     system,
     messages: [
@@ -168,16 +166,7 @@ export async function screenTextWithBedrock(
       { role: 'assistant', content: '{' },
     ],
   };
-  const r = await bedrock.send(
-    new InvokeModelCommand({
-      modelId: cfg.bedrockModelId,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(body),
-    }),
-  );
-  const parsed = JSON.parse(new TextDecoder().decode(r.body));
-  const text: string = parsed.content?.map((c: any) => c.text ?? '').join('') ?? '';
+  const text = await askClaude(cfg, body);
   return parseScreenVerdict(text);
 }
 
@@ -353,8 +342,7 @@ export async function screenTextsWithBedrock(
   const system = categoryLabels
     ? `${MODEL_SCREEN_BATCH_SYSTEM_PROMPT}\n\nEvery listing you are about to read is filed under: ${categoryLabels}`
     : MODEL_SCREEN_BATCH_SYSTEM_PROMPT;
-  const body = {
-    anthropic_version: 'bedrock-2023-05-31',
+  const body: ClaudeAsk = {
     // A verdict is about sixty tokens with its short note; room for each, and a little over.
     max_tokens: 100 * postings.length + 50,
     system,
@@ -363,16 +351,7 @@ export async function screenTextsWithBedrock(
       { role: 'assistant', content: '{' },
     ],
   };
-  const r = await bedrock.send(
-    new InvokeModelCommand({
-      modelId: cfg.bedrockModelId,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(body),
-    }),
-  );
-  const parsed = JSON.parse(new TextDecoder().decode(r.body));
-  const text: string = parsed.content?.map((c: any) => c.text ?? '').join('') ?? '';
+  const text = await askClaude(cfg, body);
   return parseBatchVerdicts(text, postings.length);
 }
 
