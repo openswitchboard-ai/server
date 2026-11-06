@@ -5,7 +5,8 @@
  * Tokens are opaque and stored as sha256 hashes, bound to one human account.
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { clientRegistrationLimiter, rateLimitBypassed } from '../abuseLimit.js';
+import { clientRegistrationLimiter, platformClientRegistrationLimiter, rateLimitBypassed } from '../abuseLimit.js';
+import { assistantPlatformOf } from './assistantEgress.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPool } from '../db.js';
 import { registrationClosedPage } from '../counter/pages.js';
@@ -200,8 +201,13 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
   // ---- RFC 7591 dynamic client registration ----------------------------------
   app.post('/oauth/register', async (req, reply) => {
-    if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await clientRegistrationLimiter.limited(req.ip)) {
-      req.log.warn({ ip: req.ip }, 'oauth-register: per-IP rate limit hit');
+    // An assistant platform registers for everyone who connects through it,
+    // from a few shared addresses, so it gets its own larger cap (see
+    // assistantEgress.ts).
+    const platform = assistantPlatformOf(req.ip);
+    const limiter = platform ? platformClientRegistrationLimiter : clientRegistrationLimiter;
+    if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await limiter.limited(req.ip)) {
+      req.log.warn({ ip: req.ip, platform: platform ?? null }, 'oauth-register: per-IP rate limit hit');
       return reply.code(429).send({ error: 'rate_limited', error_description: 'too many registrations from this address; try again later' });
     }
     const body: any = req.body ?? {};

@@ -258,6 +258,7 @@ describe('the limiters themselves', () => {
     ]);
     expect(Object.fromEntries(made.map(([n, max, w]) => [n, [max, w]]))).toEqual({
       'client-registration': [5, 3_600_000],
+      'client-registration-platform': [300, 3_600_000],
       'verification-email': [15, 3_600_000],
       'area-suggest': [60, 60_000],
       'kill-switch': [5, 3_600_000],

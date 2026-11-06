@@ -264,6 +264,18 @@ export const accountlessVerificationCeiling = makeGlobalLimiter(
 export const clientRegistrationLimiter = makeIpLimiter(5, 60 * 60 * 1000, 'client-registration');
 
 /**
+ * DCR from an assistant platform's own servers: 300 per IP per hour.
+ *
+ * Claude and ChatGPT register on behalf of every person who adds the
+ * switchboard as a connector, all from a few published addresses
+ * (src/auth/assistantEgress.ts), so the 5 above would turn away the sixth
+ * person in an hour. Still a cap, because anyone with a platform account can
+ * make it register in a loop. Separate rows from the ordinary limiter, so a
+ * busy platform address never spends anybody else's allowance.
+ */
+export const platformClientRegistrationLimiter = makeIpLimiter(300, 60 * 60 * 1000, 'client-registration-platform');
+
+/**
  * Verification emails: 15 sends per IP per hour, on top of the per-email cap.
  *
  * It was 5, and 5 is one household on one evening: two people signing up on a

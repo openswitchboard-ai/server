@@ -511,3 +511,40 @@ describe('where a code may be sent back to', () => {
     expect(r.statusCode).toBe(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+describe('registrations from an assistant platform', () => {
+  // Claude and ChatGPT register for everyone who connects through them, from
+  // a few shared addresses, so those addresses get their own larger cap.
+  const register = (remoteAddress: string) => {
+    delete process.env.RATELIMIT_BYPASS_TOKEN;
+    return app.inject({
+      method: 'POST',
+      url: '/oauth/register',
+      remoteAddress,
+      headers: { host: 'mcp.test', 'content-type': 'application/json' },
+      payload: { client_name: 'a client', redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] },
+    });
+  };
+
+  it('an ordinary address is refused after five in an hour', async () => {
+    const { clientRegistrationLimiter } = await import('../../src/abuseLimit.js');
+    clientRegistrationLimiter.reset();
+    const codes: number[] = [];
+    for (let i = 0; i < 6; i++) codes.push((await register('203.0.113.7')).statusCode);
+    expect(codes.slice(0, 5).every((c) => c !== 429)).toBe(true);
+    expect(codes[5]).toBe(429);
+    clientRegistrationLimiter.reset();
+  });
+
+  it("Anthropic's outbound address is not refused at the sixth", async () => {
+    const { clientRegistrationLimiter, platformClientRegistrationLimiter } = await import('../../src/abuseLimit.js');
+    clientRegistrationLimiter.reset();
+    platformClientRegistrationLimiter.reset();
+    for (let i = 0; i < 20; i++) {
+      const r = await register('160.79.105.20');
+      expect(r.statusCode, String(i)).not.toBe(429);
+    }
+    platformClientRegistrationLimiter.reset();
+  });
+});
