@@ -102,6 +102,46 @@ export async function verificationRateLimited(email: string): Promise<boolean> {
   return row.recent >= VERIFICATIONS_PER_QUARTER_HOUR || row.day >= VERIFICATIONS_PER_DAY;
 }
 
+/**
+ * THREE CODES SENT AND NEVER USED, IN A WEEK (migration 071).
+ *
+ * The windows above pace somebody asking again. This one is for the address
+ * whose owner never asked at all: every spam complaint prod email has drawn
+ * was a code sent to an address that never opened an account, and enough of
+ * them pause all of the switchboard's email. A person who is really signing in
+ * uses a code, and using one clears the count; a person whose codes land in
+ * spam has three chances and is then told where to look.
+ *
+ * Only codes that actually went out count (sent_at), so an email outage
+ * never shuts anybody out. The refusal reads the same whether or not an
+ * account exists. Signed-in doors (PIN recovery, confirming a change,
+ * re-verifying after a bounce) do not ask this: their mail goes to the
+ * account's own address, at the account holder's own press.
+ */
+export const UNUSED_CODES_HELD = 3;
+export const UNUSED_CODES_SENTENCE =
+  'We have sent several codes to that address and none was used, so no more will go out for a while. If it is your address, look for the last one in your spam folder, or write to info@openswitchboard.ai.';
+
+export async function unusedCodesHeld(email: string): Promise<boolean> {
+  const r = await getPool().query(
+    `SELECT count(*)::int AS n
+       FROM email_verifications
+      WHERE email_hash = $1
+        AND sent_at > now() - interval '7 days'
+        AND NOT used
+        AND created_at > COALESCE(
+              (SELECT max(created_at) FROM email_verifications WHERE email_hash = $1 AND used),
+              '-infinity'::timestamptz)`,
+    [emailHash(email)],
+  );
+  return (r.rows[0]?.n ?? 0) >= UNUSED_CODES_HELD;
+}
+
+/** The code's email went out: from here it counts towards unusedCodesHeld. */
+export async function markVerificationSent(id: string): Promise<void> {
+  await getPool().query('UPDATE email_verifications SET sent_at = now() WHERE id = $1', [id]);
+}
+
 export interface VerifyResult {
   ok: boolean;
   reason?: 'expired' | 'used' | 'bad-code' | 'locked' | 'not-found';

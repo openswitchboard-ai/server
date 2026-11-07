@@ -126,6 +126,9 @@ import {
 import {
   createVerification,
   verificationRateLimited,
+  unusedCodesHeld,
+  markVerificationSent,
+  UNUSED_CODES_SENTENCE,
   verifyByCode,
   verifyByLinkToken,
 } from './verification.js';
@@ -348,11 +351,14 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
     const sendCodeOrNote = async (
       req: FastifyRequest,
       email: string,
-      v: { code: string; linkToken: string },
+      v: { id: string; code: string; linkToken: string },
       purpose: 'register' | 'login',
     ): Promise<string | undefined> => {
       try {
         await sendVerificationEmail(cfg, email, v.code, v.linkToken, purpose);
+        await markVerificationSent(v.id).catch((e) => {
+          req.log.warn({ err_name: (e as any)?.name }, 'could not mark a verification as sent');
+        });
         return undefined;
       } catch (err) {
         if (isEmailQueueFull(err)) {
@@ -822,6 +828,10 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
           pages.registerEmailPage('Too many codes requested for that address. Wait a few minutes.'),
           429,
         );
+      }
+      if (await unusedCodesHeld(email)) {
+        req.log.warn({ purpose: 'register' }, 'verification held: three unused codes this week');
+        return html(reply, pages.registerEmailPage(UNUSED_CODES_SENTENCE), 429);
       }
       if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-register: per-IP verification-email limit hit');
@@ -1525,6 +1535,10 @@ in on this device and lets you approve what is waiting.</p>
           pages.loginEmailPage('Too many codes requested for that address. Wait a few minutes.'),
           429,
         );
+      }
+      if (await unusedCodesHeld(email)) {
+        req.log.warn({ purpose: 'login' }, 'verification held: three unused codes this week');
+        return html(reply, pages.loginEmailPage(UNUSED_CODES_SENTENCE), 429);
       }
       if (!rateLimitBypassed(req.headers as Record<string, unknown>, cfg) && await verificationEmailLimiter.limited(req.ip)) {
         req.log.warn({ ip: req.ip }, 'counter-login: per-IP verification-email limit hit');
