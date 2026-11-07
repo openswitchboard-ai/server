@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
-import { registerMcpRoutes } from '../../src/mcp/mcp.js';
+import { OPENAI_APPS_CHALLENGE, registerMcpRoutes } from '../../src/mcp/mcp.js';
 import { toolsFor } from '../../src/mcp/tools.js';
 
 describe('the public server card', () => {
@@ -15,6 +15,16 @@ describe('the public server card', () => {
     expect(card.authentication).toEqual({ required: true, schemes: ['oauth2'] });
     expect(card.tools.map((t: any) => t.name)).toEqual(toolsFor(cfg).map((t) => t.name));
     expect(card.tools.every((t: any) => t.description && t.inputSchema)).toBe(true);
+    await app.close();
+  });
+
+  it("serves OpenAI's domain challenge as the bare token", async () => {
+    const app = Fastify();
+    registerMcpRoutes(app, { envName: 'prod', sealedContact: false } as any);
+    const res = await app.inject({ method: 'GET', url: '/.well-known/openai-apps-challenge' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/plain/);
+    expect(res.body).toBe(OPENAI_APPS_CHALLENGE);
     await app.close();
   });
 });

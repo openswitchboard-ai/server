@@ -17,6 +17,8 @@ import { dispatchTool, internalError, listedTool, toolsFor } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
+export const OPENAI_APPS_CHALLENGE = 'Gp6zqSgv5COdt2DlFTdPLWlA1aknlGh1TTWdAm4KyyA';
+
 export const SETTLEMENT_OFF_BLOCK =
   'THIS DEPLOYMENT, TODAY\nPaying through the switchboard is not on here yet (settle answers SETTLEMENT_UNAVAILABLE): paying is between the two humans for now, and anyone claiming the switchboard holds money is lying.';
 
@@ -135,6 +137,15 @@ export function registerMcpRoutes(app: FastifyInstance, cfg: Config): void {
       resources: [],
       prompts: [],
     };
+  });
+  // OpenAI's plugin portal proves we own this host by fetching this token as
+  // plain text. It is a public value, nothing secret: anyone can read it here,
+  // and it only means something to the portal account that issued it
+  // (OpenSwitchboard's, November 2026). A new token from the portal replaces
+  // this one.
+  app.get('/.well-known/openai-apps-challenge', async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return reply.type('text/plain').send(OPENAI_APPS_CHALLENGE);
   });
   app.post('/mcp', async (req, reply) => {
     const auth = await authenticate(req);
