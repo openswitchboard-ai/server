@@ -45,6 +45,7 @@
     "probe": "tsx test/probe/run.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@aws-sdk/client-bedrock-runtime": "^3.700.0",
     "@aws-sdk/client-kms": "^3.700.0",
     "@aws-sdk/client-rekognition": "^3.1134.0",

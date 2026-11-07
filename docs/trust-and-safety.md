@@ -94,7 +94,8 @@ threshold is "any explicit label", not "probably illegal".
 Nearly all of it. Pass and refuse are automatic and always were. **Hold** is
 the only verdict a person sees, and it is meant to be rare.
 
-Today there is one model pass: the fast screen (Haiku on Bedrock). Every hold
+Today there is one model pass: the fast screen (Haiku through the Claude API,
+with Bedrock behind it). Every hold
 opens a `safety_reviews` row and reaches a person. The operator is told by one
 log line, `{event:'safety-review', review_id, match_id}`, with no content in it.
 

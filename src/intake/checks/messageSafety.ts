@@ -45,8 +45,7 @@
  * only a disagreement should reach the queue. Not built in step 7; every hold
  * here reaches a person today.
  */
-import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { bedrock } from '../../aws.js';
+import { askClaude, type ClaudeAsk } from '../../claude.js';
 import { promptSafe } from '../promptText.js';
 import { passed, type Check, type CheckResult } from '../types.js';
 import type { Config } from '../../config.js';
@@ -126,8 +125,7 @@ export async function screenMessageWithBedrock(
   cfg: Config,
   text: string,
 ): Promise<SafetyFlags> {
-  const body = {
-    anthropic_version: 'bedrock-2023-05-31',
+  const body: ClaudeAsk = {
     max_tokens: 300,
     system: SYSTEM_PROMPT,
     messages: [
@@ -143,16 +141,7 @@ export async function screenMessageWithBedrock(
       { role: 'assistant', content: '{' },
     ],
   };
-  const r = await bedrock.send(
-    new InvokeModelCommand({
-      modelId: cfg.bedrockModelId,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(body),
-    }),
-  );
-  const parsed = JSON.parse(new TextDecoder().decode(r.body));
-  const said: string = parsed.content?.map((c: any) => c.text ?? '').join('') ?? '';
+  const said = await askClaude(cfg, body);
   return parseSafetyVerdict(said);
 }
 
