@@ -1971,6 +1971,15 @@ ${ceremonyScript(c)}`);
  * and anyone may register one, so the name on this page proves nothing. The
  * address is the part nobody else can choose, which is why it is shown.
  */
+function isLoopbackRedirect(uri: string): boolean {
+  try {
+    const h = new URL(uri).hostname.replace(/^\[|\]$/g, '');
+    return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+  } catch {
+    return false;
+  }
+}
+
 function redirectHost(uri: string): string {
   try {
     const h = new URL(uri).hostname.replace(/^\[|\]$/g, '');
@@ -1992,6 +2001,15 @@ export function authorizePage(
   const hiddenInputs = Object.entries(hidden)
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join('\n');
+  // ONLY AN ASSISTANT ON THIS MACHINE GETS A NEW TAB (November 2026). A
+  // command-line assistant's callback is a localhost page that may already
+  // have closed, so it opens in a tab of its own and this one goes home. A
+  // hosted assistant's callback is an ordinary web page that often expects to
+  // load in the very window that started the sign-in (OpenAI's plugin portal
+  // opens a popup and waits on it), so there the redirect stays in this tab,
+  // the way OAuth usually goes.
+  const newTab = !redirectUri || isLoopbackRedirect(redirectUri);
+  const target = newTab ? { formTarget: '_blank' } : {};
   // Handing an agent a key is a sensitive action, so approving takes the same
   // ceremony an approval takes. Cancelling takes nothing: it skips the PIN
   // box's own validation and sends the refusal straight through.
@@ -2014,17 +2032,19 @@ ${hiddenInputs}
     label: 'Authorise',
     name: 'decision',
     value: 'approve',
-    formTarget: '_blank',
+    ...target,
   })}
   <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Cancel</button>
   </div>
 </form>
-${ceremonyAlt(c, 'authorize-form', { name: 'decision', value: 'approve', formTarget: '_blank' })}
+${ceremonyAlt(c, 'authorize-form', { name: 'decision', value: 'approve', ...target })}
 ${ceremonyNote(c)}
 <p class="small muted">It can post wants and haves for you, review matches, and negotiate.
 Anything irreversible — sharing your details, accepting an offer — still
 waits for you, here on your main page.</p>
-<p class="small muted">Authorising hands the assistant its key in a new tab, which you can close;
+${
+  newTab
+    ? `<p class="small muted">Authorising hands the assistant its key in a new tab, which you can close;
 this tab comes back to your main page.</p>
 <script>
 // The agent's callback (often a localhost page the agent is listening on)
@@ -2036,7 +2056,9 @@ document.getElementById('authorize-form').addEventListener('submit', function (e
     setTimeout(function () { location.assign('/?authorized=' + encodeURIComponent(id)); }, 400);
   }
 });
-</script>
+</script>`
+    : `<p class="small muted">Authorising hands the assistant its key and takes you back to it.</p>`
+}
 ${ceremonyScript(c)}`);
 }
 

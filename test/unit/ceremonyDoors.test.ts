@@ -209,6 +209,16 @@ describe('the pages those doors are pressed from carry the box', () => {
     expect(html).toContain('formnovalidate');
   });
 
+  it('a hosted assistant gets its key in the same tab, one on this machine in a new one', () => {
+    const hosted = cpages.authorizePage('ChatGPT', '/authorize', {}, 'c-1', ASKS, 'https://platform.openai.com/oauth/callback');
+    expect(hosted).not.toContain('formtarget="_blank"');
+    expect(hosted).not.toContain('data-pk-target="_blank"');
+    expect(hosted).not.toContain('/?authorized=');
+    const local = cpages.authorizePage('A CLI', '/authorize', {}, 'c-2', ASKS, 'http://127.0.0.1:47391/cb');
+    expect(local).toContain('formtarget="_blank"');
+    expect(local).toContain('/?authorized=');
+  });
+
   it('un-pausing everything — and pausing it asks for nothing', () => {
     const view = (killSwitchOn: boolean) =>
       chome.dashboardPage({
