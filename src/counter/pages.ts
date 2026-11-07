@@ -2062,6 +2062,16 @@ document.getElementById('authorize-form').addEventListener('submit', function (e
 ${ceremonyScript(c)}`);
 }
 
+/** Sends the browser on to a hosted assistant's callback (routes.ts handBack). */
+export function handBackPage(url: string, host: string): string {
+  return layout(
+    'Back to your assistant',
+    `<h1>Back to your assistant.</h1>
+<p>Taking you back to <strong>${esc(host)}</strong>.</p>
+<p><a class="btn" href="${esc(url)}">Continue</a></p>`,
+  ).replace('<meta charset="utf-8">', `<meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${esc(url)}">`);
+}
+
 export function registrationClosedPage(): string {
   return layout('Registration opens at launch', `
 <h1>Registration opens at launch.</h1>

@@ -5411,7 +5411,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         await sess.setOauthCtx(s.id, null);
         target.searchParams.set('error', 'access_denied');
         if (ctx.state) target.searchParams.set('state', ctx.state);
-        return reply.redirect(target.toString(), 303);
+        return handBack(reply, target);
       }
       // Handing an agent a key is a sensitive action, and it takes the
       // passkey or a PIN rather than a window an emailed code opened. The
@@ -5438,14 +5438,28 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       }
       target.searchParams.set('code', code);
       if (ctx.state) target.searchParams.set('state', ctx.state);
-      // Plain OAuth redirect, loopback included. A CLI that is listening on
+      // Plain OAuth redirect for a loopback client. A CLI that is listening on
       // 127.0.0.1 completes at once (top-level navigations are exempt from the
       // browser's local-network fetch rules, which a probing page is not); one
       // that printed the link and exited shows a connection error, and the
       // person pastes the address-bar URL back, which is the loopback
       // convention every such client already explains.
-      return reply.redirect(target.toString(), 303);
+      return handBack(reply, target);
     });
+
+    // HOW THE KEY GOES BACK (November 2026). A loopback client gets a plain
+    // 303. A hosted one gets a page that sends the browser on itself, because
+    // the form's CSP form-action covers every hop of a redirect that follows
+    // a form submission: the redirect_uri's origin is allowed, but a hosted
+    // callback that forwards again (OpenAI's plugin portal does) was refused
+    // by the browser and the person was left looking at "Working...". A meta
+    // refresh is an ordinary navigation, outside form-action, and the link
+    // under it is there for a browser that does not follow one.
+    function handBack(reply: FastifyReply, target: URL) {
+      const h = target.hostname.replace(/^\[|\]$/g, '');
+      if (h === '127.0.0.1' || h === 'localhost' || h === '::1') return reply.redirect(target.toString(), 303);
+      return html(reply, pages.handBackPage(target.toString(), target.hostname));
+    }
   });
 }
 

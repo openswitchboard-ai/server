@@ -219,6 +219,13 @@ describe('the pages those doors are pressed from carry the box', () => {
     expect(local).toContain('/?authorized=');
   });
 
+  it('hands a hosted assistant its key with a page that moves on by itself', () => {
+    const url = 'https://chatgpt.com/connector/oauth/abc?code=c1&state=s"1';
+    const html = cpages.handBackPage(url, 'chatgpt.com');
+    expect(html).toMatch(/<meta charset="utf-8"><meta http-equiv="refresh" content="0;url=https:\/\/chatgpt\.com\/connector\/oauth\/abc\?code=c1&amp;state=s&quot;1">/);
+    expect(html).toContain('chatgpt.com');
+  });
+
   it('un-pausing everything — and pausing it asks for nothing', () => {
     const view = (killSwitchOn: boolean) =>
       chome.dashboardPage({
