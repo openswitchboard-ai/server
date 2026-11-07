@@ -93,6 +93,12 @@ export interface Config {
   consentLogBucket: string;
   identityKeyArn: string;
   bedrockModelId: string;
+  /** The same Haiku through the Claude API (src/claude.ts); Bedrock stands behind it. */
+  anthropicModel: string;
+  /** The Secrets Manager secret holding the Claude API key, a plain string. Unset = Bedrock only. */
+  anthropicKeySecret?: string;
+  /** The region that secret lives in. */
+  anthropicKeyRegion: string;
   /** Titan Text Embeddings v2 (1024-dim) - the matching engine's embedder. */
   bedrockEmbedModelId: string;
   /** 'open': anyone can register on the human pages with a verified email.
@@ -266,6 +272,9 @@ export function loadConfig(): Config {
     consentLogBucket: required('CONSENT_LOG_BUCKET'),
     identityKeyArn: required('IDENTITY_KEY_ARN'),
     bedrockModelId: required('BEDROCK_MODEL_ID'),
+    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5',
+    anthropicKeySecret: process.env.ANTHROPIC_KEY_SECRET || undefined,
+    anthropicKeyRegion: process.env.ANTHROPIC_KEY_REGION || 'ap-southeast-2',
     bedrockEmbedModelId: process.env.BEDROCK_EMBED_MODEL_ID ?? 'amazon.titan-embed-text-v2:0',
     registrationMode: registrationModeFrom(process.env.REGISTRATION_MODE, envName),
     region: process.env.AWS_REGION ?? 'us-east-1',

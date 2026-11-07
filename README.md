@@ -72,7 +72,7 @@ metadata. Tokens are opaque, sha256-hashed at rest, and bound to one account.
 
 **3. Domain core** — Postgres (Aurora Serverless v2 with pgvector), envelope
 encryption with per-account KMS data keys, TTL expiry, per-account quotas, and an
-LLM screening pipeline on Bedrock. Every decrypt writes a WORM audit line to the
+LLM screening pipeline (Haiku through the Claude API, Bedrock behind it). Every decrypt writes a WORM audit line to the
 consent-log bucket before plaintext is returned. A published want or have stays
 `PENDING_SCREENING` until screening passes; rejects become `SCREENING_REJECTED`,
 and the owner is told the reason in plain words: their assistant reads it on
@@ -196,8 +196,8 @@ These are the invariants worth reading the code to check:
   The page is served by this server, so the protection is
   against every copy at rest, in logs and in both assistants; it is no
   protection against a server changed to serve a different page.
-- Publish is blocked until screening passes, with no bypass. If Bedrock is
-  unavailable, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
+- Publish is blocked until screening passes, with no bypass. If neither the
+  Claude API nor Bedrock can answer, they stay `PENDING_SCREENING` (SQS redelivery, then DLQ) and are
   never published unscreened.
 - One outside service is asked about matching. Where `JEV_MATCHING` is on (the
   hosted network, since 1 October 2026), a pair the rules are unsure about goes
