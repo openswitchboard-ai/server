@@ -32,6 +32,17 @@ describe('tool descriptions per family of assistant', () => {
     }
   });
 
+  it('ChatGPT gets its own wording for every tool, with no order-giving capitals', () => {
+    const chat = toolsFor(cfg, 'chatgpt');
+    const base = toolsFor(cfg);
+    expect(chat.map((t) => t.name)).toEqual(base.map((t) => t.name));
+    for (const t of chat) {
+      expect(t.description, t.name).not.toBe(base.find((b) => b.name === t.name)!.description);
+      expect(t.description, t.name).not.toMatch(/\b(NEVER|ALWAYS|ASK|SAY|POST|ONLY|WRITE|REACH)\b/);
+      expect(t.inputSchema).toBe(base.find((b) => b.name === t.name)!.inputSchema);
+    }
+  });
+
   it('a family with no overrides gets the baseline exactly', () => {
     expect(toolsFor(cfg, 'claude')).toEqual(toolsFor(cfg));
     expect(toolsFor(cfg, 'default')).toEqual(toolsFor(cfg));
