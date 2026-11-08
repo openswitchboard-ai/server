@@ -15,6 +15,7 @@ import { authenticate, recordManualVersion, unauthorized, type AuthContext } fro
 import { MANUAL, SERVER_INSTRUCTIONS } from './instructions.js';
 import { dispatchTool, internalError, listedTool, toolsFor } from './tools.js';
 import { settlementsConfigured, type Config } from '../config.js';
+import { familyForClient } from './clientFamilies.js';
 import { ownHumanBlock, suspendedBlock } from './connectFacts.js';
 
 export const OPENAI_APPS_CHALLENGE = 'Gp6zqSgv5COdt2DlFTdPLWlA1aknlGh1TTWdAm4KyyA';
@@ -87,7 +88,7 @@ async function buildMcpServer(
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolsFor(cfg).map(listedTool),
+    tools: toolsFor(cfg, await familyForClient(auth.clientId)).map(listedTool),
   }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     // Which tool was called, and nothing else: no arguments, no account. It is

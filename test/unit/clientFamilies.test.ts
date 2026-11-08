@@ -1,0 +1,53 @@
+import { describe, expect, it } from 'vitest';
+import { baselineHash, DESCRIPTION_OVERRIDES, familyOf } from '../../src/mcp/clientFamilies.js';
+import { TOOLS, toolsFor } from '../../src/mcp/tools.js';
+
+const cfg: any = { sealedContact: true };
+
+describe('tool descriptions per family of assistant', () => {
+  it('tells families apart by redirect host first, then by name', () => {
+    expect(familyOf('Anything', ['https://chatgpt.com/connector/oauth/abc'])).toBe('chatgpt');
+    expect(familyOf('ChatGPT', ['https://example.com/cb'])).toBe('chatgpt');
+    expect(familyOf('Claude', ['https://claude.ai/api/mcp/auth_callback'])).toBe('claude');
+    expect(familyOf('Claude Code (openswitchboard)', ['http://localhost:51234/callback'])).toBe('claude');
+    expect(familyOf('Gemini CLI', ['http://127.0.0.1:7777/cb'])).toBe('gemini');
+    expect(familyOf('Antigravity', ['http://127.0.0.1:7777/cb'])).toBe('gemini');
+    expect(familyOf('OpenClaw', ['http://127.0.0.1:7777/cb'])).toBe('openclaw');
+    expect(familyOf('osb-integration-suite', ['http://127.0.0.1:47391/cb'])).toBe('default');
+    // A name cannot claim a host it does not redirect to.
+    expect(familyOf('Claude', ['https://chatgpt.com/connector/oauth/x'])).toBe('chatgpt');
+  });
+
+  it('every override names a real tool and was written against the baseline served today', () => {
+    const baseline = new Map(TOOLS.map((t) => [t.name, t.description]));
+    for (const [family, overrides] of Object.entries(DESCRIPTION_OVERRIDES)) {
+      for (const [tool, o] of Object.entries(overrides)) {
+        expect(baseline.has(tool), `${family}.${tool}: no such tool`).toBe(true);
+        expect(
+          o.baseline,
+          `${family}.${tool} was written against an older baseline: review it against the new one, then update its hash to ${baselineHash(baseline.get(tool)!)}`,
+        ).toBe(baselineHash(baseline.get(tool)!));
+        expect(o.description.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('a family with no overrides gets the baseline exactly', () => {
+    expect(toolsFor(cfg, 'claude')).toEqual(toolsFor(cfg));
+    expect(toolsFor(cfg, 'default')).toEqual(toolsFor(cfg));
+  });
+
+  it('serves an override only while its baseline is current, and falls back otherwise', () => {
+    const t = TOOLS.find((x) => x.name === 'read_manual')!;
+    const saved = { ...DESCRIPTION_OVERRIDES.gemini };
+    try {
+      DESCRIPTION_OVERRIDES.gemini.read_manual = { baseline: baselineHash(t.description), description: 'Gemini words.' };
+      expect(toolsFor(cfg, 'gemini').find((x) => x.name === 'read_manual')!.description).toBe('Gemini words.');
+      expect(toolsFor(cfg, 'claude').find((x) => x.name === 'read_manual')!.description).toBe(t.description);
+      DESCRIPTION_OVERRIDES.gemini.read_manual = { baseline: 'stale0000000', description: 'Gemini words.' };
+      expect(toolsFor(cfg, 'gemini').find((x) => x.name === 'read_manual')!.description).toBe(t.description);
+    } finally {
+      DESCRIPTION_OVERRIDES.gemini = saved;
+    }
+  });
+});

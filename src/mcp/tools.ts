@@ -40,6 +40,7 @@ import {
   IDENTIFIER_VALUE_MAX_CHARS,
 } from '../domain/identifiers.js';
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
+import { baselineHash, DESCRIPTION_OVERRIDES, type ClientFamily } from './clientFamilies.js';
 import addFormats from 'ajv-formats';
 
 export interface ToolDef {
@@ -1025,7 +1026,30 @@ export const TOOLS: ToolDef[] = [
  * assistant, would try for nothing. A client holding an older list can still
  * call it and is still told payments are off (dispatchTool).
  */
-export function toolsFor(cfg: Pick<Config, 'sealedContact' | 'stripeSecretArn' | 'evidenceBucket'>): ToolDef[] {
+export function toolsFor(
+  cfg: Pick<Config, 'sealedContact' | 'stripeSecretArn' | 'evidenceBucket'>,
+  family: ClientFamily = 'default',
+): ToolDef[] {
+  return forFamily(baselineFor(cfg), family);
+}
+
+/**
+ * A family's own wording, tool by tool (clientFamilies.ts). An override is
+ * served only while the baseline it was written against is the one this
+ * deployment serves; otherwise that tool falls back to the baseline, so a
+ * baseline fix is never hidden behind a stale override.
+ */
+function forFamily(baseline: ToolDef[], family: ClientFamily): ToolDef[] {
+  if (family === 'default') return baseline;
+  const overrides = DESCRIPTION_OVERRIDES[family];
+  if (!Object.keys(overrides).length) return baseline;
+  return baseline.map((t) => {
+    const o = overrides[t.name];
+    return o && o.baseline === baselineHash(t.description) ? { ...t, description: o.description } : t;
+  });
+}
+
+function baselineFor(cfg: Pick<Config, 'sealedContact' | 'stripeSecretArn' | 'evidenceBucket'>): ToolDef[] {
   const listed = settlementsConfigured(cfg as Config) ? TOOLS : TOOLS.filter((t) => t.name !== 'settle');
   if (cfg.sealedContact) return listed;
   return listed.map((t) => {
