@@ -398,7 +398,7 @@ describe('the standing_arrangement tool', () => {
     const t = TOOLS.find((x) => x.name === 'standing_arrangement')!;
     expect(t).toBeTruthy();
     expect(Object.keys(t.inputSchema.properties)).toEqual(['action', 'arrangement']);
-    expect(t.inputSchema.properties.action.enum).toEqual(['get', 'set']);
+    expect(t.inputSchema.properties.action.enum).toEqual(['set']);
     // The description says the two things an agent must know before writing.
     expect(t.description).toMatch(/replaces the whole/i);
     expect(t.description).toMatch(/never pre-approves a gate/i);
