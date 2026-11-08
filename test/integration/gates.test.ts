@@ -236,6 +236,12 @@ d('integration gates against live deployment', () => {
     expect(locked0.isError).toBe(false);
     expect(locked0.result.what_happened).toBe('not_open_yet');
     expect(locked0.result.code).toBe('NOT_UNLOCKED_YET');
+    // Before this side presses, the conversation refusal must not claim
+    // their yes is recorded (Claude directory run, 8 November 2026).
+    const ch0 = await mcpCall(alice.accessToken, 'open_conversation', { intro_id: matchId });
+    expect(ch0.result.code).toBe('NOT_UNLOCKED_YET');
+    expect(ch0.result.human_action).toContain('has not pressed yes');
+    expect(ch0.result.human_action).not.toContain('recorded');
 
     // ONE opt-in (alice) is still not enough. From 2026-09-12 an agent's own
     // opt_in records nothing at all: it is refused with the single-use link its

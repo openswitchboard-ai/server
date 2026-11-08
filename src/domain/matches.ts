@@ -1390,7 +1390,17 @@ export async function buildMutual(
 
 export async function openChannel(matchId: string, accountId: string) {
   const m = await loadOpenMatchFor(matchId, accountId);
-  const optins = await stage3OptinCount(m.id);
+  const { n: optins, mine } = await stage3OptinState(m.id, accountId);
+  if (!mine) {
+    // THIS SIDE HAS NOT PRESSED, so "your human's yes is recorded" would be
+    // false. It was said anyway, to an assistant whose human had not pressed,
+    // and the assistant rightly doubted the switchboard (Claude directory
+    // run, 8 November 2026). Point it back at its own human's page.
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action:
+        'Your human has not pressed yes on their first-name page yet. Hand them that page (respond with request_share_name); the conversation can open once both of them have pressed.',
+    });
+  }
   if (optins < 2 || m.stage < 3) {
     // THIS REFUSAL USED TO SAY NOTHING ABOUT WHAT HAPPENS NEXT. It read "A
     // conversation can open only after both humans opt in to mutual

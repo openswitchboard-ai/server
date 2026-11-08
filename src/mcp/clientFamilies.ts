@@ -23,6 +23,7 @@
 import { createHash } from 'node:crypto';
 import { getPool } from '../db.js';
 import { CHATGPT } from './families/chatgpt.js';
+import { CLAUDE } from './families/claude.js';
 
 export type ClientFamily = 'default' | 'chatgpt' | 'claude' | 'gemini' | 'openclaw';
 
@@ -34,7 +35,7 @@ export interface DescriptionOverride {
 
 export const DESCRIPTION_OVERRIDES: Record<Exclude<ClientFamily, 'default'>, Record<string, DescriptionOverride>> = {
   chatgpt: CHATGPT,
-  claude: {},
+  claude: CLAUDE,
   gemini: {},
   openclaw: {},
 };

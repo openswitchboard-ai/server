@@ -44,8 +44,21 @@ describe('tool descriptions per family of assistant', () => {
   });
 
   it('a family with no overrides gets the baseline exactly', () => {
-    expect(toolsFor(cfg, 'claude')).toEqual(toolsFor(cfg));
+    expect(toolsFor(cfg, 'gemini')).toEqual(toolsFor(cfg));
     expect(toolsFor(cfg, 'default')).toEqual(toolsFor(cfg));
+  });
+
+  it("Claude ends its reply with the link and waits only once the person says they pressed", () => {
+    const base = toolsFor(cfg);
+    const claude = toolsFor(cfg, 'claude');
+    for (const name of ['respond', 'wait_for_press']) {
+      const d = claude.find((x) => x.name === name)!.description;
+      expect(d, name).not.toBe(base.find((b) => b.name === name)!.description);
+      expect(d, name).toContain('folded out of sight');
+    }
+    expect(claude.filter((t) => t.name !== 'respond' && t.name !== 'wait_for_press')).toEqual(
+      base.filter((t) => t.name !== 'respond' && t.name !== 'wait_for_press'),
+    );
   });
 
   it('serves an override only while its baseline is current, and falls back otherwise', () => {
