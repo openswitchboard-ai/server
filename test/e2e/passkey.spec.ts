@@ -81,14 +81,22 @@ test('passkey enrolment: virtual authenticator enrols during registration', asyn
       },
     });
 
+    // Wait for the verify answer itself. The listener above reads the body
+    // after the answer lands, and the page leaves for /consent the moment it
+    // does, so asking the list straight after the navigation could find it
+    // still empty (11 November 2026: failed that way with verify at 200).
+    const verifyAnswer = page.waitForResponse((r) => r.url().endsWith('/passkey/verify'), {
+      timeout: 30_000,
+    });
     await page.getByRole('button', { name: 'Add a passkey' }).click();
+    const answered = await verifyAnswer;
+    expect(
+      answered.status(),
+      `POST /passkey/verify must succeed: ${verifyResponses.map((r) => `${r.status} ${r.body}`).join(' | ')}`,
+    ).toBe(200);
 
     // The page only leaves for /consent when verify answered 2xx.
     await page.waitForURL(/\/consent/, { timeout: 30_000 });
-    expect(
-      verifyResponses.map((r) => `${r.status} ${r.body}`).join(' | '),
-      'POST /passkey/verify must succeed',
-    ).toMatch(/^200 /);
     await expect(page.locator('#pkerr')).toHaveCount(0);
 
     // The credential is really persisted against the account.
