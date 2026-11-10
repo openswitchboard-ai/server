@@ -264,7 +264,9 @@ export async function payHostedCheckout(url: string): Promise<void> {
         .screenshot({ path: `e2e-screenshots/checkout-stuck-${Date.now()}.png`, fullPage: true })
         .catch(() => {});
       const words = await page
-        .evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 1500))
+        .locator('body')
+        .innerText({ timeout: 5_000 })
+        .then((t) => t.replace(/\s+/g, ' ').slice(0, 1500))
         .catch(() => '(the page could not be read)');
       throw new Error(`${(e as Error).message}\nThe checkout page was showing: ${words}`);
     }
