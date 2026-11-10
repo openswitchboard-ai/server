@@ -232,6 +232,11 @@ export async function payHostedCheckout(url: string): Promise<void> {
     await page.fill('#cardExpiry', `12${String(new Date().getFullYear() + 3).slice(2)}`);
     await page.fill('#cardCvc', '123');
     await page.fill('#billingName', 'Bella Buyer').catch(() => {});
+    // The page picks the billing country from where the browser is. A runner
+    // in another country is asked for that country's postcode, and 6160 is an
+    // Australian one. The test buyer is in Australia wherever the suite runs.
+    const country = page.locator('#billingCountry');
+    if (await country.count()) await country.selectOption('AU');
     await page.fill('#billingPostalCode', '6160').catch(() => {});
     // "Save my information for faster checkout" asks for a phone number and
     // blocks the form until it gets one. A test buyer saves nothing.
@@ -243,10 +248,26 @@ export async function payHostedCheckout(url: string): Promise<void> {
     // Stripe sends the buyer on to the success_url once the payment lands.
     // Where that goes afterwards (a sign-in redirect, say) is the counter's
     // business; leaving checkout.stripe.com is the signal that matters.
-    await page.waitForURL((u) => !u.host.endsWith('checkout.stripe.com'), {
-      timeout: 120_000,
-      waitUntil: 'commit',
-    });
+    try {
+      await page.waitForURL((u) => !u.host.endsWith('checkout.stripe.com'), {
+        timeout: 120_000,
+        waitUntil: 'commit',
+      });
+    } catch (e) {
+      // A payment that never leaves the page says nothing on its own (11
+      // November 2026: eleven tests timed out here for a week with no word of
+      // why). Keep what the page was showing: a picture for the run's
+      // artifacts, and the words on it in the error itself.
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync('e2e-screenshots', { recursive: true });
+      await page
+        .screenshot({ path: `e2e-screenshots/checkout-stuck-${Date.now()}.png`, fullPage: true })
+        .catch(() => {});
+      const words = await page
+        .evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 1500))
+        .catch(() => '(the page could not be read)');
+      throw new Error(`${(e as Error).message}\nThe checkout page was showing: ${words}`);
+    }
   } finally {
     await browser.close();
   }
