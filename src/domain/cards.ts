@@ -557,8 +557,14 @@ function assertKindPresent(kind: unknown): void {
  * for a reason: the figure gate below would otherwise read the ask back to the
  * human as "your asking price" on a posting that may not carry one at all.
  */
+//
+// Since 10 November 2026 no number on a best offer is refused for being under
+// the floor (domain/offers.ts, the BEST OFFER note): every one goes to the
+// seller, who weighs it against this floor once the window has closed. The
+// sentence says so, so an assistant never tells its human a low number will
+// be turned away.
 export const FLOOR_IS_PRIVATE_ACTION =
-  'On a best offer the floor is private: nobody is ever shown it, and a number under it is refused before it travels. Take the asking price off this one and give that figure as the floor of the private band in `price` instead, then post it again.';
+  'On a best offer the floor is private: nobody is ever shown it, and every number goes to your human, who weighs each one against it when the window closes. Take the asking price off this one and give that figure as the floor of the private band in `price` instead, then post it again.';
 
 function assertFloorStaysPrivate(card: { sale?: unknown; ask?: unknown }): void {
   // A want cannot carry either field — the schema forbids both on looking_for

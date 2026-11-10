@@ -914,7 +914,8 @@ ${
 }
 <p class="small muted">Whichever way this is set, accepting an offer still
 comes to you on your main page. Auto-negotiate lets your assistant put figures
-on the table between the two you wrote; it never agrees anything.</p>
+on the table between the two you wrote; it never agrees anything. A number on a
+best offer always comes to you to put in yourself.</p>
 <a class="btn secondary" href="/ledger">Back to your wants and haves</a>
 ${cpages.ceremonyScript(c)}`);
 }

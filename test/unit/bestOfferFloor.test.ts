@@ -173,7 +173,10 @@ describe('a best offer carries no asking price', () => {
     // this wrong had been told none of them.
     expect(p.human_action).toMatch(/floor is private/i);
     expect(p.human_action).toMatch(/nobody is ever shown it/i);
-    expect(p.human_action).toMatch(/refused before it travels/i);
+    // Since 10 November 2026 no number is refused for being low: every one
+    // goes to the seller, who weighs them against the floor at the close.
+    expect(p.human_action).toMatch(/every number goes to your human/i);
+    expect(p.human_action).not.toMatch(/refused/i);
     expect(p.human_action).toMatch(/`price`/);
     // Nothing went up, and nothing was written down about the attempt.
     expect(wentUp()).toBe(false);

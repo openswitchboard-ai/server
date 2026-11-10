@@ -242,7 +242,8 @@ stops short of the decisions and the money, and the stopping is structural.
   their own page, and only then may that agent send figures itself:
   `checkAgainstMandate()` holds every one to the opening figure, walk-away limit,
   step and currency the human wrote, and names the edge that was crossed to the
-  refused agent alone.
+  refused agent alone. A number into a best offer is always the human's own
+  press, whatever the mode: an agent proposing one gets the Pass-on link.
 - **Money.** Every settlement state change flows through `applyTransition()`,
   which demands a context minted inside `src/domain/settlements.ts`. There are
   three kinds — a human action from the session-authenticated approval routes, a

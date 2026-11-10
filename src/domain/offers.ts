@@ -122,6 +122,19 @@ export function assertOfferExpiry(raw: unknown): Date {
 export const OFFER_EXPIRED_WORDS =
   'That figure has run out, so there is nothing left to accept. Ask them for another and it can be taken then.';
 
+/**
+ * The sentence every accept path gives where the introduction itself has ended
+ * (10 November 2026). An introduction ends by a decline, a bad-match verdict,
+ * an archive, a posting taken down, a quiet lapse, a best-offer window
+ * closing, a report, or the seller choosing somebody else, and only the last
+ * of those touched the offers on it. So a figure stayed open for the rest of
+ * its own month and could still be taken, writing a consent, emailing both
+ * people a record, and on a best offer turning everybody else away. The accept
+ * now reads the introduction as well as the offer.
+ */
+export const INTRODUCTION_ENDED_WORDS =
+  'This one has ended, so the offer on it can no longer be taken.';
+
 /** True where this offer's own clock has run out. */
 export function offerHasExpired(o: { expiry: Date | string }): boolean {
   const at = new Date(o.expiry).getTime();
@@ -230,7 +243,8 @@ async function answerSameFigure(
  * page is that they wrote it. A figure an agent wants to send has to get past
  * the card's negotiation mode first: refused outright in relay ("Pass on"), and
  * in mandate ("Auto-negotiate") allowed only inside the box the human drew.
- * Everything after that gate — stage, rates, ladder detection — is unchanged
+ * On a best offer it is refused in either mode (10 November 2026): that one
+ * sealed number is always the human's own press. Everything after that gate — stage, rates, ladder detection — is unchanged
  * and applies to both.
  */
 export async function proposeOffer(
@@ -254,9 +268,11 @@ export async function proposeOffer(
       human_action: 'Offers open once the details on this one are open.',
     });
   }
-  // Best offer, if this is one: the floor, the one-number rule and the closed
-  // window, all refused to the side that tried rather than silently dropped.
-  const sealed = await assertBestOfferRules(m, accountId, input);
+  // Best offer, if this is one: the seller's own side, the closed window and
+  // the one-number rule, all refused to the side that tried rather than
+  // silently dropped. There is no floor here any more (10 November 2026): every
+  // number goes to the seller. See the BEST OFFER note below.
+  const sealed = await assertBestOfferRules(m, accountId);
   // HOW LONG A FIGURE STANDS FOR. The expiry was carried straight from the
   // caller and never looked at, so an agent could put up a figure that expired
   // last year — accepted by nobody, and every sweep telling its human a number
@@ -290,7 +306,9 @@ export async function proposeOffer(
     if (input.message && carriesMoneyFigure(input.message)) {
       throw new OsbError('CONSENT_REQUIRED', { human_action: FIGURE_IN_OFFER_NOTE_ACTION });
     }
-    await assertAgentMayPropose(cfg, accountId, m.id, ownCardId(m, accountId), input);
+    await assertAgentMayPropose(cfg, accountId, m.id, ownCardId(m, accountId), input, {
+      bestOffer: sealed,
+    });
   }
   await checkOfferRate(accountId, cfg.quotas);
   // Anti-probing: max 3 offers per side per match per rolling 24h.
@@ -378,7 +396,14 @@ export async function proposeOffer(
   // the other side's agent will find it on its next sweep, and if that agent
   // only wakes when spoken to, "its next sweep" may be days away. So the other
   // human is told by email, when email is how they hear about this.
-  if (author === 'human') await notifyCounterpartyOfHumanOffer(cfg, r.rows[0]);
+  //
+  // NEVER ON A SEALED BEST OFFER (10 November 2026). The email names the
+  // figure, and on a best offer the seller is meant to see every number at
+  // once when the gathering window closes and not one of them before. Every
+  // read of the money keeps that seal (bestOfferSealedFrom); this email did
+  // not, so a seller who hears by email was handed each number as it came in
+  // while the window was still open. A sealed number sends no email at all.
+  if (author === 'human' && !sealed) await notifyCounterpartyOfHumanOffer(cfg, r.rows[0]);
   return serializeOffer(r.rows[0]);
 }
 
@@ -425,11 +450,24 @@ async function assertAgentMayPropose(
   matchId: string,
   cardId: string,
   input: { amount: number; ccy: string; message?: string },
+  opts: { bestOffer?: boolean } = {},
 ): Promise<void> {
   // The mode is read first, and on its own: a card on Pass on is refused
   // without the mandate ever being decrypted, so a refusal costs no audit line
   // and tells an agent nothing about numbers it may not act on.
-  if ((await readNegotiationMode(accountId, cardId)) === 'relay') {
+  //
+  // A BEST OFFER IS ALWAYS THE HUMAN'S OWN PRESS (10 November 2026), whatever
+  // the mode says. It is one sealed number that cannot be revised, and there
+  // is no back-and-forth to work through, so there is nothing for an assistant
+  // to automate: Auto-negotiate is for the haggling on a straight sale. So an
+  // assistant's number into a best offer takes exactly the Pass-on road below,
+  // the human's link for that figure, and the numbers they wrote for
+  // Auto-negotiate are never read here. That also retires a quirk: with an
+  // opening figure written down, the one sealed number had to be that figure.
+  // The best-offer refusals (the seller's own side, a closed window, one number
+  // each) have already run in proposeOffer, so no link is ever handed out for
+  // a number that could never go in.
+  if (opts.bestOffer || (await readNegotiationMode(accountId, cardId)) === 'relay') {
     // The refusal stands whatever happens next; parking the figure the agent
     // was carrying is a courtesy to its human, so a failure to park it must
     // never turn a clean refusal into a 500.
@@ -496,17 +534,22 @@ async function assertAgentMayPropose(
 //   - the seller's agent sees NONE of them until the window closes. A seller
 //     who could watch them arrive would be running an auction too, and would
 //     be tempted to tell somebody where they stood;
-//   - the RESERVE FLOOR is the seller's private band, and a number under it is
-//     refused to the buyer's own agent and never reaches the seller at all.
-//     It used to be the ask, and the refusal used to name it, on the reasoning
-//     that the buyer's side had already been shown it. That was the defect
-//     (dev, 20 September 2026): a seller's reserve was going up as the public
-//     asking price and being read out to the person bidding against it. A best
-//     offer now carries no ask at all (domain/cards.ts), so the floor is read
-//     from the band the matcher reads, and the refusal names no figure —
-//     saying "that is under the floor" tells the buyer only that the floor is
-//     above a number they chose themselves, which is the least that can be
-//     said while still refusing rather than silently dropping;
+//   - the RESERVE FLOOR is the seller's private band. It is never shown to
+//     anybody. Since 20 September 2026 it is no longer the ask (domain/cards.ts:
+//     a seller's reserve was going up as the public asking price and being
+//     read out to the person bidding against it), so it lives only in the band
+//     the matcher reads;
+//
+//   - EVERY NUMBER GOES IN, under the floor or over it (10 November 2026). A
+//     number under the floor used to be refused and never reached the seller.
+//     That cost the seller twice. A $19 number on a $20 floor, the only one in,
+//     was thrown away when the seller might well have taken it, and the best
+//     offer is the seller's to judge. And the two answers, refused under and
+//     taken over, let a buyer's assistant find the private floor by trying
+//     numbers. With no number ever refused for being low, there is nothing to
+//     find, and the floor is not read at all when a number is put in. It is
+//     read once the window has closed, for the seller's side only, so their
+//     assistant can say which numbers are under it (bestOfferResult);
 
 //   - a number after the close is refused. A buyer who put none by the close
 //     is filed away the way a lapsed slot is.
@@ -560,29 +603,29 @@ export async function bestOfferSealedFrom(matchId: string, accountId: string): P
  * encrypted on the row and decrypted only inside the engine (domain/cards.ts
  * for the refusal that keeps it out of `ask`, domain/matcher.ts for the other
  * reader of the same field). So this reads the band, under the seller's own
- * key, with an audit line written for it exactly as the matcher's read is.
+ * key, with an audit line written for it exactly as the matcher's read is. A
+ * row that still carries an ask (a best offer posted before that rule) has its
+ * ask as the floor.
  *
- * `disclosed` says whether the figure it found is one the buyer has already
- * been shown. It is true only for a row that still carries an ask — a best
- * offer posted before the rule — and it decides nothing except whether the
- * refusal may say the number out loud.
+ * ONE READER, AND ONLY AFTER THE CLOSE (10 November 2026). It used to be read
+ * every time a buyer put a number in, to refuse one under it. Nothing is
+ * refused for being low now, so its only reader is bestOfferResult: the
+ * seller's own side, once the window has closed. Nobody with a declared
+ * ceiling under this floor is introduced in the first place (matchRules.ts
+ * evaluatePrice is still a hard gate), so a number under it comes from a buyer
+ * going under their own stated ceiling, or from one who stated none.
  *
- * Nobody with a declared ceiling under this floor is introduced in the first
- * place (matchRules.ts evaluatePrice is a hard gate), so this door fires for a
- * buyer offering under their own stated ceiling, and never as a surprise to
- * somebody the switchboard should not have put here.
- *
- * Best-effort on the decrypt, and it fails OPEN: a band that cannot be read is
- * no floor rather than a refusal, because a seller whose key is briefly
- * unreadable should not have a buyer's one sealed number turned away. The
- * seller still sees every number when the window closes and still chooses.
+ * Best-effort on the decrypt, and it fails SOFT: a band that cannot be read is
+ * no floor, and the seller is shown their numbers exactly as they would be
+ * with no floor set.
  */
-async function bestOfferFloor(
-  sale: SaleRow,
-): Promise<{ amount: number; ccy: string; disclosed: boolean } | undefined> {
+async function bestOfferFloor(sale: {
+  card_id: string;
+  ask: { amount: number; ccy: string } | null;
+}): Promise<{ amount: number; ccy: string } | undefined> {
   const ask = sale.ask;
-  if (ask && Number.isFinite(ask.amount)) {
-    return { amount: Number(ask.amount), ccy: String(ask.ccy).toUpperCase(), disclosed: true };
+  if (ask && Number.isFinite(Number(ask.amount))) {
+    return { amount: Number(ask.amount), ccy: String(ask.ccy).toUpperCase() };
   }
   try {
     const r = await getPool().query(
@@ -606,9 +649,9 @@ async function bestOfferFloor(
     const band = JSON.parse(f.price) as { band?: { min?: unknown }; ccy?: unknown };
     const min = band?.band?.min;
     if (typeof min !== 'number' || !Number.isFinite(min) || min <= 0) return undefined;
-    return { amount: min, ccy: String(band.ccy ?? '').toUpperCase(), disclosed: false };
+    return { amount: min, ccy: String(band.ccy ?? '').toUpperCase() };
   } catch {
-    // See the note above: unreadable is no floor, never a refusal.
+    // See the note above: unreadable is no floor.
     return undefined;
   }
 }
@@ -618,7 +661,6 @@ async function bestOfferFloor(
 async function assertBestOfferRules(
   m: { id: string; account_have: string; account_want: string },
   accountId: string,
-  input: { amount: number; ccy: string },
 ): Promise<boolean> {
   const sale = await saleOf(m.id);
   if (!sale || sale.sale !== 'best-offer') return false;
@@ -633,20 +675,12 @@ async function assertBestOfferRules(
       human_action: 'The window on this has closed.',
     });
   }
-  const floor = await bestOfferFloor(sale);
-  if (floor) {
-    const sameCcy = String(input.ccy).toUpperCase() === String(floor.ccy).toUpperCase();
-    if (!sameCcy || Number(input.amount) < Number(floor.amount)) {
-      throw new OsbError('NOT_UNLOCKED_YET', {
-        human_action: floor.disclosed
-          ? // A figure that is already on the other side's screen. Naming it
-            // back discloses nothing new, and only rows posted before a best
-            // offer stopped carrying an ask can reach this.
-            `That is below the floor on this one: the asking price is ${floor.amount} ${floor.ccy}, and a number under it is not carried.`
-          : 'That is below the floor on this one, so it has not been carried. The floor is the seller’s own and is never shown to anybody. Ask your human whether they would go higher, and send the number they give you; if they would not, there is nothing to send here.',
-      });
-    }
-  }
+  // NO FLOOR HERE (10 November 2026). A number under the seller's floor goes
+  // in like any other and the seller sees it when the window closes; see the
+  // BEST OFFER note above. The floor is not read on this path at all, so the
+  // answer to a buyer is the same whatever the number is. A number in another
+  // currency goes in too, as it was typed: nothing is ever converted, and the
+  // seller sees each number with its own currency beside it.
   const prior = await getPool().query(
     `SELECT 1 FROM offers
       WHERE match_id = $1 AND proposer_account = $2 AND state <> 'withdrawn' LIMIT 1`,
@@ -683,7 +717,33 @@ export interface BestOfferLine {
   timing: string;
   /** 'well established' | 'getting started' */
   reliability: string;
+  /**
+   * Whether this number is under the lowest price the seller set (10 November
+   * 2026). The SELLER'S side only, and only once the window has closed: it is
+   * on this result and nowhere else. A yes or no and never the floor itself,
+   * because the owner's own reads do not hand their assistant that figure back
+   * either (domain/cards.ts, the own-posting view). Absent where the floor
+   * cannot be read, where none was set, or where the number is in another
+   * currency, since nothing is ever converted.
+   */
+  under_floor?: boolean;
 }
+
+/**
+ * The sentence for the seller's assistant when the best number is under the
+ * floor (10 November 2026). Every number now reaches the seller, so this is
+ * the moment the floor is for: "you only got one, and it is a dollar under
+ * your lowest; take it or keep waiting?" The choices it names are the ones
+ * that exist. A window opens once on a posting and never again
+ * (sequencer.ts, openGatheringWindow), and a buyer cannot put a number in once
+ * it has closed, so waiting brings no new numbers here. Leaving them is a real
+ * choice (each stands until its own time runs out), and so is taking the
+ * posting down and putting it up again, which opens a new window.
+ */
+export const bestOfferUnderFloorNote = (n: number): string =>
+  `${n === 1 ? 'That number is' : 'The best of these is'} under the lowest price your human set. ` +
+  `It is still their choice: they can take ${n === 1 ? 'it' : 'one'} anyway, or leave ${n === 1 ? 'it' : 'them'}. ` +
+  'This window will not open again, so for fresh numbers they would take this down and post it again.';
 
 const distanceBand = (km: number | null): string => {
   if (km === null) return 'not local';
@@ -704,7 +764,7 @@ export async function bestOfferResult(
   accountId: string,
 ): Promise<{ offers: BestOfferLine[]; note: string } | undefined> {
   const c = await getPool().query(
-    `SELECT id, account_id, sale, category, geo_lat, geo_lon, gather_until, gather_closed_at
+    `SELECT id, account_id, sale, category, geo_lat, geo_lon, gather_until, gather_closed_at, ask
        FROM cards WHERE id = $1`,
     [cardId],
   );
@@ -712,7 +772,7 @@ export async function bestOfferResult(
   if (!card || card.account_id !== accountId || card.sale !== 'best-offer') return undefined;
   if (!card.gather_until || new Date(card.gather_until) > new Date()) return undefined;
   const r = await getPool().query(
-    `SELECT o.id, o.match_id, o.amount, o.ccy, o.message,
+    `SELECT o.id, o.match_id, o.amount, o.ccy, o.message, o.state,
             w.urgency AS want_urgency, w.geo_lat AS want_lat, w.geo_lon AS want_lon,
             COALESCE(rep.score, 0.5) AS reliability
        FROM offers o
@@ -724,6 +784,10 @@ export async function bestOfferResult(
     [cardId],
   );
   if (!r.rowCount) return undefined;
+  // The seller's own floor, read only here: past the owner check and past the
+  // close, so it can never reach a buyer or arrive early. Fails soft, and an
+  // unreadable floor leaves the result exactly as it was before this.
+  const floor = await bestOfferFloor({ card_id: card.id, ask: card.ask ?? null });
   const { haversineKm } = await import('../geo/geohash.js');
   const offers: BestOfferLine[] = (r.rows as any[]).map((o) => {
     const placed =
@@ -747,8 +811,19 @@ export async function bestOfferResult(
       ),
       timing: timingBand(o.want_urgency),
       reliability: Number(o.reliability) >= 0.5 ? 'well established' : 'getting started',
+      ...(floor && String(o.ccy).toUpperCase() === floor.ccy
+        ? { under_floor: Number(o.amount) < floor.amount }
+        : {}),
     };
   });
+  // The note is said only where it is true of the best number: every number
+  // could be weighed against the floor and none reaches it. A number in
+  // another currency cannot be weighed, so its presence says nothing here.
+  // Once one has been taken, the choice is made and there is nothing to say.
+  const allUnder =
+    !!floor &&
+    !(r.rows as any[]).some((o) => o.state === 'accepted-by-human') &&
+    offers.every((o) => o.under_floor === true);
   // The category as a person says it mid-sentence, from the taxonomy itself.
   const { categoryPhrase } = await import('./matchRules.js');
   const thing = categoryPhrase(card.category);
@@ -758,7 +833,8 @@ export async function bestOfferResult(
     note:
       `${n === 1 ? 'One person has' : `${n} people have`} put a number on your ${thing}; ` +
       `here ${n === 1 ? 'it is' : 'they are, best first'}. It is your human's choice. ` +
-      'Say the word and I will fetch their link to accept one.',
+      'Say the word and I will fetch their link to accept one.' +
+      (allUnder ? ` ${bestOfferUnderFloorNote(offers.length)}` : ''),
   };
 }
 
@@ -911,6 +987,11 @@ export async function agentOfferAction(
 
   // send_to_human: the sole agent-reachable "accept-direction" state.
   if (o.state !== 'proposed') throw new OsbError('NOT_UNLOCKED_YET');
+  // Nothing is parked for a human on an introduction that has ended: the
+  // accept behind it would be refused (INTRODUCTION_ENDED_WORDS).
+  if (m.state !== 'open') {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
+  }
   if (new Date(o.expiry) < new Date()) throw new OsbError('NOT_UNLOCKED_YET');
   const r = await getPool().query(
     `UPDATE offers SET state='awaiting-human', updated_at=now() WHERE id=$1 RETURNING *`,
@@ -1003,6 +1084,11 @@ export async function acceptOfferByHuman(
   if (!m) throw new Error('introduction missing');
   const side = sideOf(m, humanAccountId);
   void side;
+  // THE INTRODUCTION, AS WELL AS THE OFFER (10 November 2026): see
+  // INTRODUCTION_ENDED_WORDS. Refused here early, and again under the lock.
+  if (m.state !== 'open') {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
+  }
   if (o.proposer_account === humanAccountId) {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: 'This is your own side\'s offer. Only the other person can accept it.',
@@ -1036,6 +1122,15 @@ export async function acceptOfferByHuman(
     const again = await client.query('SELECT * FROM offers WHERE id = $1', [offerId]);
     const current: OfferRow = again.rows[0] ?? o;
     stillOpen(current);
+    // And the introduction again, read with a share lock on its row. None of
+    // the ways an introduction ends takes the lock above, so this read is what
+    // settles the race: an ending that committed first is seen here, and one
+    // that comes after waits for this accept to finish, so an offer is never
+    // taken on an introduction that has already ended.
+    const intro = await client.query('SELECT state FROM matches WHERE id = $1 FOR SHARE', [m.id]);
+    if ((intro.rows[0] ?? m).state !== 'open') {
+      throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
+    }
     // The lines the seller's page listed, confirmed by this same press. It
     // throws where one is waiting that the page never showed.
     await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);

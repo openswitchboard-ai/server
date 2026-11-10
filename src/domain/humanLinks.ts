@@ -278,7 +278,8 @@ export async function acceptNumberLink(
 ): Promise<HumanLink> {
   if (!offerId) throw Object.assign(new Error('which number?'), { validation: true });
   const r = await getPool().query(
-    `SELECT o.*, m.category, m.account_want, m.account_have, m.card_want, m.card_have FROM offers o
+    `SELECT o.*, m.category, m.account_want, m.account_have, m.card_want, m.card_have,
+            m.state AS match_state FROM offers o
      JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
     [offerId],
   );
@@ -299,6 +300,12 @@ export async function acceptNumberLink(
           ? 'That figure has already been accepted.'
           : 'That figure is no longer on the table.',
     });
+  }
+  // And the introduction it is on (10 November 2026): a page to accept a
+  // figure on one that has ended is a page whose press would be refused.
+  const { INTRODUCTION_ENDED_WORDS } = await import('./offers.js');
+  if (o.match_state && o.match_state !== 'open') {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
   }
   // And its own clock, refused HERE rather than at the press: minting a page
   // for a human to accept something that has already run out is a page nobody

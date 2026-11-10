@@ -32,6 +32,7 @@ vi.mock('../../src/crypto.js', async (orig) => ({
   writeDecryptAudit: vi.fn(async () => 'decrypt-audit/x'),
 }));
 
+import { decryptFields } from '../../src/crypto.js';
 import * as db from '../../src/db.js';
 import * as matches from '../../src/domain/matches.js';
 import * as offers from '../../src/domain/offers.js';
@@ -393,6 +394,7 @@ function fakePool() {
             geo_lon: 0,
             gather_until: world.gatherUntil,
             gather_closed_at: world.gatherClosedAt,
+            ask: world.ask,
           },
         ]);
       }
@@ -458,6 +460,7 @@ function fakePool() {
               amount: o.amount,
               ccy: o.ccy,
               message: o.message,
+              state: o.state,
               want_urgency: 'none',
               want_lat: 0,
               want_lon: world.away[o.proposer_account] ?? 0,
@@ -767,42 +770,27 @@ describe('best offer: one sealed number each', () => {
     expect(world.intros.filter((i) => i.live)).toHaveLength(3);
   });
 
-  it('refuses a number under the ask, to the buyer and to nobody else', async () => {
-    await expect(send(1, 400)).rejects.toMatchObject({
-      payload: { code: 'NOT_UNLOCKED_YET' },
-    });
-    await expect(send(1, 400)).rejects.toMatchObject({
-      payload: { human_action: expect.stringContaining('below the floor') },
-    });
-    expect(world.offers).toHaveLength(0);
+  /**
+   * EVERY NUMBER GOES IN (10 November 2026). A number under the floor used to
+   * be refused and never reached the seller, which threw away numbers the
+   * seller might have taken and let a buyer's assistant find the floor by
+   * trying. Now it goes in like any other, and the floor is not read at all
+   * while a number is put in.
+   */
+  it('takes a number under a best offer that still shows an asking price', async () => {
+    await send(1, 400);
+    expect(world.offers).toHaveLength(1);
   });
 
-  /**
-   * THE FLOOR IS THE PRIVATE RESERVE NOW (dev, 20 September 2026). It used to
-   * be the ask, which meant a seller's reserve went up as the posting's public
-   * asking price and was read out to the person bidding against it. A best
-   * offer carries no ask at all since then (domain/cards.ts), so the floor is
-   * read from the sealed band — and the refusal names no figure, because this
-   * one has never been shown to anybody.
-   */
   describe('with no ask on it, which is every best offer now', () => {
     beforeEach(() => {
       world.ask = null;
       world.reserve = { min: 420, ccy: 'AUD' };
     });
 
-    it('refuses a number under the sealed reserve without saying what it is', async () => {
-      await expect(send(1, 400)).rejects.toMatchObject({
-        payload: { code: 'NOT_UNLOCKED_YET' },
-      });
-      const e: any = await send(1, 400).catch((x) => x);
-      expect(e.payload.human_action).toContain('below the floor');
-      expect(e.payload.human_action).toContain('never shown');
-      // The one thing it must not do: say the seller's number back.
-      expect(e.payload.human_action).not.toMatch(/420/);
-      expect(e.payload.human_action.length).toBeLessThanOrEqual(300);
-      expect(lintHumanCopy(e.payload.human_action)).toEqual([]);
-      expect(world.offers).toHaveLength(0);
+    it('takes a number under the sealed reserve like any other', async () => {
+      await send(1, 400);
+      expect(world.offers).toHaveLength(1);
     });
 
     it('takes a number that meets it', async () => {
@@ -814,6 +802,20 @@ describe('best offer: one sealed number each', () => {
       world.reserve = null;
       await send(1, 5);
       expect(world.offers).toHaveLength(1);
+    });
+
+    it('answers the buyer the same over the floor as under it', async () => {
+      const under: any = await send(1, 400);
+      const over: any = await send(2, 500);
+      expect(Object.keys(under).sort()).toEqual(Object.keys(over).sort());
+      expect(under.state).toBe(over.state);
+    });
+
+    it('does not read the floor while a number is put in', async () => {
+      vi.mocked(decryptFields).mockClear();
+      await send(1, 400);
+      const purposes = vi.mocked(decryptFields).mock.calls.map((c: any[]) => c[3]?.purpose);
+      expect(purposes).not.toContain('best-offer-floor');
     });
   });
 
@@ -907,6 +909,96 @@ describe('best offer: one sealed number each', () => {
     world.gatherUntil = new Date(Date.now() - 1000);
     await sequencer.closeDueGatherings();
     expect(await offers.bestOfferResult(HAVE, buyer(1))).toBeUndefined();
+  });
+
+  /**
+   * THE FLOOR AT THE CLOSE, FOR THE SELLER'S SIDE (10 November 2026). Every
+   * number now reaches the seller, so the floor is what their assistant needs
+   * to say "the only one in is a dollar under your lowest; take it or leave
+   * it?". A yes or no per number, a sentence when the best is under, and
+   * none of it anywhere a buyer reads or before the window closes.
+   */
+  describe('the floor, weighed for the seller once it has closed', () => {
+    const close = async () => {
+      world.gatherUntil = new Date(Date.now() - 1000);
+      await sequencer.closeDueGatherings();
+    };
+    beforeEach(() => {
+      world.ask = null;
+      world.reserve = { min: 420, ccy: 'AUD' };
+    });
+
+    it('says the best number is under the floor, and leaves the choice with the human', async () => {
+      await send(1, 419);
+      await close();
+      const result = (await offers.bestOfferResult(HAVE, SELLER))!;
+      expect(result.offers.map((o) => o.under_floor)).toEqual([true]);
+      expect(result.note).toContain(offers.bestOfferUnderFloorNote(1));
+      // No figure of the floor's, and nothing the copy rules refuse.
+      expect(result.note).not.toContain('420');
+      expect(lintHumanCopy(offers.bestOfferUnderFloorNote(1))).toEqual([]);
+      expect(lintHumanCopy(offers.bestOfferUnderFloorNote(3))).toEqual([]);
+      expect(BANNED.test(result.note)).toBe(false);
+      // And the seller's own sweep carries it.
+      const sweep = await matches.checkMatches(cfg, SELLER);
+      const said = JSON.stringify(sweep);
+      expect(said).toContain('under the lowest price your human set');
+    });
+
+    it('marks each number and says nothing more where the best meets the floor', async () => {
+      await send(1, 420);
+      await send(2, 300);
+      await close();
+      const result = (await offers.bestOfferResult(HAVE, SELLER))!;
+      expect(result.offers.map((o) => [o.amount, o.under_floor])).toEqual([
+        [420, false],
+        [300, true],
+      ]);
+      expect(result.note).not.toContain('lowest price');
+    });
+
+    it('says nothing of it before the window closes', async () => {
+      await send(1, 300);
+      expect(await offers.bestOfferResult(HAVE, SELLER)).toBeUndefined();
+      const said = JSON.stringify(await matches.checkMatches(cfg, SELLER));
+      expect(said).not.toMatch(/under_floor|lowest price/);
+    });
+
+    it('says nothing of it to a buyer, by any read they have', async () => {
+      await send(1, 300);
+      await close();
+      expect(await offers.bestOfferResult(HAVE, buyer(1))).toBeUndefined();
+      const sweep = JSON.stringify(await matches.checkMatches(cfg, buyer(1)));
+      expect(sweep).not.toMatch(/under_floor|lowest price|floor/i);
+      const table = JSON.stringify(await offers.offerTable(buyer(1), introId(1)));
+      expect(table).not.toMatch(/under_floor/);
+    });
+
+    it('shows the numbers as before where the floor cannot be read', async () => {
+      await send(1, 300);
+      await close();
+      vi.mocked(decryptFields).mockRejectedValueOnce(new Error('key unreadable'));
+      const result = (await offers.bestOfferResult(HAVE, SELLER))!;
+      expect(result.offers[0]).not.toHaveProperty('under_floor');
+      expect(result.note).not.toContain('lowest price');
+    });
+
+    it('weighs nothing in another currency, and says nothing for it', async () => {
+      await send(1, 300);
+      world.offers[0].ccy = 'USD';
+      await close();
+      const result = (await offers.bestOfferResult(HAVE, SELLER))!;
+      expect(result.offers[0]).not.toHaveProperty('under_floor');
+      expect(result.note).not.toContain('lowest price');
+    });
+
+    it('says nothing once one has been taken', async () => {
+      await send(1, 300);
+      await close();
+      world.offers[0].state = 'accepted-by-human';
+      const result = (await offers.bestOfferResult(HAVE, SELLER))!;
+      expect(result.note).not.toContain('lowest price');
+    });
   });
 
   it('accepting one declines the rest, who are told only that it went elsewhere', async () => {
