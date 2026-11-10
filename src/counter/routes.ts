@@ -1358,12 +1358,17 @@ in on this device and lets you approve what is waiting.</p>
       const challenge = await sess.takeWebauthnChallenge(s.id);
       if (!challenge) return reply.code(400).send({ error: 'no_pending_challenge' });
       const had = await holdsCredential(s.accountId!);
-      await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
+      const enrolledId = await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
       // A successful passkey ceremony is a sensitive-action ceremony, and
       // enrolling one is a ceremony too: the device just checked the person.
       // Fitted inside a recovery hold, it counts only as the recovery does.
-      const enrolledId = typeof (req.body as any)?.id === 'string' ? (req.body as any).id : '';
-      const enrolledHeld = enrolledId ? await passkeyHeldUntil(s.accountId!, enrolledId) : undefined;
+      // The hold is looked up by the id verifyRegistration verified and stored,
+      // never by the body's `id`: a body naming some other id found no hold and
+      // got the full window inside the recovery (10 November 2026). And it
+      // fails closed: while the account's recovery hold stands, an enrolment
+      // opens only the weaker window even if its own hold cannot be found.
+      const enrolledHeld =
+        (await passkeyHeldUntil(s.accountId!, enrolledId)) ?? (await pinHeldUntil(s.accountId!));
       await sess.elevateSession(s.id, PIN_ELEVATION_MINUTES, enrolledHeld ? 'code' : 'passkey');
       if (had) {
         const email = await ops.accountEmail(s.accountId!, 'security-notice');

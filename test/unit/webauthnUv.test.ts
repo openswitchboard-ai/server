@@ -73,3 +73,40 @@ describe('what the answer has to show', () => {
     expect(call.requireUserVerification).toBe(true);
   });
 });
+
+describe('which credential an enrolment is (10 November 2026)', () => {
+  const verified = (id: string) =>
+    vi.mocked(swa.verifyRegistrationResponse).mockResolvedValueOnce({
+      verified: true,
+      registrationInfo: { credential: { id, publicKey: new Uint8Array([1]), counter: 0, transports: [] } },
+    } as any);
+
+  it('is the id in the signed authenticator data, not the body\'s id', async () => {
+    const stored: any[] = [];
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (_sql: string, params: any[]) => {
+        stored.push(params[0]);
+        return { rows: [{ credential_id: params[0] }], rowCount: 1 };
+      },
+    } as any);
+    verified('attested');
+    const id = await wa.verifyRegistration(cfg, ACCOUNT, 'c', { id: 'decoy', rawId: 'decoy' });
+    expect(id).toBe('attested');
+    expect(stored).toEqual(['attested']);
+  });
+
+  it('an id already on file is refused, not counted as that passkey', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue(emptyPool());
+    verified('somebody-elses');
+    await expect(wa.verifyRegistration(cfg, ACCOUNT, 'c', { id: 'x', rawId: 'x' })).rejects.toThrow(
+      /already enrolled/,
+    );
+  });
+
+  it('an assertion with no string id is refused before any lookup', async () => {
+    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+    vi.spyOn(db, 'getPool').mockReturnValue({ query } as any);
+    await expect(wa.verifyAuthentication(cfg, 'c', { id: 123 })).rejects.toThrow(/unknown passkey/);
+    expect(query).not.toHaveBeenCalled();
+  });
+});

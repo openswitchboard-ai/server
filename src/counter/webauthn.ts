@@ -70,7 +70,7 @@ export async function verifyRegistration(
   accountId: string,
   expectedChallenge: string,
   response: any,
-): Promise<void> {
+): Promise<string> {
   const v = await verifyRegistrationResponse({
     response,
     expectedChallenge,
@@ -83,10 +83,18 @@ export async function verifyRegistration(
   });
   if (!v.verified || !v.registrationInfo) throw new Error('passkey registration not verified');
   const cred = v.registrationInfo.credential;
-  await getPool().query(
+  // The id that counts is the one inside the signed authenticator data, which
+  // is what gets stored — never the `id` the request body carries, which the
+  // library only checks against `rawId`, so a caller can set both to anything
+  // (10 November 2026). And an id that is already on file enrols nothing: with
+  // 'none' attestation anybody can claim any credential id (this account's own
+  // ids are handed out in excludeCredentials), so a conflict must not let the
+  // ceremony count as the old passkey — or as somebody else's. It is refused.
+  const ins = await getPool().query(
     `INSERT INTO webauthn_credentials (credential_id, account_id, public_key, sign_count, transports)
      VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (credential_id) DO NOTHING`,
+     ON CONFLICT (credential_id) DO NOTHING
+     RETURNING credential_id`,
     [
       cred.id,
       accountId,
@@ -95,6 +103,8 @@ export async function verifyRegistration(
       JSON.stringify(cred.transports ?? []),
     ],
   );
+  if (!ins.rowCount) throw new Error('passkey already enrolled');
+  return cred.id;
 }
 
 export async function authenticationOptions(cfg: Config) {
@@ -117,6 +127,10 @@ export async function verifyAuthentication(
   expectedChallenge: string,
   response: any,
 ): Promise<string> {
+  // The id looked up here is the id the signature is then checked against, so
+  // it is the credential actually verified; a non-string id is refused rather
+  // than left to the driver to coerce (10 November 2026).
+  if (typeof response?.id !== 'string') throw new Error('unknown passkey');
   const r = await getPool().query('SELECT * FROM webauthn_credentials WHERE credential_id = $1', [
     response.id,
   ]);

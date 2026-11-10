@@ -43,6 +43,18 @@ vi.mock('../../src/counter/webauthn.js', async (orig) => ({
   registrationOptions: vi.fn(async () => ({ challenge: 'chal-2', user: { id: 'u' } })),
 }));
 
+// Enrolment runs the real verifyRegistration against a library that answers
+// with whatever credential id the signed authenticator data is meant to carry.
+vi.mock('@simplewebauthn/server', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  verifyRegistrationResponse: vi.fn(async () => ({
+    verified: true,
+    registrationInfo: {
+      credential: { id: world.attestedId, publicKey: new Uint8Array([1, 2, 3]), counter: 0, transports: [] },
+    },
+  })),
+}));
+
 import { buildApp } from '../../src/app.js';
 import { sendSecurityNoticeEmail } from '../../src/counter/email.js';
 import { hashPin } from '../../src/counter/pin.js';
@@ -99,6 +111,10 @@ interface World {
   links: any[];
   /** Credential ids fitted while a recovery hold stood. */
   passkeysFittedInHold: string[];
+  /** The credential id inside the signed authenticator data of an enrolment. */
+  attestedId: string;
+  /** Credential ids already on file, for any account. */
+  credentialsOnFile: string[];
 }
 let world: World;
 let pinHash: string;
@@ -142,6 +158,12 @@ function fakePool() {
       if (s.startsWith('SELECT a.pin_money_from FROM accounts a JOIN webauthn_credentials')) {
         const fitted = world.passkeysFittedInHold.includes(params[1]);
         return rows(fitted && world.pinMoneyFrom && world.pinMoneyFrom > new Date() ? [{ pin_money_from: world.pinMoneyFrom }] : []);
+      }
+      if (s.startsWith('INSERT INTO webauthn_credentials')) {
+        if (world.credentialsOnFile.includes(params[0])) return rows([]);
+        world.credentialsOnFile.push(params[0]);
+        if (world.pinMoneyFrom && world.pinMoneyFrom > new Date()) world.passkeysFittedInHold.push(params[0]);
+        return rows([{ credential_id: params[0] }]);
       }
       if (s.startsWith('SELECT pin_money_from FROM accounts')) {
         return rows([{ pin_money_from: world.pinMoneyFrom }]);
@@ -240,6 +262,8 @@ beforeEach(() => {
     settlementApproved: false,
     links: [],
     passkeysFittedInHold: [],
+    attestedId: 'attested-key',
+    credentialsOnFile: ['old-key'],
   };
   pinAttemptLimiter.reset();
   anonymousSessionLimiter.reset();
@@ -422,6 +446,62 @@ describe('a passkey fitted while a recovered PIN waits', () => {
     world.signedIn = true;
     const k = await post('/agent-keys', { name: 'laptop', pin: '' });
     expect(k.statusCode).not.toBe(200);
+  });
+
+  // 10 November 2026: the hold was looked up by the body's `id`, which the
+  // library only checks against `rawId`. A body naming some other id found no
+  // hold, and the new passkey opened the full window inside the recovery.
+  const enrol = (body: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/passkey/verify',
+      headers: { host: 'my.test', 'content-type': 'application/json', cookie: '__Host-osb_counter=osb_cs_x' },
+      payload: JSON.stringify(body),
+    });
+
+  it('enrolling it opens only the weaker window', async () => {
+    const r = await enrol({ id: 'attested-key', rawId: 'attested-key' });
+    expect(r.statusCode).toBe(200);
+    expect(world.elevatedVia).toBe('code');
+  });
+
+  it('a body naming some other id still opens only the weaker window', async () => {
+    const r = await enrol({ id: 'decoy', rawId: 'decoy' });
+    expect(r.statusCode).toBe(200);
+    expect(world.credentialsOnFile).toContain('attested-key');
+    expect(world.elevatedVia).toBe('code');
+  });
+
+  it('fails closed: while the hold stands, a passkey whose own hold is not found is still weaker', async () => {
+    // The enrolment is not recorded as held (say, a clock edge); the
+    // account's recovery hold is still enough to keep the window weak.
+    world.passkeysFittedInHold = [];
+    world.pinMoneyFrom = new Date(Date.now() + 3_600_000);
+    const insertOnlyPool = fakePool();
+    const q = insertOnlyPool.query;
+    insertOnlyPool.query = async (sql: string, params: any[] = []) => {
+      const r = await q(sql, params);
+      world.passkeysFittedInHold = [];
+      return r;
+    };
+    vi.spyOn(db, 'getPool').mockReturnValue(insertOnlyPool);
+    const r = await enrol({ id: 'attested-key', rawId: 'attested-key' });
+    expect(r.statusCode).toBe(200);
+    expect(world.elevatedVia).toBe('code');
+  });
+
+  it('an id already on file enrols nothing and opens nothing, this account or another', async () => {
+    world.attestedId = 'old-key';
+    const r = await enrol({ id: 'old-key', rawId: 'old-key' });
+    expect(r.statusCode).not.toBe(200);
+    expect(world.elevatedVia).toBe('code');
+  });
+
+  it('outside a hold, a new passkey opens the full window as before', async () => {
+    world.pinMoneyFrom = null;
+    const r = await enrol({ id: 'decoy', rawId: 'decoy' });
+    expect(r.statusCode).toBe(200);
+    expect(world.elevatedVia).toBe('passkey');
   });
 
   it('a passkey held before the recovery is untouched', async () => {
