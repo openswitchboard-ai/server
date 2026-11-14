@@ -93,6 +93,7 @@ import {
   oneObjectDetailSentence,
   ownIdentifiers,
   readIdentifiers,
+  sharesIdentifier,
   type Identifier,
 } from './identifiers.js';
 import {
@@ -246,6 +247,13 @@ export interface ItemRefusal {
   reason: ItemRefusalReason;
   /** The one move that fixes it, in plain words. */
   fix: string;
+  /**
+   * On a list sent again with replace: the item already up that this line
+   * stands for. It stays up exactly as it was, with anyone who came forward
+   * on it, and is not taken down for the line being turned away.
+   */
+  intent_id?: string;
+  still_up?: true;
 }
 
 export const ITEM_FIXES = {
@@ -507,11 +515,14 @@ export function readListItem(
 // The rules, in order:
 //
 //   1. BY IDENTIFIER. A new item that carries identifiers is matched to an
-//      item already up that shares one of them, compared in every form an
-//      identifier is compared in (domain/identifiers.ts identifierNorms).
-//      Where several share it — two of the same product in different
-//      condition — the one whose name and details also agree is taken first,
-//      then the oldest.
+//      item already up that shares one of them (domain/identifiers.ts
+//      sharesIdentifier) AND whose name agrees (namesAgree): the same words
+//      once folded, or every word of one among the other's, as when a tidier
+//      name adds a word. A shared identifier under two different names is
+//      never enough to hand one item's posting, and the people who came
+//      forward on it, to another. Where several qualify — two of the same
+//      product in different condition — the one whose name and details also
+//      agree is taken first, then the oldest.
 //   2. BY NAME AND DETAILS. Otherwise, an item already up whose name and
 //      details agree once normalised (case, accents, punctuation and spacing
 //      folded; the quantity, the deal and the price left out, because those
@@ -571,22 +582,37 @@ export interface NewItem {
   attributes: Record<string, unknown>;
 }
 
+/**
+ * Do two item names say the same thing? The same words once folded (case,
+ * accents, punctuation, spacing), or every word of one among the words of the
+ * other ("shifter" and "right shifter"). Pure.
+ */
+export function namesAgree(a: unknown, b: unknown): boolean {
+  const x = foldText(a);
+  const y = foldText(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const xs = x.split(' ');
+  const ys = y.split(' ');
+  const [shorter, longer] = xs.length <= ys.length ? [xs, new Set(ys)] : [ys, new Set(xs)];
+  return shorter.every((w) => longer.has(w));
+}
+
 /** Which item already up each new item is matched to, by index, and how. */
 export function matchItems(
   olds: OldItem[],
   news: NewItem[],
+  alreadyTaken: Iterable<string> = [],
 ): Map<number, { old: OldItem; how: 'identifier' | 'name' }> {
   const out = new Map<number, { old: OldItem; how: 'identifier' | 'name' }>();
-  const taken = new Set<string>();
-  const formsOf = (ids: unknown) => new Set(identifierNorms(identifiersOf(ids)));
-  const oldForms = new Map(olds.map((o) => [o.id, formsOf(o.identifiers)]));
+  const taken = new Set<string>(alreadyTaken);
+  const oldIds = new Map(olds.map((o) => [o.id, identifiersOf(o.identifiers)]));
   const oldKeys = new Map(olds.map((o) => [o.id, nameKey(o.kind, o.attributes)]));
-  // 1. By identifier.
+  // 1. By identifier, where the names agree too.
   for (const n of news) {
     if (!n.identifiers.length) continue;
-    const mine = identifierNorms(n.identifiers);
     const sharing = olds.filter(
-      (o) => !taken.has(o.id) && mine.some((f) => oldForms.get(o.id)!.has(f)),
+      (o) => !taken.has(o.id) && namesAgree(n.kind, o.kind) && sharesIdentifier(n.identifiers, oldIds.get(o.id)),
     );
     if (!sharing.length) continue;
     const key = nameKey(n.kind, n.attributes);
@@ -603,6 +629,61 @@ export function matchItems(
     taken.add(pick.id);
     out.set(n.index, { old: pick, how: 'name' });
   }
+  return out;
+}
+
+/**
+ * A line that was turned away, read for what it can still say: its name and
+ * any identifiers that read cleanly. Used only to find the item already up
+ * that the line stands for (matchRefusedLines), never to write anything.
+ */
+export function refusedLine(raw: unknown, index: number): NewItem | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const kind = typeof o.name === 'string' ? o.name.trim().replace(/\s+/g, ' ') : '';
+  const ids = readIdentifiers(o.identifiers);
+  const identifiers = ids.ok ? ids.identifiers : [];
+  const details = o.details;
+  const attributes =
+    details && typeof details === 'object' && !Array.isArray(details) ? { ...(details as Record<string, unknown>) } : {};
+  if (!foldText(kind) && !identifiers.length) return undefined;
+  return { index, kind, identifiers, attributes };
+}
+
+/**
+ * WHICH ITEM ALREADY UP EACH TURNED-AWAY LINE STANDS FOR, on a list sent
+ * again with replace. A line that is on the list but was turned away this
+ * time (a detail out of shape, a price missing, the shelf's rules) still says
+ * the item is on the list, so the item already up for it stays up as it was
+ * rather than coming down as if it had been dropped.
+ *
+ * Matched after the good lines, from what they left, in the same order as
+ * matchItems and then more loosely: by an agreeing name alone, then by a
+ * shared identifier alone. Looser is safe here because a match only keeps an
+ * item up; it never writes a line's words onto it. Pure.
+ */
+export function matchRefusedLines(
+  olds: OldItem[],
+  lines: NewItem[],
+  taken: Iterable<string>,
+): Map<number, OldItem> {
+  const out = new Map<number, OldItem>();
+  const held = new Set(taken);
+  for (const [index, m] of matchItems(olds, lines, held)) {
+    out.set(index, m.old);
+    held.add(m.old.id);
+  }
+  const loosely = (fits: (n: NewItem, o: OldItem) => boolean) => {
+    for (const n of lines) {
+      if (out.has(n.index)) continue;
+      const pick = olds.find((o) => !held.has(o.id) && fits(n, o));
+      if (!pick) continue;
+      out.set(n.index, pick);
+      held.add(pick.id);
+    }
+  };
+  loosely((n, o) => namesAgree(n.kind, o.kind));
+  loosely((n, o) => n.identifiers.length > 0 && sharesIdentifier(n.identifiers, o.identifiers));
   return out;
 }
 
@@ -985,15 +1066,23 @@ async function runPublishList(
   const good: ListItem[] = [];
   const currency = shared.currency;
   const seen = new Set<string>();
+  /** Lines turned away here, read for what they still say (matchRefusedLines). */
+  const turnedAway: NewItem[] = [];
+  const turnAway = (index: number, raw: unknown) => {
+    const line = refusedLine(raw, index);
+    if (line) turnedAway.push(line);
+  };
   for (const [index, raw] of sentItems.entries()) {
     const read = readListItem(raw, index, { type, deal: shared.deal });
     if (!read.ok) {
       refusals.push(read.refusal);
+      turnAway(index, raw);
       continue;
     }
     const item = read.item;
     if ((item.price !== undefined || item.priceLimit !== undefined) && !currency) {
       refusals.push({ index, reason: 'price', fix: ITEM_FIXES.currency });
+      turnAway(index, raw);
       continue;
     }
     // The item as a posting, held to the protocol's own document and to the
@@ -1012,11 +1101,13 @@ async function runPublishList(
     const v = validatePayload('intent-card', asCard);
     if (!v.valid) {
       refusals.push({ index, reason: 'details', fix: `This item cannot go up as it stands: ${v.plain.join('; ')}.` });
+      turnAway(index, raw);
       continue;
     }
     const shelf = shelfRuleRefusal(asCard);
     if (shelf) {
       refusals.push({ index, reason: shelf.reason_code === NO_MONEY_REASON ? 'price' : 'not_carried', fix: shelf.human_action });
+      turnAway(index, raw);
       continue;
     }
     item.attributes = canonicaliseAttributes(filed.category, item.attributes) as ListItem['attributes'];
@@ -1055,6 +1146,11 @@ async function runPublishList(
   // A replace matches only what this pass has not already seen in an earlier part.
   const pool = pass ? olds.filter((o) => o.list_pass !== pass) : olds;
   const matched = matchItems(pool, good);
+  // On a replace, a line turned away still stands for the item already up for
+  // it: that item stays up as it was, and the answer says so beside the line.
+  const keptFor = new Map<number, OldItem>(
+    replace ? matchRefusedLines(pool, turnedAway, [...matched.values()].map((m) => m.old.id)) : [],
+  );
   // The private limits on matched wants, opened once for the whole call, so
   // an unchanged limit leaves its item alone. One audit line for all of them.
   const toOpen = [...matched.entries()].filter(
@@ -1088,7 +1184,7 @@ async function runPublishList(
       toAdd.push(item);
     }
   }
-  const claimed = new Set([...matched.values()].map((m) => m.old.id));
+  const claimed = new Set([...[...matched.values()].map((m) => m.old.id), ...[...keptFor.values()].map((o) => o.id)]);
   const toWithdraw = finishing ? pool.filter((o) => !claimed.has(o.id)) : [];
   // What will be amended; narrowed below to what the pipe lets through.
   let changing = toChange;
@@ -1169,6 +1265,8 @@ async function runPublishList(
   });
   adding = toAdd.filter((i) => !doorRefused.has(i.index));
   changing = toChange.filter((c) => !doorRefused.has(c.item.index));
+  // A changed line the door turned away leaves its item up as it was.
+  for (const c of toChange) if (doorRefused.has(c.item.index)) keptFor.set(c.item.index, c.old);
 
   /**
    * NOTHING TO WRITE. Nothing is counted against the day, and a new list is
@@ -1215,7 +1313,11 @@ async function runPublishList(
         `UPDATE lists SET replace_pass = $2, replace_parts = $3, replace_next = $4, updated_at = now() WHERE id = $1`,
         [row.id, pass, parts, next],
       );
-      const seenIds = [...unchanged.map((u) => u.old.id), ...changing.map((c) => c.old.id)];
+      const seenIds = [
+        ...unchanged.map((u) => u.old.id),
+        ...changing.map((c) => c.old.id),
+        ...[...keptFor.values()].map((o) => o.id),
+      ];
       if (seenIds.length) {
         await q(`UPDATE cards SET list_pass = $2 WHERE id = ANY($1::uuid[])`, [seenIds, pass]);
       }
@@ -1391,7 +1493,12 @@ async function runPublishList(
       ...(how === 'written' ? changing.map((c) => ({ index: c.item.index, intent_id: c.old.id, result: 'changed' as const })) : []),
       ...unchanged.map((u) => ({ index: u.item.index, intent_id: u.old.id, result: 'unchanged' as const })),
     ].sort((a, b) => a.index - b.index);
-    const refused = [...refusals].sort((a, b) => a.index - b.index);
+    const refused = [...refusals]
+      .sort((a, b) => a.index - b.index)
+      .map((r) => {
+        const kept = keptFor.get(r.index);
+        return kept ? { ...r, intent_id: kept.id, still_up: true as const } : r;
+      });
     const counts = {
       sent: sentItems.length,
       added: how === 'written' ? inserted.length : 0,
@@ -1424,7 +1531,10 @@ async function runPublishList(
       category: filed.category,
       filed_under_note: { text: filedUnderNote(filed), provenance: 'switchboard-system' as const },
       results_note: {
-        text: resultsSentence(counts, replace ? { finished: finishing, left: (parts as number) - (part as number) } : undefined),
+        text: resultsSentence(
+          { ...counts, stillUp: refused.filter((r) => r.still_up).length },
+          replace ? { finished: finishing, left: (parts as number) - (part as number) } : undefined,
+        ),
         provenance: 'switchboard-system' as const,
       },
     };
@@ -1436,7 +1546,7 @@ async function runPublishList(
  * own words. Counts only: no figure, no id, nothing about any one item.
  */
 export function resultsSentence(
-  c: { sent: number; added: number; changed: number; unchanged: number; withdrawn: number; refused: number },
+  c: { sent: number; added: number; changed: number; unchanged: number; withdrawn: number; refused: number; stillUp?: number },
   replace?: { finished: boolean; left: number },
 ): string {
   const n = (k: number, one: string, many: string) => (k === 1 ? `1 ${one}` : `${k} ${many}`);
@@ -1446,6 +1556,13 @@ export function resultsSentence(
   if (c.unchanged) parts.push(`${n(c.unchanged, 'item is', 'items are')} up as before`);
   if (c.withdrawn) parts.push(`${n(c.withdrawn, 'item no longer on the list has', 'items no longer on the list have')} come down`);
   if (c.refused) parts.push(`${n(c.refused, 'item was', 'items were')} not posted, each with the reason beside it`);
+  if (c.stillUp) {
+    parts.push(
+      c.stillUp === 1
+        ? '1 of those was already up and stays up as it was'
+        : `${c.stillUp} of those were already up and stay up as they were`,
+    );
+  }
   const head = `Of ${n(c.sent, 'item', 'items')} sent: ${parts.length ? parts.join('; ') : 'nothing changed'}.`;
   if (replace && !replace.finished && replace.left > 0) {
     return `${head} Send the remaining ${n(replace.left, 'part', 'parts')}; items no longer on the list come down after the last one.`;

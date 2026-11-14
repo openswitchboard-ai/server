@@ -11,6 +11,7 @@ import { startMatchingWorker } from './workers/matchingWorker.js';
 import { startOpsWorker } from './workers/opsWorker.js';
 import { startEmailEventsWorker } from './workers/emailEventsWorker.js';
 import { warmCategoryCorpus } from './domain/categorySuggest.js';
+import { fillIdentifierForms } from './domain/identifierBackfill.js';
 import { warnIfLedgerDisabled } from './safety/ledger.js';
 import { initKnownImageCheck, warnIfKnownImageCheckOff } from './safety/knownImageCheck.js';
 import { initJev } from './shadow/jev.js';
@@ -45,6 +46,11 @@ async function main() {
   // key, which is why this waits for initCounterKeys. A store error falls back
   // to this task's own count and is logged, never refused wholesale.
   useSharedLimiterStore(postgresLimiterStore, (msg, extra) => app.log.error(extra, msg));
+
+  // The identifier lookup forms migration 073 left blank, written again from
+  // the stored values (domain/identifierBackfill.ts). One empty read when
+  // there are none; nothing waits on it, and a failure is retried next start.
+  void fillIdentifierForms(log).catch((e: any) => app.log.error({ err: e?.message }, 'identifier-forms: pass failed'));
 
   if (settlementsConfigured(cfg)) {
     // Provision the Stripe webhook endpoint (idempotent). Settlements stay

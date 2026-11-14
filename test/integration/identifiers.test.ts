@@ -40,8 +40,10 @@ const d = RUN ? describe : describe.skip;
 const runTag = randomBytes(3).toString('hex');
 const BUCKET = `id_${runTag}`;
 // Unique to this run, so no other posting on the board can share it.
-const MODEL = `ZX-${runTag.toUpperCase()}-900`;
-const MODEL_NORM = `zx${runTag}900`;
+// A letter before the last group, so the dash is spelling whatever the tag
+// ends in (a dash between two digits is kept as a boundary, migration 073).
+const MODEL = `ZX-${runTag.toUpperCase()}-Q900`;
+const MODEL_NORM = `zx${runTag}q900`;
 const SHARED_SENTENCE =
   'Both postings carry the same identifier, the number or code that tells one product or edition from another.';
 
@@ -154,7 +156,7 @@ d('identifiers on a posting', () => {
   });
 
   it('(e) an amend replaces the set, and the posting goes back through the screen', async () => {
-    const other = `QR-${runTag.toUpperCase()}-17`;
+    const other = `QR-${runTag.toUpperCase()}-X17`;
     const r = await mcpCall(beppe.accessToken, 'amend_intent', {
       intent_id: have,
       patch: {},
@@ -168,7 +170,7 @@ d('identifiers on a posting', () => {
       `SELECT array_to_string(identifier_norms, ',') FROM cards WHERE id = :id::uuid`,
       [{ name: 'id', value: have }],
     );
-    expect(rows[0][0].split(',')[0]).toBe(`qr${runTag}17`);
+    expect(rows[0][0].split(',')[0]).toBe(`qr${runTag}x17`);
   });
 
   it('(f) a padded number meets a bare one, and a thirteen-digit code passes the real screen', async () => {
@@ -200,7 +202,9 @@ d('identifiers on a posting', () => {
     const forms = await dbExec(`SELECT array_to_string(identifier_norms, ',') FROM cards WHERE id = :id::uuid`, [
       { name: 'id', value: w },
     ]);
-    expect(forms[0][0]).toBe(`0${a}${b},${a}${b}`);
+    // A mark between two digits is kept as a boundary (migration 073); eight
+    // digits with the padding also gives the form without marks.
+    expect(forms[0][0]).toBe(`0${a}-${b},${a}-${b},0${a}${b}`);
 
     const match = await poll(async () => {
       const rows = await dbExec(

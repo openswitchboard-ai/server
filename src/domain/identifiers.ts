@@ -17,14 +17,16 @@
  *
  * THREE RULES, and they are the whole of this file.
  *
- *   1. COMPARED AS NORMALISED. The value is case-folded and everything that is
- *      not a letter or a digit is taken out, so "199/165", "199 / 165" and
- *      "199-165" are one identifier. Both forms are kept: the value as given
- *      is the owner's to read back, and the normalised form is what the engine
- *      compares. A normalised form under IDENTIFIER_MIN_NORM characters says
- *      too little to tell one product from another and is refused. A value
- *      of several words ending in a code is compared by that code alone as
- *      well (trailingCode), so a name in front of a code never hides it.
+ *   1. COMPARED AS NORMALISED. The value is case-folded, and a mark between
+ *      two digits is kept as one boundary while every other mark is taken
+ *      out, so "199/165", "199 / 165" and "199-165" are one identifier and
+ *      "2/198" and "21/98" are two (normaliseIdentifier). Both forms are kept:
+ *      the value as given is the owner's to read back, and the normalised form
+ *      is what the engine compares. A normalised form under IDENTIFIER_MIN_NORM
+ *      letters and digits says too little to tell one product from another
+ *      and is refused. A value of several words ending in a code meets the
+ *      code given alone (trailingCode), and never another name in front of
+ *      the same code (identifiersAgree).
  *
  *   2. IT NAMES A PRODUCT OR AN EDITION, NEVER ONE OBJECT. A serial number, a
  *      registration or a certificate number belongs to a single thing and
@@ -69,9 +71,27 @@ export interface Identifier {
   norm: string;
 }
 
+/** The one mark a normalised form keeps: a boundary between two runs of digits. */
+export const IDENTIFIER_BOUNDARY = '-';
+
+const DIGIT_AT_END = /\p{N}$/u;
+const DIGIT_AT_START = /^\p{N}/u;
+
 /**
- * The form two identifiers are compared in: case-folded, accents folded, and
- * every character that is not a letter or a digit removed.
+ * The form two identifiers are compared in (14 November 2026, migration 073).
+ * Case-folded and accents folded. Any run of characters that is not a letter
+ * or a digit becomes one IDENTIFIER_BOUNDARY where it sits between two
+ * digits, and is taken out everywhere else.
+ *
+ * Between two digits a mark carries meaning: "2/198" and "21/98" are two
+ * numbers with the same digits, and so are "012/198" and "121/98". Which mark
+ * it is, and any spacing round it, carries none, so "199/165", "199 / 165" and
+ * "199-165" are one. Next to a letter a mark is spelling: "WH-1000XM4",
+ * "WH1000XM4" and "wh 1000 xm4" are one model number, and "SL M7100" is
+ * "SL-M7100".
+ *
+ * Before 14 November 2026 every mark was taken out, so "2/198" and "21/98"
+ * were one identifier, and so were "012/198" and "121/98".
  */
 export function normaliseIdentifier(value: unknown): string {
   if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -79,8 +99,27 @@ export function normaliseIdentifier(value: unknown): string {
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '');
+    .replace(/[^\p{L}\p{N}]+/gu, (marks: string, at: number, all: string) =>
+      DIGIT_AT_END.test(all.slice(Math.max(0, at - 2), at)) && DIGIT_AT_START.test(all.slice(at + marks.length))
+        ? IDENTIFIER_BOUNDARY
+        : '',
+    );
 }
+
+/** The letters and digits in a normalised form: what IDENTIFIER_MIN_NORM counts. */
+export const normLength = (norm: string): number => norm.split(IDENTIFIER_BOUNDARY).join('').length;
+
+/**
+ * How many digits make a value a LONG code. A barcode, an ISBN or a long
+ * catalogue number is grouped by its marks only for reading, so a long code
+ * is compared with its marks taken out as well: "978-0-14-143951-8" and
+ * "9780141439518" are one ISBN. Eight is the shortest common barcode. Short
+ * numbers, where a mark between two digits does carry meaning, never get
+ * this form.
+ */
+export const IDENTIFIER_LONG_DIGITS = 8;
+
+const digitCount = (value: string): number => (value.match(/\p{N}/gu) ?? []).length;
 
 /**
  * THE WORDS THAT SAY AN IDENTIFIER NAMES ONE OBJECT. One small general list,
@@ -254,7 +293,7 @@ export function readIdentifiers(value: unknown): ReadIdentifiers {
     // product it is (domain/placeholderValues.ts).
     if (isPlaceholderValue(given)) return no('placeholder');
     const norm = normaliseIdentifier(given);
-    if (norm.length < IDENTIFIER_MIN_NORM) return no('too_short');
+    if (normLength(norm) < IDENTIFIER_MIN_NORM) return no('too_short');
     if (!out.some((i) => i.norm === norm)) out.push({ kind, value: given, norm });
   }
   return { ok: true, identifiers: out };
@@ -275,97 +314,135 @@ export function identifierError(read: Extract<ReadIdentifiers, { ok: false }>): 
 /**
  * The identifiers stored on a row or held in a screened snapshot, read
  * defensively: anything malformed reads as none, so nothing that never went
- * through readIdentifiers is ever compared.
+ * through readIdentifiers is ever compared. The stored `norm` must be there,
+ * as the mark of a value that went through readIdentifiers, but the form
+ * handed on is worked out again from the value, so a row written under an
+ * older rule is compared by today's.
  */
 export function identifiersOf(stored: unknown): Identifier[] {
   if (!Array.isArray(stored)) return [];
   const out: Identifier[] = [];
   for (const item of stored) {
     if (!item || typeof item !== 'object') continue;
-    const { kind, value, norm } = item as Record<string, unknown>;
-    if (typeof kind !== 'string' || typeof value !== 'string' || typeof norm !== 'string') continue;
-    if (norm.length < IDENTIFIER_MIN_NORM) continue;
+    const { kind, value, norm: stamped } = item as Record<string, unknown>;
+    if (typeof kind !== 'string' || typeof value !== 'string' || typeof stamped !== 'string') continue;
+    const norm = normaliseIdentifier(value);
+    if (normLength(norm) < IDENTIFIER_MIN_NORM) continue;
     out.push({ kind, value, norm });
   }
   return out.slice(0, IDENTIFIERS_MAX);
 }
 
 /**
- * The same value with the leading zeros dropped from each run of digits, taken
- * while the marks still part the runs: "025/165" reads "25165". The same
- * number is printed padded in one place and bare in another, and this is the
- * form in which the two meet. It is a SECOND form beside `norm`, never a
- * replacement for it: where the runs fall depends on how a value is
- * punctuated, so two spellings of one long code ("978-0141439518",
- * "9780141439518") agree as `norm` and need not agree here.
+ * The same value with the leading zeros dropped from each run of digits:
+ * "025/165" reads "25-165", as "25/165" does. The same number is printed
+ * padded in one place and bare in another, and this is the form in which the
+ * two meet. It is a SECOND form beside `norm`, never a replacement for it,
+ * and undefined where it is the same as `norm` or too short to say anything
+ * ("A-007" would read "a7").
  */
-export function unpaddedForm(value: string): string {
-  return normaliseIdentifier(value.replace(/\d+/g, (run) => run.replace(/^0+(?=\d)/, '')));
+export function unpaddedForm(value: string): string | undefined {
+  const bare = normaliseIdentifier(value.replace(/\p{N}+/gu, (run) => run.replace(/^0+(?=\p{N})/u, '')));
+  return bare !== normaliseIdentifier(value) && normLength(bare) >= IDENTIFIER_MIN_NORM ? bare : undefined;
 }
 
 /**
  * THE CODE AT THE END OF A NAME. A value of several words whose last word
  * holds a digit ("Obsidian Flames 125/197", "Scarlet & Violet 151 199/165")
  * is most often a name with the printed code after it, while the other side
- * gave the code alone ("125/197"). The whole value's forms never meet the bare
- * code's, so the last word is compared on its own too. Undefined where the
- * value is one word, where its last word has no digit, or where that word
- * comes to under IDENTIFIER_MIN_NORM characters once normalised.
+ * gave the code alone ("125/197"). Undefined where the value is one word,
+ * where its last word has no digit, or where that word comes to under
+ * IDENTIFIER_MIN_NORM letters and digits once normalised. Spacing round a
+ * slash or a dash is closed up first, so "Name 199 / 165" ends in "199/165".
  *
  * Only the LAST word, and only one holding a digit: a name leads and the code
  * follows far more often than the reverse, and a trailing word of letters
  * alone ("Deluxe", "Edition") says nothing about which product it is.
  */
 export function trailingCode(value: string): string | undefined {
-  const words = value.trim().split(/\s+/);
+  const words = value.trim().replace(/\s*([/\\\-–—])\s*/g, '$1').split(/\s+/);
   if (words.length < 2) return undefined;
   const last = words[words.length - 1];
   if (!/\p{N}/u.test(last)) return undefined;
-  return normaliseIdentifier(last).length >= IDENTIFIER_MIN_NORM ? last : undefined;
+  return normLength(normaliseIdentifier(last)) >= IDENTIFIER_MIN_NORM ? last : undefined;
 }
 
 /**
- * The most forms one identifier is compared in: its `norm`, its unpadded form,
- * and the same two for a trailing code (trailingCode). Migration 069 holds
- * identifier_norms to IDENTIFIERS_MAX times this.
+ * The forms one value is compared in as a whole: its `norm`; its unpadded
+ * form where that differs; and, for a long code, the same with every mark
+ * taken out.
  */
-export const IDENTIFIER_FORMS_MAX = 4;
+function wholeForms(value: string): string[] {
+  const norm = normaliseIdentifier(value);
+  const forms = [norm];
+  const bare = unpaddedForm(value);
+  if (bare) forms.push(bare);
+  if (digitCount(value) >= IDENTIFIER_LONG_DIGITS) {
+    const plain = norm.split(IDENTIFIER_BOUNDARY).join('');
+    if (plain !== norm) forms.push(plain);
+  }
+  return forms;
+}
 
 /**
- * The forms a posting's identifiers are compared in: what the candidate query
- * binds and the index holds. Each identifier gives its `norm`; its unpadded
- * form where that differs and is long enough to say anything; and, where the
- * value is a name with a code after it, the code alone in both those forms.
- * Two postings share an identifier when any form of one is a form of the
- * other.
+ * DO TWO IDENTIFIERS NAME THE SAME THING? Yes where:
  *
- * The trailing-code forms make the net wider, and that is safe: a shared
- * identifier is never a sure match on its own. It brings a candidate in by
- * the exact-match path, and the tiers still need a near shelf and agreeing
- * names before they call it sure (matchTiers.ts). Two products that differ
- * only in the name in front of one printed code still meet as candidates, and
- * their own words decide the rest.
+ *   - the two values agree as wholes, in any of their forms (wholeForms); or
+ *   - one is a name with a code after it, the other has no name in front of
+ *     anything, and the other agrees with that code ("Obsidian Flames
+ *     125/197" and "125/197").
+ *
+ * Where BOTH have words in front of a code, those words count: "Base Set
+ * 4/102" and "Jungle 4/102" are two products, so they agree only as wholes.
+ * A set or series name tells products apart, and it is never thrown away
+ * while the other side gave one too.
+ */
+export function identifiersAgree(a: Identifier, b: Identifier): boolean {
+  const aWhole = wholeForms(a.value);
+  const bWhole = wholeForms(b.value);
+  if (aWhole.some((f) => bWhole.includes(f))) return true;
+  const aTail = trailingCode(a.value);
+  const bTail = trailingCode(b.value);
+  if (aTail && !bTail) return wholeForms(aTail).some((f) => bWhole.includes(f));
+  if (bTail && !aTail) return wholeForms(bTail).some((f) => aWhole.includes(f));
+  return false;
+}
+
+/**
+ * The most forms one identifier is indexed under: up to three for the whole
+ * value (wholeForms) and three for a trailing code. Migration 073 holds
+ * identifier_norms to IDENTIFIERS_MAX times this.
+ */
+export const IDENTIFIER_FORMS_MAX = 6;
+
+/**
+ * The forms a posting's identifiers are looked up by: what the candidate
+ * query binds and the index holds. Each identifier gives its whole forms and,
+ * where the value is a name with a code after it, the code's forms too.
+ *
+ * This is the WIDER net. Two identifiers that agree (identifiersAgree) always
+ * have a form in common here, so the lookup never misses a pair. Some pairs
+ * with a form in common do not agree ("Base Set 4/102" and "Jungle 4/102"
+ * share the code's form): those come in as candidates only, and everything
+ * that says two postings share an identifier asks sharesIdentifier, which
+ * holds them apart.
  */
 export function identifierNorms(ids: Identifier[]): string[] {
   const forms = new Set<string>();
-  const add = (value: string, norm: string) => {
-    forms.add(norm);
-    const bare = unpaddedForm(value);
-    if (bare.length >= IDENTIFIER_MIN_NORM) forms.add(bare);
-  };
   for (const i of ids) {
-    add(i.value, i.norm);
+    for (const f of wholeForms(i.value)) forms.add(f);
     const tail = trailingCode(i.value);
-    if (tail) add(tail, normaliseIdentifier(tail));
+    if (tail) for (const f of wholeForms(tail)) forms.add(f);
   }
-  return [...forms];
+  return [...forms].filter((f) => normLength(f) >= IDENTIFIER_MIN_NORM);
 }
 
-/** Do two postings carry an identifier in common? Any compared form of one that is a form of the other. */
+/** Do two postings carry an identifier in common? Some identifier on one agrees with one on the other. */
 export function sharesIdentifier(a: unknown, b: unknown): boolean {
-  const mine = new Set(identifierNorms(identifiersOf(a)));
-  if (!mine.size) return false;
-  return identifierNorms(identifiersOf(b)).some((form) => mine.has(form));
+  const mine = identifiersOf(a);
+  if (!mine.length) return false;
+  const theirs = identifiersOf(b);
+  return mine.some((x) => theirs.some((y) => identifiersAgree(x, y)));
 }
 
 /**

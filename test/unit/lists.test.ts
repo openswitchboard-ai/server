@@ -65,7 +65,10 @@ import {
   listFigures,
   listSentence,
   matchItems,
+  matchRefusedLines,
   nameKey,
+  namesAgree,
+  refusedLine,
   publishList,
   readListItem,
   readShared,
@@ -842,6 +845,148 @@ describe('a list sent again', () => {
     });
     expect([r.added, r.unchanged, r.changed, r.withdrawn]).toEqual([1, 1, 0, 0]);
     expect(statements(/UPDATE cards SET lifecycle_state='WITHDRAWN'/)).toHaveLength(0);
+  });
+
+  // L13 (review triage, 14 November 2026): a shared identifier alone handed
+  // one item's posting, with its introductions, to a different item.
+  it('never hands an item already up to a line with a different name, whatever identifier they share', () => {
+    const printed = (value: string) => [{ kind: 'printed number', value, norm: 'stale' }];
+    const olds: OldItem[] = [
+      { id: 'o1', kind: 'mountain bike crankset', identifiers: printed('4/102'), attributes: {}, ask: null, hasBand: false },
+      { id: 'o2', kind: 'road bike crankset', identifiers: printed('2/198'), attributes: {}, ask: null, hasBand: false },
+    ];
+    const m = matchItems(olds, [
+      // The same identifier under another name: not the same item.
+      { index: 0, kind: 'gravel bike wheelset', identifiers: printed('4/102') as any, attributes: {} },
+      // A number that only used to read the same: not the same item either.
+      { index: 1, kind: 'road bike crankset', identifiers: printed('21/98') as any, attributes: { condition: 'good' } },
+      // A tidier name with a word added, under the same identifier: the same item.
+      { index: 2, kind: 'Mountain Bike Crankset, 175mm', identifiers: printed('4 / 102') as any, attributes: {} },
+    ]);
+    expect(m.has(0)).toBe(false);
+    expect(m.has(1)).toBe(false);
+    expect(m.get(2)).toEqual({ old: olds[0], how: 'identifier' });
+    expect(namesAgree('shifter', 'Right  Shifter')).toBe(true);
+    expect(namesAgree('crankset', 'wheelset')).toBe(false);
+    expect(namesAgree('', 'crankset')).toBe(false);
+  });
+
+  it('on a replace, adds the differently named line and takes the old item down, rather than handing it over', async () => {
+    world.list = listRow();
+    const kept = '55555555-0000-4000-8000-000000000001';
+    world.olds = [
+      old(kept, {
+        kind: 'mountain bike crankset',
+        identifiers: [{ kind: 'printed number', value: 'Base Set 4/102', norm: 'baseset4102' }],
+        attributes: { trade: true },
+      }),
+    ];
+    const r = await publishList(cfg(), ACCOUNT, {
+      list_id: LIST,
+      replace: true,
+      items: [{ name: 'gravel bike wheelset', identifiers: [{ kind: 'printed number', value: 'Jungle 4/102' }] }],
+    });
+    expect([r.added, r.changed, r.unchanged, r.withdrawn]).toEqual([1, 0, 0, 1]);
+    expect(statements(/UPDATE cards SET geo=/)).toHaveLength(0);
+    expect(world.inserted.map((x) => x.kind)).toEqual(['gravel bike wheelset']);
+    expect(world.inserted[0].norms).toEqual(['jungle4-102', '4-102']);
+  });
+
+  // M22 (review triage, 14 November 2026): a line turned away on a replace
+  // took its live item down as if it had been dropped from the list.
+  describe('a line turned away on a replace', () => {
+    const saddle = '66666666-0000-4000-8000-000000000001';
+    const pedals = '66666666-0000-4000-8000-000000000002';
+    const chain = '66666666-0000-4000-8000-000000000003';
+    const levers = '66666666-0000-4000-8000-000000000004';
+    const olds = () => [
+      old(saddle, { kind: 'saddle' }),
+      old(pedals, {
+        kind: 'pedals',
+        identifiers: [{ kind: 'model number', value: 'PD-M8100', norm: 'pdm8100' }],
+        attributes: { condition: 'good', trade: true },
+      }),
+      old(chain, { kind: 'chain' }),
+      old(levers, { kind: 'brake levers', attributes: { condition: 'good', trade: true } }),
+    ];
+
+    it('leaves its item up as it was, says so beside the line, and takes down only what was dropped', async () => {
+      world.list = listRow();
+      world.olds = olds();
+      const r = await publishList(cfg(), ACCOUNT, {
+        list_id: LIST,
+        replace: true,
+        items: [
+          { name: 'saddle', details: { condition: 'good' } },
+          // Turned away for a detail out of shape; found by its identifier.
+          { name: 'pedals', identifiers: [{ kind: 'model number', value: 'PD M8100' }], details: { Condition: 'good' } },
+          // Turned away for a price on a trade; found by its name alone.
+          { name: 'Brake Levers', price: 20 },
+          // The chain is no longer on the list.
+        ],
+      });
+      expect([r.unchanged, r.withdrawn, r.refused]).toEqual([1, 1, 2]);
+      expect(statements(/UPDATE cards SET lifecycle_state='WITHDRAWN'/).map((d) => d.params[0])).toEqual([chain]);
+      expect(r.refused_items).toEqual([
+        expect.objectContaining({ index: 1, reason: 'details', intent_id: pedals, still_up: true }),
+        expect.objectContaining({ index: 2, reason: 'price', intent_id: levers, still_up: true }),
+      ]);
+      // Nothing is written onto the items that stay up.
+      expect(statements(/UPDATE cards SET geo=/)).toHaveLength(0);
+      expect(r.results_note.text).toBe(
+        'Of 3 items sent: 1 item is up as before; 1 item no longer on the list has come down; 2 items were not posted, each with the reason beside it; 2 of those were already up and stay up as they were.',
+      );
+      expect(lintHumanCopy(r.results_note.text)).toEqual([]);
+    });
+
+    it('in parts: marks the item it stands for as seen, so the last part leaves it up', async () => {
+      world.list = listRow();
+      world.olds = olds();
+      const one = await publishList(cfg(), ACCOUNT, {
+        list_id: LIST,
+        replace: true,
+        part: 1,
+        parts: 2,
+        items: [{ name: 'saddle', details: { condition: 'good' } }, { name: 'pedals', quantity: 0 }],
+      });
+      expect(one.refused_items).toEqual([expect.objectContaining({ index: 1, intent_id: pedals, still_up: true })]);
+      const stamp = statements(/UPDATE cards SET list_pass = \$2/)[0];
+      expect(stamp.params[0].sort()).toEqual([saddle, pedals].sort());
+    });
+
+    it('leaves a changed item up as it was where the door turns the new line away', async () => {
+      world.list = listRow();
+      world.olds = [olds()[1]];
+      const r = await publishList(cfg(), ACCOUNT, {
+        list_id: LIST,
+        replace: true,
+        items: [{ name: 'pedals', identifiers: [{ kind: 'model number', value: 'PD-M8100' }], details: { budget: 25 } }],
+      });
+      expect(r.withdrawn).toBe(0);
+      expect(r.refused_items).toEqual([
+        expect.objectContaining({ index: 0, reason: 'figure_in_words', intent_id: pedals, still_up: true }),
+      ]);
+      expect(statements(/UPDATE cards SET geo=/)).toHaveLength(0);
+    });
+
+    it('adds nothing to the answer of a list sent without replace', async () => {
+      world.list = listRow();
+      world.olds = olds();
+      const r = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'pedals', quantity: 0 }] });
+      expect(r.refused_items).toEqual([{ index: 0, reason: 'quantity', fix: ITEM_FIXES.quantity }]);
+    });
+
+    it('matches loosely, but each item already up once, and only from what the good lines left', () => {
+      const os: OldItem[] = [
+        { id: 'a', kind: 'saddle', identifiers: null, attributes: {}, ask: null, hasBand: false },
+        { id: 'b', kind: 'saddle', identifiers: null, attributes: {}, ask: null, hasBand: false },
+      ];
+      const lines = [refusedLine({ name: 'Saddle', price: 4 }, 0)!, refusedLine({ name: 'saddle' }, 1)!, refusedLine({ name: 'saddle' }, 2)!];
+      const m = matchRefusedLines(os, lines, ['a']);
+      expect([...m.entries()].map(([i, o]) => [i, o.id])).toEqual([[0, 'b']]);
+      expect(refusedLine('pedals', 0)).toBeUndefined();
+      expect(refusedLine({ name: '', identifiers: 'junk' }, 0)).toBeUndefined();
+    });
   });
 
   it('opens the private limits on matched wants once, under one audit line, to tell an unchanged one', async () => {

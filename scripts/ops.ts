@@ -60,6 +60,13 @@ switch (cmd) {
     // Place cards written before 0.3.0 and hand them back to the matcher.
     body = { op: 'backfill-geo', rematch: arg('rematch', 'true') !== 'false' };
     break;
+  case 'identifier-forms':
+    // Write the compared forms of every stored identifier again under the
+    // current rule (migration 073, domain/identifierBackfill.ts). Each task
+    // already does the rows migration 073 cleared as it starts; --all true
+    // reads every row with identifiers, for one an older task wrote mid-rollout.
+    body = { op: 'identifier-forms', all: arg('all', 'false') === 'true' };
+    break;
   case 'reviewer-sign-in': {
     // A directory reviewer's account signs in with a passphrase instead of an
     // emailed code (src/counter/reviewerSignIn.ts). The account must already
@@ -108,7 +115,7 @@ switch (cmd) {
   }
   default:
     console.error(
-      'usage: ops.ts <create-match|ttl-expiry|backfill-geo|snap-categories|reviewer-sign-in> [--env dev] ...',
+      'usage: ops.ts <create-match|ttl-expiry|backfill-geo|snap-categories|identifier-forms|reviewer-sign-in> [--env dev] ...',
     );
     process.exit(1);
 }

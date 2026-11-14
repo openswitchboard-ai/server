@@ -15,6 +15,7 @@ import { sweepConversationPhotos } from '../domain/channelPhoto.js';
 import { backfillEmbeddings } from '../domain/embeddings.js';
 import { backfillCardGeo } from '../geo/backfill.js';
 import { requeueSnapped, snapCardCategories } from '../domain/categoryBackfill.js';
+import { fillIdentifierForms } from '../domain/identifierBackfill.js';
 import { gazetteerSource } from '../geo/gazetteer.js';
 import { createMatch } from '../domain/matches.js';
 import { sweepRateLimitWindows } from '../rateLimitStore.js';
@@ -410,6 +411,14 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                       }),
                     );
                   }
+                  break;
+                }
+                case 'identifier-forms': {
+                  // Idempotent: write the compared forms of stored identifiers
+                  // again under the current rule (migration 073). `all` reads
+                  // every row with identifiers, not only the ones left blank.
+                  const r = await fillIdentifierForms(log, { all: body.all === true });
+                  log('identifier-forms: done', { ...r, all: body.all === true });
                   break;
                 }
                 case 'match-notify': {

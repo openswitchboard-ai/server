@@ -57,6 +57,12 @@ import {
   trailingCode,
 } from '../../src/domain/identifiers.js';
 import {
+  fillIdentifierForms,
+  lookupFormsFor,
+  restampIdentifiers,
+  restampSnapshot,
+} from '../../src/domain/identifierBackfill.js';
+import {
   IDENTIFIER_MIN_COSINE,
   IDENTIFIER_SHARED_SENTENCE,
   IDENTIFIER_SURE_MIN_WORDS,
@@ -98,14 +104,16 @@ import { refsFake, type RefsFake } from './postingRefsFake.js';
 
 // ---------------------------------------------------------------------------
 describe('an identifier is compared as normalised', () => {
-  it('folds case and takes out everything that is not a letter or a digit', () => {
-    expect(normaliseIdentifier('199/165')).toBe('199165');
-    expect(normaliseIdentifier('199 / 165')).toBe('199165');
-    expect(normaliseIdentifier('199-165')).toBe('199165');
+  it('folds case, keeps a mark between two digits as one boundary, and takes out every other mark', () => {
+    expect(normaliseIdentifier('199/165')).toBe('199-165');
+    expect(normaliseIdentifier('199 / 165')).toBe('199-165');
+    expect(normaliseIdentifier('199-165')).toBe('199-165');
     expect(normaliseIdentifier('WH-1000XM4')).toBe('wh1000xm4');
     expect(normaliseIdentifier(' wh 1000 xm4 ')).toBe('wh1000xm4');
-    expect(normaliseIdentifier('978-0-14-143951-8')).toBe('9780141439518');
+    expect(normaliseIdentifier('978-0-14-143951-8')).toBe('978-0-14-143951-8');
     expect(normaliseIdentifier('Éd. 12/B')).toBe('ed12b');
+    expect(normaliseIdentifier('SL M7100')).toBe('slm7100');
+    expect(normaliseIdentifier('-/199//165--')).toBe('199-165');
     expect(normaliseIdentifier(9780141439518)).toBe('9780141439518');
     expect(normaliseIdentifier(undefined)).toBe('');
   });
@@ -116,11 +124,13 @@ describe('an identifier is compared as normalised', () => {
       const r = one(value);
       return r.ok ? identifierNorms(r.identifiers) : [];
     };
-    expect(forms('025/165')).toEqual(['025165', '25165']);
-    expect(forms('25/165')).toEqual(['25165']);
+    expect(forms('025/165')).toEqual(['025-165', '25-165']);
+    expect(forms('25/165')).toEqual(['25-165']);
     expect(sharesIdentifier(readOk('025/165'), readOk('25/165'))).toBe(true);
-    // One code punctuated two ways still agrees, by its plain form.
+    // One long code punctuated two ways still agrees, by its form without marks.
     expect(sharesIdentifier(readOk('978-0141439518'), readOk('9780141439518'))).toBe(true);
+    expect(sharesIdentifier(readOk('978-0-14-143951-8'), readOk('978 0141 439518'))).toBe(true);
+    expect(forms('978-0-14-143951-8')).toEqual(['978-0-14-143951-8', '9780141439518']);
     // Padding is all that is forgiven: a different number is a different number.
     expect(sharesIdentifier(readOk('025/165'), readOk('26/165'))).toBe(false);
     // An unpadded form too short to say anything is left out.
@@ -180,7 +190,10 @@ describe('a name with a code after it is compared by the code too', () => {
     expect(sharesIdentifier(ids('Scarlet & Violet 151 199/165'), ids('199/165'))).toBe(true);
     // The unpadded form of the trailing code is compared too.
     expect(sharesIdentifier(ids('Some Name 025/165'), ids('25/165'))).toBe(true);
-    expect(identifierNorms(ids('Obsidian Flames 125/197'))).toEqual(['obsidianflames125197', '125197']);
+    // Spacing round the slash does not split the code off from itself.
+    expect(sharesIdentifier(ids('Some Name 199 / 165'), ids('199/165'))).toBe(true);
+    expect(trailingCode('Some Name 199 / 165')).toBe('199/165');
+    expect(identifierNorms(ids('Obsidian Flames 125/197'))).toEqual(['obsidianflames125-197', '125-197']);
   });
 
   it('never meets a different code behind the same name', () => {
@@ -202,7 +215,7 @@ describe('a name with a code after it is compared by the code too', () => {
     const most = ids('Name 025/165', 'Other 007/099', 'Third 0012/0150');
     const forms = identifierNorms(most);
     expect(forms.length).toBeLessThanOrEqual(IDENTIFIERS_MAX * IDENTIFIER_FORMS_MAX);
-    const sql = readFileSync(new URL('../../migrations/069_identifier_forms.sql', import.meta.url), 'utf8');
+    const sql = readFileSync(new URL('../../migrations/073_identifier_boundaries.sql', import.meta.url), 'utf8');
     expect(sql).toContain(`cardinality(identifier_norms) <= ${IDENTIFIERS_MAX * IDENTIFIER_FORMS_MAX}`);
   });
 
@@ -210,6 +223,199 @@ describe('a name with a code after it is compared by the code too', () => {
     expect(differentByIdentifier(ids('Obsidian Flames 125/197'), ids('125/197'))).toBe(false);
     // Same kind, different code: still different.
     expect(differentByIdentifier(ids('Obsidian Flames 125/197'), ids('126/197'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The boundary between two digits (14 November 2026, migration 073).
+// ---------------------------------------------------------------------------
+describe('a mark between two digits tells two numbers apart', () => {
+  const ids = (...values: string[]) => {
+    const r = readIdentifiers(values.map((value) => ({ kind: 'printed number', value })));
+    if (!r.ok) throw new Error(r.error);
+    return r.identifiers;
+  };
+  const same = (a: string, b: string) => sharesIdentifier(ids(a), ids(b));
+
+  it('holds apart two numbers with the same digits split in different places', () => {
+    expect(same('2/198', '21/98')).toBe(false);
+    expect(same('012/198', '121/98')).toBe(false);
+    expect(same('1/234', '12/34')).toBe(false);
+    expect(normaliseIdentifier('2/198')).not.toBe(normaliseIdentifier('21/98'));
+    // And says so, where the kinds agree.
+    expect(differentByIdentifier(ids('2/198'), ids('21/98'))).toBe(true);
+  });
+
+  it('meets the same number however it is marked, spaced or padded', () => {
+    expect(same('199 / 165', '199-165')).toBe(true);
+    expect(same('199/165', '199 - 165')).toBe(true);
+    expect(same('199/165', '199\\165')).toBe(true);
+    expect(same('012/198', '12/198')).toBe(true);
+    expect(same('012/198', '12/0198')).toBe(true);
+    expect(same('025/165', '26/165')).toBe(false);
+  });
+
+  it('takes a mark next to a letter as spelling, so a model number agrees with or without its dash', () => {
+    // Decided: a mark beside a letter separates nothing a reader would count,
+    // and a model number is printed with and without it.
+    expect(same('WH-1000XM4', 'WH1000XM4')).toBe(true);
+    expect(same('WH-1000XM4', 'wh 1000 xm4')).toBe(true);
+    expect(same('RD-M8100-SGS', 'RDM8100SGS')).toBe(true);
+    expect(same('WH-1000XM4', 'WH-1000XM3')).toBe(false);
+  });
+
+  it('compares a short number with no mark only as written, and a long code without its marks too', () => {
+    // Under eight digits a missing mark is not guessed at.
+    expect(same('2/198', '2198')).toBe(false);
+    expect(same('199/165', '199165')).toBe(false);
+    // From eight digits up, the marks are only grouping.
+    expect(same('978-0-14-143951-8', '9780141439518')).toBe(true);
+    expect(same('5 012345 678900', '5012345678900')).toBe(true);
+    expect(same('9638 5074', '96385074')).toBe(true);
+    expect(same('978-0-14-143951-8', '978-0-14-143951-9')).toBe(false);
+    // Padding that takes a number to eight digits still meets the bare one.
+    expect(same('0123/1234', '123/1234')).toBe(true);
+    expect(same('0123/1234', '1231/234')).toBe(false);
+  });
+
+  it('counts letters and digits, never the boundary, toward the shortest an identifier may be', () => {
+    const reason = (value: string) => {
+      const r = readIdentifiers([{ kind: 'printed number', value }]);
+      return r.ok ? undefined : r.reason;
+    };
+    expect(reason('1/2')).toBe('too_short');
+    expect(reason('1-2')).toBe('too_short');
+    expect(reason('1/23')).toBeUndefined();
+  });
+});
+
+describe('a name in front of a code counts where both sides give one', () => {
+  const ids = (...values: string[]) => {
+    const r = readIdentifiers(values.map((value) => ({ kind: 'printed number', value })));
+    if (!r.ok) throw new Error(r.error);
+    return r.identifiers;
+  };
+  const same = (a: string, b: string) => sharesIdentifier(ids(a), ids(b));
+
+  it('holds apart two different names in front of one code', () => {
+    expect(same('Base Set 4/102', 'Jungle 4/102')).toBe(false);
+    expect(same('Jungle 4/102', 'Base Set 4/102')).toBe(false);
+    expect(differentByIdentifier(ids('Base Set 4/102'), ids('Jungle 4/102'))).toBe(true);
+    expect(same('Penguin 978-0-14-143951-8', 'Vintage 978-0-14-143951-8')).toBe(false);
+  });
+
+  it('still meets the code given alone, from either side', () => {
+    expect(same('4/102', 'Base Set 4/102')).toBe(true);
+    expect(same('Base Set 4/102', '4/102')).toBe(true);
+    expect(same('Base Set 04/102', '4 / 102')).toBe(true);
+    expect(same('Penguin 978-0-14-143951-8', '9780141439518')).toBe(true);
+    expect(differentByIdentifier(ids('Base Set 4/102'), ids('4/102'))).toBe(false);
+  });
+
+  it('meets the same name in front of the same code, however it is written', () => {
+    expect(same('Base Set 4/102', 'base set 4 / 102')).toBe(true);
+    expect(same('Base Set 4/102', 'Base-Set 04/102')).toBe(true);
+    expect(same('Base Set 4/102', 'Base Set 5/102')).toBe(false);
+  });
+
+  it('still looks the pair up by the code, and only the comparison holds them apart', () => {
+    // The lookup is the wider net: it brings "Jungle 4/102" in as a
+    // candidate for "Base Set 4/102", and nothing says they share one.
+    const a = identifierNorms(ids('Base Set 4/102'));
+    const b = identifierNorms(ids('Jungle 4/102'));
+    expect(a.some((f) => b.includes(f))).toBe(true);
+    expect(same('Base Set 4/102', 'Jungle 4/102')).toBe(false);
+  });
+
+  it('never misses a pair that agrees: two that agree always have a lookup form in common', () => {
+    const values = [
+      '2/198', '21/98', '012/198', '12/198', '121/98', '199 / 165', '199-165', '199165',
+      'WH-1000XM4', 'WH1000XM4', 'Base Set 4/102', 'Jungle 4/102', '4/102', 'Base Set 04/102',
+      '978-0-14-143951-8', '9780141439518', 'Penguin 978-0141439518', 'Obsidian Flames 125/197',
+      '125/197', 'Scarlet & Violet 151 199/165', 'A-007', 'A7B', 'CDP 7 46001 2', 'CDP7460012',
+    ];
+    let agreeing = 0;
+    for (const x of values) {
+      for (const y of values) {
+        if (!sharesIdentifier(ids(x), ids(y))) continue;
+        agreeing++;
+        const fx = identifierNorms(ids(x));
+        const fy = identifierNorms(ids(y));
+        expect(fx.some((f) => fy.includes(f)), `${x} | ${y}`).toBe(true);
+        // And agreement goes both ways.
+        expect(sharesIdentifier(ids(y), ids(x)), `${y} | ${x}`).toBe(true);
+      }
+    }
+    expect(agreeing).toBeGreaterThan(values.length);
+  });
+
+  it('compares a row stored under the old rule by today’s rule', () => {
+    // Written before 14 November 2026, when every mark was taken out.
+    const stored = [{ kind: 'printed number', value: '2/198', norm: '2198' }];
+    expect(identifiersOf(stored)).toEqual([{ kind: 'printed number', value: '2/198', norm: '2-198' }]);
+    expect(sharesIdentifier(stored, [{ kind: 'printed number', value: '21/98', norm: '2198' }])).toBe(false);
+    expect(sharesIdentifier(stored, ids('2 / 198'))).toBe(true);
+  });
+});
+
+describe('the stored forms are written again (migration 073)', () => {
+  it('restamps each norm from its value and leaves everything else as it was', () => {
+    const stored = [
+      { kind: 'printed number', value: '2/198', norm: '2198' },
+      { kind: 'model number', value: 'WH-1000XM4', norm: 'wh1000xm4' },
+      'junk',
+    ];
+    expect(restampIdentifiers(stored)).toEqual([
+      { kind: 'printed number', value: '2/198', norm: '2-198' },
+      { kind: 'model number', value: 'WH-1000XM4', norm: 'wh1000xm4' },
+      'junk',
+    ]);
+    const snap = { version: 3, kind: 'x', identifiers: [{ kind: 'k', value: '21/98', norm: '2198' }] };
+    expect(restampSnapshot(snap)).toEqual({ ...snap, identifiers: [{ kind: 'k', value: '21/98', norm: '21-98' }] });
+    expect(restampSnapshot({ version: 1 })).toEqual({ version: 1 });
+    expect(restampSnapshot(null)).toBeNull();
+    expect(lookupFormsFor(stored)).toEqual(['2-198', 'wh1000xm4']);
+    expect(lookupFormsFor([{ kind: 'x', value: 'ab', norm: 'ab' }])).toEqual([]);
+  });
+
+  it('clears the lookup forms of every row with identifiers, and widens the limit to match', () => {
+    const sql = readFileSync(new URL('../../migrations/073_identifier_boundaries.sql', import.meta.url), 'utf8');
+    expect(sql).toContain('UPDATE cards SET identifier_norms = NULL WHERE identifiers IS NOT NULL;');
+    expect(sql).toContain('WHERE identifiers IS NOT NULL AND identifier_norms IS NULL');
+    expect(IDENTIFIER_FORMS_MAX).toBe(6);
+  });
+
+  it('writes a due row again, and only where the row still holds what was read', async () => {
+    const writes: any[][] = [];
+    const reads: string[] = [];
+    vi.spyOn(db, 'getPool').mockReturnValue({
+      query: async (sql: string, params: any[] = []) => {
+        if (/^\s*SELECT id, identifiers/.test(sql)) {
+          reads.push(sql.replace(/\s+/g, ' '));
+          return {
+            rows: [
+              {
+                id: '11111111-1111-4111-8111-111111111111',
+                identifiers: [{ kind: 'printed number', value: '2/198', norm: '2198' }],
+                screened_content: null,
+                identifier_norms: null,
+              },
+            ],
+          };
+        }
+        writes.push(params);
+        return { rowCount: 1, rows: [] };
+      },
+    } as any);
+    const r = await fillIdentifierForms();
+    expect(r).toEqual({ read: 1, written: 1 });
+    expect(reads[0]).toContain('AND identifier_norms IS NULL');
+    expect(JSON.parse(writes[0][1])).toEqual([{ kind: 'printed number', value: '2/198', norm: '2-198' }]);
+    expect(writes[0][2]).toEqual(['2-198']);
+    expect(writes[0][3]).toBeNull();
+    // The guard: the row as it was read.
+    expect(JSON.parse(writes[0][4])).toEqual([{ kind: 'printed number', value: '2/198', norm: '2198' }]);
+    vi.restoreAllMocks();
   });
 });
 
