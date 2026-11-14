@@ -89,12 +89,24 @@ export const ACCOUNT_DELETE_ACTION = 'account-delete';
  */
 export const LINES_CONFIRM_ACTION = 'lines-confirm';
 
-/** Every press that ignores the window: the money presses, deletion, and
- *  confirming in writing. */
+/**
+ * A TRADE TAKES A FRESH CEREMONY TOO (14 November 2026). Sending one and
+ * accepting one bind things off two lists, so each is held to the rule a
+ * figure is held to: the PIN or the passkey at the press, every time.
+ */
+export const TRADE_ACTIONS: ReadonlySet<string> = new Set(['trade-send', 'trade-accept']);
+
+export function isTradeAction(action: string): boolean {
+  return TRADE_ACTIONS.has(action);
+}
+
+/** Every press that ignores the window: the money presses, deletion,
+ *  confirming in writing, and a trade. */
 export const FRESH_CEREMONY_ACTIONS: ReadonlySet<string> = new Set([
   ...MONEY_ACTIONS,
   ACCOUNT_DELETE_ACTION,
   LINES_CONFIRM_ACTION,
+  ...TRADE_ACTIONS,
 ]);
 
 export function isFreshCeremonyAction(action: string): boolean {

@@ -43,6 +43,7 @@ import {
 import { withdrawIntent } from '../domain/cards.js';
 import { acceptOfferByHuman, proposeOffer } from '../domain/offers.js';
 import * as confirmLines from '../domain/confirmLines.js';
+import * as trades from '../domain/trades.js';
 import {
   MODE_NAMES,
   readNegotiation,
@@ -1821,6 +1822,7 @@ in on this device and lets you approve what is waiting.</p>
     const MONEY_WORDS: FreshWords = { takes: 'Money takes', held: 'move money' };
     const DELETE_WORDS: FreshWords = { takes: 'Deleting your account takes', held: 'delete your account' };
     const CONFIRM_WORDS: FreshWords = { takes: 'Confirming in writing takes', held: 'confirm in writing' };
+    const TRADE_WORDS: FreshWords = { takes: 'A trade takes', held: 'send or accept a trade' };
 
     // ------------------------------------------------------------------
     // MONEY ALWAYS TAKES A FRESH CEREMONY (Lachlan, 27 September 2026).
@@ -1920,7 +1922,9 @@ in on this device and lets you approve what is waiting.</p>
               ? DELETE_WORDS
               : action === creds.LINES_CONFIRM_ACTION
                 ? CONFIRM_WORDS
-                : MONEY_WORDS,
+                : creds.isTradeAction(action)
+                  ? TRADE_WORDS
+                  : MONEY_WORDS,
           )
         : ceremony(s, reply, String(b?.pin ?? ''), refuse);
 
@@ -2021,6 +2025,12 @@ in on this device and lets you approve what is waiting.</p>
         : '<p>Your go-ahead is recorded. Nothing goes over until the other side says yes too.</p>',
     ];
 
+    const TRADE_SENT_DONE: [string, string] = ['Sent', `<p>${pages.esc(trades.TRADE_SENT_DONE_WORDS)}</p>`];
+    const TRADE_ACCEPTED_DONE: [string, string] = [
+      'Accepted',
+      `<p>${pages.esc(trades.TRADE_ACCEPTED_DONE_WORDS)}</p>`,
+    ];
+
     const CONFIRMED_DONE: [string, string] = [
       confirmLines.CONFIRM_DONE_TITLE,
       `<p>${pages.esc(confirmLines.CONFIRM_DONE_WORDS)}</p>`,
@@ -2083,12 +2093,20 @@ in on this device and lets you approve what is waiting.</p>
       // listed for the press that confirms them. Nothing where none is
       // waiting, so a page on an introduction nobody asked a line on is the
       // page it always was.
+      // On a pairing the lines ride its anchor and go both ways
+      // (domain/confirmLines.ts): what is listed is what waits on THIS reader.
+      const linesAt = async (matchId: string): Promise<string> => {
+        const m = await getMatch(matchId);
+        return m ? (await confirmLines.linesIntroOf(m)).id : matchId;
+      };
       const sellerLines = async (matchId: string): Promise<pages.OneQuestionLines | undefined> => {
-        const waiting = (await confirmLines.linesForPage(matchId)).filter((l) => l.state === 'asked');
+        const m = await getMatch(matchId);
+        const at = m ? await confirmLines.linesIntroOf(m) : undefined;
+        const waiting = confirmLines.waitingOn(await confirmLines.linesForPage(at?.id ?? matchId), accountId);
         if (!waiting.length) return undefined;
         return {
           mode: 'confirm',
-          heading: confirmLines.SELLER_LINES_HEADING,
+          heading: at?.pairing_id ? trades.TRADE_LINES_HEADING : confirmLines.SELLER_LINES_HEADING,
           yes: confirmLines.LINE_YES,
           items: waiting.map((l) => ({ id: l.id, words: l.words })),
         };
@@ -2102,7 +2120,7 @@ in on this device and lets you approve what is waiting.</p>
         } catch {
           return { error: 'This match is not yours.' };
         }
-        const boxes = side === 'have' ? await sellerLines(m.id) : undefined;
+        const boxes = side === 'have' || m.pairing_id ? await sellerLines(m.id) : undefined;
         if (!boxes) return { error: confirmLines.CONFIRM_NOTHING_WAITING };
         const thing = firstUp(await readersOwnPhrase(m, accountId));
         return {
@@ -2150,7 +2168,7 @@ in on this device and lets you approve what is waiting.</p>
         }
         // A seller sending a figure confirms what the buyer asked on the
         // same page, with the same press, and the button says so.
-        const boxes = side === 'have' ? await sellerLines(m.id) : undefined;
+        const boxes = side === 'have' || m.pairing_id ? await sellerLines(m.id) : undefined;
         return {
           ...base,
           question:
@@ -2226,7 +2244,22 @@ in on this device and lets you approve what is waiting.</p>
         if (o.account_have === accountId) {
           lines = await sellerLines(o.match_id);
         } else {
-          const all = await confirmLines.linesForPage(o.match_id);
+          const at = await linesAt(o.match_id);
+          const all = await confirmLines.linesForPage(at);
+          // Between two lists the buyer may have lines of their own to
+          // confirm; those are listed and confirmed by this press. Only what
+          // the buyer asked and the seller has not confirmed holds it up.
+          const theirsWaiting = confirmLines.waitingOnOther(all, accountId);
+          if (theirsWaiting.length) {
+            return {
+              error: at !== o.match_id ? confirmLines.LINES_BLOCKED_PAIRING_WORDS : confirmLines.BUYER_BLOCKED_WORDS,
+              keepLink: true,
+            };
+          }
+          lines = await sellerLines(o.match_id);
+        }
+        if (!lines && o.account_have !== accountId) {
+          const all = await confirmLines.linesForPage(await linesAt(o.match_id));
           if (all.some((l) => l.state !== 'confirmed')) {
             return { error: confirmLines.BUYER_BLOCKED_WORDS, keepLink: true };
           }
@@ -2250,6 +2283,25 @@ in on this device and lets you approve what is waiting.</p>
             ? confirmLines.confirmButtonLabel('offer-accept', shortFigure)
             : 'Accept',
           needsPin: true,
+        };
+      }
+      if (row.action === 'trade-send' || row.action === 'trade-accept') {
+        // A TRADE BETWEEN TWO LISTS (domain/trades.ts): what goes each way,
+        // the note, the lines confirmed between the two of them, what comes
+        // off this person's list, and the press, which takes the PIN or the
+        // passkey every time as a figure does.
+        const v = await trades.tradePageView(accountId, row.ref_id, row.action === 'trade-send' ? 'send' : 'accept');
+        if ('error' in v) return v;
+        return {
+          ...base,
+          question: v.question,
+          detail: v.detail,
+          sections: v.sections,
+          ...(v.lines ? { lines: v.lines } : {}),
+          noLabel: 'Not now',
+          yesLabel: v.yesLabel,
+          needsPin: true,
+          fresh: true,
         };
       }
       if (row.action === 'stage3-disclosure') {
@@ -3238,6 +3290,30 @@ in on this device and lets you approve what is waiting.</p>
           });
           await links.recordLinkDecision(row.id, 'approved');
           return html(reply, doneFor('link', ...ACCEPTED_DONE));
+        }
+        if (row.action === 'trade-send') {
+          // The proposer's own press sends the trade their assistant drafted,
+          // and confirms what the page listed that waited on them.
+          const sent = await trades.sendTradeByHuman(row.ref_id, s.accountId!, 'counter', cfg, {
+            lines: confirmLines.readLinePress(b, 'trade-send'),
+          });
+          await links.recordLinkDecision(row.id, 'approved');
+          const linesSaved =
+            sent.linesConfirmed === true
+              ? '<p>What they asked you to confirm in writing is confirmed too.</p>'
+              : sent.linesConfirmed === false
+                ? `<p>${pages.esc(confirmLines.SEND_DONE_LINES_NOT_CONFIRMED)}</p>`
+                : '';
+          return html(reply, pages.donePage(TRADE_SENT_DONE[0], `${TRADE_SENT_DONE[1]}${linesSaved}`));
+        }
+        if (row.action === 'trade-accept') {
+          // The other human's press: confirms the lines its page listed and
+          // accepts, in one transaction under the pairing's lock.
+          await trades.acceptTradeByHuman(row.ref_id, s.accountId!, 'counter', cfg, {
+            lines: confirmLines.readLinePress(b, 'trade-accept'),
+          });
+          await links.recordLinkDecision(row.id, 'approved');
+          return html(reply, doneFor('link', ...TRADE_ACCEPTED_DONE));
         }
         if (row.action === 'lines-confirm') {
           // The page of its own: one press confirms what it listed, and

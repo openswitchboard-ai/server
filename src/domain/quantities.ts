@@ -70,19 +70,53 @@ export async function takeOneForSale(db: Queryable, haveCardId: string): Promise
 }
 
 /**
+ * Take n units of a list item for an accepted trade (domain/trades.ts),
+ * inside the accept's own transaction: one guarded statement, so a trade that
+ * asks for more than is left takes nothing. Throws NOT_ENOUGH_LEFT_WORDS where
+ * there are not n left, so the accept rolls back and nothing is recorded.
+ * Returns what is left after it. Only list items are ever traded.
+ */
+export async function takeUnits(db: Queryable, cardId: string, n: number): Promise<number> {
+  const units = Number.isInteger(n) && n >= 1 ? n : 1;
+  const r = await db.query(
+    `UPDATE cards SET quantity_gone = quantity_gone + $2, updated_at = now()
+      WHERE id = $1 AND list_id IS NOT NULL AND lifecycle_state = 'PUBLISHED'
+        AND quantity_gone + $2 <= (CASE WHEN jsonb_typeof(attributes->'quantity') = 'number'
+                                        THEN GREATEST((attributes->>'quantity')::numeric::int, 1) ELSE 1 END)
+      RETURNING attributes, quantity_gone`,
+    [cardId, units],
+  );
+  if (r.rows[0]) return leftOf(r.rows[0]);
+  throw new OsbError('NOT_UNLOCKED_YET', { human_action: NOT_ENOUGH_LEFT_WORDS });
+}
+
+/** The refusal where a trade would take more of something than is left. */
+export const NOT_ENOUGH_LEFT_WORDS =
+  'Something in this trade has fewer left than it asks for now, or has come off its list, so the trade can no longer be taken as it stands.';
+
+/** Why the switchboard took an item down itself (cards.withdrawn_because). */
+export type TakenDownBecause = 'none_left' | 'traded';
+
+/**
  * None left: the item comes down with its reason, and the introductions on it
  * that never reached a conversation are filed away in one statement with
  * their open figures. The introduction the deal was agreed on is left exactly
  * as it is, and so is any other with an agreed figure, and the anchor of an
  * open pairing (domain/pairings.ts), whose item simply stops counting.
  * Pairings count again, and the people whose room that frees get their next.
+ * Every trade that needed it closes with them (domain/trades.ts).
  */
-export async function takeDownNoneLeft(cardId: string, keepMatchId: string, cfg?: Config): Promise<number> {
+export async function takeDownNoneLeft(
+  cardId: string,
+  keepMatchId: string,
+  cfg?: Config,
+  because: TakenDownBecause = 'none_left',
+): Promise<number> {
   const down = await getPool().query(
-    `UPDATE cards SET lifecycle_state = 'WITHDRAWN', withdrawn_because = 'none_left', updated_at = now()
+    `UPDATE cards SET lifecycle_state = 'WITHDRAWN', withdrawn_because = $2, updated_at = now()
       WHERE id = $1 AND lifecycle_state IN ('PENDING_SCREENING', 'PUBLISHED')
       RETURNING id`,
-    [cardId],
+    [cardId, because],
   );
   if (!down.rowCount) return 0;
   const r = await getPool().query(
@@ -118,6 +152,8 @@ export async function takeDownNoneLeft(cardId: string, keepMatchId: string, cfg?
   const { pairingsOnCard, reconcilePairings } = await import('./pairings.js');
   const grouped = await pairingsOnCard(cardId);
   if (grouped.length) await reconcilePairings(grouped, cfg);
+  const { closeUnmeetableTrades } = await import('./trades.js');
+  await closeUnmeetableTrades([cardId]);
   const { resequenceAround } = await import('./sequencer.js');
   for (const id of ids) await resequenceAround(id, cfg);
   return ids.length;

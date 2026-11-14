@@ -991,6 +991,11 @@ export async function archiveOpenIntroductionsOnCard(
   const { pairingsOnCard, reconcilePairings } = await import('./pairings.js');
   const grouped = await pairingsOnCard(cardId);
   if (grouped.length) await reconcilePairings(grouped, cfg);
+  // A trade that had this item in it can no longer be met, and closes with
+  // its reason (domain/trades.ts). An item in a trade need not have met
+  // anything itself, so this runs whether or not it is in a pairing.
+  const { closeUnmeetableTrades } = await import('./trades.js');
+  await closeUnmeetableTrades([cardId]);
   if (!ids.length) return 0;
   for (const id of ids) {
     await writeConsentEvent({

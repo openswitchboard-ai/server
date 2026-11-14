@@ -31,6 +31,7 @@ import { purgeOldEmailEvents } from './emailEventsWorker.js';
 import {
   notifyBestOfferClosed,
   notifyMatchCreated,
+  notifyTrade,
   notifyYourMove,
   runDigestTick,
   runRenewalTick,
@@ -459,6 +460,13 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     body.step === 'details' ? 'details' : body.step === 'written' ? 'written' : 'names',
                     typeof body.occasion === 'string' ? body.occasion : undefined,
                   );
+                  break;
+                }
+                case 'trade-notify': {
+                  // A trade between two lists was sent, accepted or turned
+                  // down (enqueued by domain/trades.ts). Who is told is read
+                  // off the trade; the key is the trade and the moment.
+                  await notifyTrade(cfg, String(body.trade_id ?? ''), String(body.moment ?? ''));
                   break;
                 }
                 case 'best-offer-closed-notify': {

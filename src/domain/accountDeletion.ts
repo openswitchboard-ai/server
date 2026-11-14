@@ -102,6 +102,12 @@
  *                             this account asked that are still waiting
  *                             are taken off; the words this account wrote
  *                             erased unless held.
+ *   trade_proposals,
+ *   trade_proposal_items .... KEEP rows (the record of what was put and
+ *                             agreed between two lists). Open trades and
+ *                             drafts this account put are taken back; open
+ *                             ones put to it close. The note words this
+ *                             account wrote erased unless held.
  *   offer_drafts ............ ERASE.
  *   settlements,
  *   settlement_evidence,
@@ -133,6 +139,10 @@
  *   the decrypt audit (WORM)  KEEP.
  */
 import { ACCOUNT_DELETION_SQL as SEALED_CONTACT_DELETION_SQL } from './sealedContact.js';
+import {
+  ACCOUNT_DELETION_TRADES_SQL as TRADES_DELETION_SQL,
+  ACCOUNT_DELETION_TRADE_NOTES_SQL as TRADE_NOTES_ERASE_SQL,
+} from './trades.js';
 import {
   ACCOUNT_DELETION_ERASE_SQL as LINES_ERASE_SQL,
   ACCOUNT_DELETION_WITHDRAW_SQL as LINES_WITHDRAW_SQL,
@@ -410,6 +420,9 @@ export async function deleteAccount(
     // still waiting are taken off. Their words come off below.
     await q(LINES_WITHDRAW_SQL);
 
+    // Trades between two lists, the same way (domain/trades.ts).
+    await q(TRADES_DELETION_SQL);
+
     // Engine and eval rows that quote the postings.
     await q(
       `DELETE FROM near_misses
@@ -438,6 +451,7 @@ export async function deleteAccount(
         [accountId, heldMatches],
       );
       await q(LINES_ERASE_SQL, [accountId, heldMatches]);
+      await q(TRADE_NOTES_ERASE_SQL, [accountId, heldMatches]);
       // The words, figures and place of every posting, except those on an
       // introduction under a hold.
       await q(

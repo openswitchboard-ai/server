@@ -55,7 +55,14 @@ export type ApprovalAction =
    *  (domain/confirmLines.ts). Bound to one introduction at mint time. It is
    *  the one-question page with the lines listed on it, and it takes the PIN
    *  or the passkey at the press as a money press does. */
-  | 'lines-confirm';
+  | 'lines-confirm'
+  /** Send a trade between two lists that the person's assistant drafted
+   *  (domain/trades.ts). Bound to one trade at mint time; takes the PIN or
+   *  the passkey at the press, as a figure does. */
+  | 'trade-send'
+  /** Accept a trade the other side sent. Bound to one trade at mint time;
+   *  the same fresh ceremony. */
+  | 'trade-accept';
 
 /**
  * The actions whose link opens a one-question page: one sentence, two buttons,
@@ -98,6 +105,10 @@ export const ONE_QUESTION_ACTIONS: ApprovalAction[] = [
   // Confirming written lines, from 2 October 2026: the same page with the
   // lines listed on it, and the press is the seller's own.
   'lines-confirm',
+  // A trade between two lists, from 14 November 2026: the same page with
+  // what goes each way listed on it.
+  'trade-send',
+  'trade-accept',
 ];
 
 export function isOneQuestionAction(a: string): a is ApprovalAction {

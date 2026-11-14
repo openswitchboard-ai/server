@@ -1731,7 +1731,9 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
       ...(rej ? { note: { text: rej.plain, provenance: 'switchboard-system' as const } } : {}),
       ...(row.withdrawn_because === 'none_left'
         ? { note: { text: NONE_LEFT_ITEM_SENTENCE, provenance: 'switchboard-system' as const } }
-        : {}),
+        : row.withdrawn_because === 'traded'
+          ? { note: { text: TRADED_ITEM_SENTENCE, provenance: 'switchboard-system' as const } }
+          : {}),
     };
   });
   return {
@@ -1741,6 +1743,10 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
     list_items: items,
   };
 }
+
+/** Beside an item that came down because the last of it went in a trade (domain/trades.ts). */
+export const TRADED_ITEM_SENTENCE =
+  'The last of these went in an accepted trade, so it came off the list. Send it again with its new quantity if your human has more.';
 
 /** Beside an item that came down because every one of it has gone. */
 export const NONE_LEFT_ITEM_SENTENCE =

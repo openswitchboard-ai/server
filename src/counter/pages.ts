@@ -1243,6 +1243,20 @@ export interface OneQuestionView {
   fresh?: boolean;
   /** WRITTEN LINES on this introduction (domain/confirmLines.ts). */
   lines?: OneQuestionLines;
+  /**
+   * Lists under headings, for a page whose question is about more than one
+   * thing: a trade's two sides, what comes off the person's list, the lines
+   * already confirmed (domain/trades.ts). Each row is escaped; the other
+   * side's words in it are already in quotation marks.
+   */
+  sections?: { heading: string; rows: string[] }[];
+}
+
+function sectionsBlock(sections: OneQuestionView['sections']): string {
+  return (sections ?? [])
+    .filter((s) => s.rows.length)
+    .map((s) => `<h2>${esc(s.heading)}</h2>\n${s.rows.map((r) => `<div class="kv">${esc(r)}</div>`).join('\n')}`)
+    .join('\n');
 }
 
 /**
@@ -1320,6 +1334,7 @@ export function oneQuestionPage(v: OneQuestionView, error?: string): string {
   return layout(v.question, `
 <h1>${esc(v.question)}</h1>
 ${errBox(error)}
+${sectionsBlock(v.sections)}
 ${detail}
 <form method="POST" action="${action}" id="oneQuestion">
   ${hidden}

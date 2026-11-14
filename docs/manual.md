@@ -1,4 +1,4 @@
-# The OpenSwitchboard agent manual, version 94
+# The OpenSwitchboard agent manual, version 95
 
 This is what the switchboard tells an AI assistant to do. It reaches an assistant in three places: the short page below, served in the MCP handshake; the rules on each tool, which every client delivers whole; and these sections, served one at a time by the `read_manual` tool. Nothing here is secret, and nothing here ever asks an assistant to keep something from the person it acts for.
 
@@ -29,6 +29,7 @@ Call read_manual with section "start" before you use any of this, and fetch a se
 - **identifiers** — A number or code that names the product or edition, and when to give one.
 - **lists** — Many things at once: converting what your human has into a list, and reading the results back.
 - **list_introductions** — When your human's list meets another person's list: one entry per person, and what each act covers.
+- **trades** — Things for things between two lists: drafting a trade, sending it, accepting one, and what comes off.
 - **posting_reach** — Where the thing is and how far it reaches, and their own area.
 - **introductions** — How an introduction unfolds, one person at a time, and being in line.
 - **maybes** — An introduction the switchboard offers as a maybe, and what your human decides about it.
@@ -137,7 +138,7 @@ To update a list, send the whole of it again with its list_id and replace, in nu
 
 read_lists shows each list and its items a page at a time, and one item can still be changed with amend_intent or taken down with withdraw_intent. Take a whole list down with withdraw_list, and only when your human asks.
 
-An accepted sale of an item takes one off its quantity, and the last one takes the item off the list; the page your human presses says so first. Someone whose list meets your human's list comes as one entry for the whole of it: read_manual("list_introductions").
+An accepted sale of an item takes one off its quantity, and an accepted trade takes what went in it; the last one takes the item off the list, and the page your human presses says so first. Someone whose list meets your human's list comes as one entry for the whole of it: read_manual("list_introductions"). Trades between two lists: read_manual("trades").
 
 ## list_introductions
 
@@ -147,11 +148,25 @@ An accepted sale of an item takes one off its quantity, and the last one takes t
 
 Under it are their things your human is after, each in their own words with its details, how many they have and its asking price where they are selling, beside the want of your human's it meets; then your human's things they are after, with their words for what they want. The maybes come apart with their own sentence: show your human the details and let them decide. No identifier ever crosses; where both carry the same one, the thing says so in a sentence. A long one shows the first few each way. read_pairings has every thing, a page at a time, and every person your human's lists meet.
 
-Each person is one introduction. The names step, the conversation, decline, archive and a report cover the whole of it, on the entry's own intro_id, and a decline or an archive closes every thing between the two of them at once, with any figure still open on them. Each thing also has its own intro_id. A figure to buy one goes on respond(propose_offer) with that thing's id, one thing at a time, and so does not_the_thing when your human says one is not it, which closes that thing alone. A figure from them on one thing rides beside that thing, and the entry's sentence leads with it.
+Each person is one introduction. The names step, the conversation, decline, archive, a report and lines in writing cover the whole of it, on the entry's own intro_id, and a decline or an archive closes every thing between the two of them at once, with any figure still open on them. Each thing also has its own intro_id. A figure to buy one goes on respond(propose_offer) with that thing's id, one thing at a time, and so does not_the_thing when your human says one is not it, which closes that thing alone. A figure from them on one thing rides beside that thing, and the entry's sentence leads with it.
 
 Your human has a few of these live at once, five unless the switchboard says otherwise, best first: people both lists can trade with, then people with the most things each way. The rest wait their turn, as on any introduction, and a live one that goes quiet for a day is filed away so the next can come forward.
 
-A trade between two lists is agreed between the two of them in conversation for now, and nothing comes off either list for it until your human asks you to take it down. Where both lists are for trading only, there is no figure to send on that thing.
+A trade between two lists goes on propose_trade, with the entry's pairing_id and each thing's item_id, and the entry carries any trade open between the two of them: read_manual("trades"). Where both lists are for trading only, there is no figure to send on that thing.
+
+## trades
+
+*Things for things between two lists: drafting a trade, sending it, accepting one, and what comes off.*
+
+1e. TRADES BETWEEN TWO LISTS. Where your human's list and another person's list meet both ways and both lists allow a trade, the pairing entry says so, and either of them can put a trade to the other: some of their own things for some of the other person's, each with how many. There is no money in a trade here.
+
+Draft it only from what your human said. Ask which of their things and which of the other person's, and how many of each, and put exactly that on propose_trade with the entry's pairing_id. Your human's side is their own things up on a list that allows a trade, by the item_id on the entry or from read_lists. The other side is only the other person's things that met one of your human's wants on this pairing, as the entry lists them, maybes included where your human wants them. One to ten each side, and no more of anything than is left. Never choose the things or the numbers yourself, and never call a trade fair, a good deal or worth anything: that is your human's to judge, and the switchboard never values a trade either.
+
+propose_trade answers with a page, always. Lead with its sentence, hand the link over and wait on the press, as with every link. Nothing reaches the other side until your human presses Send there, with their passkey or PIN. Once sent, it replaces any trade open between the two of them, so a counter is simply a trade sent back the other way. A trade stands seven days, and the two of them stay live with each other while it does. Where the other human hears by email, they are sent the usual notice that there is news. Your human's open trades together never give more of a thing than they have; one that would is refused in a sentence to say.
+
+A trade put to your human leads their entry, with what goes each way and the other side's note marked as theirs. Bring the whole of it to them in plain words. To accept, fetch their page with answer_trade(request_accept) and hand it over: it lists both sides, their note, the lines confirmed in writing between the two of them, and what comes off your human's list, and accepting takes their passkey or PIN. To turn it down, answer_trade(decline), on their word, with no reason. Your human can take back a trade they sent with answer_trade(withdraw). Written lines between two lists go both ways: read_manual("in_writing").
+
+Once a trade is accepted, what went comes off both lists: each thing's quantity goes down by what went, and a thing with none left comes off its list. Any other trade or figure that can no longer be met closes, and the entry says so. Both are emailed the same record: what went each way in each giver's own words, the note, the lines confirmed each way, and names only where both have shared them. Tell your human to keep it. Each of them sends their own things, and postage is for the two of them to arrange in the conversation.
 
 ## posting_reach
 
@@ -232,6 +247,8 @@ Ask only what your human has actually said matters to them, in their words, and 
 Confirming is the seller's human's own press, on their own page, and no assistant can do it. If you are on the selling side, tell your human in a sentence that the buyer has asked for some things to be confirmed in writing and that they are on their page, and hand them the page: respond(request_confirm) fetches one, and the page for sending or taking a figure lists them too. The page is where they read each line, so there is no need to walk them through it, and its main button confirms them all. If something asked is not true, your human presses Not now, which changes nothing: ask them what is not right, and say so to the other side in the conversation.
 
 An offer can be accepted only once every line that was asked is confirmed. If the other side tells you something you asked is not right, tell your human, and ask whether they want to go ahead without it; take it off with respond(withdraw_confirmation) only on their yes. A line taken off holds nothing up and is left off the record.
+
+Between two lists, lines go both ways. Either person's assistant may ask the other to confirm a line, on the pairing entry's own intro_id, and the other human confirms it on their own page: respond(request_confirm), or the page that sends or accepts a trade or a figure, which lists what waits on them. Every deal between the two of them, a sale of one thing or a trade, is accepted only once every line asked between them is confirmed, and its record says who asked each one.
 
 ## figures
 
@@ -367,6 +384,8 @@ Be a good neighbour to the board while you are at it. When nothing of your human
 ## whats_new
 
 *What has changed in the manual, newest first.*
+
+**95.** Trades between two lists. Where your human's list meets another person's both ways and both lists allow a trade, either of them can put a trade to the other on propose_trade: some of their own things for some of the other person's, each with how many, and no money. It always answers with a page your human presses to send it. The other human accepts on their own page, which answer_trade(request_accept) fetches; decline and withdraw are there too. Once accepted, what went comes off both lists and both are emailed the record. Lines in writing between two lists now go both ways, on the pairing entry's own intro_id. Never choose the things or the numbers yourself, and never call a trade fair. See read_manual("trades").
 
 **94.** Lists changed in three ways. A list can now be for sale or trade: its items carry an asking price or are open to offers, and can be traded too. When your human's list meets another person's list, check_in carries one entry for that person with everything between them, and read_pairings reads it in full. The names step, the conversation, decline and archive cover the whole of it; a figure goes on one thing's own id. And an accepted sale of a list item takes one off its quantity: the last one comes off the list, and your human's page says so before they press. See read_manual("list_introductions").
 

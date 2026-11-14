@@ -573,6 +573,9 @@ export async function endPairing(
     anchor = p.rows[0].anchor_match_id ? String(p.rows[0].anchor_match_id) : null;
     const r = await client.query(memberEndingSql(end), memberEndingParams(pairingId, end) as any[]);
     members = (r.rows as { id: string }[]).map((x) => x.id);
+    // Every trade between them closes with the pairing (domain/trades.ts).
+    const { CLOSE_ON_PAIRING_END_SQL } = await import('./trades.js');
+    await client.query(CLOSE_ON_PAIRING_END_SQL, [pairingId]);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -635,6 +638,9 @@ export async function reconcilePairings(
   const ids = [...new Set(pairingIds.filter(Boolean))];
   if (!ids.length) return [];
   await recountPairings(ids);
+  // A trade asking for something that no longer met a want here closes.
+  const { closeUnaskableTrades } = await import('./trades.js');
+  await closeUnaskableTrades(ids);
   const r = await getPool().query(
     `SELECT p.id FROM pairings p
       WHERE p.id = ANY($1::uuid[]) AND p.state = 'open'
@@ -696,20 +702,42 @@ export async function itemNotTheThing(
 }
 
 /**
- * The live pairings whose clock has run out: no movement for a day, and no
- * agreed figure on any member (a deal already agreed is never lapsed).
+ * A TRADE HOLDS THE CLOCK (founder's review of P2, 14 November 2026). The
+ * person a trade is put to has its whole seven days to decide, so a pairing
+ * with a trade open does not lapse while it stands, and neither does one
+ * whose proposer holds a page to send a draft that has not run out. When a
+ * trade ends (turned down, taken back, closed, run out, or replaced) the
+ * ordinary clock starts again from that moment: the ending counts as
+ * movement. A pairing with an agreed trade is never lapsed, as one with an
+ * agreed figure is not. One clause, read by the lapse below.
  */
-export async function lapseDuePairings(cfg?: Config, limit = 200): Promise<{ lapsed: number; promoted: number }> {
-  const due = await getPool().query(
-    `SELECT p.id FROM pairings p
+export const TRADE_HOLDS_CLOCK_SQL = `EXISTS (SELECT 1 FROM trade_proposals t
+          WHERE t.pairing_id = p.id
+            AND (t.state = 'accepted'
+                 OR (t.state = 'open' AND t.expiry > now() - make_interval(mins => $1::int))
+                 OR (t.state IN ('declined', 'withdrawn', 'closed', 'expired', 'superseded')
+                     AND t.updated_at > now() - make_interval(mins => $1::int))
+                 OR (t.state = 'awaiting-send'
+                     AND EXISTS (SELECT 1 FROM approval_links a
+                                  WHERE a.action = 'trade-send' AND a.ref_id = t.id
+                                    AND a.used_at IS NULL AND a.expires_at > now()))))`;
+
+/**
+ * The live pairings whose clock has run out: no movement for a day, no
+ * agreed figure on any member (a deal already agreed is never lapsed), and no
+ * trade holding the clock (TRADE_HOLDS_CLOCK_SQL).
+ */
+export const LAPSE_DUE_SQL = (limit: number) => `SELECT p.id FROM pairings p
       WHERE p.state = 'open' AND p.live
         AND p.last_movement_at < now() - make_interval(mins => $1::int)
         AND NOT EXISTS (SELECT 1 FROM matches m JOIN offers o ON o.match_id = m.id
                          WHERE m.pairing_id = p.id AND o.state = 'accepted-by-human')
+        AND NOT ${TRADE_HOLDS_CLOCK_SQL}
       ORDER BY p.last_movement_at ASC
-      LIMIT ${Number(limit) || 200}`,
-    [PAIRING_SLOT_MINUTES],
-  );
+      LIMIT ${Number(limit) || 200}`;
+
+export async function lapseDuePairings(cfg?: Config, limit = 200): Promise<{ lapsed: number; promoted: number }> {
+  const due = await getPool().query(LAPSE_DUE_SQL(limit), [PAIRING_SLOT_MINUTES]);
   let lapsed = 0;
   let promoted = 0;
   for (const row of due.rows as { id: string }[]) {
@@ -787,9 +815,9 @@ export function dealSentence(v: {
   return can.length ? `You can ${joinOr(can)}.` : '';
 }
 
-/** Said beside a trade that both lists allow, while trades are agreed in conversation. */
-export const TRADE_FOR_NOW_SENTENCE =
-  'A trade is agreed between the two of you in conversation for now, and nothing comes off either list until one of you takes it down.';
+// A trade that both lists allow is put, sent and accepted through
+// domain/trades.ts; its sentences live there (TRADE_HOW_SENTENCE and the
+// rest), and the entry carries the open trade beside the things.
 
 /** Said when the other side has a figure waiting on one of the things between them. */
 export const PAIRING_FIGURE_SENTENCE = 'They have put a figure on one of these, and it is beside that one.';
@@ -804,7 +832,7 @@ export const THEIR_WORDS_SENTENCE =
 
 /** For the assistant: which id each act goes on. Never said aloud. */
 export const PAIRING_WHAT_TO_DO =
-  'This is one entry for one person. A figure on one of their things, or not_the_thing on one, goes on that thing’s own intro_id. The names step, the conversation, decline, archive and a report go on this entry’s intro_id and cover the whole of it. read_pairings has every thing on it, a page at a time. Say none of the ids aloud.';
+  'This is one entry for one person. A figure on one of their things, or not_the_thing on one, goes on that thing’s own intro_id. The names step, the conversation, decline, archive, a report and lines in writing go on this entry’s intro_id and cover the whole of it. A trade goes on propose_trade with this entry’s pairing_id and each thing’s item_id. read_pairings has every thing on it, a page at a time. Say none of the ids aloud.';
 
 /** What is left once the two of them have everything they need, per step. */
 export function pairingNextSentence(next: string): string {
@@ -890,6 +918,7 @@ function theyHaveItem(row: MemberRow, deal: DealsAllow) {
   const details = detailsOf(theirs?.attributes);
   return {
     intro_id: row.id,
+    item_id: row.card_have,
     their_words: theirWords(theirs?.kind),
     ...(Object.keys(details).length ? { details } : {}),
     quantity: left,
@@ -908,6 +937,7 @@ function theyWantItem(row: MemberRow, deal: DealsAllow) {
   const details = detailsOf(theirs?.attributes);
   return {
     intro_id: row.id,
+    item_id: row.card_have,
     your_item: row.h_kind ?? null,
     your_quantity_left: Math.max(0, quantityIn(row.h_attributes) - Number(row.h_gone ?? 0)),
     their_words: theirWords(theirs?.kind),
@@ -1031,21 +1061,33 @@ export async function pairingEntry(
     getAny: v.getSure + v.getMaybe > 0,
     giveAny: v.giveSure + v.giveMaybe > 0,
   });
+  // THE TRADE BETWEEN THEM (domain/trades.ts): one put to this reader leads,
+  // ahead of everything else on the entry; one of their own, a draft, the
+  // last one lately ended, or how to put one, follow the counts.
+  const { tradeForEntry } = await import('./trades.js');
+  const t = await tradeForEntry(p, accountId, trade);
+  const tradeWaiting = t.fields.trade_waiting_on_you === true;
+  // THE LINES between them ride the anchor (domain/confirmLines.ts).
+  const { linesForAgent } = await import('./confirmLines.js');
+  const lines = await linesForAgent(accountId, anchor).catch(() => undefined);
   const lead = [
+    tradeWaiting ? t.lead : '',
     figureWaiting ? PAIRING_FIGURE_SENTENCE : '',
+    lines?.lead ?? '',
     countsSentence(v),
     deal,
-    trade ? TRADE_FOR_NOW_SENTENCE : '',
+    tradeWaiting ? '' : (t.lead ?? ''),
     pairingNextSentence(next),
   ]
     .filter(Boolean)
     .join(' ');
+  const { trade_waiting_on_you: _tw, ...tradeFields } = t.fields;
   const entry: any = {
     kind: 'pairing',
     intro_id: anchor.id,
     pairing_id: p.id,
     state: 'open',
-    next: figureWaiting ? 'awaiting_your_human' : next,
+    next: figureWaiting || tradeWaiting || !!lines?.lead ? 'awaiting_your_human' : next,
     note: sb(lead),
     they_have: { sure: v.getSure, maybe: v.getMaybe, items: theyHave },
     they_want: { sure: v.giveSure, maybe: v.giveMaybe, items: theyWant },
@@ -1061,6 +1103,8 @@ export async function pairingEntry(
     can_buy: v.canBuy && v.getSure + v.getMaybe > 0,
     can_sell: v.canSell && v.giveSure + v.giveMaybe > 0,
     trade_possible: trade,
+    ...tradeFields,
+    ...(lines ? { confirmations: lines.confirmations, confirmations_note: lines.note } : {}),
     their_words_note: sb(THEIR_WORDS_SENTENCE),
     what_to_do: PAIRING_WHAT_TO_DO,
     ...(shown < total ? { more_note: sb(moreSentence(total - shown)) } : {}),
@@ -1177,8 +1221,11 @@ export async function readPairings(
       const made = isHave ? theyHaveItem(x.row, x.deal) : theyWantItem(x.row, x.deal);
       parts[x.part].push((await withOffers(accountId, made, x.row, isHave ? 'want' : 'have')).item);
     }
+    const { tradeForEntry } = await import('./trades.js');
+    const { trade_waiting_on_you: _w, ...tradeFields } = (await tradeForEntry(p, accountId, tradePossible(p))).fields;
     return {
       ...summaryOf(p, accountId, true),
+      ...tradeFields,
       page,
       ...(all.length > page * PAIRING_ITEMS_PAGE_SIZE ? { next_page: page + 1 } : {}),
       they_have_items: parts.they_have,

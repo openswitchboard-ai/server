@@ -55,7 +55,7 @@ import type { Config } from '../config.js';
 export type LineState = 'asked' | 'confirmed' | 'withdrawn';
 
 /** Which page a line was confirmed on. */
-export type AnsweredOn = 'offer-accept' | 'offer-send' | 'lines-confirm';
+export type AnsweredOn = 'offer-accept' | 'offer-send' | 'lines-confirm' | 'trade-send' | 'trade-accept';
 
 export interface ConfirmLineRow {
   id: string;
@@ -145,6 +145,10 @@ export const PRESS_NOT_NOW_WHAT_TO_DO =
 export const BUYER_BLOCKED_WORDS =
   'The seller has not yet confirmed what you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.';
 
+/** The same, between two lists, where a line can go either way. */
+export const LINES_BLOCKED_PAIRING_WORDS =
+  'The other side has not yet confirmed what you asked for in writing, so nothing is agreed yet. If you want to go ahead without it, tell your assistant to take it off, then open this again.';
+
 /** The heading over the lines on the seller's pages. Nothing sits under it
  *  but the lines themselves, each with a plain yes beside it. */
 export const SELLER_LINES_HEADING = 'The buyer asked you to confirm';
@@ -159,6 +163,8 @@ export const SELLER_LINES_HEADING = 'The buyer asked you to confirm';
 export function confirmButtonLabel(page: AnsweredOn, figure?: string): string {
   if (page === 'offer-accept') return `Confirm and accept ${figure ?? ''}`.trim();
   if (page === 'offer-send') return `Confirm and send ${figure ?? ''}`.trim();
+  if (page === 'trade-accept') return 'Confirm and accept this trade';
+  if (page === 'trade-send') return 'Confirm and send this trade';
   return 'Confirm';
 }
 export const LINES_NOT_NOW_LABEL = 'Not now';
@@ -302,15 +308,44 @@ async function acceptedAlready(matchId: string, db: Queryable): Promise<boolean>
 // Asking, and taking one off. The buying side's assistant, and nobody else.
 // ---------------------------------------------------------------------------
 
-/** The introduction, with every refusal an ask or a take-off shares. */
-async function buyingSideOf(accountId: string, matchId: string): Promise<MatchRow> {
+/**
+ * The introduction, with every refusal an ask or a take-off shares.
+ *
+ * LINES BOTH WAYS ON A PAIRING (the trades design, P2). Between two lists a
+ * deal may be a trade, where each person gives something, so either of them
+ * may ask the other to confirm a line, and the other confirms it. On an
+ * ordinary introduction only the buying side asks, as ever.
+ */
+async function askingSideOf(accountId: string, matchId: string): Promise<MatchRow> {
   const m = await getMatch(matchId);
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   const side = sideOf(m, accountId); // not a party: not found
   // No buyer and no seller where no money changes hands (domain/swaps.ts).
   if (noMoneySentence(m)) throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_NO_DEAL_HERE });
-  if (side !== 'want') throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_BUYING_SIDE_ONLY });
-  return m;
+  if (side !== 'want' && !m.pairing_id) {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_BUYING_SIDE_ONLY });
+  }
+  // Between two lists the lines live on the pairing's anchor, whichever item
+  // the call named.
+  return m.pairing_id ? linesIntroOf(m) : m;
+}
+
+/** The person a line asked by `askedBy` waits on: the other one of the two. */
+export const lineAnswerer = (m: Pick<MatchRow, 'account_want' | 'account_have'>, askedBy: string): string =>
+  askedBy === m.account_want ? m.account_have : m.account_want;
+
+/**
+ * Where the written lines between two people live. On a pairing they ride its
+ * anchor (domain/pairings.ts), whichever item a deal is on, so a sale of one
+ * thing and a trade of several read the same lines. Anywhere else, the
+ * introduction itself.
+ */
+export async function linesIntroOf(m: MatchRow): Promise<MatchRow> {
+  if (!m.pairing_id) return m;
+  const { handleFor } = await import('./pairings.js');
+  const at = await handleFor(m.id);
+  if (at === m.id) return m;
+  return (await getMatch(at)) ?? m;
 }
 
 export interface AgentLine {
@@ -341,7 +376,7 @@ const agentLine = (l: ConfirmLineRow): AgentLine => {
  * introduction's lock, where the two answers that matter are read again.
  */
 export async function askLine(cfg: Config, accountId: string, matchId: string, raw: unknown) {
-  const m = await buyingSideOf(accountId, matchId);
+  const m = await askingSideOf(accountId, matchId);
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_NOT_OPEN });
   if (m.stage < 2) {
     // The floor under an offer, and so under a line on one (offers.ts).
@@ -362,7 +397,9 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
     throw new OsbError('CONSENT_REQUIRED', { human_action: LINE_HAS_FIGURE });
   }
   const max = maxLinesFor(cfg);
-  if (await acceptedAlready(m.id, getPool())) {
+  // On a pairing there can be more than one deal between the same two people,
+  // so an accepted one closes nothing: the lines go on the next.
+  if (!m.pairing_id && (await acceptedAlready(m.id, getPool()))) {
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_AFTER_ACCEPT });
   }
   if ((await standingLines(m.id)).length >= max) {
@@ -371,10 +408,11 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
   // THE OFFER_WORDS DOOR. A line is the same thing an offer note is: one
   // stranger's free words on their way to another, between the same two
   // people. So it is read on the same terms, and refused in the same words.
+  const answerer = lineAnswerer(m, accountId);
   const intake = await runIntake(cfg, {
     door: 'offer_words',
     sender_account: accountId,
-    recipient_account: m.account_have,
+    recipient_account: answerer,
     match_id: m.id,
     text: checked.value,
   });
@@ -392,7 +430,7 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
     // A line asked after the accept cannot undo a deal, and under the lock
     // there is no "at the same moment": either the accept is already here, or
     // it will find this line when it looks.
-    if (await acceptedAlready(m.id, client)) {
+    if (!m.pairing_id && (await acceptedAlready(m.id, client))) {
       throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_AFTER_ACCEPT });
     }
     const r = await client.query(
@@ -410,8 +448,10 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
   // The seller's human is told it is their move, where email is how they
   // hear. The occasion is the oldest line still unanswered, so however many
   // lines are asked while that one waits, it is one notice.
-  const oldest = (await standingLines(m.id).catch(() => [])).find((l) => l.state === 'asked');
-  await notifyWrittenMove(cfg, m.id, m.account_have, `asked:${(oldest ?? row).id}`);
+  const oldest = (await standingLines(m.id).catch(() => [])).find(
+    (l) => l.state === 'asked' && l.asked_by === accountId,
+  );
+  await notifyWrittenMove(cfg, m.id, answerer, `asked:${(oldest ?? row).id}`);
   // Something moved on this introduction, so its slot's clock starts again,
   // as it does for a figure and a message (domain/sequencer.ts).
   try {
@@ -429,7 +469,7 @@ export async function askLine(cfg: Config, accountId: string, matchId: string, r
  * without a line is the only person that costs anything.
  */
 export async function withdrawLine(accountId: string, matchId: string, lineId: string) {
-  const m = await buyingSideOf(accountId, matchId);
+  const m = await askingSideOf(accountId, matchId);
   return withIntroductionLocked(m.id, async (client) => {
     const found = await client.query(
       `SELECT id, match_id, asked_by, line, state, created_at, answered_at
@@ -446,8 +486,9 @@ export async function withdrawLine(accountId: string, matchId: string, lineId: s
       return { intro_id: m.id, confirmation_id: row.id, state: 'withdrawn' as const, already: true };
     }
     // The record that went out lists what stood at the accept. Nothing is
-    // taken off a deal that is already agreed.
-    if (await acceptedAlready(m.id, client)) {
+    // taken off a deal that is already agreed. (A pairing's lines are for the
+    // next deal between the two of them, so there they can come off.)
+    if (!m.pairing_id && (await acceptedAlready(m.id, client))) {
       throw new OsbError('NOT_UNLOCKED_YET', { human_action: LINES_AFTER_ACCEPT });
     }
     await client.query(
@@ -529,14 +570,16 @@ export async function applyLinePress(
     );
   }
   const none: PressOutcome = { confirmed: [] };
-  // Only the seller confirms. A press by the buying side confirms nothing,
-  // whatever its form said.
-  if (humanAccountId !== m.account_have) return none;
+  // Only the seller confirms on an ordinary introduction. A press by the
+  // buying side confirms nothing, whatever its form said. On a pairing each
+  // person confirms what the OTHER asked, and never their own.
+  if (!m.pairing_id && humanAccountId !== m.account_have) return none;
+  if (humanAccountId !== m.account_have && humanAccountId !== m.account_want) return none;
   const open = await client.query(
     `SELECT id, state FROM confirm_lines
-      WHERE match_id = $1 AND state = 'asked'
+      WHERE match_id = $1 AND state = 'asked' AND asked_by <> $2
       ORDER BY created_at ASC, id ASC`,
-    [m.id],
+    [m.id, humanAccountId],
   );
   const waiting = open.rows as { id: string; state: LineState }[];
   if (!waiting.length) return none;
@@ -583,10 +626,12 @@ export async function confirmLinesByHuman(
       "confirm lines: a confirmation is only recorded from the human's own press (recorded_via must be 'counter')",
     );
   }
-  const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
-  sideOf(m, humanAccountId);
-  if (humanAccountId !== m.account_have) return { confirmed: [] };
+  const found = await getMatch(matchId);
+  if (!found) throw Object.assign(new Error('introduction not found'), { notFound: true });
+  sideOf(found, humanAccountId);
+  if (!found.pairing_id && humanAccountId !== found.account_have) return { confirmed: [] };
+  // A pairing's lines ride its anchor, whichever item the page was about.
+  const m = await linesIntroOf(found);
   return withIntroductionLocked(m.id, (client) =>
     applyLinePress(client, m, humanAccountId, recordedVia, press),
   );
@@ -645,6 +690,32 @@ export interface LinesForAgent {
   lead?: string;
 }
 
+/** On a pairing, where lines go both ways. */
+export const LINES_NOTE_PAIRING_WAITING_ON_YOU =
+  'The other side has asked your human to confirm some things in writing, and they are on your human’s own page. Tell your human so in a sentence and hand them the page: respond(request_confirm), or the page for a figure or a trade, which lists them too. Its main button confirms them all, and you cannot confirm any yourself. If something asked is not true, your human presses Not now: ask them what is not right, and say so to the other side in the conversation. Nothing can be accepted between the two of them while one is waiting.';
+
+export const LINES_NOTE_PAIRING_WAITING_ON_THEM =
+  'The other side’s human has not yet confirmed everything your human asked in writing: each line here says which. Nothing can be accepted between the two of them until they have. Take a line off with respond(withdraw_confirmation) only on your human’s yes.';
+
+export const LINES_NOTE_PAIRING_CONFIRMED =
+  'Everything asked in writing between the two of them is confirmed. Confirmed lines go on the record of a deal between them; nothing said in conversation does.';
+
+export const LINES_LEAD_PAIRING =
+  'They have also asked you to confirm some things in writing, on your own page.';
+
+/** The reader's sentence for the lines on a pairing, where they go both ways. Pure. */
+export function pairingLinesNoteFor(
+  accountId: string,
+  lines: Pick<ConfirmLineRow, 'state' | 'asked_by'>[],
+): { text: string; lead?: string } {
+  const waiting = lines.filter((l) => l.state === 'asked');
+  if (waiting.some((l) => l.asked_by !== accountId)) {
+    return { text: LINES_NOTE_PAIRING_WAITING_ON_YOU, lead: LINES_LEAD_PAIRING };
+  }
+  if (waiting.length) return { text: LINES_NOTE_PAIRING_WAITING_ON_THEM };
+  return { text: LINES_NOTE_PAIRING_CONFIRMED };
+}
+
 /** Which sentence goes with the lines, from the reading side. Pure. */
 export function linesNoteFor(
   side: 'want' | 'have',
@@ -666,12 +737,12 @@ export function linesNoteFor(
  */
 export async function linesForAgent(
   accountId: string,
-  m: Pick<MatchRow, 'id' | 'account_want' | 'account_have'>,
+  m: Pick<MatchRow, 'id' | 'account_want' | 'account_have'> & { pairing_id?: string | null },
 ): Promise<LinesForAgent | undefined> {
   const lines = await standingLines(m.id);
   if (!lines.length) return undefined;
   const side = sideOf(m as MatchRow, accountId);
-  const said = linesNoteFor(side, lines);
+  const said = m.pairing_id ? pairingLinesNoteFor(accountId, lines) : linesNoteFor(side, lines);
   return {
     confirmations: lines.map(agentLine),
     note: { text: said.text, provenance: 'switchboard-system' },
@@ -764,14 +835,29 @@ export interface PageLine {
   id: string;
   words: string;
   state: Exclude<LineState, 'withdrawn'>;
+  /** Who asked it: the other person confirms it. */
+  asked_by?: string;
 }
 
 /** The standing lines with their words, for a page. Erased words drop out. */
 export async function linesForPage(matchId: string): Promise<PageLine[]> {
   return (await standingLines(matchId))
-    .map((l) => ({ id: l.id, words: lineText(l.line) ?? '', state: l.state as PageLine['state'] }))
+    .map((l) => ({
+      id: l.id,
+      words: lineText(l.line) ?? '',
+      state: l.state as PageLine['state'],
+      asked_by: l.asked_by,
+    }))
     .filter((l) => l.words);
 }
+
+/** The lines waiting on this person to confirm: asked by the other one. Pure. */
+export const waitingOn = <T extends { state: string; asked_by?: string }>(lines: T[], accountId: string): T[] =>
+  lines.filter((l) => l.state === 'asked' && l.asked_by !== accountId);
+
+/** The lines this person asked that the other has not yet confirmed. Pure. */
+export const waitingOnOther = <T extends { state: string; asked_by?: string }>(lines: T[], accountId: string): T[] =>
+  lines.filter((l) => l.state === 'asked' && l.asked_by === accountId);
 
 /** The introductions on which something is waiting for this seller to confirm. */
 export async function linesWaitingFor(
@@ -781,7 +867,9 @@ export async function linesWaitingFor(
     `SELECT l.match_id, m.category, count(*)::int AS count, min(l.created_at) AS asked_at
        FROM confirm_lines l
        JOIN matches m ON m.id = l.match_id
-      WHERE m.account_have = $1 AND l.state = 'asked' AND m.state = 'open' AND m.live
+      WHERE l.asked_by <> $1
+        AND (m.account_have = $1 OR (m.pairing_id IS NOT NULL AND m.account_want = $1))
+        AND l.state = 'asked' AND m.state = 'open' AND m.live
       GROUP BY l.match_id, m.category
       ORDER BY min(l.created_at) DESC
       LIMIT 20`,

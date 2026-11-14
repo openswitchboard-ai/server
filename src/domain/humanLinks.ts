@@ -23,7 +23,7 @@ import { getPool } from '../db.js';
 import { OsbError } from '../protocol.js';
 import { getHearsVia } from './accounts.js';
 import { readLaneFacts, sayFor } from './lanes.js';
-import { assertNotSwap, getMatch, ownCardId, sideOf } from './matches.js';
+import { assertNotSwap, getMatch, ownCardId, sideOf, type MatchRow } from './matches.js';
 import { categoryPhrase, ownThingPhrase } from './matchRules.js';
 import { validateMandate, validateOfferNote, type Mandate } from './negotiation.js';
 import { APPROVAL_LINK_TTL_MINUTES, createApprovalLink, signLink } from '../counter/links.js';
@@ -206,7 +206,9 @@ export async function sendNumberLink(
   const page = url(cfg, token);
   // Where the buyer has asked this seller to confirm things in writing, the
   // page lists them, and the sentence says so in a clause (confirmLines.ts).
-  const boxes = side === 'have' && (await sellerHasLinesToAnswer(matchId));
+  const boxes = m.pairing_id
+    ? await linesWaitingOnMe(m, accountId)
+    : side === 'have' && (await sellerHasLinesToAnswer(matchId));
   // The same words the page's heading uses: a seller asks a price for their
   // own thing, a buyer offers one for the thing they are after.
   const thing = await ownThingWords(m, accountId);
@@ -220,13 +222,13 @@ export async function sendNumberLink(
   const theirs = side === 'have' ? `for their ${thing}` : `for the ${thing}`;
   return {
     say: saySentence(
-      `${asks}, and nothing goes until you press it${sealed}${boxes ? LINES_ON_PAGE_CLAUSE : ''}`,
+      `${asks}, and nothing goes until you press it${sealed}${boxes ? linesClause(!!m.pairing_id) : ''}`,
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page asking your human whether to ${side === 'have' ? 'ask' : 'offer'} ${figure}${thing ? ` ${theirs}` : ''}. They press ${button} and it goes to the other side; nothing is agreed until one of them accepts.${oneNumber}${boxes ? ` ${LINES_ON_PAGE_FOR_AGENT}` : ''} Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page asking your human whether to ${side === 'have' ? 'ask' : 'offer'} ${figure}${thing ? ` ${theirs}` : ''}. They press ${button} and it goes to the other side; nothing is agreed until one of them accepts.${oneNumber}${boxes ? ` ${linesForAgentLine(!!m.pairing_id)}` : ''} Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -254,6 +256,27 @@ async function sellerHasLinesToAnswer(matchId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Is anything waiting on this person to confirm, where the page about this
+ * introduction lists lines? On a pairing the lines ride its anchor and go
+ * both ways (domain/confirmLines.ts), so a member's page reads the anchor's.
+ */
+async function linesWaitingOnMe(m: MatchRow, accountId: string): Promise<boolean> {
+  try {
+    const { linesIntroOf, standingLines, waitingOn } = await import('./confirmLines.js');
+    const at = await linesIntroOf(m);
+    return waitingOn(await standingLines(at.id), accountId).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** The clause and the agent's line for a page that lists lines, with whose they are. */
+const linesClause = (pairing: boolean) =>
+  pairing ? LINES_ON_PAGE_CLAUSE.replace('the buyer has', 'the other side has') : LINES_ON_PAGE_CLAUSE;
+const linesForAgentLine = (pairing: boolean) =>
+  pairing ? LINES_ON_PAGE_FOR_AGENT.replace('what the buyer asked', 'what the other side asked') : LINES_ON_PAGE_FOR_AGENT;
+
 /** Is the have behind this introduction being sold on best offer? */
 async function isBestOffer(matchId: string): Promise<boolean> {
   const r = await getPool().query(
@@ -279,7 +302,7 @@ export async function acceptNumberLink(
   if (!offerId) throw Object.assign(new Error('which number?'), { validation: true });
   const r = await getPool().query(
     `SELECT o.*, m.category, m.account_want, m.account_have, m.card_want, m.card_have,
-            m.state AS match_state FROM offers o
+            m.pairing_id, m.state AS match_state FROM offers o
      JOIN matches m ON m.id = o.match_id WHERE o.id = $1`,
     [offerId],
   );
@@ -327,19 +350,22 @@ export async function acceptNumberLink(
     counterpartyAccount: o.proposer_account,
   });
   const page = url(cfg, token);
-  const boxes = o.account_have === accountId && (await sellerHasLinesToAnswer(o.match_id));
+  const om = o.pairing_id ? await getMatch(o.match_id) : undefined;
+  const boxes = om
+    ? await linesWaitingOnMe(om, accountId)
+    : o.account_have === accountId && (await sellerHasLinesToAnswer(o.match_id));
   // The same words the page's heading uses: "Accept $415 AUD for your Trek?"
   const thing = await ownThingWords(o, accountId);
   const forWhat = thing ? (o.account_have === accountId ? ` for your ${thing}` : ` for the ${thing}`) : '';
   return {
     say: saySentence(
-      `whether to accept ${money(Number(o.amount), o.ccy)}${forWhat}, and saying yes takes your passkey or PIN${boxes ? LINES_ON_PAGE_CLAUSE : ''}`,
+      `whether to accept ${money(Number(o.amount), o.ccy)}${forWhat}, and saying yes takes your passkey or PIN${boxes ? linesClause(!!om) : ''}`,
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
-    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN.${boxes ? ` ${LINES_ON_PAGE_FOR_AGENT}` : ''} Once they press it, your next check_matches shows the result.`,
+    what_it_does: `Opens one page saying ${money(Number(o.amount), o.ccy)} is on the table${o.account_have === accountId ? ` for their ${categoryPhrase(o.category)}` : ` for the ${categoryPhrase(o.category)} they are after`}, with Accept and Not now. They press Accept and it is agreed, and that takes their PIN.${boxes ? ` ${linesForAgentLine(!!om)}` : ''} Once they press it, your next check_matches shows the result.`,
   };
 }
 
@@ -358,39 +384,101 @@ export async function confirmLinesLink(
   accountId: string,
   matchId: string,
 ): Promise<HumanLink> {
-  const m = await getMatch(matchId);
-  if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
-  const side = sideOf(m, accountId);
+  const found = await getMatch(matchId);
+  if (!found) throw Object.assign(new Error('introduction not found'), { notFound: true });
+  const side = sideOf(found, accountId);
   const lines = await import('./confirmLines.js');
-  if (side !== 'have') {
+  // On a pairing, lines go both ways and ride its anchor: either person may
+  // have something waiting on them (domain/confirmLines.ts).
+  if (side !== 'have' && !found.pairing_id) {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
         'Confirming in writing is for the selling side, and your human is the one buying here. Ask for a line with respond(ask_confirmation); their human answers it.',
     });
   }
+  const m = await lines.linesIntroOf(found);
   if (m.state !== 'open') {
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: lines.LINES_NOT_OPEN });
   }
-  if (!lines.unconfirmed(await lines.standingLines(matchId)).length) {
+  if (!lines.waitingOn(await lines.standingLines(m.id), accountId).length) {
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: lines.CONFIRM_NOTHING_WAITING });
   }
   const { token, id } = await createApprovalLink({
     accountId,
     action: 'lines-confirm',
-    refId: matchId,
-    counterpartyAccount: m.account_want,
+    refId: m.id,
+    counterpartyAccount: m.account_want === accountId ? m.account_have : m.account_want,
+  });
+  const page = url(cfg, token);
+  const who = m.pairing_id ? 'the other side' : 'the buyer';
+  return {
+    say: saySentence(
+      `you to confirm in writing what ${who} has asked about, in one press, and it takes your passkey or PIN`,
+      page,
+    ),
+    link: page,
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does: `Opens one page listing what ${who} asked your human to confirm in writing. Its main button confirms them all, and they go on the record of a deal as confirmed by your human. You cannot confirm any of it for them. If something asked is not true they press Not now, which changes nothing: ask them what is not right and say so to the other side in the conversation. Once they press, your next check_in shows the result.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// (c3) A trade between two lists (domain/trades.ts). The proposer's page to
+// send the trade their assistant drafted, and the other human's page to
+// accept it. Both bound to one trade at mint time, and both take the PIN or
+// passkey at the press, as a figure does. Refused at mint time where the
+// press could only be refused.
+// ---------------------------------------------------------------------------
+const things = (n: number) => (n === 1 ? '1 thing' : `${n} things`);
+
+export async function tradeSendLink(cfg: Config, accountId: string, tradeId: string): Promise<HumanLink> {
+  const trades = await import('./trades.js');
+  const t = await trades.assertSendable(accountId, tradeId);
+  const { mine, theirs, items } = await trades.tradeCounts(t.id, accountId);
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'trade-send',
+    refId: t.id,
+    counterpartyAccount: t.recipient_account,
+    payload: { items: trades.tradeItemsKey(items) },
   });
   const page = url(cfg, token);
   return {
     say: saySentence(
-      'you to confirm in writing what the buyer has asked about, in one press, and it takes your passkey or PIN',
+      `whether to send your trade, ${things(mine)} of yours for ${things(theirs)} of theirs, and nothing goes until you press it, which takes your passkey or PIN`,
       page,
     ),
     link: page,
     press_id: id,
     expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
     what_it_does:
-      'Opens one page listing what the buyer asked your human to confirm in writing. Its main button confirms them all, and they go on the record of a deal as confirmed by your human. You cannot confirm any of it for them. If something asked is not true they press Not now, which changes nothing: ask them what is not right and say so to the other side in the conversation. Once they press, your next check_in shows the result.',
+      'Opens one page listing what goes each way, with how many, and the note if there is one. They press Send this trade and it goes to the other side, replacing any trade open between the two of them. Nothing is agreed until the other human accepts it on their own page; if they do, what your human gives comes off their list, and the page says so. Once they press it, your next check_in shows the result.',
+  };
+}
+
+export async function tradeAcceptLink(cfg: Config, accountId: string, tradeId: string): Promise<HumanLink> {
+  const trades = await import('./trades.js');
+  const { t } = await trades.assertAcceptable(accountId, tradeId);
+  const { mine, theirs, items } = await trades.tradeCounts(t.id, accountId);
+  const { token, id } = await createApprovalLink({
+    accountId,
+    action: 'trade-accept',
+    refId: t.id,
+    counterpartyAccount: t.proposer_account,
+    payload: { items: trades.tradeItemsKey(items) },
+  });
+  const page = url(cfg, token);
+  return {
+    say: saySentence(
+      `whether to accept their trade, ${things(theirs)} of theirs for ${things(mine)} of yours, and saying yes takes your passkey or PIN. It also lists what comes off your list if you accept`,
+      page,
+    ),
+    link: page,
+    press_id: id,
+    expires_in_minutes: APPROVAL_LINK_TTL_MINUTES,
+    what_it_does:
+      'Opens one page with what goes each way, their note marked as theirs, the lines confirmed in writing between the two of them, and what comes off your human’s list. They press Accept this trade and it is agreed, and that takes their passkey or PIN; anything the other side asked them to confirm in writing is confirmed by the same press. Once they press it, both of them are emailed the record and your next check_in shows the result.',
   };
 }
 
@@ -783,11 +871,12 @@ export interface PressAnswer {
    * question, so an agent does not have to work out which one it was.
    */
   fetch_again?: {
-    tool: 'respond' | 'publish_intent';
+    tool: 'respond' | 'publish_intent' | 'propose_trade' | 'answer_trade';
     action?: string;
     intro_id?: string;
     offer_id?: string;
     intent_id?: string;
+    trade_id?: string;
   };
   /**
    * On the shelf page (SHELF_PICK): the shelf the human chose, as the path to
@@ -827,6 +916,8 @@ const PAGE_ASKS: Record<string, string> = {
   'shelf-pick': 'them to pick which shelf this belongs on',
   'contact-send': 'them to type their address, phone number or email themselves and send it, sealed, to the other side',
   'lines-confirm': 'them to confirm in writing what the other side asked about, in one press',
+  'trade-send': 'whether to send their trade to the other side',
+  'trade-accept': 'whether to accept the trade the other side put to them',
 };
 
 export const PRESS_SENTENCES = {
@@ -922,6 +1013,11 @@ export function fetchAgainFor(row: {
       return { tool: 'respond', action: 'request_send_contact', intro_id: row.ref_id };
     case 'lines-confirm':
       return { tool: 'respond', action: 'request_confirm', intro_id: row.ref_id };
+    // The same trade sent again finds its draft and hands a fresh page.
+    case 'trade-send':
+      return { tool: 'propose_trade' };
+    case 'trade-accept':
+      return { tool: 'answer_trade', action: 'request_accept', trade_id: row.ref_id };
     default:
       return undefined;
   }

@@ -273,6 +273,67 @@ export async function notifyYourMove(
 }
 
 // ---------------------------------------------------------------------------
+// A TRADE BETWEEN TWO LISTS (ops op 'trade-notify', enqueued by
+// domain/trades.ts). Three moments, each to one person:
+//
+//   'arrived'   a trade was sent: the person it was put to;
+//   'accepted'  the trade was accepted: the person who put it;
+//   'declined'  the trade was turned down: the person who put it.
+//
+// The same road as notifyYourMove: quiet for an account that has turned match
+// mail off, held back by sendEmail for anyone whose assistant brings them the
+// news, behind every suppression, complaint and deleted-account gate, and sent
+// as the one fixed notice with nothing of the trade in it. One key per trade
+// and moment, so a redelivered job, or a second one, finds it spent. The job
+// carries ids only; who is told is read off the trade itself, never off the
+// message, so a job naming somebody else tells nobody.
+// ---------------------------------------------------------------------------
+export type TradeMoment = 'arrived' | 'accepted' | 'declined';
+const TRADE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function notifyTrade(cfg: Config, tradeId: string, moment: string): Promise<void> {
+  if (!TRADE_ID.test(String(tradeId ?? ''))) return;
+  if (moment !== 'arrived' && moment !== 'accepted' && moment !== 'declined') return;
+  const r = await getPool().query(
+    `SELECT t.proposer_account, t.recipient_account, t.state,
+            m.id AS match_id, m.category, m.account_want, m.account_have, m.card_want, m.card_have, m.swap
+       FROM trade_proposals t
+       JOIN pairings p ON p.id = t.pairing_id
+       JOIN matches m ON m.id = p.anchor_match_id
+      WHERE t.id = $1`,
+    [tradeId],
+  );
+  const t = r.rows[0];
+  if (!t) return;
+  // Only what the trade's own state still says happened.
+  const stillTrue =
+    moment === 'arrived' ? ['open', 'accepted', 'declined', 'superseded'].includes(t.state) : t.state === moment;
+  if (!stillTrue) return;
+  const recipient = String(moment === 'arrived' ? t.recipient_account : t.proposer_account);
+  const ctx = await emailAccountContext(cfg, recipient);
+  if (ctx.freqMatches === 'off') return;
+  const to = await accountEmail(recipient, 'your-move');
+  if (!to) return;
+  const ownLabel = await readersOwnThingLabel(t, recipient);
+  await sendEmail(cfg, {
+    to,
+    accountId: recipient,
+    template: 'your-move',
+    kind: 'bulk',
+    dedupeKey: `trade:${tradeId}:${moment}`,
+    content: renderYourMove(
+      {
+        categoryLabel: ctx.blind ? undefined : ownLabel,
+        blind: ctx.blind,
+        step: moment === 'arrived' ? 'trade' : 'trade-news',
+        side: sideOf(t, recipient),
+      },
+      ctx.links,
+    ),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The numbers on a best offer are ready (ops op 'best-offer-closed-notify',
 // enqueued by the sweep that closed the window: domain/sequencer.ts,
 // closeDueGatherings). Told to the seller, once per window.

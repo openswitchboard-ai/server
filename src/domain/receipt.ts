@@ -83,9 +83,10 @@ export interface ReceiptFacts {
   offeredBy: 'buyer' | 'seller';
   /** The note that rode with the accepted offer, in its writer's own words. */
   note?: string;
-  /** The lines the buyer asked and the seller's human confirmed with their
-   *  own press, in the order asked. The buyer's words. */
-  confirmed?: string[];
+  /** The lines asked and confirmed with a press, in the order asked. A bare
+   *  string is the buyer's words, confirmed by the seller; between two lists
+   *  (a pairing) a line can go either way, and says which. */
+  confirmed?: ConfirmedLine[];
   /** Present only where both have already shared a first name and a suburb. */
   people?: { buyer: ReceiptPerson; seller: ReceiptPerson };
 }
@@ -150,6 +151,9 @@ export function receiptFingerprint(block: string): string {
 
 const other = (role: 'buyer' | 'seller') => (role === 'buyer' ? 'seller' : 'buyer');
 
+/** One confirmed line: the buyer's words where it is a bare string. */
+export type ConfirmedLine = string | { text: string; askedBy: 'buyer' | 'seller' };
+
 /**
  * The block itself. One fact per line, each line starting with what it is, and
  * the same words whoever is reading: there is no "you" in a record two people
@@ -169,8 +173,9 @@ export function receiptBlock(f: ReceiptFacts): string {
   // One line each, in the order asked. The words are the buyer's and the
   // confirming was the seller's, and the line says both.
   for (const raw of f.confirmed ?? []) {
-    const line = oneLine(raw);
-    if (line) lines.push(`Asked by the buyer, confirmed by the seller: "${line}"`);
+    const askedBy = typeof raw === 'string' ? 'buyer' : raw.askedBy;
+    const line = oneLine(typeof raw === 'string' ? raw : raw.text);
+    if (line) lines.push(`Asked by the ${askedBy}, confirmed by the ${other(askedBy)}: "${line}"`);
   }
   if (f.people) {
     lines.push(`Buyer: ${oneLine(f.people.buyer.firstName)}, ${oneLine(f.people.buyer.locality)}`);
@@ -214,6 +219,34 @@ async function sharedPerson(accountId: string, matchId: string): Promise<Receipt
  * missing, or anything at all goes wrong reading them, the record says "the
  * buyer" and "the seller" and is still a record.
  */
+/**
+ * Two named people on one introduction, or nobody by name: the gate
+ * peopleIfShared below uses, for any two accounts on it (a trade names its
+ * people by who proposed and who accepted rather than by side).
+ */
+export async function namesIfBothPressed(
+  m: Pick<MatchRow, 'id' | 'stage' | 'account_want' | 'account_have'>,
+  first: string,
+  second: string,
+): Promise<[ReceiptPerson, ReceiptPerson] | undefined> {
+  try {
+    if (Number(m.stage) < 3) return undefined;
+    const r = await getPool().query(
+      `SELECT count(DISTINCT account_id)::int AS n
+         FROM consent_tokens
+        WHERE match_id = $1 AND kind = 'stage3-optin'
+          AND account_id = ANY($2::uuid[])`,
+      [m.id, [m.account_want, m.account_have]],
+    );
+    if (Number(r.rows[0]?.n ?? 0) < 2) return undefined;
+    const a = await sharedPerson(first, m.id);
+    const b = await sharedPerson(second, m.id);
+    return a && b ? [a, b] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function peopleIfShared(
   m: MatchRow,
 ): Promise<{ buyer: ReceiptPerson; seller: ReceiptPerson } | undefined> {
@@ -250,7 +283,7 @@ export async function buildReceipt(
   m: MatchRow,
   o: { amount: string | number; ccy: string; proposer_account: string; message?: unknown },
   at: Date = new Date(),
-  extra: { confirmed?: string[] } = {},
+  extra: { confirmed?: ConfirmedLine[] } = {},
 ): Promise<Receipt> {
   if (m.swap) throw new Error('receipt: a swap has no figure and no record of one');
   // The seller's posting AS THE BUYER IS ALREADY SHOWN IT: the details step,
@@ -282,7 +315,9 @@ export async function buildReceipt(
   const { offerMessageText } = await import('./offers.js');
   const note = offerMessageText(o.message) ?? undefined;
   const people = await peopleIfShared(m);
-  const confirmed = (extra.confirmed ?? []).map(oneLine).filter(Boolean);
+  const confirmed = (extra.confirmed ?? [])
+    .map((c): ConfirmedLine => (typeof c === 'string' ? oneLine(c) : { text: oneLine(c.text), askedBy: c.askedBy }))
+    .filter((c) => (typeof c === 'string' ? c : c.text));
   return receiptFrom({
     at,
     thing,
@@ -294,4 +329,109 @@ export async function buildReceipt(
     ...(confirmed.length ? { confirmed } : {}),
     ...(people ? { people } : {}),
   });
+}
+
+// ---------------------------------------------------------------------------
+// THE RECORD OF A TRADE (the trades design, P2; domain/trades.ts).
+//
+// Things for things between two lists. The same canonical form, the same
+// fingerprint and the same email as a sale's record, and the same rule about
+// what may be in it: each thing in its GIVER's own screened words, with the
+// details they posted and how many; the note that went with the trade; the
+// lines confirmed between the two of them, each saying which way it went;
+// and names only where both have already pressed the names step. Nobody is a
+// buyer or a seller in a trade, so the two people are named by what they did:
+// the person who proposed it, and the person who accepted it. No money is
+// part of a trade in this version, and the record says so.
+// ---------------------------------------------------------------------------
+
+/** One thing in a trade, as its giver posted it. */
+export interface TradeItemFact {
+  /** The giver's own screened words, else the shelf's phrase. */
+  thing: string;
+  /** Their posted details as one plain sentence, values only. */
+  details?: string;
+  quantity: number;
+}
+
+export type TradeRole = 'proposer' | 'accepter';
+
+export interface TradeReceiptFacts {
+  /** When the accept was pressed. */
+  at: Date;
+  fromProposer: TradeItemFact[];
+  fromAccepter: TradeItemFact[];
+  /** The proposer's own words that went with the trade. */
+  note?: string;
+  /** Lines confirmed between the two, in the order asked. */
+  confirmed?: { text: string; askedBy: TradeRole }[];
+  /** Present only where both have already shared a first name and a suburb. */
+  people?: { proposer: ReceiptPerson; accepter: ReceiptPerson };
+}
+
+const roleWords = (r: TradeRole) => (r === 'proposer' ? 'the person who proposed it' : 'the person who accepted it');
+const otherRole = (r: TradeRole): TradeRole => (r === 'proposer' ? 'accepter' : 'proposer');
+const upperFirst = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+/** The closing line every trade record carries. */
+export const TRADE_RECEIPT_POSTAGE =
+  'Each person sends their own things, and postage is for the two of them to arrange, unless a confirmed line here says otherwise.';
+
+/** The line that says no money is part of it. */
+export const TRADE_RECEIPT_NO_MONEY = 'No money is part of this trade.';
+
+function itemLine(role: TradeRole, item: TradeItemFact): string {
+  const q = Number.isInteger(item.quantity) && item.quantity >= 1 ? item.quantity : 1;
+  const details = oneLine(item.details);
+  return `From ${roleWords(role)}: ${oneLine(item.thing)}, quantity ${q}.${details ? ` As they posted it: ${details}` : ''}`;
+}
+
+/**
+ * The block of a trade's record. One fact per line, the same words whoever is
+ * reading, canonical as every record is. Pure.
+ */
+export function tradeReceiptBlock(f: TradeReceiptFacts): string {
+  const lines: string[] = [];
+  lines.push(`Trade agreed: ${receiptTime(f.at)}`);
+  lines.push(...tradeTermsLines(f));
+  lines.push('Proposed by one of the two, and accepted by the other, each with their own press.');
+  for (const c of f.confirmed ?? []) {
+    const line = oneLine(c.text);
+    if (line) {
+      lines.push(`${upperFirst(`asked by ${roleWords(c.askedBy)}`)}, confirmed by ${roleWords(otherRole(c.askedBy))}: "${line}"`);
+    }
+  }
+  lines.push(TRADE_RECEIPT_POSTAGE);
+  if (f.people) {
+    lines.push(`${upperFirst(roleWords('proposer'))}: ${oneLine(f.people.proposer.firstName)}, ${oneLine(f.people.proposer.locality)}`);
+    lines.push(`${upperFirst(roleWords('accepter'))}: ${oneLine(f.people.accepter.firstName)}, ${oneLine(f.people.accepter.locality)}`);
+  }
+  return canonicalReceipt(lines.join('\n'));
+}
+
+/**
+ * THE TERMS: what goes each way, that no money is part of it, and the note.
+ * Exactly what the proposer pressed Send on, and the middle of the record.
+ * Pure.
+ */
+export function tradeTermsLines(f: Pick<TradeReceiptFacts, 'fromProposer' | 'fromAccepter' | 'note'>): string[] {
+  const lines: string[] = [];
+  for (const item of f.fromProposer) lines.push(itemLine('proposer', item));
+  for (const item of f.fromAccepter) lines.push(itemLine('accepter', item));
+  lines.push(TRADE_RECEIPT_NO_MONEY);
+  const note = oneLine(f.note);
+  if (note) lines.push(`Note ${roleWords('proposer')} sent with the trade: "${note}"`);
+  return lines;
+}
+
+/** The terms in canonical form, and their fingerprint. Pure. */
+export function tradeTermsFrom(f: Pick<TradeReceiptFacts, 'fromProposer' | 'fromAccepter' | 'note'>): Receipt {
+  const block = canonicalReceipt(tradeTermsLines(f).join('\n'));
+  return { block, sha256: receiptFingerprint(block) };
+}
+
+/** A trade's block and its fingerprint, from the facts. Pure. */
+export function tradeReceiptFrom(f: TradeReceiptFacts): Receipt {
+  const block = tradeReceiptBlock(f);
+  return { block, sha256: receiptFingerprint(block) };
 }

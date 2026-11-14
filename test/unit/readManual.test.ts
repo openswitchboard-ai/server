@@ -246,6 +246,10 @@ const MUST_SAY: [string, RegExp][] = [
   // Pairings (migration 074): one entry per person, read-only, and nothing
   // on it is read aloud.
   ['read_pairings', /never read a field name, an id or a dotted path aloud/i],
+  // Trades (migration 075): the assistant drafts and the human sends, and a
+  // trade is answered only on the human's word.
+  ['propose_trade', /YOUR HUMAN TO SEND/],
+  ['answer_trade', /ONLY ON YOUR HUMAN'S WORD/],
 ];
 
 describe('the tool descriptions carry the rules and stay inside the budget', () => {

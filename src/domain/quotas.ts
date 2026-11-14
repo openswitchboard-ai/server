@@ -197,14 +197,25 @@ export async function recordPublishWithinQuota(
   });
 }
 
-/** Throws RATE_LIMITED_OFFERS when the account exceeds the hourly offer rate. */
+/**
+ * Throws RATE_LIMITED_OFFERS when the account exceeds the hourly offer rate.
+ * A trade put to somebody (domain/trades.ts) counts against the same hour as
+ * a figure does: both are one person putting something to another.
+ */
 export async function checkOfferRate(accountId: string, q: Quotas): Promise<void> {
   const r = await getPool().query(
     `SELECT count(*)::int AS n FROM offers
      WHERE proposer_account = $1 AND created_at > now() - interval '1 hour'`,
     [accountId],
   );
-  if (r.rows[0].n >= q.maxOffersPerHour) {
+  const t = await getPool()
+    .query(
+      `SELECT count(*)::int AS n FROM trade_proposals
+        WHERE proposer_account = $1 AND created_at > now() - interval '1 hour'`,
+      [accountId],
+    )
+    .catch(() => ({ rows: [] as any[] }));
+  if (Number(r.rows[0].n) + Number(t.rows?.[0]?.n ?? 0) >= q.maxOffersPerHour) {
     throw new OsbError('RATE_LIMITED_OFFERS', {
       retry_after: 3600,
       human_action: `Offers are paced. Send the next one ${roughWait(3600)} — nothing your human needs to do.`,
@@ -219,8 +230,10 @@ export async function checkOfferRate(accountId: string, q: Quotas): Promise<void
  * uses; the two limits arrive as the parameters named here.
  */
 export const OFFER_RATE_GUARD_SQL = (hourLimitParam: string, dayLimitParam: string) =>
-  `(SELECT count(*) FROM offers
-      WHERE proposer_account = $2 AND created_at > now() - interval '1 hour') < ${hourLimitParam}
+  `((SELECT count(*) FROM offers
+      WHERE proposer_account = $2 AND created_at > now() - interval '1 hour')
+    + (SELECT count(*) FROM trade_proposals
+      WHERE proposer_account = $2 AND created_at > now() - interval '1 hour')) < ${hourLimitParam}
    AND (SELECT count(*) FROM offers
           WHERE proposer_account = $2 AND match_id = $1
             AND created_at > now() - interval '24 hours') < ${dayLimitParam}`;

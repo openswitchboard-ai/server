@@ -51,14 +51,15 @@ describe('tool descriptions per family of assistant', () => {
   it("Claude ends its reply with the link and waits only once the person says they pressed", () => {
     const base = toolsFor(cfg);
     const claude = toolsFor(cfg, 'claude');
-    for (const name of ['respond', 'wait_for_press']) {
+    // The tools whose answer is a page to hand over (the trade tools since
+    // 14 November 2026).
+    const handing = ['respond', 'wait_for_press', 'propose_trade', 'answer_trade'];
+    for (const name of handing) {
       const d = claude.find((x) => x.name === name)!.description;
       expect(d, name).not.toBe(base.find((b) => b.name === name)!.description);
       expect(d, name).toContain('folded out of sight');
     }
-    expect(claude.filter((t) => t.name !== 'respond' && t.name !== 'wait_for_press')).toEqual(
-      base.filter((t) => t.name !== 'respond' && t.name !== 'wait_for_press'),
-    );
+    expect(claude.filter((t) => !handing.includes(t.name))).toEqual(base.filter((t) => !handing.includes(t.name)));
   });
 
   it('serves an override only while its baseline is current, and falls back otherwise', () => {

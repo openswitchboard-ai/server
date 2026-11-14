@@ -10,7 +10,7 @@ import {
   sideOf,
   type MatchRow,
 } from './matches.js';
-import type { Receipt } from './receipt.js';
+import type { ConfirmedLine, Receipt } from './receipt.js';
 import { isLadderPattern } from './matchRules.js';
 import { type Arrangement } from './arrangement.js';
 import { readLaneFacts, sayFor } from './lanes.js';
@@ -28,11 +28,14 @@ import { FIGURE_IN_OFFER_NOTE_ACTION, carriesMoneyFigure } from './moneyInWords.
 import { clearOfferDrafts, saveOfferDraft } from './offerDrafts.js';
 import {
   BUYER_BLOCKED_WORDS,
+  LINES_BLOCKED_PAIRING_WORDS,
   applyLinePress,
   confirmedWords,
+  linesIntroOf,
   standingLines,
   unconfirmed,
   withIntroductionLocked,
+  type ConfirmLineRow,
   type LinePress,
 } from './confirmLines.js';
 import {
@@ -427,7 +430,7 @@ export async function proposeOffer(
 
 /** The sentence a figure is refused with where the two lists allow only a trade. */
 export const TRADE_ONLY_WORDS =
-  'Both of these lists are for trading, so there is no figure to send on this one. The two of them agree a trade between themselves in conversation.';
+  'Both of these lists are for trading, so there is no figure to send on this one. A trade goes on propose_trade, with what goes each way, and your human sends it from their own page.';
 
 /** Refuse a figure on a pairing member whose two lists allow no sale. */
 async function assertMemberTakesFigure(matchId: string): Promise<void> {
@@ -1248,7 +1251,11 @@ export async function acceptOfferByHuman(
   // press is refused and the whole of it rolls back: nothing is confirmed
   // and nothing is accepted. The buyer's press confirms nothing, and is
   // refused while anything is still waiting.
-  const outcome = await withIntroductionLocked(m.id, async (client) => {
+  // A PAIRING'S LINES RIDE ITS ANCHOR (domain/confirmLines.ts), whichever
+  // item this figure is on, so the lock and the lines are the anchor's: a line
+  // asked between the two people is seen by every deal between them.
+  const linesAt = await linesIntroOf(m);
+  const outcome = await withIntroductionLocked(linesAt.id, async (client) => {
     // The offer again, now that nothing else can move it: two presses on one
     // figure, or a press racing a withdrawal, are settled here.
     const again = await client.query('SELECT * FROM offers WHERE id = $1', [offerId]);
@@ -1267,12 +1274,15 @@ export async function acceptOfferByHuman(
     stillOpen(current);
     // The lines the seller's page listed, confirmed by this same press. It
     // throws where one is waiting that the page never showed.
-    await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
-    const lines = await standingLines(m.id, client);
+    await applyLinePress(client, linesAt, humanAccountId, recordedVia, opts.lines);
+    const lines = await standingLines(linesAt.id, client);
     if (unconfirmed(lines).length) {
-      throw Object.assign(new OsbError('NOT_UNLOCKED_YET', { human_action: BUYER_BLOCKED_WORDS }), {
-        linesNotConfirmed: true,
-      });
+      throw Object.assign(
+        new OsbError('NOT_UNLOCKED_YET', {
+          human_action: m.pairing_id ? LINES_BLOCKED_PAIRING_WORDS : BUYER_BLOCKED_WORDS,
+        }),
+        { linesNotConfirmed: true },
+      );
     }
     // A LIST ITEM GIVES UP ONE (domain/quantities.ts). Taken in this same
     // transaction, before anything is written down, so a sale of something
@@ -1284,7 +1294,7 @@ export async function acceptOfferByHuman(
     // beside the press and on the offer itself. Best-effort, exactly as the
     // mail is: a record that cannot be built is no reason to refuse a human's
     // yes, and the event is then written without the field.
-    const receipt = await receiptOrNothing(m, current, confirmedWords(lines));
+    const receipt = await receiptOrNothing(m, current, confirmedForSale(m, lines));
     await writeConsentEvent({
       event: 'offer-accepted-by-human',
       offer_id: offerId,
@@ -1311,6 +1321,11 @@ export async function acceptOfferByHuman(
   // None left: the item comes down, said on the page before the press, and
   // whatever can no longer be met closes with a sentence (quantities.ts).
   if (left === 0) await takeDownNoneLeft(m.card_have, m.id, cfg);
+  // Fewer left: a trade that counted on more of it closes (domain/trades.ts).
+  else if (left !== undefined) {
+    const { closeUnmeetableTrades } = await import('./trades.js');
+    await closeUnmeetableTrades([m.card_have]);
+  }
   // An agreed figure is movement, and the last there may be for a while: the
   // two people go off to arrange the handover. Without this a quiet slot could
   // lapse an introduction whose deal was already done (review M14; lapse also
@@ -1348,13 +1363,32 @@ export async function acceptedDeal(
 }
 
 /**
+ * The confirmed lines for a sale's record. On an ordinary introduction every
+ * line is the buyer's, confirmed by the seller, as it always was; between two
+ * lists a line may go either way, and the record says which. Pure.
+ */
+export function confirmedForSale(
+  m: Pick<MatchRow, 'account_want' | 'pairing_id'>,
+  lines: ConfirmLineRow[],
+): ConfirmedLine[] {
+  if (!m.pairing_id) return confirmedWords(lines);
+  const out: ConfirmedLine[] = [];
+  for (const l of lines) {
+    if (l.state !== 'confirmed') continue;
+    const text = confirmedWords([l])[0];
+    if (text) out.push({ text, askedBy: l.asked_by === m.account_want ? 'buyer' : 'seller' });
+  }
+  return out;
+}
+
+/**
  * The record for this acceptance, or nothing. Never throws: whatever goes
  * wrong in building it, the acceptance is recorded and stands.
  */
 async function receiptOrNothing(
   m: MatchRow,
   o: OfferRow,
-  confirmed: string[] = [],
+  confirmed: ConfirmedLine[] = [],
 ): Promise<Receipt | undefined> {
   try {
     const { buildReceipt } = await import('./receipt.js');

@@ -503,7 +503,13 @@ export function renderChannelWaiting(
 // person's move, and one whose assistant only wakes when spoken to would
 // otherwise be left waiting in silence. It says nothing of what was asked:
 // the line's words never reach this file.
-export type YourMoveStep = 'names' | 'details' | 'written';
+//
+// THE TRADE STEPS (14 November 2026; domain/trades.ts). 'trade' is a trade
+// between two lists put to this person: it is their move. 'trade-news' is the
+// proposer told that their trade was accepted or turned down. Neither says
+// what was in the trade, and send.ts swaps every notice for the one fixed
+// mail in any case.
+export type YourMoveStep = 'names' | 'details' | 'written' | 'trade' | 'trade-news';
 
 export function renderYourMove(
   v: { categoryLabel?: string; blind: boolean; step?: YourMoveStep; side: ReaderSide },
@@ -515,6 +521,17 @@ export function renderYourMove(
   // yes to swapping first names, and the two of them can talk once this
   // person says yes back. The sentence says exactly that and no more.
   const tail = 'Your yes is the last step before the two of you can talk.';
+  if (v.step === 'trade' || v.step === 'trade-news') {
+    const line =
+      v.step === 'trade'
+        ? 'Someone has put a trade to you. Ask your assistant about it.'
+        : 'There is news about a trade you put to someone. Ask your assistant about it.';
+    const { html, text } = notice(
+      { heading: v.step === 'trade' ? 'It is your move.' : 'There is news.', line: v.blind ? 'Something is waiting on you.' : line, accent: MATCH },
+      f,
+    );
+    return { subject: v.step === 'trade' ? subject : 'There is news', html, text };
+  }
   if (v.step === 'written') {
     const waiting = thing
       ? `Something about ${theirThing(thing, v.side)} is waiting on you.`

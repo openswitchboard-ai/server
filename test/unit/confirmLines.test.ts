@@ -807,7 +807,10 @@ describe('only the seller’s human confirms a line, by their own press', () => 
       .filter((f) => /confirmLinesByHuman|applyLinePress/.test(readFileSync(f, 'utf8')))
       .map((f) => f.slice(src.length + 1))
       .sort();
-    expect(callers).toEqual(['counter/routes.ts', 'domain/confirmLines.ts', 'domain/offers.ts']);
+    // domain/trades.ts since 14 November 2026: the pages that send and accept
+    // a trade between two lists confirm what they list, reached only from
+    // the counter's own press like the offer path.
+    expect(callers).toEqual(['counter/routes.ts', 'domain/confirmLines.ts', 'domain/offers.ts', 'domain/trades.ts']);
     // The internal ops queue and the tool surface know nothing of it.
     expect(readFileSync(join(src, 'workers', 'opsWorker.ts'), 'utf8')).not.toMatch(/confirm_lines|confirmLines/);
     expect(readFileSync(join(src, 'mcp', 'tools.ts'), 'utf8')).not.toMatch(/confirmLinesByHuman|applyLinePress/);
