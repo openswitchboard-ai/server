@@ -1046,6 +1046,8 @@ const OFFER_STATE_WORDS: Record<string, string> = {
   'accepted-by-human': 'agreed',
   declined: 'declined',
   withdrawn: 'withdrawn',
+  // Closed because the match itself ended (domain/introductionEnds.ts).
+  closed: 'closed',
 };
 
 /** The one line about figures on the match page, in place of the old control. */

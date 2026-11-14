@@ -27,6 +27,7 @@ import {
   renderSummons,
   renderVerification,
   renderYourMove,
+  renderBestOfferClosed,
   EXEMPT_TEMPLATES,
   NOTICE_TEMPLATES,
   type EmailContent,
@@ -136,6 +137,16 @@ function allTemplates(): { name: string; content: EmailContent; blind: boolean }
       name: 'your-move-blind',
       blind: true,
       content: renderYourMove({ categoryLabel: LABEL, blind: true, side: 'have' }, links),
+    },
+    {
+      name: 'best-offer-closed',
+      blind: false,
+      content: renderBestOfferClosed({ categoryLabel: LABEL, blind: false }, links),
+    },
+    {
+      name: 'best-offer-closed-blind',
+      blind: true,
+      content: renderBestOfferClosed({ categoryLabel: LABEL, blind: true }, links),
     },
     {
       name: 'offer-on-the-table',

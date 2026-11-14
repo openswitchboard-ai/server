@@ -293,6 +293,16 @@ export async function acceptNumberLink(
       human_action: 'That figure is your own side\'s. Only the other person can accept it.',
     });
   }
+  // And the introduction it is on (10 November 2026): a page to accept a
+  // figure on one that has ended is a page whose press would be refused. Read
+  // before the figure's own state since 14 November 2026, because the ending
+  // closes the figure with it (domain/introductionEnds.ts) and the reason is
+  // the introduction. An agreed figure keeps its own answer.
+  const { INTRODUCTION_ENDED_WORDS } = await import('./offers.js');
+  const ended = !!o.match_state && o.match_state !== 'open';
+  if (ended && o.state !== 'accepted-by-human') {
+    throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
+  }
   if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action:
@@ -300,12 +310,6 @@ export async function acceptNumberLink(
           ? 'That figure has already been accepted.'
           : 'That figure is no longer on the table.',
     });
-  }
-  // And the introduction it is on (10 November 2026): a page to accept a
-  // figure on one that has ended is a page whose press would be refused.
-  const { INTRODUCTION_ENDED_WORDS } = await import('./offers.js');
-  if (o.match_state && o.match_state !== 'open') {
-    throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
   }
   // And its own clock, refused HERE rather than at the press: minting a page
   // for a human to accept something that has already run out is a page nobody

@@ -118,6 +118,7 @@ export const NOTICE_TEMPLATES = new Set<string>([
   'summons',
   'channel-waiting',
   'your-move',
+  'best-offer-closed',
   'offer-on-the-table',
   'deal-agreed',
   'digest',
@@ -530,6 +531,31 @@ export function renderYourMove(
       ? `They have said yes to swapping first names about ${theirThing(thing, v.side)}. ${tail}`
       : `They have said yes to swapping first names. ${tail}`;
   const { html, text } = notice({ heading: 'It is your move.', line, accent: MATCH }, f);
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// (c3b) The numbers on a best offer are ready (14 November 2026). The window
+// on a have sold on best offer has closed, and the numbers people put in are
+// on the seller's sweep. A notice like the rest: no figure, no count, nobody's
+// name, and what to do about it is a sentence to their assistant. Sent once
+// per window (email/digestEngine.ts, notifyBestOfferClosed).
+// ---------------------------------------------------------------------------
+export function renderBestOfferClosed(
+  v: { categoryLabel?: string; blind: boolean },
+  f: FooterLinks,
+): EmailContent {
+  const thing = categoryPhrase(v.categoryLabel);
+  const subject = v.blind ? 'OpenSwitchboard: something is waiting for you' : 'Your numbers are ready';
+  const line = v.blind
+    ? 'Something is ready for you to look at.'
+    : thing
+      ? `The numbers people put in for ${theirThing(thing, 'have')} are ready to look at.`
+      : 'The numbers people put in are ready to look at.';
+  const { html, text } = notice(
+    { heading: v.blind ? 'Something is waiting.' : 'Your numbers are ready.', line, accent: HAVE },
+    f,
+  );
   return { subject, html, text };
 }
 

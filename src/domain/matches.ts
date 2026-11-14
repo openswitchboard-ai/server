@@ -28,6 +28,7 @@ import {
 import { IDENTIFIER_SHARED_SENTENCE, agreementSentence, wordAgreement } from './matchTiers.js';
 import { sharesIdentifier } from './identifiers.js';
 import { inLineCount, noteMovement, ownCardIsFull } from './sequencer.js';
+import { endingClosesOffers } from './introductionEnds.js';
 import {
   counterpartyProfileConsentError,
   namesGateConsentError,
@@ -337,9 +338,13 @@ export async function recordVerdict(
        ON CONFLICT DO NOTHING`,
       [accountId, counterparty],
     );
+    // Its open figures close in the same statement (domain/introductionEnds.ts).
     await pool.query(
-      `UPDATE matches SET state = 'declined', live = false, updated_at = now()
-       WHERE id = $1 AND state = 'open'`,
+      endingClosesOffers(
+        `UPDATE matches SET state = 'declined', live = false, updated_at = now()
+       WHERE id = $1 AND state = 'open'
+       RETURNING id`,
+      ),
       [matchId],
     );
     await pool.query(
@@ -656,8 +661,15 @@ export async function declineMatch(
   cfg?: Config,
 ): Promise<string[]> {
   await loadOpenMatchFor(matchId, accountId, false);
+  // Its open figures close in the same statement (domain/introductionEnds.ts).
+  // Guarded on 'open' (review L20): a decline racing an archive or a lapse
+  // never turns an introduction that has already ended into a declined one.
   await getPool().query(
-    `UPDATE matches SET state = 'declined', live = false, updated_at = now() WHERE id = $1`,
+    endingClosesOffers(
+      `UPDATE matches SET state = 'declined', live = false, updated_at = now()
+       WHERE id = $1 AND state = 'open'
+       RETURNING id`,
+    ),
     [matchId],
   );
   const { resequenceAround } = await import('./sequencer.js');
@@ -778,12 +790,15 @@ export async function severMatch(
   cfg?: Config,
 ): Promise<{ severed: boolean; promoted: string[] }> {
   const pool = getPool();
+  // Its open figures close in the same statement (domain/introductionEnds.ts).
   const r = await pool.query(
-    `UPDATE matches
+    endingClosesOffers(
+      `UPDATE matches
         SET state = 'closed', severed_at = now(), severed_by = $2,
             live = false, updated_at = now()
       WHERE id = $1 AND state = 'open'
       RETURNING id`,
+    ),
     [matchId, by ?? null],
   );
   if (!r.rowCount) return { severed: false, promoted: [] };
@@ -849,12 +864,16 @@ export async function archiveMatch(
       human_action: 'This introduction is not an open connection, so there is nothing to file away.',
     });
   }
+  // Any figure still open on it closes in the same statement
+  // (domain/introductionEnds.ts). An agreed one is left exactly as it is.
   const r = await getPool().query(
-    `UPDATE matches
+    endingClosesOffers(
+      `UPDATE matches
         SET state = 'archived', archived_at = now(), archived_by = $2,
             archived_via = $3, live = false, updated_at = now()
       WHERE id = $1 AND state = 'open'
       RETURNING id`,
+    ),
     [matchId, accountId, recordedVia],
   );
   if (!r.rowCount) {
@@ -914,13 +933,17 @@ export async function archiveOpenIntroductionsOnCard(
   recordedVia = 'withdrawn',
   cfg?: Config,
 ): Promise<number> {
+  // Their open figures close in the same statement (domain/introductionEnds.ts).
+  // A conversation kept open keeps its figures too: it has not ended.
   const r = await getPool().query(
-    `UPDATE matches
+    endingClosesOffers(
+      `UPDATE matches
         SET state = 'archived', archived_at = now(), archived_by = $2,
             archived_via = $3, live = false, updated_at = now()
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
         AND (channel_id IS NULL OR stage < 4)
       RETURNING id`,
+    ),
     [cardId, accountId, recordedVia],
   );
   const ids = (r.rows as { id: string }[]).map((x) => x.id);

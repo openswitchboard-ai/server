@@ -65,6 +65,9 @@ export interface StoryOffer {
   updated_at: Date;
   expiry: Date;
   note?: string | null;
+  /** Closed because its introduction ended (domain/introductionEnds.ts),
+   *  rather than taken back by whoever made it. */
+  closedWithIntroduction?: boolean;
 }
 
 /** Everything the steps are built from. Plain data, so the build is pure. */
@@ -147,10 +150,15 @@ export function buildSteps(f: StoryFacts, now: Date = new Date()): MatchStep[] {
   }
 
   // Offers. When each one ends, for the "countered" test and the end step.
+  // A figure that ran out before its introduction ended lapsed, and says so;
+  // the ending only closed what was still standing.
+  const lapsedFirst = (o: StoryOffer) =>
+    !!o.closedWithIntroduction && t(o.expiry) < t(o.updated_at);
   const endOf = (o: StoryOffer): Date | undefined => {
     if (OPEN_STATES.has(o.state)) {
       return t(o.expiry) < now ? t(o.expiry) : undefined;
     }
+    if (lapsedFirst(o)) return t(o.expiry);
     return t(o.updated_at);
   };
   const offers = [...f.offers].sort((a, b) => t(a.created_at).getTime() - t(b.created_at).getTime());
@@ -184,6 +192,15 @@ export function buildSteps(f: StoryFacts, now: Date = new Date()): MatchStep[] {
     const end = endOf(o);
     if (!end) continue;
     let text: string | undefined;
+    if (o.closedWithIntroduction) {
+      // Nobody took it back and nobody turned it down: the introduction ended
+      // and it closed with it, unless its own time had already run out.
+      text = lapsedFirst(o)
+        ? mine ? `Your ${m} lapsed` : `${Whose} ${m} lapsed`
+        : mine ? `Your ${m} closed when this one ended` : `${Whose} ${m} closed when this one ended`;
+      steps.push({ at: end, text });
+      continue;
+    }
     switch (o.state) {
       case 'accepted-by-human':
         text = mine ? `${Who} accepted your ${m}` : `You accepted ${m}`;
@@ -301,7 +318,8 @@ export async function readStoryFacts(
       )
       .catch(() => ({ rows: [] as any[] })),
     pool.query(
-      `SELECT id, proposer_account, amount, ccy, state, created_at, updated_at, expiry, message
+      `SELECT id, proposer_account, amount, ccy, state, created_at, updated_at, expiry, message,
+              closed_with_introduction
          FROM offers WHERE match_id = $1 ORDER BY created_at ASC LIMIT 50`,
       [matchId],
     ),
@@ -321,6 +339,7 @@ export async function readStoryFacts(
       updated_at: o.updated_at ?? o.created_at,
       expiry: o.expiry,
       note: typeof o.message?.text === 'string' ? o.message.text : null,
+      ...(o.closed_with_introduction === true ? { closedWithIntroduction: true } : {}),
     }));
   return {
     facts: {

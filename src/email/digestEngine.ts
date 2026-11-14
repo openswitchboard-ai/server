@@ -22,7 +22,9 @@ import { getPool } from '../db.js';
 import { categoryLeafLabel } from '../domain/matchRules.js';
 import { readersOwnThingLabel } from '../domain/matches.js';
 import { accountEmail } from '../domain/counterOps.js';
+import { bestOfferNumbersIn } from '../domain/offers.js';
 import {
+  renderBestOfferClosed,
   renderChannelWaiting,
   renderDigest,
   renderRenewal,
@@ -264,6 +266,50 @@ export async function notifyYourMove(
         blind: ctx.blind,
         step,
         side: sideOf(m, recipientAccount),
+      },
+      ctx.links,
+    ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The numbers on a best offer are ready (ops op 'best-offer-closed-notify',
+// enqueued by the sweep that closed the window: domain/sequencer.ts,
+// closeDueGatherings). Told to the seller, once per window.
+//
+// The same notice as the rest, by the same road as notifyYourMove: quiet for
+// an account that has turned match mail off, held back by sendEmail for
+// anyone whose assistant brings them the news, behind every suppression and
+// complaint gate, and sent as the one fixed notice with nothing of the numbers
+// in it. Nothing at all where nobody put a number in: the window closing on
+// nothing is not news, and the seller's sweep says nothing about it either.
+//
+// ONCE. The sweep hands over one job per window (its UPDATE stamps the close
+// and returns the card to that sweep alone), and the dedupe key is the card:
+// a window opens once on a posting and never again, so a redelivered job, or
+// a second one, finds the key spent. A send that fails throws, so the queue
+// redelivers it and the reclaimable 'failed' row lets the retry through.
+// ---------------------------------------------------------------------------
+const CARD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function notifyBestOfferClosed(cfg: Config, cardId: string): Promise<void> {
+  if (!CARD_ID.test(String(cardId ?? ''))) return;
+  const closed = await bestOfferNumbersIn(cardId);
+  if (!closed || closed.numbers < 1) return;
+  const ctx = await emailAccountContext(cfg, closed.seller);
+  if (ctx.freqMatches === 'off') return;
+  const to = await accountEmail(closed.seller, 'best-offer-closed');
+  if (!to) return;
+  await sendEmail(cfg, {
+    to,
+    accountId: closed.seller,
+    template: 'best-offer-closed',
+    kind: 'bulk',
+    dedupeKey: `best-offer-closed:${cardId}`,
+    content: renderBestOfferClosed(
+      {
+        categoryLabel: ctx.blind ? undefined : categoryLeafLabel(closed.category, closed.kind),
+        blind: ctx.blind,
       },
       ctx.links,
     ),

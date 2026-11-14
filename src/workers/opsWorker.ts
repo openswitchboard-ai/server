@@ -28,6 +28,7 @@ import { sweepPhotoQuarantine } from '../safety/photoQuarantine.js';
 import { sweepSafetyRecords } from '../safety/retention.js';
 import { purgeOldEmailEvents } from './emailEventsWorker.js';
 import {
+  notifyBestOfferClosed,
   notifyMatchCreated,
   notifyYourMove,
   runDigestTick,
@@ -449,6 +450,14 @@ export function startOpsWorker(cfg: Config, log: (msg: string, extra?: any) => v
                     body.step === 'details' ? 'details' : body.step === 'written' ? 'written' : 'names',
                     typeof body.occasion === 'string' ? body.occasion : undefined,
                   );
+                  break;
+                }
+                case 'best-offer-closed-notify': {
+                  // The window on a best offer closed and its seller is told
+                  // the numbers are ready (enqueued by closeDueGatherings).
+                  // Once per window: the dedupe key is the card, and a failed
+                  // send throws so the message redelivers and retries.
+                  await notifyBestOfferClosed(cfg, String(body.card_id ?? ''));
                   break;
                 }
                 case 'email-digest-tick': {

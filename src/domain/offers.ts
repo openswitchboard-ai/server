@@ -4,6 +4,7 @@ import { decryptFields, writeConsentEvent } from '../crypto.js';
 import {
   assertNotSwap,
   getMatch,
+  inLineSentence,
   ownCardId,
   readersOwnThingLabel,
   sideOf,
@@ -12,7 +13,7 @@ import {
 import type { Receipt } from './receipt.js';
 import { isLadderPattern } from './matchRules.js';
 import { type Arrangement } from './arrangement.js';
-import { sayFor } from './lanes.js';
+import { readLaneFacts, sayFor } from './lanes.js';
 import {
   checkAgainstMandate,
   noMandateRefusal,
@@ -42,6 +43,7 @@ import {
   offerRateRefusal,
 } from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
+import { endingClosesOffers } from './introductionEnds.js';
 import type { Config } from '../config.js';
 
 export interface OfferRow {
@@ -258,6 +260,17 @@ export async function proposeOffer(
   if (!m) throw Object.assign(new Error('introduction not found'), { notFound: true });
   sideOf(m, accountId);
   if (m.state !== 'open') throw new OsbError('NOT_UNLOCKED_YET');
+  // AN INTRODUCTION STILL IN LINE TAKES NO FIGURE (14 November 2026, review
+  // M5). It is a row waiting its turn, not yet an introduction: nothing
+  // advances on it, and on a best offer a number from somebody in line would
+  // sit in the seller's result beside the people who were actually introduced.
+  // The refusal is the sentence the sweep already gives them, and nothing more.
+  if (m.live === false) {
+    const facts = await readLaneFacts(accountId);
+    throw new OsbError('NOT_UNLOCKED_YET', {
+      human_action: inLineSentence(facts.arrangement, facts.hearsVia),
+    });
+  }
   // A swap has no figure on it at all (domain/swaps.ts): both people are
   // looking, so a number is refused in words before anything else is read.
   assertNotSwap(m);
@@ -780,6 +793,10 @@ export async function bestOfferResult(
        JOIN cards w ON w.id = m.card_want
        LEFT JOIN reputation rep ON rep.account_id = m.account_want
       WHERE m.card_have = $1 AND o.state IN ('proposed','awaiting-human','accepted-by-human')
+        -- A buyer whose introduction has ended is not in it any more (H3): an
+        -- ending closes their figure (domain/introductionEnds.ts), and this
+        -- holds for any row from before that. An agreed figure stays.
+        AND (m.state = 'open' OR o.state = 'accepted-by-human')
       ORDER BY o.amount DESC, o.created_at ASC`,
     [cardId],
   );
@@ -839,6 +856,38 @@ export async function bestOfferResult(
 }
 
 /**
+ * How many numbers a closed window has for its seller to look at: the count
+ * behind bestOfferResult, read the same way and nothing more. It decides
+ * whether the seller is told the numbers are ready (email/digestEngine.ts,
+ * notifyBestOfferClosed), so it never reads the floor: a count needs no
+ * decrypt and leaves no audit line. Zero where the window is still open,
+ * where this is not a best offer, or where nobody put a number in.
+ */
+export async function bestOfferNumbersIn(
+  cardId: string,
+): Promise<{ seller: string; numbers: number; category: string; kind: string | null } | undefined> {
+  const r = await getPool().query(
+    `SELECT c.account_id AS seller, c.category, c.kind,
+            (SELECT count(*)::int FROM offers o JOIN matches m ON m.id = o.match_id
+              WHERE m.card_have = c.id
+                AND o.state IN ('proposed','awaiting-human','accepted-by-human')
+                AND (m.state = 'open' OR o.state = 'accepted-by-human')) AS numbers
+       FROM cards c
+      WHERE c.id = $1 AND c.sale = 'best-offer'
+        AND c.gather_until IS NOT NULL AND c.gather_until <= now()`,
+    [cardId],
+  );
+  const row = r.rows[0];
+  if (!row) return undefined;
+  return {
+    seller: String(row.seller),
+    numbers: Number(row.numbers ?? 0),
+    category: String(row.category ?? ''),
+    kind: row.kind ?? null,
+  };
+}
+
+/**
  * The seller took one of them. Everybody else's number is declined and their
  * introduction is filed away as not chosen, which is what their sweep reads
  * the sentence off. No figure and no count travels to any of them.
@@ -851,17 +900,26 @@ async function declineTheRest(acceptedOfferId: string, matchId: string): Promise
   );
   const cardId = c.rows[0]?.id;
   if (!cardId) return;
+  // Only figures on introductions still open: one whose introduction already
+  // ended was closed with it, and is not anybody the seller turned down.
   await getPool().query(
     `UPDATE offers o SET state = 'declined', updated_at = now()
        FROM matches m
       WHERE o.match_id = m.id AND m.card_have = $1 AND o.id <> $2
+        AND m.state = 'open'
         AND o.state IN ('proposed','awaiting-human')`,
     [cardId, acceptedOfferId],
   );
+  // Their numbers are declined above, which is what happened to them: the
+  // seller chose. The ending still closes anything else left open on those
+  // introductions in the same statement (domain/introductionEnds.ts).
   await getPool().query(
-    `UPDATE matches SET state = 'archived', archived_at = now(),
+    endingClosesOffers(
+      `UPDATE matches SET state = 'archived', archived_at = now(),
             archived_via = 'not-chosen', live = false, updated_at = now()
-      WHERE card_have = $1 AND id <> $2 AND state = 'open'`,
+      WHERE card_have = $1 AND id <> $2 AND state = 'open'
+      RETURNING id`,
+    ),
     [cardId, matchId],
   );
 }
@@ -939,6 +997,19 @@ async function detectLadderProbing(accountId: string, matchId: string): Promise<
 }
 
 /**
+ * The refusal for a guarded transition that found nothing to move: the figure
+ * changed between the read and the write. Where its introduction has ended
+ * that is the reason, said as every accept path says it; otherwise a plain
+ * "not now", which is what the state checks above answer too.
+ */
+async function movedOn(matchId: string): Promise<OsbError> {
+  const m = await getMatch(matchId);
+  return m && m.state !== 'open'
+    ? new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS })
+    : new OsbError('NOT_UNLOCKED_YET');
+}
+
+/**
  * Agent-reachable offer transitions. The ONLY accept-flavoured transition an
  * agent can make is proposed -> awaiting-human ("send_to_human"): parking the
  * offer for its human. 'accepted-by-human' is reachable exclusively via
@@ -956,16 +1027,30 @@ export async function agentOfferAction(
   const side = sideOf(m, accountId); // throws notFound if not a party
   void side;
   const isProposer = o.proposer_account === accountId;
+  // An introduction that has ended took its open figures with it
+  // (domain/introductionEnds.ts), so a figure closed that way is answered
+  // with why it closed rather than with a bare refusal. An agreed figure keeps
+  // the answer it always had.
+  const endedWithIt = () => {
+    if (m.state !== 'open' && o.state !== 'accepted-by-human') {
+      throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
+    }
+  };
 
   if (action === 'withdraw_offer') {
     if (!isProposer) throw Object.assign(new Error('only the proposer can withdraw'), { notFound: true });
+    endedWithIt();
     if (o.state !== 'proposed' && o.state !== 'awaiting-human') {
       throw new OsbError('NOT_UNLOCKED_YET');
     }
+    // GUARDED (review M17): only a figure still on the table is taken back, so
+    // one closed or agreed in the meantime is never written over.
     const r = await getPool().query(
-      `UPDATE offers SET state='withdrawn', updated_at=now() WHERE id=$1 RETURNING *`,
+      `UPDATE offers SET state='withdrawn', updated_at=now() WHERE id=$1
+          AND state IN ('proposed', 'awaiting-human') RETURNING *`,
       [offerId],
     );
+    if (!r.rows[0]) throw await movedOn(o.match_id);
     return serializeOffer(r.rows[0]);
   }
 
@@ -975,13 +1060,18 @@ export async function agentOfferAction(
     });
   }
 
+  endedWithIt();
+
   if (action === 'decline_offer') {
     // Declines carry NO reason. The API accepts none and the schema forbids one.
     if (o.state !== 'proposed' && o.state !== 'awaiting-human') throw new OsbError('NOT_UNLOCKED_YET');
+    // GUARDED (review M17), as the withdrawal above is.
     const r = await getPool().query(
-      `UPDATE offers SET state='declined', updated_at=now() WHERE id=$1 RETURNING *`,
+      `UPDATE offers SET state='declined', updated_at=now() WHERE id=$1
+          AND state IN ('proposed', 'awaiting-human') RETURNING *`,
       [offerId],
     );
+    if (!r.rows[0]) throw await movedOn(o.match_id);
     return serializeOffer(r.rows[0]);
   }
 
@@ -993,10 +1083,17 @@ export async function agentOfferAction(
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
   }
   if (new Date(o.expiry) < new Date()) throw new OsbError('NOT_UNLOCKED_YET');
+  // GUARDED (review M17): parked only while it is still proposed AND its
+  // introduction is still open, read in the same statement, so a figure is
+  // never parked for a human on an introduction that ended a moment ago.
   const r = await getPool().query(
-    `UPDATE offers SET state='awaiting-human', updated_at=now() WHERE id=$1 RETURNING *`,
+    `UPDATE offers SET state='awaiting-human', updated_at=now() WHERE id=$1
+        AND state = 'proposed'
+        AND EXISTS (SELECT 1 FROM matches m WHERE m.id = offers.match_id AND m.state = 'open')
+      RETURNING *`,
     [offerId],
   );
+  if (!r.rows[0]) throw await movedOn(o.match_id);
   // 0.D: parking an offer for a human creates a counter approval link
   // (single-use, 15-min TTL, HMAC-bound to account/action/amount/counterparty)
   // and notifies the human by email. Blind mode strips all content.
@@ -1078,17 +1175,24 @@ export async function acceptOfferByHuman(
       throw new OsbError('NOT_UNLOCKED_YET', { human_action: OFFER_EXPIRED_WORDS });
     }
   };
+  // THE INTRODUCTION, AS WELL AS THE OFFER (10 November 2026): see
+  // INTRODUCTION_ENDED_WORDS. Refused here early, and again under the lock.
+  // Read FIRST since 14 November 2026: an introduction that ends now closes
+  // its open figures with it (domain/introductionEnds.ts), so a figure on one
+  // that has ended reads 'withdrawn', and the person pressing is owed why it
+  // closed rather than a state word that sounds like somebody took it back.
+  // An agreed figure keeps the answer it always had (stillOpen refuses it).
+  const ended = (introState: string, offerState: string) =>
+    introState !== 'open' && offerState !== 'accepted-by-human';
   const o = await loadOffer(offerId);
-  stillOpen(o);
   const m = await getMatch(o.match_id);
   if (!m) throw new Error('introduction missing');
   const side = sideOf(m, humanAccountId);
   void side;
-  // THE INTRODUCTION, AS WELL AS THE OFFER (10 November 2026): see
-  // INTRODUCTION_ENDED_WORDS. Refused here early, and again under the lock.
-  if (m.state !== 'open') {
+  if (ended(m.state, o.state)) {
     throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
   }
+  stillOpen(o);
   if (o.proposer_account === humanAccountId) {
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: 'This is your own side\'s offer. Only the other person can accept it.',
@@ -1121,16 +1225,18 @@ export async function acceptOfferByHuman(
     // figure, or a press racing a withdrawal, are settled here.
     const again = await client.query('SELECT * FROM offers WHERE id = $1', [offerId]);
     const current: OfferRow = again.rows[0] ?? o;
-    stillOpen(current);
     // And the introduction again, read with a share lock on its row. None of
     // the ways an introduction ends takes the lock above, so this read is what
     // settles the race: an ending that committed first is seen here, and one
     // that comes after waits for this accept to finish, so an offer is never
-    // taken on an introduction that has already ended.
+    // taken on an introduction that has already ended. (An ending that waits
+    // here then finds this figure agreed, and closes nothing that is.)
     const intro = await client.query('SELECT state FROM matches WHERE id = $1 FOR SHARE', [m.id]);
-    if ((intro.rows[0] ?? m).state !== 'open') {
+    const introState = (intro.rows[0] ?? m).state as string;
+    if (ended(introState, current.state)) {
       throw new OsbError('NOT_UNLOCKED_YET', { human_action: INTRODUCTION_ENDED_WORDS });
     }
+    stillOpen(current);
     // The lines the seller's page listed, confirmed by this same press. It
     // throws where one is waiting that the page never showed.
     await applyLinePress(client, m, humanAccountId, recordedVia, opts.lines);
@@ -1169,6 +1275,12 @@ export async function acceptOfferByHuman(
     return { accepted: r.rows[0] as OfferRow, receipt };
   });
   const { accepted, receipt } = outcome;
+  // An agreed figure is movement, and the last there may be for a while: the
+  // two people go off to arrange the handover. Without this a quiet slot could
+  // lapse an introduction whose deal was already done (review M14; lapse also
+  // skips any introduction with an agreed figure, domain/sequencer.ts).
+  const { noteMovement } = await import('./sequencer.js');
+  await noteMovement(o.match_id);
   // Best offer: taking one is choosing, so the rest are declined in the same
   // breath and their people are told, plainly, that it went elsewhere.
   await declineTheRest(offerId, o.match_id);

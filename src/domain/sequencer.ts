@@ -50,6 +50,7 @@ import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
 import { haversineKm } from '../geo/geohash.js';
 import type { Config } from '../config.js';
+import { endingClosesOffers } from './introductionEnds.js';
 
 /** The ceiling the wire puts on cards.slots, restated where the server reads it. */
 export const MAX_SLOTS = 10;
@@ -449,6 +450,10 @@ export async function dueToLapse(limit = 200): Promise<string[]> {
        JOIN cards w ON w.id = m.card_want
        JOIN cards h ON h.id = m.card_have
       WHERE m.state = 'open' AND m.live
+        -- A deal already agreed is never lapsed (review M14): the two people
+        -- have gone off to arrange the handover, which is quiet by nature.
+        AND NOT EXISTS (SELECT 1 FROM offers o
+                         WHERE o.match_id = m.id AND o.state = 'accepted-by-human')
         AND m.last_movement_at < now() - make_interval(mins =>
               CASE WHEN w.urgency = 'today' OR h.urgency = 'today' THEN $1::int
                    ELSE $2::int END)
@@ -496,12 +501,13 @@ export interface GatherOutcome {
 }
 
 /**
- * Close every gathering window whose clock has run out. Closing does two
+ * Close every gathering window whose clock has run out. Closing does three
  * things and no more: it stamps the card so the seller's sweep starts showing
- * the numbers (domain/offers.ts, bestOfferResult), and it files away the
- * people who never put one in, the same way a lapsed slot is filed away, so
- * nobody is left holding an introduction that has already been decided without
- * them. Nobody is told anything about anybody else's figure at any point.
+ * the numbers (domain/offers.ts, bestOfferResult), it files away the people
+ * who never put one in, the same way a lapsed slot is filed away, so nobody is
+ * left holding an introduction that has already been decided without them,
+ * and it hands the seller's notice to the ops queue (noticeTheClose, below).
+ * Nobody is told anything about anybody else's figure at any point.
  */
 export async function closeDueGatherings(cfg?: Config): Promise<GatherOutcome> {
   const due = await getPool().query(
@@ -513,20 +519,59 @@ export async function closeDueGatherings(cfg?: Config): Promise<GatherOutcome> {
   const ids = (due.rows as { id: string }[]).map((x) => x.id);
   let lapsed = 0;
   for (const cardId of ids) {
+    // Nobody filed away here has a figure on the table (that is the test), so
+    // the offers half of endingClosesOffers finds nothing; it rides along so
+    // every ending reads the same (domain/introductionEnds.ts).
     const r = await getPool().query(
-      `UPDATE matches m
+      endingClosesOffers(
+        `UPDATE matches m
           SET state = 'archived', archived_at = now(), archived_via = 'lapsed',
               live = false, updated_at = now()
         WHERE m.card_have = $1 AND m.state = 'open'
           AND NOT EXISTS (SELECT 1 FROM offers o
                            WHERE o.match_id = m.id AND o.state <> 'withdrawn')
         RETURNING m.id`,
+      ),
       [cardId],
     );
     lapsed += r.rowCount ?? 0;
     for (const row of r.rows as { id: string }[]) await resequenceAround(row.id, cfg);
+    if (cfg?.opsQueueUrl) await noticeTheClose(cfg, cardId);
   }
   return { closed: ids.length, lapsed };
+}
+
+/**
+ * THE SELLER IS TOLD THE NUMBERS ARE READY (14 November 2026). Nothing else
+ * says so to a seller whose assistant only wakes when spoken to: the numbers
+ * sit on their sweep and nobody has been told to look. So each window this
+ * sweep closes hands the ordinary notice a job on the ops queue, the way a
+ * summons is handed one (summon, above), and the notice itself
+ * (email/digestEngine.ts, notifyBestOfferClosed) decides whether there is
+ * anybody to tell and anything to tell them.
+ *
+ * ONCE PER WINDOW, twice over. The UPDATE above stamps gather_closed_at and
+ * returns the card only to the one sweep that stamped it, so two sweeps
+ * running together, or the same one run twice, hand over one job between
+ * them. And the mail's dedupe key is the card itself (a window opens once on
+ * a posting and never again), so a job redelivered by the queue sends nothing
+ * new. The job carries the card's id and nothing else.
+ *
+ * Best-effort, as the summons is: the window is closed and the numbers are on
+ * the seller's sweep whether or not the job goes.
+ */
+async function noticeTheClose(cfg: Config, cardId: string): Promise<void> {
+  try {
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: cfg.opsQueueUrl,
+        MessageBody: JSON.stringify({ op: 'best-offer-closed-notify', card_id: cardId }),
+      }),
+    );
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error(`sequencer: close notice enqueue failed (the window is closed): ${e?.message ?? e}`);
+  }
 }
 
 export interface LapseOutcome {
@@ -545,12 +590,17 @@ export async function lapseDueSlots(cfg?: Config): Promise<LapseOutcome> {
   let lapsed = 0;
   let promoted = 0;
   for (const id of due) {
+    // Its open figures close in the same statement (domain/introductionEnds.ts).
     const r = await getPool().query(
-      `UPDATE matches
+      endingClosesOffers(
+        `UPDATE matches
           SET state = 'archived', archived_at = now(), archived_via = 'lapsed',
               live = false, updated_at = now()
         WHERE id = $1 AND state = 'open' AND live
+          AND NOT EXISTS (SELECT 1 FROM offers o
+                           WHERE o.match_id = matches.id AND o.state = 'accepted-by-human')
         RETURNING id`,
+      ),
       [id],
     );
     if (!r.rowCount) continue;

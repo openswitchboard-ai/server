@@ -586,12 +586,20 @@ export async function matchForHuman(
 }
 
 export async function offersOnMatch(matchId: string): Promise<MatchOfferRow[]> {
+  // A figure that closed because its introduction ended (domain/
+  // introductionEnds.ts) reads 'closed' on this page, which is the one place
+  // that shows a state word to a person: 'withdrawn' would tell them somebody
+  // took it back.
   const r = await getPool().query(
-    `SELECT id, amount, ccy, state, expiry, proposer_account, authored_by, message
+    `SELECT id, amount, ccy, state, expiry, proposer_account, authored_by, message,
+            closed_with_introduction
      FROM offers WHERE match_id = $1 ORDER BY created_at ASC LIMIT 50`,
     [matchId],
   );
-  return r.rows;
+  return (r.rows as (MatchOfferRow & { closed_with_introduction?: boolean })[]).map(
+    ({ closed_with_introduction, ...o }) =>
+      closed_with_introduction === true ? { ...o, state: 'closed' } : o,
+  );
 }
 
 // ---------------------------------------------------------------------------
