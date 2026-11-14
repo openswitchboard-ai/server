@@ -243,6 +243,9 @@ const MUST_SAY: [string, RegExp][] = [
   ['publish_list', /CONVERT WHAT YOUR HUMAN HAS YOURSELF/],
   ['read_lists', /never read a field name, an id or a dotted path aloud/i],
   ['withdraw_list', /ONLY WHEN THEY ASK YOU TO/],
+  // Pairings (migration 074): one entry per person, read-only, and nothing
+  // on it is read aloud.
+  ['read_pairings', /never read a field name, an id or a dotted path aloud/i],
 ];
 
 describe('the tool descriptions carry the rules and stay inside the budget', () => {

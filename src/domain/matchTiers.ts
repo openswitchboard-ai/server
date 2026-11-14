@@ -143,6 +143,12 @@ const SKIP_KEYS = new Set([
   'price',
   'format',
   'availability',
+  // A grade, whether it is graded and by whom, describe the state of one
+  // copy, as condition does: they never decide whether two postings are the
+  // same thing, and a difference between them is for a written line.
+  'grade',
+  'graded',
+  'grader',
 ]);
 
 /** Words that carry no meaning about the thing. */

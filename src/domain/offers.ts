@@ -44,6 +44,7 @@ import {
 } from './quotas.js';
 import { OsbError, SCHEMA_VERSION, assertOutbound, assertReasonless } from '../protocol.js';
 import { endingClosesOffers } from './introductionEnds.js';
+import { takeDownNoneLeft, takeOneForSale } from './quantities.js';
 import type { Config } from '../config.js';
 
 export interface OfferRow {
@@ -274,6 +275,10 @@ export async function proposeOffer(
   // A swap has no figure on it at all (domain/swaps.ts): both people are
   // looking, so a number is refused in words before anything else is read.
   assertNotSwap(m);
+  // A MEMBER OF A PAIRING (domain/pairings.ts) takes a figure only where the
+  // two lists allow a sale or a giveaway. Until today a trade list's
+  // introductions ran as sales; now a figure there is refused in words.
+  if (m.pairing_id) await assertMemberTakesFigure(m.id);
   if (m.stage < 2) {
     // Unreachable for anything made since 13 September 2026 (an introduction
     // starts at the details step); kept as the floor under a figure.
@@ -418,6 +423,29 @@ export async function proposeOffer(
   // while the window was still open. A sealed number sends no email at all.
   if (author === 'human' && !sealed) await notifyCounterpartyOfHumanOffer(cfg, r.rows[0]);
   return serializeOffer(r.rows[0]);
+}
+
+/** The sentence a figure is refused with where the two lists allow only a trade. */
+export const TRADE_ONLY_WORDS =
+  'Both of these lists are for trading, so there is no figure to send on this one. The two of them agree a trade between themselves in conversation.';
+
+/** Refuse a figure on a pairing member whose two lists allow no sale. */
+async function assertMemberTakesFigure(matchId: string): Promise<void> {
+  const r = await getPool().query(
+    `SELECT lw.deal AS want_deal, lh.deal AS have_deal
+       FROM matches m
+       JOIN cards w ON w.id = m.card_want
+       JOIN cards h ON h.id = m.card_have
+       JOIN lists lw ON lw.id = w.list_id
+       JOIN lists lh ON lh.id = h.list_id
+      WHERE m.id = $1`,
+    [matchId],
+  );
+  const row = r.rows[0];
+  if (!row) return;
+  const { dealsAllow } = await import('./pairings.js');
+  const d = dealsAllow(row.have_deal, row.want_deal);
+  if (!d.sale && !d.free) throw new OsbError('NOT_UNLOCKED_YET', { human_action: TRADE_ONLY_WORDS });
 }
 
 /**
@@ -1246,6 +1274,11 @@ export async function acceptOfferByHuman(
         linesNotConfirmed: true,
       });
     }
+    // A LIST ITEM GIVES UP ONE (domain/quantities.ts). Taken in this same
+    // transaction, before anything is written down, so a sale of something
+    // with none left is refused and nothing is recorded. Nothing happens for
+    // an ordinary posting.
+    const left = m.swap ? undefined : await takeOneForSale(client, m.card_have);
     // THE RECORD OF WHAT WAS AGREED (domain/receipt.ts). Built before the
     // press is written down, so its fingerprint can sit in the locked log
     // beside the press and on the offer itself. Best-effort, exactly as the
@@ -1272,9 +1305,12 @@ export async function acceptOfferByHuman(
       `UPDATE offers SET state='accepted-by-human', receipt_sha256=$2, updated_at=now() WHERE id=$1 RETURNING *`,
       [offerId, receipt?.sha256 ?? null],
     );
-    return { accepted: r.rows[0] as OfferRow, receipt };
+    return { accepted: r.rows[0] as OfferRow, receipt, left };
   });
-  const { accepted, receipt } = outcome;
+  const { accepted, receipt, left } = outcome;
+  // None left: the item comes down, said on the page before the press, and
+  // whatever can no longer be met closes with a sentence (quantities.ts).
+  if (left === 0) await takeDownNoneLeft(m.card_have, m.id, cfg);
   // An agreed figure is movement, and the last there may be for a while: the
   // two people go off to arrange the handover. Without this a quiet slot could
   // lapse an introduction whose deal was already done (review M14; lapse also

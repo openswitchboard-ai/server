@@ -27,6 +27,7 @@ import {
   type PriceBand,
 } from './matchRules.js';
 import { resequenceCard } from './sequencer.js';
+import { groupsAsPairing, insertGroupedMatch, resequencePairings } from './pairings.js';
 import {
   OFFERED_KEYS,
   isSwapPair,
@@ -813,6 +814,8 @@ export async function runMatchingForCard(
     promoted: [],
   };
   const touchedCards = new Set<string>();
+  /** People whose pairings this run added to (domain/pairings.ts). */
+  const touchedPeople = new Set<string>();
   // Trial B's collecting bucket (src/shadow/jevTrials.ts). Filled as the run
   // goes and handed over once at the end, so the shadow sees the pairs in the
   // order the engine ranked them rather than the order they happened to
@@ -1079,17 +1082,16 @@ export async function runMatchingForCard(
       const ask = swap ? null : ((have.ask ?? null) as Ask | null);
       const overlap = swap ? false : limitsOverlap(wantBand, haveBand, ask);
       const roomOverAsk = swap ? false : clearsAskWithRoom(wantBand, ask);
-      const ins = await getPool().query(
-        // stage 2 with both interest columns true: the posting IS the
-        // statement of interest, so an introduction is born with both sides
-        // keen and the details open to both (see createMatch in matches.ts).
-        `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
+      // stage 2 with both interest columns true: the posting IS the
+      // statement of interest, so an introduction is born with both sides
+      // keen and the details open to both (see createMatch in matches.ts).
+      const insertSql = `INSERT INTO matches (card_want, card_have, account_want, account_have, score, category,
                               kind, limits_overlap, clears_ask_25,
                               stage, interest_want, interest_have, certainty, swap, judged_by)
          VALUES ($1,$2,$3,$4,$5,$6,$9,$7,$8,2,true,true,$10,$11,$12)
          ON CONFLICT (card_want, card_have) DO NOTHING
-         RETURNING id`,
-        [
+         RETURNING id`;
+      const insertParams = [
           want.id,
           have.id,
           want.account_id,
@@ -1106,8 +1108,18 @@ export async function runMatchingForCard(
           tier,
           swap,
           judgedBy,
-        ],
-      );
+        ];
+      // TWO LISTS ON GOODS (domain/pairings.ts): the introduction is made by
+      // the same statement, and joins the pairing between the two people in
+      // the same transaction. Anything else is inserted exactly as before.
+      const grouped = groupsAsPairing(want as any, have as any, swap);
+      const ins = grouped
+        ? await insertGroupedMatch(insertSql, insertParams, want.account_id, have.account_id)
+        : await getPool().query(insertSql, insertParams);
+      if (grouped && ins.rows[0]) {
+        touchedPeople.add(want.account_id);
+        touchedPeople.add(have.account_id);
+      }
       if (ins.rows[0]) {
         const id = ins.rows[0].id as string;
         outcome.matchesCreated.push(id);
@@ -1183,6 +1195,13 @@ export async function runMatchingForCard(
   // holder now — see domain/sequencer.ts.
   for (const cardId of touchedCards) {
     for (const id of await resequenceCard(cardId)) {
+      if (!outcome.promoted.includes(id)) outcome.promoted.push(id);
+    }
+  }
+  // A pairing goes live as a whole, when both people have room for it, and
+  // the anchor is what the promotion names.
+  if (touchedPeople.size) {
+    for (const id of await resequencePairings([...touchedPeople])) {
       if (!outcome.promoted.includes(id)) outcome.promoted.push(id);
     }
   }

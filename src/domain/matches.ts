@@ -94,6 +94,14 @@ export interface MatchRow {
    * the state it was before this existed.
    */
   my_optin?: boolean;
+  /**
+   * The pairing this item introduction belongs to (migration 074,
+   * domain/pairings.ts), or null for an ordinary introduction. A member is
+   * sequenced, swept, declined, archived and severed with its pairing.
+   */
+  pairing_id?: string | null;
+  /** The anchor's own item set aside while it carries on as the handle. */
+  item_set_aside_at?: Date | null;
 }
 
 export async function getMatch(id: string): Promise<MatchRow | undefined> {
@@ -660,7 +668,13 @@ export async function declineMatch(
   accountId: string,
   cfg?: Config,
 ): Promise<string[]> {
-  await loadOpenMatchFor(matchId, accountId, false);
+  const m = await loadOpenMatchFor(matchId, accountId, false);
+  // A MEMBER OF A PAIRING: declining is about the person, so the whole pairing
+  // is declined and every member ends in one statement (domain/pairings.ts).
+  if (m.pairing_id) {
+    const { endPairing } = await import('./pairings.js');
+    return mine((await endPairing(m.pairing_id, { state: 'declined' }, cfg)).promoted, accountId);
+  }
   // Its open figures close in the same statement (domain/introductionEnds.ts).
   // Guarded on 'open' (review L20): a decline racing an archive or a lapse
   // never turns an introduction that has already ended into a declined one.
@@ -752,6 +766,12 @@ export async function notTheThing(
   } catch {
     /* the introduction still closes */
   }
+  // ONE THING ON A PAIRING: only that thing's introduction ends, and the
+  // pairing carries on with the rest (domain/pairings.ts itemNotTheThing).
+  if (m.pairing_id) {
+    const { itemNotTheThing } = await import('./pairings.js');
+    return { promoted: await mine(await itemNotTheThing(m, cfg), accountId), recorded };
+  }
   const promoted = await declineMatch(matchId, accountId, cfg);
   return { promoted, recorded };
 }
@@ -790,6 +810,14 @@ export async function severMatch(
   cfg?: Config,
 ): Promise<{ severed: boolean; promoted: string[] }> {
   const pool = getPool();
+  // A MEMBER OF A PAIRING: a report or a suspension is about the person, so
+  // the whole pairing is closed and every member with it (domain/pairings.ts).
+  const row = await getMatch(matchId);
+  if (row?.pairing_id && row.state === 'open') {
+    const { endPairing } = await import('./pairings.js');
+    const out = await endPairing(row.pairing_id, { state: 'closed_by_switchboard', by }, cfg);
+    if (out.ended) return { severed: true, promoted: out.promoted };
+  }
   // Its open figures close in the same statement (domain/introductionEnds.ts).
   const r = await pool.query(
     endingClosesOffers(
@@ -863,6 +891,13 @@ export async function archiveMatch(
     throw new OsbError('NOT_UNLOCKED_YET', {
       human_action: 'This introduction is not an open connection, so there is nothing to file away.',
     });
+  }
+  // A MEMBER OF A PAIRING: filing it away is about the person, so the whole
+  // pairing is filed away, every member in one statement (domain/pairings.ts).
+  if (m.pairing_id) {
+    const { endPairing } = await import('./pairings.js');
+    const out = await endPairing(m.pairing_id, { state: 'archived', via: recordedVia, by: accountId }, cfg);
+    return { intro_id: matchId, state: 'archived', already: !out.ended, promoted: await mine(out.promoted, accountId) };
   }
   // Any figure still open on it closes in the same statement
   // (domain/introductionEnds.ts). An agreed one is left exactly as it is.
@@ -942,11 +977,20 @@ export async function archiveOpenIntroductionsOnCard(
             archived_via = $3, live = false, updated_at = now()
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open'
         AND (channel_id IS NULL OR stage < 4)
+        -- The anchor of an open pairing is its handle, and ends only with it
+        -- (domain/pairings.ts): its own item simply stops counting.
+        AND NOT EXISTS (SELECT 1 FROM pairings p
+                         WHERE p.anchor_match_id = matches.id AND p.state = 'open')
       RETURNING id`,
     ),
     [cardId, accountId, recordedVia],
   );
   const ids = (r.rows as { id: string }[]).map((x) => x.id);
+  // A list item's pairings count again, and one left with nothing anybody can
+  // have and no conversation going is filed away (domain/pairings.ts).
+  const { pairingsOnCard, reconcilePairings } = await import('./pairings.js');
+  const grouped = await pairingsOnCard(cardId);
+  if (grouped.length) await reconcilePairings(grouped, cfg);
   if (!ids.length) return 0;
   for (const id of ids) {
     await writeConsentEvent({
@@ -1770,6 +1814,10 @@ export const severedSentence = (mine: boolean): string =>
   mine ? SEVERED_REPORTER_SENTENCE : SEVERED_OTHER_SENTENCE;
 
 /** Filing a finished introduction away. It stays retrievable afterwards. */
+/** An introduction filed away because the last of the thing went in another deal. */
+export const NONE_LEFT_SENTENCE =
+  'The last one of these has gone in another deal, so this one has been filed away. Nothing more is expected of either of you on it.';
+
 export const ARCHIVE_SENTENCE =
   'Filed away. Who it was and what it was about stay here, so I can bring it back whenever you ask.';
 
@@ -1844,6 +1892,10 @@ export async function checkMatches(
                        AND t.kind = 'stage3-optin') AS my_optin
        FROM matches m
       WHERE (m.account_want = $1 OR m.account_have = $1) ${filter}
+        -- ONE ENTRY PER PERSON for a pairing's members (domain/pairings.ts):
+        -- only the anchor is read, and it carries the whole pairing.
+        AND (m.pairing_id IS NULL
+             OR EXISTS (SELECT 1 FROM pairings p WHERE p.id = m.pairing_id AND p.anchor_match_id = m.id))
       ORDER BY m.created_at DESC LIMIT 50`,
     params,
   );
@@ -1901,7 +1953,16 @@ export async function checkMatches(
       // best-offer seller who went with somebody else. Both sides are owed a
       // sentence saying so rather than an introduction that quietly stops.
       const c = entry.mutual?.counterparty;
-      if (m.archived_via === 'lapsed') {
+      if (m.pairing_id && (m.archived_via === 'lapsed' || !c)) {
+        const { PAIRING_LAPSED_SENTENCE } = await import('./pairings.js');
+        entry.note = sbNote(
+          m.archived_via === 'lapsed'
+            ? PAIRING_LAPSED_SENTENCE
+            : 'Your introduction to someone whose list met yours has been filed away. Nothing more is expected of either of you on it.',
+        );
+      } else if (m.archived_via === 'none_left') {
+        entry.note = sbNote(NONE_LEFT_SENTENCE);
+      } else if (m.archived_via === 'lapsed') {
         entry.note = sbNote(
           `This one went quiet and has been filed away. Nothing more is expected of either of you about ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))}; say the word if you would like me to look again.`,
         );
@@ -1925,6 +1986,15 @@ export async function checkMatches(
     }
     if (m.state !== 'open') {
       out.push({ intro_id: m.id, state: m.state });
+      continue;
+    }
+    // A PAIRING: one entry for the person, built on its anchor
+    // (domain/pairings.ts). Nothing on it is shown where there is nothing to
+    // show this reader.
+    if (m.pairing_id) {
+      const { pairingEntry } = await import('./pairings.js');
+      const entry = await pairingEntry(cfg, m, accountId, { arrangement, hearsVia, ownProfile });
+      if (entry) out.push(entry);
       continue;
     }
     // IN LINE. Only the introductions in a slot are live. The rest are rows

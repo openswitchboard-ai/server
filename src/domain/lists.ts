@@ -270,10 +270,10 @@ export const ITEM_FIXES = {
     'The quantity and the deal have places of their own. Take quantity, free and trade out of the details, and give the quantity in quantity.',
   quantity: `Give the quantity as a whole number from 1 to ${LIST_ITEM_MAX_QUANTITY}, or leave it out for one.`,
   price_missing:
-    'On a list for sale, give this item an asking price your human said, or mark it open to offers.',
+    'On a list for sale, or for sale or trade, give this item an asking price your human said, or mark it open to offers.',
   price_both: 'Give this item an asking price or mark it open to offers. One of the two.',
   price_no_money:
-    'This list is a trade or a giveaway, so its items carry no money. Take the price off this item, or post the priced ones as a list for sale.',
+    'This list is for trading or giving away, so its items carry no money. Take the price off this item, or post the priced ones on a list for sale, or for sale or trade.',
   price_on_want:
     'On a want list, the most your human would pay goes in price_limit, which nobody else is shown. Move the figure there, or leave it off.',
   limit_on_have:
@@ -288,7 +288,16 @@ export const ITEM_FIXES = {
 // THE SHARED FIELDS.
 // ---------------------------------------------------------------------------
 
-export type ListDeal = 'sale' | 'trade' | 'free';
+/**
+ * The deal for a whole list. 'sale_or_trade' (14 November 2026): its items can
+ * be bought, or put into a trade, and carry money the way a sale's do.
+ */
+export type ListDeal = 'sale' | 'trade' | 'free' | 'sale_or_trade';
+
+/** Does a list with this deal sell, so its items carry money? Pure. */
+export const dealSells = (deal: ListDeal | string): boolean => deal === 'sale' || deal === 'sale_or_trade';
+/** Does a list with this deal trade? Pure. */
+export const dealTrades = (deal: ListDeal | string): boolean => deal === 'trade' || deal === 'sale_or_trade';
 
 /** The shared fields as the assistant sent them. */
 export interface SharedSent {
@@ -314,7 +323,7 @@ function callRefusal(field: string, sentence: string): Error {
 }
 
 const SIDES = new Set(['looking_for', 'offering']);
-const DEALS = new Set(['sale', 'trade', 'free']);
+const DEALS = new Set(['sale', 'trade', 'free', 'sale_or_trade']);
 
 /** The shared fields, read and checked, or a refusal of the call. */
 export function readShared(raw: unknown): SharedSent {
@@ -334,7 +343,10 @@ export function readShared(raw: unknown): SharedSent {
     throw callRefusal('shared.side', 'Say which side the list is on: "offering" for things your human has, "looking_for" for things they are after.');
   }
   if (typeof o.deal !== 'string' || !DEALS.has(o.deal)) {
-    throw callRefusal('shared.deal', 'Say what kind of deal the whole list is: "sale", "trade" or "free".');
+    throw callRefusal(
+      'shared.deal',
+      'Say what kind of deal the whole list is: "sale", "trade", "sale_or_trade" or "free".',
+    );
   }
   if (o.currency !== undefined && (typeof o.currency !== 'string' || !/^[A-Z]{3}$/.test(o.currency))) {
     throw callRefusal('shared.currency', 'The currency is three capital letters, such as "AUD".');
@@ -474,7 +486,7 @@ export function readListItem(
   if (price === null || priceLimit === null) return no('price', ITEM_FIXES.price_value);
   const offers = o.open_to_offers === true;
   if (o.open_to_offers !== undefined && typeof o.open_to_offers !== 'boolean') return no('shape', ITEM_FIXES.shape);
-  if (ctx.deal !== 'sale') {
+  if (!dealSells(ctx.deal)) {
     if (price !== undefined || priceLimit !== undefined || offers) return no('price', ITEM_FIXES.price_no_money);
   } else if (ctx.type === 'HAVE') {
     if (priceLimit !== undefined) return no('price', ITEM_FIXES.limit_on_have);
@@ -487,11 +499,12 @@ export function readListItem(
   // The deal is said on every item, in the words the posting door already
   // treats as the arrangement rather than the thing (postingDetail.ts), so the
   // other side reads it at the details step. A sale says nothing extra: its
-  // asking price, or the want's private limit, says it.
+  // asking price, or the want's private limit, says it. For sale or trade
+  // says `trade` beside its price.
   const attributes: Record<string, string | number | boolean> = {
     ...details,
     ...(quantity > 1 ? { quantity } : {}),
-    ...(ctx.deal === 'trade' ? { trade: true } : ctx.deal === 'free' ? { free: true } : {}),
+    ...(dealTrades(ctx.deal) ? { trade: true } : ctx.deal === 'free' ? { free: true } : {}),
   };
   return {
     ok: true,
@@ -1356,6 +1369,20 @@ async function runPublishList(
   };
   const ttl = shared.ttl_days;
   const changedVersions: { card_id: string; content_version: number }[] = [];
+  // A QUANTITY SENT AGAIN IS WHAT THEY HAVE NOW (domain/quantities.ts): an
+  // item whose quantity changed starts its count of what has gone again.
+  const quantityChanged = changing
+    .filter(({ item, old }) => {
+      const before = (old.attributes as Record<string, unknown> | null | undefined)?.quantity ?? 1;
+      return before !== (item.attributes.quantity ?? 1);
+    })
+    .map(({ old }) => old.id);
+  if (quantityChanged.length) {
+    await getPool().query(
+      `UPDATE cards SET quantity_gone = 0 WHERE id = ANY($1::uuid[]) AND quantity_gone > 0`,
+      [quantityChanged],
+    );
+  }
   await eachLimited(changing, DOOR_CONCURRENCY, async ({ item, old }) => {
     const version = await writeAmendment(old.id, {
       geo,
@@ -1670,7 +1697,8 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
   const summary = (await listSummaries(accountId)).find((s) => s.list_id === listId);
   const p = Number.isInteger(page) && page >= 1 ? page : 1;
   const r = await getPool().query(
-    `SELECT id, type, category, kind, identifiers, attributes, ask, lifecycle_state, screening, expires_at
+    `SELECT id, type, category, kind, identifiers, attributes, ask, lifecycle_state, screening, expires_at,
+            quantity_gone, withdrawn_because
        FROM cards WHERE list_id = $1 AND account_id = $2
       ORDER BY created_at, id
       LIMIT $3 OFFSET $4`,
@@ -1684,17 +1712,26 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
     const details = Object.fromEntries(Object.entries(attrs).filter(([k]) => !RESERVED_DETAILS.has(k)));
     const who = row.lifecycle_state === 'PUBLISHED' ? (people.get(row.id) ?? { here: 0, waiting: 0 }) : undefined;
     const rej = row.lifecycle_state === 'SCREENING_REJECTED' ? rejectionInPlainWords(row.screening) : undefined;
+    const quantity = typeof attrs.quantity === 'number' ? attrs.quantity : 1;
+    const gone = Math.min(quantity, Number(row.quantity_gone ?? 0));
+    const sells = summary ? dealSells(summary.deal) : !attrs.trade && !attrs.free;
     return {
       intent_id: row.id,
       state: row.lifecycle_state,
       name: row.kind,
       ...(identifiersOf(row.identifiers).length ? { identifiers: ownIdentifiers(row.identifiers) } : {}),
       ...(Object.keys(details).length ? { details } : {}),
-      quantity: typeof attrs.quantity === 'number' ? attrs.quantity : 1,
+      // What is left: the quantity given, less what has gone in accepted
+      // deals (domain/quantities.ts), with how many have gone beside it.
+      quantity: quantity - gone,
+      ...(gone > 0 ? { gone } : {}),
       ...(row.ask?.amount ? { price: row.ask.amount } : {}),
-      ...(row.type === 'HAVE' && !row.ask && !attrs.trade && !attrs.free ? { open_to_offers: true } : {}),
+      ...(row.type === 'HAVE' && !row.ask && sells ? { open_to_offers: true } : {}),
       ...(who ? { people_here: who.here, in_line: who.waiting } : {}),
       ...(rej ? { note: { text: rej.plain, provenance: 'switchboard-system' as const } } : {}),
+      ...(row.withdrawn_because === 'none_left'
+        ? { note: { text: NONE_LEFT_ITEM_SENTENCE, provenance: 'switchboard-system' as const } }
+        : {}),
     };
   });
   return {
@@ -1704,6 +1741,10 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
     list_items: items,
   };
 }
+
+/** Beside an item that came down because every one of it has gone. */
+export const NONE_LEFT_ITEM_SENTENCE =
+  'Every one of these has gone in accepted deals, so it came off the list. Send it again with its new quantity if your human has more.';
 
 // ---------------------------------------------------------------------------
 // TAKING A LIST DOWN.

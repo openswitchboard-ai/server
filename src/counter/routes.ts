@@ -169,6 +169,7 @@ import * as wa from './webauthn.js';
 import * as creds from './credentials.js';
 import { PATCH_FAVICON_PNG, PATCH_HEADER_PNG } from './patchAsset.js';
 import type { Config } from '../config.js';
+import { acceptQuantityLine, listItemLeft, sendQuantityLine } from '../domain/quantities.js';
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
 
@@ -2141,6 +2142,12 @@ in on this device and lets you approve what is waiting.</p>
             needsPin: true,
           };
         }
+        // A seller sending a figure on a list item is told, before the press,
+        // that an accept takes one off their list (domain/quantities.ts).
+        if (side === 'have') {
+          const line = sendQuantityLine(await listItemLeft(m.card_have));
+          if (line) detail.push(line);
+        }
         // A seller sending a figure confirms what the buyer asked on the
         // same page, with the same press, and the button says so.
         const boxes = side === 'have' ? await sellerLines(m.id) : undefined;
@@ -2198,6 +2205,13 @@ in on this device and lets you approve what is waiting.</p>
           await counterpartyIsNew(o.proposer_account),
         );
         if (anomaly) detail.push(anomaly);
+        // THE SELLER IS TOLD BEFORE THE PRESS that accepting takes one off
+        // their list, and what is left after it (domain/quantities.ts): the
+        // press is the human asking for it to come down.
+        if (o.account_have === accountId && !o.swap) {
+          const line = acceptQuantityLine(await listItemLeft(o.card_have));
+          if (line) detail.push(line);
+        }
         // One line (27 September 2026): the page accepts, and everything else
         // about the number is said to the assistant.
         detail.push(pages.OFFER_ELSEWHERE_LINE);

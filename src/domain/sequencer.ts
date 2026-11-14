@@ -51,6 +51,7 @@ import { getPool } from '../db.js';
 import { haversineKm } from '../geo/geohash.js';
 import type { Config } from '../config.js';
 import { endingClosesOffers } from './introductionEnds.js';
+import { PAIRING_MOVEMENT_SQL, lapseDuePairings } from './pairings.js';
 
 /** The ceiling the wire puts on cards.slots, restated where the server reads it. */
 export const MAX_SLOTS = 10;
@@ -168,7 +169,9 @@ async function lineOf(cardId: string): Promise<LineRow[]> {
        LEFT JOIN reputation rep
               ON rep.account_id = CASE WHEN m.card_want = $1
                                        THEN m.account_have ELSE m.account_want END
-      WHERE (m.card_want = $1 OR m.card_have = $1) AND m.state = 'open'`,
+      WHERE (m.card_want = $1 OR m.card_have = $1) AND m.state = 'open'
+        -- A member of a pairing is sequenced with its pairing (domain/pairings.ts).
+        AND m.pairing_id IS NULL`,
     [cardId],
   );
   return r.rows as LineRow[];
@@ -205,7 +208,7 @@ async function sureWaitingOn(cardId: string): Promise<boolean> {
   const r = await getPool().query(
     `SELECT 1 FROM matches
       WHERE (card_want = $1 OR card_have = $1) AND state = 'open' AND NOT live
-        AND certainty = 'sure'
+        AND certainty = 'sure' AND pairing_id IS NULL
       LIMIT 1`,
     [cardId],
   );
@@ -220,7 +223,7 @@ async function freeSlots(cardId: string): Promise<number> {
              AND c.gather_until > now()) AS gather_open,
             (SELECT count(*)::int FROM matches m
               WHERE (m.card_want = c.id OR m.card_have = c.id)
-                AND m.state = 'open' AND m.live) AS live_now
+                AND m.state = 'open' AND m.live AND m.pairing_id IS NULL) AS live_now
        FROM cards c WHERE c.id = $1`,
     [cardId],
   );
@@ -328,6 +331,9 @@ export async function noteMovement(matchId: string): Promise<void> {
       `UPDATE matches SET last_movement_at = now() WHERE id = $1 AND state = 'open' AND live`,
       [matchId],
     );
+    // And the clock of the pairing it belongs to, where it is a member
+    // (domain/pairings.ts). Nothing for an ordinary introduction.
+    await getPool().query(PAIRING_MOVEMENT_SQL, [matchId]);
   } catch {
     // The action itself stands; the clock simply runs from where it was.
   }
@@ -364,6 +370,12 @@ export interface OwnLineRow {
   /** That posting's slots and whether its gathering window is open. */
   slots: number | null;
   gather_open: boolean;
+  /**
+   * A member of a pairing (domain/pairings.ts): live while its pairing is,
+   * and sequenced with it. A live one counts as somebody with this posting;
+   * none ever counts against its slots or as somebody waiting in its line.
+   */
+  grouped?: boolean;
 }
 
 /** People with each posting now, and people waiting in its own line. Pure. */
@@ -381,9 +393,9 @@ export function lineCounts(rows: OwnLineRow[]): Map<string, { here: number; wait
     const here = new Set(live.map((r) => r.other));
     const head = list[0];
     // Full exactly as freeSlots reads it: live introductions against slots.
-    const full = !head.gather_open && live.length >= Number(head.slots ?? 1);
+    const full = !head.gather_open && live.filter((r) => !r.grouped).length >= Number(head.slots ?? 1);
     const waiting = new Set(
-      full ? list.filter((r) => !r.live && !here.has(r.other)).map((r) => r.other) : [],
+      full ? list.filter((r) => !r.live && !r.grouped && !here.has(r.other)).map((r) => r.other) : [],
     );
     out.set(cid, { here: here.size, waiting: waiting.size });
   }
@@ -394,11 +406,11 @@ export function lineCounts(rows: OwnLineRow[]): Map<string, { here: number; wait
 export async function lineRows(cardIds: string[]): Promise<OwnLineRow[]> {
   if (!cardIds.length) return [];
   const r = await getPool().query(
-    `SELECT t.cid, t.live, t.other, c.slots,
+    `SELECT t.cid, t.live, t.other, t.grouped, c.slots,
             (c.sale = 'best-offer' AND c.gather_until IS NOT NULL AND c.gather_until > now()) AS gather_open
        FROM (SELECT unnest(ARRAY[m.card_want, m.card_have]) AS cid,
                     unnest(ARRAY[m.account_have, m.account_want]) AS other,
-                    m.live
+                    m.live, (m.pairing_id IS NOT NULL) AS grouped
                FROM matches m
               WHERE m.state = 'open'
                 AND (m.card_want = ANY($1::uuid[]) OR m.card_have = ANY($1::uuid[]))) t
@@ -412,6 +424,7 @@ export async function lineRows(cardIds: string[]): Promise<OwnLineRow[]> {
     other: String(row.other),
     slots: row.slots === null || row.slots === undefined ? null : Number(row.slots),
     gather_open: row.gather_open === true,
+    ...(row.grouped === true ? { grouped: true } : {}),
   }));
 }
 
@@ -450,6 +463,8 @@ export async function dueToLapse(limit = 200): Promise<string[]> {
        JOIN cards w ON w.id = m.card_want
        JOIN cards h ON h.id = m.card_have
       WHERE m.state = 'open' AND m.live
+        -- A pairing's members run on the pairing's clock (lapseDueSlots below).
+        AND m.pairing_id IS NULL
         -- A deal already agreed is never lapsed (review M14): the two people
         -- have gone off to arrange the handover, which is quiet by nature.
         AND NOT EXISTS (SELECT 1 FROM offers o
@@ -611,5 +626,8 @@ export async function lapseDueSlots(cfg?: Config): Promise<LapseOutcome> {
     );
     promoted += (await resequenceAround(id, cfg)).length;
   }
-  return { lapsed, promoted };
+  // AND THE PAIRINGS (domain/pairings.ts): the same day's clock, on the
+  // pairing as a whole, ending every member in one statement.
+  const grouped = await lapseDuePairings(cfg);
+  return { lapsed: lapsed + grouped.lapsed, promoted: promoted + grouped.promoted };
 }

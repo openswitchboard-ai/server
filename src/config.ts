@@ -210,6 +210,10 @@ export interface Config {
    *  the same named fields, without the copies. LEAN_SWEEP=on|off; unset is
    *  on in dev and off in prod, so the rehearsal ladder runs it first. */
   leanSweep: boolean;
+  /** How many people whose lists meet this person's can be live with them at
+   *  once (domain/pairings.ts). PAIRINGS_LIVE_PER_PERSON, 1 to 50, default 5.
+   *  Optional so a test's config without it reads the default. */
+  pairingsLivePerPerson?: number;
   /** JEV AS THE JUDGE ON THE BORDERLINE (founder, 29 September 2026;
    *  src/domain/jevJudge.ts). JEV_MATCHING=on|off; unset is ON in dev and OFF
    *  in prod. The hosted network has had it set on since 1 October 2026: one env
@@ -326,6 +330,7 @@ export function loadConfig(): Config {
     jevModel: process.env.JEV_MODEL || JEV_MODEL,
     opsMetricsBasicAuth: opsMetricsBasicAuthFrom(process.env.OPS_METRICS_BASIC_AUTH),
     leanSweep: leanSweepFrom(process.env.LEAN_SWEEP, envName),
+    pairingsLivePerPerson: inRange(process.env.PAIRINGS_LIVE_PER_PERSON, 5, 1, 50, 'PAIRINGS_LIVE_PER_PERSON'),
     jevMatching: jevMatchingFrom(process.env.JEV_MATCHING, envName),
     jevShelf: jevShelfFrom(process.env.JEV_SHELF, envName),
     sealedContact: sealedContactFrom(process.env.SEALED_CONTACT, envName),

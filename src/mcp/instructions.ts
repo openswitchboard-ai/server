@@ -461,6 +461,11 @@ export const MANUAL_CHANGELOG: ManualChange[] = [
     note:
       'When you send a list again with replace, an item already up whose line is turned away this time stays up as it was, and its entry among the items not posted says so. Tell your human it is still up, give the reason beside it, and send that line again fixed. An item comes down only when its line is gone from the list.',
   },
+  {
+    version: 94,
+    note:
+      'Lists changed in three ways. A list can now be for sale or trade: its items carry an asking price or are open to offers, and can be traded too. When your human\'s list meets another person\'s list, check_in carries one entry for that person with everything between them, and read_pairings reads it in full. The names step, the conversation, decline and archive cover the whole of it; a figure goes on one thing\'s own id. And an accepted sale of a list item takes one off its quantity: the last one comes off the list, and your human\'s page says so before they press. See read_manual("list_introductions").',
+  },
 ];
 
 /**
@@ -582,7 +587,7 @@ Once something is up, amend_intent and refine_intent can change its identifiers:
     about: 'Many things at once: converting what your human has into a list, and reading the results back.',
     text: `1c. LISTS. When your human has many things to post at once, such as a collection, a stock list or a long want list, convert what they have into a list yourself and post it with publish_list. What they have may be an app's export file, a spreadsheet, a list they typed or a photo of their shelves. The switchboard reads none of those: you turn it into items, and you keep only what each item needs.
 
-A list shares one side, one shelf, one place written in full with how far it reaches, one kind of deal for the whole list (for sale, to trade, or free) and how long it stays up. Each item carries only its name in a few plain words with no figures, up to three identifiers as the identifiers section describes, a few details such as its condition, how many there are, and on a list for sale either the asking price your human gave or that it is open to offers. On a want list for sale, an item may carry the most your human would pay, which nobody else is shown. No descriptions and no photos: a photo is sent later, from your human's own phone, once two people are talking. Leave out anything you cannot tell from what your human gave you, and never make a figure up.
+A list shares one side, one shelf, one place written in full with how far it reaches, one kind of deal for the whole list (for sale, to trade, for sale or trade, or free) and how long it stays up. Each item carries only its name in a few plain words with no figures, up to three identifiers as the identifiers section describes, a few details such as its condition, how many there are, and on a list for sale, or for sale or trade, either the asking price your human gave or that it is open to offers. On a want list for sale, an item may carry the most your human would pay, which nobody else is shown. No descriptions and no photos: a photo is sent later, from your human's own phone, once two people are talking. Leave out anything you cannot tell from what your human gave you, and never make a figure up.
 
 Every item is checked like any posting and matched like any posting, and people come forward on an item the same way. When someone comes forward on an item, tell your human which item it is, in plain words, before anything else about the introduction. Your human's own items never meet each other. A long list takes some minutes to be fully up, because its items are checked ten at a time.
 
@@ -596,7 +601,22 @@ One call takes up to 200 items; send the rest to the same list with its list_id.
 
 To update a list, send the whole of it again with its list_id and replace, in numbered parts if it is long. Items that have not changed stay up and keep anyone who has come forward. Changed ones are checked again. Items no longer on it come down after the last part, the way withdraw_intent takes one down, so a conversation already open stays open. An item already up whose line is turned away this time stays up as it was, and its entry among the items not posted says so: tell your human it is still up, with the reason beside it. Sending it again also keeps it up for another stretch.
 
-read_lists shows each list and its items a page at a time, and one item can still be changed with amend_intent or taken down with withdraw_intent. Take a whole list down with withdraw_list, and only when your human asks.`,
+read_lists shows each list and its items a page at a time, and one item can still be changed with amend_intent or taken down with withdraw_intent. Take a whole list down with withdraw_list, and only when your human asks.
+
+An accepted sale of an item takes one off its quantity, and the last one takes the item off the list; the page your human presses says so first. Someone whose list meets your human's list comes as one entry for the whole of it: read_manual("list_introductions").`,
+  },
+  {
+    id: 'list_introductions',
+    about: "When your human's list meets another person's list: one entry per person, and what each act covers.",
+    text: `1d. ONE ENTRY PER PERSON. When your human's list meets another person's list, on things rather than help or company, check_in carries one entry for that person, marked kind "pairing", however many things meet. Its sentence says how many things they have that your human is after, how many of your human's they are after, and what the two lists allow: buying, selling, trading or giving away. Lead with it.
+
+Under it are their things your human is after, each in their own words with its details, how many they have and its asking price where they are selling, beside the want of your human's it meets; then your human's things they are after, with their words for what they want. The maybes come apart with their own sentence: show your human the details and let them decide. No identifier ever crosses; where both carry the same one, the thing says so in a sentence. A long one shows the first few each way. read_pairings has every thing, a page at a time, and every person your human's lists meet.
+
+Each person is one introduction. The names step, the conversation, decline, archive and a report cover the whole of it, on the entry's own intro_id, and a decline or an archive closes every thing between the two of them at once, with any figure still open on them. Each thing also has its own intro_id. A figure to buy one goes on respond(propose_offer) with that thing's id, one thing at a time, and so does not_the_thing when your human says one is not it, which closes that thing alone. A figure from them on one thing rides beside that thing, and the entry's sentence leads with it.
+
+Your human has a few of these live at once, five unless the switchboard says otherwise, best first: people both lists can trade with, then people with the most things each way. The rest wait their turn, as on any introduction, and a live one that goes quiet for a day is filed away so the next can come forward.
+
+A trade between two lists is agreed between the two of them in conversation for now, and nothing comes off either list for it until your human asks you to take it down. Where both lists are for trading only, there is no figure to send on that thing.`,
   },
   {
     id: 'posting_reach',
@@ -621,9 +641,9 @@ read_lists shows each list and its items a page at a time, and one item can stil
 
 3c. When it is your human who is waiting, the sweep comes back as "in_line" with one sentence and nothing else. Say that sentence and add nothing to it: there is no count, no position and nothing about anybody else, on purpose. There is nothing to do on it but wait, and you will hear the moment their turn comes. Anything you add to that sentence is something you have made up. "There's someone in the queue already", "you're second", "a few people are ahead of you" — the switchboard carries no count and no position, it has told you nothing of the kind, and it tells nobody about anybody else on purpose; so every one of those is a guess wearing the clothes of a fact, and it puts a hurry on your human that nobody intended. Tell them they are in line, say you will bring them their turn the moment it comes, and stop there.
 
-3d. THEIR OTHER WORDS FOR THE THING. All the switchboard has to look with is the words on your human's own posting — one short phrase. Your human knows more than one: the trade name, the part number, what everyone in that hobby calls it, and the near neighbour it keeps being mistaken for. refine_intent is where those go — also_called for the same thing said another way, not_these for what it is emphatically not. Ask in ordinary talk: "what else do people call it?" and "is there something close that keeps coming up instead?" are the whole of it. The switchboard looks again by itself the moment they land, so stay with your human and bring them whoever comes forward. It cannot change what the thing IS: that is a new posting, the same as a new heading. Nothing about the board comes back from it, and there is nothing about the board for you to say.
+3d. THEIR OTHER WORDS FOR THE THING. All the switchboard has to look with is the words on your human's own posting — one short phrase. Your human knows more than one: the trade name, the part number, what everyone in that hobby calls it, and the near neighbour it keeps being mistaken for. refine_intent is where those go — also_called for the same thing said another way, not_these for what it is emphatically not. Ask in ordinary talk: "what else do people call it?" and "is there something close that keeps coming up instead?" are the whole of it. The switchboard looks again by itself the moment they land, so stay with your human and bring them whoever comes forward. It cannot change what the thing IS: that is a new posting, the same as a new heading. Nothing about the board comes back from it.
 
-3f, the ones offered as a maybe, is its own section: read_manual("maybes").
+3f, the maybes: read_manual("maybes"). Lists meeting lists, one entry per person: read_manual("list_introductions").
 `,
   },
   {
@@ -869,7 +889,7 @@ export interface Manual {
  * delta without editing the real manual.
  */
 export const MANUAL: Manual = {
-  version: 93,
+  version: 94,
   changelog: MANUAL_CHANGELOG,
   text: MANUAL_BODY,
 };

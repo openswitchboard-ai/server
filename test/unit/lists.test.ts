@@ -348,7 +348,7 @@ describe('an item is read on its own, and the minimum is a name that says what i
     const s = readShared(shared());
     expect(s.ttl_days).toBe(60);
     expect(() => readShared(undefined)).toThrow(/A new list needs its shared fields/);
-    expect(() => readShared(shared({ deal: 'auction' }))).toThrow(/"sale", "trade" or "free"/);
+    expect(() => readShared(shared({ deal: 'auction' }))).toThrow(/"sale", "trade", "sale_or_trade" or "free"/);
     expect(() => readShared(shared({ category: 'Not A Path' }))).toThrow(/cannot go up as it stands/);
     expect(() => readShared(shared({ photo: 'x' }))).toThrow(/take no 'photo'/);
     expect(sharedKey(readShared(shared({ ttl_days: 30 })))).toBe(sharedKey(s));
