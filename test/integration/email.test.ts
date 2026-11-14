@@ -291,6 +291,18 @@ d('0.E email daemon (live dev)', () => {
       `UPDATE accounts SET email_complaint_suppressed_at = NULL WHERE id = :a::uuid`,
       [{ name: 'a', value: accountId }],
     );
+    // This address is fixed (it is SES's complaint simulator), and every run
+    // leaves one code unused. Three unused in a week and the switchboard holds
+    // further codes for the address (verification.ts unusedCodesHeld), which
+    // is right for a person and wrong for a fixture: earlier runs' codes are
+    // marked used first. The hash is the account's own (email_hash_v2 is the
+    // same peppered hash the verifications carry).
+    await dbExec(
+      `UPDATE email_verifications SET used = true
+        WHERE NOT used
+          AND email_hash = (SELECT email_hash_v2 FROM accounts WHERE id = :a::uuid)`,
+      [{ name: 'a', value: accountId }],
+    );
     const res = await counterFetch(new Jar(), '/login', form({ email }));
     expect(res.status).toBe(200);
     await poll(

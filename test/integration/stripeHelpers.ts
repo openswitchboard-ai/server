@@ -21,7 +21,7 @@
  * dev-scoped KMS access, like its existing RDS-Data observability).
  */
 import { createCipheriv, randomBytes } from 'node:crypto';
-import { chromium } from '@playwright/test';
+import { chromium, type Locator, type Page } from '@playwright/test';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { DecryptCommand, KMSClient } from '@aws-sdk/client-kms';
@@ -202,6 +202,46 @@ export async function attachStripeAccount(accountId: string, stripeAcctId: strin
   );
 }
 
+/** Is a visible match for `selector` in any frame of the page right now? */
+async function anyFrameHasVisible(page: Page, selector: string): Promise<boolean> {
+  for (const f of page.frames()) {
+    if (await f.locator(selector).first().isVisible().catch(() => false)) return true;
+  }
+  return false;
+}
+
+/**
+ * The first visible match for `selector` in any frame, waiting up to
+ * `timeout`. When none turns up, the error names every frame and the fields in
+ * it, and a picture of the page goes to e2e-screenshots/, so a page Stripe
+ * redraws says how it now looks.
+ */
+async function visibleInAnyFrame(page: Page, selector: string, timeout: number): Promise<Locator> {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    for (const f of page.frames()) {
+      const l = f.locator(selector).first();
+      if (await l.isVisible().catch(() => false)) return l;
+    }
+    if (Date.now() > deadline) break;
+    await page.waitForTimeout(500);
+  }
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync('e2e-screenshots', { recursive: true });
+  await page.screenshot({ path: `e2e-screenshots/checkout-missing-${Date.now()}.png`, fullPage: true }).catch(() => {});
+  const perFrame: string[] = [];
+  for (const f of page.frames()) {
+    const ids = await f
+      .locator('input, select, button')
+      .evaluateAll((els) =>
+        els.map((el) => `${el.tagName.toLowerCase()}#${el.id}[${el.getAttribute('name') ?? ''}]`).join(' '),
+      )
+      .catch(() => '(unreadable)');
+    if (ids) perFrame.push(`${f.url().slice(0, 80)} :: ${ids}`);
+  }
+  throw new Error(`no visible ${selector} on the checkout page after ${timeout}ms. It had:\n${perFrame.join('\n')}`);
+}
+
 /**
  * Pay a real hosted Checkout Session, in a browser, with a Stripe test card.
  *
@@ -220,31 +260,55 @@ export async function payHostedCheckout(url: string): Promise<void> {
   try {
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#email', { timeout: 60_000 });
-    await page.fill('#email', 'testsuite+buyer@openswitchboard.ai');
+    // Since November 2026 the hosted page draws its fields inside Stripe's own
+    // frames (the email box is #linkAuthentication-emailInput in one, the card
+    // in another), where they used to sit on the page itself with plain ids.
+    // So every field is looked for in every frame, by the old id and the new
+    // names alike, and a field that never turns up says what the page had.
+    const field = (selector: string, timeout = 60_000) => visibleInAnyFrame(page, selector, timeout);
+    await (await field('#email, #linkAuthentication-emailInput, input[name="email"]')).fill(
+      'testsuite+buyer@openswitchboard.ai',
+    );
     // Wallets and delayed methods come and go on this page; the card option
-    // is an accordion row that may already be open.
-    if (!(await page.locator('#cardNumber').isVisible().catch(() => false))) {
-      await page.locator('#payment-method-accordion-item-title-card').click({ force: true });
+    // is an accordion row (or a radio) that may already be open.
+    const CARD_NUMBER = '#cardNumber, input[name="number"], #Field-numberInput';
+    if (!(await anyFrameHasVisible(page, CARD_NUMBER))) {
+      const choice = await field(
+        '#payment-method-accordion-item-title-card, button[data-testid="card-accordion-item-button"], input[type="radio"][value="card"], [role="radio"]:has-text("Card"), :text-is("Card")',
+        15_000,
+      ).catch(() => undefined);
+      await choice?.click({ force: true });
     }
-    await page.waitForSelector('#cardNumber', { timeout: 60_000 });
-    await page.fill('#cardNumber', '4000000000000077');
-    await page.fill('#cardExpiry', `12${String(new Date().getFullYear() + 3).slice(2)}`);
-    await page.fill('#cardCvc', '123');
-    await page.fill('#billingName', 'Bella Buyer').catch(() => {});
+    await (await field(CARD_NUMBER)).fill('4000000000000077');
+    await (await field('#cardExpiry, input[name="expiry"], #Field-expiryInput')).fill(
+      `12${String(new Date().getFullYear() + 3).slice(2)}`,
+    );
+    await (await field('#cardCvc, input[name="cvc"], #Field-cvcInput')).fill('123');
+    await field('#billingName, input[name="name"], #Field-nameInput', 3_000)
+      .then((l) => l.fill('Bella Buyer'))
+      .catch(() => {});
     // The page picks the billing country from where the browser is. A runner
     // in another country is asked for that country's postcode, and 6160 is an
     // Australian one. The test buyer is in Australia wherever the suite runs.
-    const country = page.locator('#billingCountry');
-    if (await country.count()) await country.selectOption('AU');
-    await page.fill('#billingPostalCode', '6160').catch(() => {});
+    await field('#billingCountry, select[name="country"], #Field-countryInput', 3_000)
+      .then((l) => l.selectOption('AU'))
+      .catch(() => {});
+    await field('#billingPostalCode, input[name="postalCode"], #Field-postalCodeInput', 3_000)
+      .then((l) => l.fill('6160'))
+      .catch(() => {});
     // "Save my information for faster checkout" asks for a phone number and
     // blocks the form until it gets one. A test buyer saves nothing.
-    const saveForLater = page.locator('#enableStripePass');
-    if (await saveForLater.isVisible().catch(() => false)) {
-      await saveForLater.uncheck({ force: true }).catch(() => {});
-    }
-    await page.click('button[type=submit]');
+    const saveForLater = await field('#enableStripePass, input[name="enableStripePass"]', 2_000).catch(
+      () => undefined,
+    );
+    if (saveForLater) await saveForLater.uncheck({ force: true }).catch(() => {});
+    // The main Pay button, and never the Link one beside the email box
+    // (pay_with_link_arrow), which opens a Link window instead of paying.
+    await (
+      await field(
+        '[data-testid="hosted-payment-submit-button"], button.SubmitButton, button[type=submit]:not([name="pay_with_link_arrow"])',
+      )
+    ).click();
     // Stripe sends the buyer on to the success_url once the payment lands.
     // Where that goes afterwards (a sign-in redirect, say) is the counter's
     // business; leaving checkout.stripe.com is the signal that matters.
@@ -268,7 +332,27 @@ export async function payHostedCheckout(url: string): Promise<void> {
         .innerText({ timeout: 5_000 })
         .then((t) => t.replace(/\s+/g, ' ').slice(0, 1500))
         .catch(() => '(the page could not be read)');
-      throw new Error(`${(e as Error).message}\nThe checkout page was showing: ${words}`);
+      // The form itself lives in Stripe's frames, so their words are what say
+      // why a payment did not go (a decline, a missing field, a check).
+      const inFrames: string[] = [];
+      for (const f of page.frames()) {
+        if (f === page.mainFrame()) continue;
+        const t = await f
+          .locator('body')
+          .innerText({ timeout: 2_000 })
+          .then((x) => x.replace(/\s+/g, ' ').trim().slice(0, 400))
+          .catch(() => '');
+        if (t) inFrames.push(`${f.url().split('?')[0].slice(0, 70)}: ${t}`);
+      }
+      // Since 14 November 2026 Stripe's hosted page can put a human check
+      // (hCaptcha) in front of an automated browser. The suite does not answer
+      // or dodge those; it says plainly that this is why the payment stopped.
+      const askedForAHuman = page
+        .frames()
+        .some((f) => /hcaptcha/.test(f.url()) && inFrames.some((t) => t.includes('hcaptcha') && /Verify/.test(t)));
+      throw new Error(
+        `${askedForAHuman ? 'STRIPE ASKED FOR A HUMAN CHECK (hCaptcha) before taking the test payment; the suite does not answer those. ' : ''}${(e as Error).message}\nThe checkout page was showing: ${words}\nIn its frames: ${inFrames.join(' | ')}`,
+      );
     }
   } finally {
     await browser.close();
