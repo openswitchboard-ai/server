@@ -65,12 +65,25 @@ export async function registrationOptions(cfg: Config, accountId: string, label:
   });
 }
 
+/**
+ * An enrolment the switchboard turned down. The route answers it as a 400
+ * with the code, so the page can say what happened (14 November 2026): before
+ * this it was a 500, and the page could only say "that didn't work".
+ */
+export class EnrolmentRefused extends Error {
+  constructor(readonly code: 'passkey_not_verified' | 'passkey_already_enrolled') {
+    super(code === 'passkey_already_enrolled' ? 'passkey already enrolled' : 'passkey registration not verified');
+  }
+}
+
 export async function verifyRegistration(
   cfg: Config,
   accountId: string,
   expectedChallenge: string,
   response: any,
 ): Promise<string> {
+  // The library throws on a malformed or unverified response; that is the
+  // same refusal as a response it reads and does not verify.
   const v = await verifyRegistrationResponse({
     response,
     expectedChallenge,
@@ -80,8 +93,8 @@ export async function verifyRegistration(
     // ignored the request and sent back an unverified assertion must not be
     // enrolled as though it had complied.
     requireUserVerification: true,
-  });
-  if (!v.verified || !v.registrationInfo) throw new Error('passkey registration not verified');
+  }).catch(() => undefined);
+  if (!v?.verified || !v.registrationInfo) throw new EnrolmentRefused('passkey_not_verified');
   const cred = v.registrationInfo.credential;
   // The id that counts is the one inside the signed authenticator data, which
   // is what gets stored — never the `id` the request body carries, which the
@@ -103,7 +116,7 @@ export async function verifyRegistration(
       JSON.stringify(cred.transports ?? []),
     ],
   );
-  if (!ins.rowCount) throw new Error('passkey already enrolled');
+  if (!ins.rowCount) throw new EnrolmentRefused('passkey_already_enrolled');
   return cred.id;
 }
 

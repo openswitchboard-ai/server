@@ -684,6 +684,8 @@ page once you are back in.`;
 export const PASSKEY_FAILED_PIN = "That didn't work. Try again, or use your PIN.";
 export const PASSKEY_FAILED_CODE = "That didn't work. Try again, or have a code emailed.";
 export const PASSKEY_FAILED_RETRY = "That didn't work. Try again.";
+export const PASSKEY_ALREADY_HERE =
+  'This device already has a passkey for your account, so there is nothing to add here.';
 
 /**
  * The one passkey handler for a whole page. Any number of buttons can carry
@@ -774,7 +776,15 @@ document.getElementById('${buttonId}').addEventListener('click', async () => {
     const r = await postJson('/passkey/verify', body);
     location.href = r.next || '/';
   } catch (e) {
-    document.getElementById('${errId}').innerHTML = '<div class="err">' + ${JSON.stringify(failed)} + '</div>';
+    const said = String((e && e.message) || '');
+    // The confirmation this page was opened under ran out: open it again,
+    // and it asks for the confirmation first.
+    if (said.indexOf('ceremony_required') >= 0) { location.href = '/passkey'; return; }
+    // The browser answers InvalidStateError for a device that already holds
+    // one of this account's passkeys (they are listed in excludeCredentials).
+    const already = (e && e.name === 'InvalidStateError') || said.indexOf('passkey_already_enrolled') >= 0;
+    document.getElementById('${errId}').innerHTML = '<div class="err">'
+      + (already ? ${JSON.stringify(PASSKEY_ALREADY_HERE)} : ${JSON.stringify(failed)}) + '</div>';
   }
 });
 </script>`;

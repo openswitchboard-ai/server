@@ -1358,7 +1358,15 @@ in on this device and lets you approve what is waiting.</p>
       const challenge = await sess.takeWebauthnChallenge(s.id);
       if (!challenge) return reply.code(400).send({ error: 'no_pending_challenge' });
       const had = await holdsCredential(s.accountId!);
-      const enrolledId = await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
+      let enrolledId: string;
+      try {
+        enrolledId = await wa.verifyRegistration(cfg, s.accountId!, challenge, req.body);
+      } catch (e) {
+        // A refusal is the person's answer to show, not a server fault.
+        if (!(e instanceof wa.EnrolmentRefused)) throw e;
+        req.log.info({ code: e.code }, 'passkey enrolment refused');
+        return reply.code(400).send({ error: e.code });
+      }
       // A successful passkey ceremony is a sensitive-action ceremony, and
       // enrolling one is a ceremony too: the device just checked the person.
       // Fitted inside a recovery hold, it counts only as the recovery does.

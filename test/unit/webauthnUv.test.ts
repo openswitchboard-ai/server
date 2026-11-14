@@ -103,6 +103,18 @@ describe('which credential an enrolment is (10 November 2026)', () => {
     );
   });
 
+  it('each refusal carries a code the route answers as a 400 (14 November 2026)', async () => {
+    vi.spyOn(db, 'getPool').mockReturnValue(emptyPool());
+    verified('on-file');
+    await expect(wa.verifyRegistration(cfg, ACCOUNT, 'c', { id: 'x', rawId: 'x' })).rejects.toMatchObject({
+      code: 'passkey_already_enrolled',
+    });
+    vi.mocked(swa.verifyRegistrationResponse).mockRejectedValueOnce(new Error('bad attestation object'));
+    const thrown = await wa.verifyRegistration(cfg, ACCOUNT, 'c', {}).catch((e) => e);
+    expect(thrown).toBeInstanceOf(wa.EnrolmentRefused);
+    expect(thrown.code).toBe('passkey_not_verified');
+  });
+
   it('an assertion with no string id is refused before any lookup', async () => {
     const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
     vi.spyOn(db, 'getPool').mockReturnValue({ query } as any);
