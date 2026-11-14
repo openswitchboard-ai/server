@@ -1903,7 +1903,7 @@ export async function checkMatches(
       const c = entry.mutual?.counterparty;
       if (m.archived_via === 'lapsed') {
         entry.note = sbNote(
-          `This one went quiet and has been filed away. Nothing more is expected of either of you about the ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))}; say the word if you would like me to look again.`,
+          `This one went quiet and has been filed away. Nothing more is expected of either of you about ${plainLeaf(m.category, m.kind, kindQuoting(m, accountId))}; say the word if you would like me to look again.`,
         );
       } else if (m.archived_via === 'not-chosen') {
         // No figure, no count, nothing about anyone else: the losing side is

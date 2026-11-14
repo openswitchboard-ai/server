@@ -278,7 +278,10 @@ d('a whole best offer, sealed numbers to an accepted one', () => {
     ]);
     expect(lines.map((l) => l.intro_id).sort()).toEqual([intros.ari, intros.bea].sort());
     // The floor is a yes or no on each line, and never a figure anywhere.
-    expect(read!.raw).not.toContain(String(FLOOR));
+    // Ids are random hex and can hold the floor's digits ("…-8317-…"), so they
+    // are taken out first, and the floor is looked for as a number on its own.
+    const withoutIds = read!.raw.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '');
+    expect(withoutIds).not.toMatch(new RegExp(`(^|[^0-9])${FLOOR}([^0-9]|$)`));
     expect(JSON.stringify(read!.best.note)).not.toMatch(/\d{3}/);
   });
 
