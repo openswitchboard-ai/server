@@ -68,3 +68,12 @@ export function figuresSentOnLists(calls: TracedCall[]): { call: number; name: s
   });
   return out;
 }
+
+/** The shape of each list call: how many items it carried, the list it named, and whether it re-sent a held attempt. */
+export function listCallShapes(calls: TracedCall[]): { items: number; listId?: string; reference?: boolean }[] {
+  return calls.map((c) => ({
+    items: Array.isArray(c.args.items) ? c.args.items.length : 0,
+    ...(typeof c.args.list_id === 'string' && c.args.list_id ? { listId: c.args.list_id } : {}),
+    ...(c.args.reference !== undefined && c.args.reference !== null && c.args.reference !== '' ? { reference: true } : {}),
+  }));
+}

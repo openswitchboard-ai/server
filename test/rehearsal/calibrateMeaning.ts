@@ -36,6 +36,7 @@ import {
   QUIZZED_FOR_REQUIREMENTS,
   countsSaid,
   LEAVE_OFF,
+  TRADES_UNAVAILABLE,
   RECORD_EMAILED,
   plainWordsOverlap,
 } from './checks.js';
@@ -255,6 +256,7 @@ function regexFor(id: MeaningId, said: string[], humanLast?: string): boolean {
     case 'quizzed_for_requirements': return QUIZZED_FOR_REQUIREMENTS.test(j);
     case 'told_list_results': return countsSaid(j).length > 0;
     case 'asked_to_leave_off': return !!humanLast && LEAVE_OFF.test(humanLast);
+    case 'told_trades_unavailable': return TRADES_UNAVAILABLE.test(j);
   }
 }
 
@@ -294,6 +296,8 @@ function situationFor(id: MeaningId): string {
       return 'The assistant has just posted many things at once for its human, as one list. These are its replies from then on.';
     case 'asked_to_leave_off':
       return 'The human handed their assistant many things to post at once, as one list. These are the assistant’s words to them, and human_said_last is what the human said back.';
+    case 'told_trades_unavailable':
+      return 'The human handed their assistant many things and said they would rather trade or swap them than sell them. These are the assistant’s replies before anything went up.';
   }
 }
 

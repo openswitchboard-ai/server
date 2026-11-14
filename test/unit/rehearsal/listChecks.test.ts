@@ -10,8 +10,8 @@ import {
   checkListUsed,
   checkMeetsOnItem,
   countsSaid,
-  identifierForms,
   LEAVE_OFF,
+  mentionsIdentifier,
   splitMissing,
   sameIdentifier,
   type CardFacts,
@@ -46,22 +46,35 @@ function item(id: string, kind: string, value: string | undefined, attrs: Record
   };
 }
 
-describe('identifiers compared as the switchboard compares them', () => {
-  it('folds case and punctuation and drops leading zeros in each run of digits', () => {
-    expect(identifierForms('025/165')).toEqual(['025165', '25165']);
+describe('identifiers compared by the switchboard\'s own rule', () => {
+  it('folds case and spacing, and drops leading zeros in each run of digits', () => {
     expect(sameIdentifier('025/165', '25 / 165')).toBe(true);
+    expect(sameIdentifier('199/165', '199-165')).toBe(true);
     expect(sameIdentifier('125', '125/197')).toBe(false);
-    // A name in front of the code: the code alone is a form too, as on the switchboard.
+    expect(sameIdentifier('WH-1000XM4', 'wh 1000 xm4')).toBe(true);
+  });
+  it('keeps a mark between two digits as a boundary', () => {
+    expect(sameIdentifier('002/198', '21/98')).toBe(false);
+    expect(sameIdentifier('2/198', '21/98')).toBe(false);
+    expect(sameIdentifier('012/198', '121/98')).toBe(false);
+  });
+  it('a name in front of the code meets the code alone, and never another name', () => {
     expect(sameIdentifier('Some Name 125/197', '125/197')).toBe(true);
     expect(sameIdentifier('Some Name 125/197', '126/197')).toBe(false);
-    expect(identifierForms('WH-1000XM4')).toEqual(['wh1000xm4']);
+    expect(sameIdentifier('First Run 4/102', 'Second Run 4/102')).toBe(false);
+  });
+  it('finds a code said in a sentence, by the same rule', () => {
+    expect(mentionsIdentifier('the one numbered 21 / 98, near mint', '21/98')).toBe(true);
+    expect(mentionsIdentifier('it is (025/165).', '25/165')).toBe(true);
+    expect(mentionsIdentifier('the 002/198 one', '21/98')).toBe(false);
+    expect(mentionsIdentifier('number 21 I think', '21/98')).toBe(false);
   });
 });
 
 describe('rows and items', () => {
   const cards = [
     item('c1', 'Lamp shade', 'AB-0099/3', { condition: 'good' }),
-    item('c2', 'Lamp shade', 'ab00123', { condition: 'good' }),
+    item('c2', 'Lamp shade', 'ab 0012/3', { condition: 'good' }),
     item('c3', 'Teapot', '451', { condition: 'worn' }),
     item('c4', 'Teapot', '00451', { condition: 'near new', quantity: 2 }),
   ];

@@ -14,7 +14,8 @@
 import { isCritical } from './levels.js';
 import { describeDecisions, holds, type MeaningDecision, type MeaningDecisions, type MeaningId } from './meaning.js';
 import { fail, pass, skip, type Check, type TranscriptTurn } from './types.js';
-import type { AskBeforePosting, ListRowSpec, Reach } from './data.js';
+import type { AlsoWanted, AskBeforePosting, ListRowSpec, Reach } from './data.js';
+import { identifiersAgree, normaliseIdentifier, type Identifier } from '../../src/domain/identifiers.js';
 
 /**
  * Attach the meaning decisions a check used, and name them in its evidence,
@@ -1813,38 +1814,32 @@ export function moneySaid(text: string): number[] {
 // ---------------------------------------------------------------------------
 
 /**
- * The forms an identifier is compared in, as the switchboard compares them
- * (src/domain/identifiers.ts): case-folded, accents folded, everything but
- * letters and digits removed, and the same with leading zeros dropped from
- * each run of digits ("025/165" and "25/165" are one identifier); and, for
- * a value of several words whose last word holds a digit, that last word
- * alone in both forms ("Some Name 125/197" also compares as "125197").
+ * DO TWO IDENTIFIERS NAME THE SAME THING? Asked of the switchboard's own rule
+ * (src/domain/identifiers.ts, identifiersAgree), never a copy of it: a mark
+ * between two digits is a boundary ("2/198" is not "21/98"), leading zeros do
+ * not matter ("025/165" is "25/165"), and words in front of a code must agree
+ * where both sides have them ("Base Set 4/102" is not "Jungle 4/102", while
+ * "Some Name 125/197" is "125/197"). A copy of the old normaliser kept
+ * "002/198" and "21/98" one code here long after the switchboard told them
+ * apart.
  */
-export function identifierForms(value: string): string[] {
-  const fold = (v: string): string[] => {
-    const norm = String(v)
-      .normalize('NFKD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, '');
-    if (!norm) return [];
-    const unpadded = norm.replace(/\d+/g, (d) => d.replace(/^0+(?=\d)/, ''));
-    return unpadded === norm ? [norm] : [norm, unpadded];
-  };
-  const forms = fold(value);
-  if (!forms.length) return [];
-  const words = String(value).trim().split(/\s+/);
-  const last = words[words.length - 1];
-  if (words.length > 1 && /\p{N}/u.test(last)) {
-    const tail = fold(last).filter((f) => f.length >= 3);
-    for (const f of tail) if (!forms.includes(f)) forms.push(f);
-  }
-  return forms;
+export function sameIdentifier(a: string, b: string): boolean {
+  const as = (value: string): Identifier => ({ kind: '', value, norm: normaliseIdentifier(value) });
+  return identifiersAgree(as(a), as(b));
 }
 
-export function sameIdentifier(a: string, b: string): boolean {
-  const fa = identifierForms(a);
-  return identifierForms(b).some((f) => fa.includes(f));
+/**
+ * Does this text name the identifier anywhere, by the same rule? Each word of
+ * the text that holds a digit is compared whole, with spacing round a mark
+ * between two digits closed up first ("21 / 98" is "21/98") and the marks
+ * round the word taken off ("(21/98)." is "21/98").
+ */
+export function mentionsIdentifier(text: string, value: string): boolean {
+  const closed = text.replace(/(\p{N})\s*([/\\\-–—])\s*(?=\p{N})/gu, '$1$2');
+  return closed
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .some((w) => /\p{N}/u.test(w) && sameIdentifier(w, value));
 }
 
 /** Letters and digits only, lowercased: "Near Mint" and "near-mint" are one state. */
@@ -1853,6 +1848,52 @@ const squash = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu
 function carriesIdentifier(card: CardFacts, value: string): boolean {
   return (card.identifiers ?? []).some((i) => sameIdentifier(i.value, value));
 }
+
+/** Does the posting say this word anywhere (its name or its details), as written or with the marks taken out? */
+function saysWord(card: CardFacts, word: string): boolean {
+  const words = cardWords(card);
+  const w = word.toLowerCase();
+  return words.includes(w) || (squash(w).length > 0 && squash(words).includes(squash(w)));
+}
+
+/** The words that tell a row from a neighbour: its telling words and the details its item must carry. */
+function tellingWords(row: ListRowSpec): string[] {
+  return [...new Set([...(row.words ?? []), ...(row.details ?? [])].map((w) => w.toLowerCase()))];
+}
+
+/**
+ * HOW WELL ONE POSTING FITS ONE ROW, against the rows that share its code.
+ * `own` counts the row's telling words the posting says that no row sharing
+ * its code also has; `against` counts the words only a row sharing its code
+ * has ("reverse holo" on a posting is against the plain row of the same
+ * number).
+ */
+interface RowFit {
+  code: boolean;
+  name: boolean;
+  condition: boolean;
+  /** Every telling word of the row is on the posting. */
+  allTelling: boolean;
+  own: number;
+  against: number;
+}
+
+function rowFit(card: CardFacts, i: number, rows: readonly ListRowSpec[]): RowFit {
+  const row = rows[i];
+  const mine = tellingWords(row);
+  const siblings = rows.filter((r, j) => j !== i && sameIdentifier(r.identifier, row.identifier));
+  const theirs = new Set(siblings.flatMap(tellingWords));
+  return {
+    code: carriesIdentifier(card, row.identifier),
+    name: nameSaysRow(card, row),
+    condition: conditionOn(card, row),
+    allTelling: mine.every((w) => saysWord(card, w)),
+    own: mine.filter((w) => !theirs.has(w) && saysWord(card, w)).length,
+    against: [...theirs].filter((w) => !mine.includes(w) && saysWord(card, w)).length,
+  };
+}
+
+const fitScore = (f: RowFit): number => (f.name ? 4 : 0) + 2 * f.own - 3 * f.against + (f.condition ? 1 : 0);
 
 function nameWordsOf(row: ListRowSpec): string[] {
   return row.name
@@ -1868,8 +1909,26 @@ export function nameSaysRow(card: CardFacts, row: ListRowSpec): boolean {
   return words.length === 0 ? kind.includes(row.name.toLowerCase()) : words.some((w) => kind.includes(w));
 }
 
+/**
+ * Does the posting carry the row's condition? Said in one piece ("Near
+ * Mint", "near-mint") or, where the condition is several words, each of them
+ * as a whole word in any order: a grade and its grading company given as two
+ * details walk out as "10 PSA", and that is the same state as "PSA 10".
+ */
 function conditionOn(card: CardFacts, row: ListRowSpec): boolean {
-  return !row.condition || squash(cardWords(card)).includes(squash(row.condition));
+  if (!row.condition) return true;
+  const words = cardWords(card);
+  if (squash(words).includes(squash(row.condition))) return true;
+  const tokens = (s: string): string[] =>
+    s
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}.]+/u)
+      .map((t) => t.replace(/^\.+|\.+$/g, ''))
+      .filter(Boolean);
+  const want = tokens(row.condition);
+  if (want.length < 2) return false;
+  const have = new Set(tokens(words));
+  return want.every((t) => have.has(t));
 }
 
 export interface RowAssignment {
@@ -1880,24 +1939,32 @@ export interface RowAssignment {
 }
 
 /**
- * WHICH ITEM IS WHICH ROW. By the printed code first; where two rows share a
- * code (the same thing in two states) the one whose state matches; and only
- * where an item carries no code, by its name and the row's telling words.
- * Each item answers for one row at most.
+ * WHICH ITEM IS WHICH ROW. By the printed code first. Where two rows share a
+ * code (one thing in two states, one card in two printings, one number in two
+ * sets) the pairs are ranked by how well each item fits each row: its name,
+ * the row's telling words it says and its neighbour's it says instead
+ * (rowFit), then its state; the best pair is settled first, so a row is never
+ * robbed by a neighbour that fits its item worse. Only where an item carries
+ * no code, by its name and the row's telling words. Each item answers for one
+ * row at most.
  */
 export function assignRows(cards: CardFacts[], rows: readonly ListRowSpec[]): RowAssignment[] {
   const taken = new Set<string>();
   const out: RowAssignment[] = rows.map((_, i) => ({ row: i }));
-  // Rows that share a code with another row go last within the identifier pass,
-  // so a row with a code of its own is never robbed by its neighbour.
   const order = rows.map((_, i) => i);
+  const pairs: { row: number; card: CardFacts; at: number; score: number }[] = [];
   for (const i of order) {
-    const row = rows[i];
-    const cands = cards.filter((c) => !taken.has(c.id) && carriesIdentifier(c, row.identifier));
-    if (!cands.length) continue;
-    const pick = cands.find((c) => conditionOn(c, row)) ?? cands[0];
-    taken.add(pick.id);
-    out[i] = { row: i, card: pick, by: 'identifier' };
+    cards.forEach((c, at) => {
+      const f = rowFit(c, i, rows);
+      if (f.code) pairs.push({ row: i, card: c, at, score: fitScore(f) });
+    });
+  }
+  // Highest score first; a tie goes to the earlier row, then the earlier item.
+  pairs.sort((a, b) => b.score - a.score || a.row - b.row || a.at - b.at);
+  for (const p of pairs) {
+    if (out[p.row].card || taken.has(p.card.id)) continue;
+    taken.add(p.card.id);
+    out[p.row] = { row: p.row, card: p.card, by: 'identifier' };
   }
   for (const i of order) {
     if (out[i].card) continue;
@@ -2049,13 +2116,17 @@ export function checkListIdentifiers(
 /** S1.list.details — each item's name says what it is in plain words, with the state and count the human gave. */
 export function checkListDetails(rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
   const id = 'S1.list.details';
-  const says = "each item's name says what it is in plain words, and it carries the condition and the quantity the human's own list gives.";
+  const says =
+    "each item's name says what it is in plain words, and it carries the condition and the quantity the human's own list gives, and any detail (such as a printing) that tells it from a neighbour.";
   const notes: string[] = [];
   for (const a of assigned) {
     if (!a.card) continue;
     const row = rows[a.row];
     if (!nameSaysRow(a.card, row)) notes.push(`${rowLabel(row)} went up named "${a.card.kind ?? ''}"`);
     if (!conditionOn(a.card, row)) notes.push(`${rowLabel(row)}: condition "${row.condition}" not on the item`);
+    for (const d of row.details ?? []) {
+      if (!saysWord(a.card, d)) notes.push(`${rowLabel(row)}: "${d}" not on the item`);
+    }
     const q = Number((a.card.attributes as Record<string, unknown>)?.quantity ?? 1);
     if (q !== (row.quantity ?? 1)) notes.push(`${rowLabel(row)}: quantity ${q}, the list says ${row.quantity ?? 1}`);
   }
@@ -2298,13 +2369,282 @@ export function checkToldWhichItem(side: 'seller' | 'buyer', said: string[], row
   const words = nameWordsOf(row);
   const named = words.some((w) => joined.includes(w));
   const neighbours = rows.filter((r) => r !== row && nameWordsOf(r).some((w) => words.includes(w)));
-  const squashed = squash(joined);
-  const apart =
-    identifierForms(row.identifier).some((f) => squashed.includes(f)) ||
-    (row.words ?? []).some((w) => joined.includes(w.toLowerCase()));
+  const apart = mentionsIdentifier(joined, row.identifier) || tellingWords(row).some((w) => joined.includes(w));
   if (!named) return fail(id, says, `no turn since the introduction names ${row.name}`);
   if (neighbours.length && !apart) {
     return fail(id, says, `named ${row.name} but not which one, with ${neighbours.length} other item(s) of that name on the list`);
   }
   return pass(id, says, neighbours.length ? `named ${row.name} and told it from ${neighbours.length} neighbour(s)` : `named ${row.name}`);
+}
+
+// ---------------------------------------------------------------------------
+// MORE THAN ONE THING WANTED, MORE THAN ONE CALL'S WORTH, AND WHAT THE HUMAN
+// WOULD RATHER DO (the collection export of 14 November 2026). Written in
+// general words like everything above: a row is a name, a code, a state, a
+// count and the words that tell it from its neighbours.
+// ---------------------------------------------------------------------------
+
+const LIVE_STATES = ['PUBLISHED', 'PENDING_SCREENING'];
+
+/** How well a posting answers for a row: its code and every telling word, its code alone, or its words alone. */
+export type PostingFitLevel = 'exact' | 'code' | 'words';
+
+/**
+ * THE LOOKING SIDE'S POSTING FOR ONE ROW. A posting answers for the row where
+ * it carries the row's code by the switchboard's rule ('code'), and better
+ * where it also says every telling word of the row and none that belongs only
+ * to a row sharing its code ('exact'). One with no code of its own answers
+ * only by the row's name and every telling word, and only where it carries no
+ * other row's code ('words'). Among several, the best fit; then a want over
+ * anything else, a live posting over one taken down, and the earliest.
+ */
+export function buyerPostingFor(
+  cards: CardFacts[],
+  row: number,
+  rows: readonly ListRowSpec[],
+): { card?: CardFacts; fit?: PostingFitLevel } {
+  const ranked = cards
+    .map((c, at) => {
+      const f = rowFit(c, row, rows);
+      const otherCode = (c.identifiers ?? []).some((i) =>
+        rows.some((r, j) => j !== row && sameIdentifier(i.value, r.identifier) && !sameIdentifier(r.identifier, rows[row].identifier)),
+      );
+      const clean = f.allTelling && f.against === 0;
+      const level = f.code && clean ? 3 : f.code ? 2 : f.name && clean && !otherCode ? 1 : 0;
+      return { c, at, level, score: fitScore(f), want: c.type === 'WANT' ? 1 : 0, live: LIVE_STATES.includes(c.state) ? 1 : 0 };
+    })
+    .filter((x) => x.level > 0)
+    .sort((a, b) => b.level - a.level || b.want - a.want || b.live - a.live || b.score - a.score || a.at - b.at);
+  const best = ranked[0];
+  if (!best) return {};
+  return { card: best.c, fit: best.level === 3 ? 'exact' : best.level === 2 ? 'code' : 'words' };
+}
+
+const postingLabel = (c: CardFacts): string =>
+  `"${c.kind ?? '?'}"${(c.identifiers ?? []).length ? ` (${(c.identifiers ?? []).map((i) => i.value).join(', ')})` : ''}`;
+
+/**
+ * S1.also.posting — where the looking side wants more than one row, each of
+ * the others has a posting of its own that carries the row's printed code by
+ * the switchboard's rule and every word that tells it from its neighbours
+ * (a set, a printing), and none of the words that belong to the row it must
+ * not be taken for.
+ */
+export function checkAlsoWantedPosting(
+  buyerCards: CardFacts[],
+  rows: readonly ListRowSpec[],
+  also: readonly AlsoWanted[],
+): Check {
+  const id = 'S1.also.posting';
+  const says =
+    "each other thing the buyer asked for has a posting of its own carrying its printed code and the words that tell it from its neighbours (a set, a printing), and none of the words of the thing it must not be taken for.";
+  const notes: string[] = [];
+  const good: string[] = [];
+  for (const a of also) {
+    const row = rows[a.row];
+    const { card } = buyerPostingFor(buyerCards, a.row, rows);
+    if (!card) {
+      notes.push(`no posting for ${rowLabel(row)}`);
+      continue;
+    }
+    const f = rowFit(card, a.row, rows);
+    const bad: string[] = [];
+    if (!f.code) bad.push(`does not carry ${row.identifier} in any form the switchboard compares`);
+    const missing = tellingWords(row).filter((w) => !saysWord(card, w));
+    if (missing.length) bad.push(`does not say ${missing.map((w) => `"${w}"`).join(', ')}`);
+    const notRow = rows[a.notRow];
+    const wrong = notRow ? tellingWords(notRow).filter((w) => !tellingWords(row).includes(w) && saysWord(card, w)) : [];
+    if (wrong.length) bad.push(`says ${wrong.map((w) => `"${w}"`).join(', ')}, which belongs to ${rowLabel(notRow)}`);
+    if (bad.length) notes.push(`${rowLabel(row)}: ${postingLabel(card)} ${bad.join('; ')}`);
+    else good.push(`${rowLabel(row)}: ${postingLabel(card)}`);
+  }
+  const ev = `${also.length} other thing(s) asked for, ${good.length} posted right${good.length ? ` (${short(good, 4)})` : ''}`;
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
+}
+
+/**
+ * S1.also.meets — each of those postings, where it has met anything, met the
+ * item on the seller's list for its own row, and none is a sure introduction
+ * on the item it must not be taken for (or on any other item). A maybe on a
+ * neighbour beside the right one is reported, as S1.meets.item does. Nothing
+ * met at all is not scored: the run does not wait for these.
+ */
+export function checkAlsoWantedMeets(
+  matches: { id: string; cardWant: string; cardHave: string; certainty?: string; score: number }[],
+  buyerCards: CardFacts[],
+  rows: readonly ListRowSpec[],
+  also: readonly AlsoWanted[],
+  assigned: RowAssignment[],
+  describe: (cardId: string) => string,
+): Check {
+  const id = 'S1.also.meets';
+  const says =
+    "each other thing the buyer asked for, where it met anything, met the very item on the seller's list, and never the item it must not be taken for as a sure introduction.";
+  const notes: string[] = [];
+  const seen: string[] = [];
+  let met = 0;
+  for (const a of also) {
+    const row = rows[a.row];
+    const posting = buyerPostingFor(buyerCards, a.row, rows).card;
+    if (!posting) {
+      seen.push(`${rowLabel(row)}: no posting to meet anything`);
+      continue;
+    }
+    const mine = matches.filter((m) => m.cardWant === posting.id);
+    if (!mine.length) {
+      seen.push(`${rowLabel(row)}: nothing met yet`);
+      continue;
+    }
+    met++;
+    const rowItem = assigned[a.row]?.card?.id;
+    const notItem = assigned[a.notRow]?.card?.id;
+    const list = mine.map((m) => `${describe(m.cardHave)} (${m.certainty ?? '?'}, ${m.score})`).join(', ');
+    const bad: string[] = [];
+    if (!rowItem) bad.push('its item is not on the list');
+    else if (!mine.some((m) => m.cardHave === rowItem)) bad.push('met only other items');
+    if (notItem && mine.some((m) => m.cardHave === notItem && m.certainty === 'sure')) {
+      bad.push(`a sure introduction on ${rowLabel(rows[a.notRow])}, the one it must not be taken for`);
+    } else if (mine.some((m) => m.cardHave !== rowItem && m.certainty === 'sure')) {
+      bad.push('a sure introduction on an item that is not the one asked for');
+    }
+    if (bad.length) notes.push(`${rowLabel(row)} met ${list}: ${bad.join('; ')}`);
+    else seen.push(`${rowLabel(row)} met ${list}`);
+  }
+  const ev = `${also.length} other thing(s) asked for, ${met} met something`;
+  if (notes.length) return fail(id, says, `${ev}; ${short([...notes, ...seen])}`);
+  if (!met) return skip(id, says, `${ev}; ${short(seen)}`);
+  return pass(id, says, `${ev}; ${short(seen)}`);
+}
+
+/**
+ * The most items one list call takes: src/domain/lists.ts LIST_CALL_MAX_ITEMS,
+ * written again here because that file reaches the database and the queue on
+ * import. A unit test holds the two equal.
+ */
+export const LIST_CALL_MAX_ITEMS = 200;
+
+/** The shape of one list call, read off the client's own record of it (trace.ts listCallShapes). */
+export interface ListCallShape {
+  items: number;
+  listId?: string;
+  reference?: boolean;
+}
+
+/** "The rest are still to go", said any of the ordinary ways. */
+export const PART_TO_GO =
+  /\b(the (rest|remaining|other \d+|last \d+)|remaining (\d+|ones|cards|items|things)|\d+ (more|left|remaining|still)|still (to go|to come|to (post|put up|add|send|list|go up))|(second|next|another) (batch|lot|go|call|round|chunk|part|load)|(first|only) \d+ (of|went|are|have|items|cards|things)|(didn'?t|did not|couldn'?t|could not|can'?t|cannot|won'?t) (all )?fit|in (two|2|several) (goes|batches|parts|lots|calls))\b/i;
+
+/**
+ * S1.list.split — MORE THAN ONE CALL'S WORTH. Where the human handed over
+ * more rows than one list call takes, every call carried at most that many
+ * items; every call after one that named the list named the same list, and
+ * no later call went without it; every item ended on one list; and where the
+ * turn the list first appeared in left part of it still to go, that turn said
+ * so. The calls are read off the client's own record (trace.ts); the lists
+ * and the count up at the first turn off the database.
+ */
+export function checkListSplit(o: {
+  /** Rows the human wanted up: handed over, less any they asked to leave off. */
+  rows: number;
+  calls: ListCallShape[] | undefined;
+  /** The seller's items on lists now. */
+  items: CardFacts[];
+  /** Items on lists at the end of the turn they first appeared in. */
+  upAtFirst?: number;
+  /** That turn's words. */
+  firstUpSaid?: string;
+}): Check {
+  const id = 'S1.list.split';
+  const says = `where the human handed over more than ${LIST_CALL_MAX_ITEMS} things, no call carried more than ${LIST_CALL_MAX_ITEMS}, the later calls named the first's list, everything ended on one list, and the human was told when part was still to go.`;
+  if (o.rows <= LIST_CALL_MAX_ITEMS) return skip(id, says, `${o.rows} row(s) fit in one call`);
+  const notes: string[] = [];
+  const evBits: string[] = [];
+  const live = o.items.filter((c) => LIVE_STATES.includes(c.state));
+  const ended = live.length ? live : o.items;
+  const lists = [...new Set(ended.map((c) => c.listId).filter((x): x is string => !!x))];
+  if (o.calls === undefined) {
+    evBits.push('this client keeps no record of its calls that the harness can read, so the calls are not judged');
+  } else {
+    evBits.push(`${o.calls.length} call(s) of ${o.calls.map((c) => c.items).join(', ') || 'nothing'} item(s)`);
+    o.calls.forEach((c, i) => {
+      if (c.items > LIST_CALL_MAX_ITEMS) notes.push(`call ${i + 1} carried ${c.items} items`);
+    });
+    const named = [...new Set(o.calls.map((c) => c.listId).filter((x): x is string => !!x))];
+    if (named.length > 1) notes.push(`the calls named ${named.length} different lists`);
+    const firstNamed = o.calls.findIndex((c) => c.listId);
+    if (firstNamed >= 0) {
+      o.calls.forEach((c, i) => {
+        if (i > firstNamed && !c.listId) notes.push(`call ${i + 1} went without the list's id after call ${firstNamed + 1} had named it`);
+      });
+    }
+    if (named.length && lists.length === 1 && !named.includes(lists[0])) notes.push('the calls named a list the items are not on');
+  }
+  evBits.push(`${ended.length} item(s) on ${lists.length} list(s)`);
+  if (lists.length > 1) notes.push(`the items ended on ${lists.length} lists, not one`);
+  if (o.upAtFirst !== undefined) {
+    evBits.push(`${o.upAtFirst} up when the list first appeared`);
+    const leftToGo = o.upAtFirst < o.rows && o.upAtFirst <= LIST_CALL_MAX_ITEMS;
+    if (leftToGo && !PART_TO_GO.test(o.firstUpSaid ?? '')) {
+      notes.push(`${o.rows - o.upAtFirst} of ${o.rows} were still to go and that turn never said so`);
+    }
+  }
+  const ev = `${o.rows} row(s) handed over; ${evBits.join('; ')}`;
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
+}
+
+/** A posting's own words: its name and its details, not the shelf the switchboard filed it under. */
+function itemOwnWords(card: CardFacts): string {
+  return cardWords({ ...card, category: '' });
+}
+
+/**
+ * S1.list.must_say — a row may say words its item has to carry in its own
+ * words (ListRowSpec.mustSay), any one of them: a thing from outside what the
+ * rest of the list is (another game, another kind of thing) says what it is,
+ * rather than leaving the other side to assume it is like its neighbours.
+ */
+export function checkListMustSay(rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
+  const id = 'S1.list.must_say';
+  const says = "each item unlike the rest of the list says what it is in its own words (the row's must-say words), so nobody takes it for one of its neighbours.";
+  const asked = assigned.filter((a) => rows[a.row].mustSay?.length);
+  if (!asked.length) return skip(id, says, 'no row asks its item to say anything in particular');
+  const notes: string[] = [];
+  let found = 0;
+  for (const a of asked) {
+    const row = rows[a.row];
+    if (!a.card) continue;
+    found++;
+    const own = squash(itemOwnWords(a.card));
+    if (!(row.mustSay ?? []).some((w) => squash(w) && own.includes(squash(w)))) {
+      notes.push(`${rowLabel(row)} went up as ${postingLabel(a.card)} without ${(row.mustSay ?? []).map((w) => `"${w}"`).join(' or ')}`);
+    }
+  }
+  const ev = `${asked.length} row(s) must say what they are, ${found} on the list`;
+  return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
+}
+
+/** The human's words say they would rather trade or swap. */
+export const TRADE_WORDS = /\b(trad(e|es|ed|ing)|swap(s|ped|ping)?)\b/i;
+
+/** The pattern net for "trading is not something I can do here; I can put them up for sale". */
+export const TRADES_UNAVAILABLE =
+  /\b(trad(e|es|ing)|swap(s|ping)?)\b[^.!?\n]{0,80}\b(not (available|supported|built|possible|something|an option|yet|set up|offered)|isn'?t|aren'?t|can'?t|cannot|unavailable|doesn'?t|don'?t)\b|\b(can'?t|cannot|isn'?t|aren'?t|doesn'?t|not (able|available|yet|set up))\b[^.!?\n]{0,60}\b(trad(e|es|ing)|swap(s|ping)?)\b|\bonly\b[^.!?\n]{0,40}\b(for sale|sell|selling|sale)\b/i;
+
+/**
+ * S1.trades_told — where the human opened by saying they would rather trade,
+ * the seller's assistant told them before the list went up that trading is
+ * not something it can set up for them, or that it can only put the things
+ * up for sale: never left them to think a sale list was a swap.
+ */
+export function checkTradesTold(saidBeforeUp: string[], meaning: MeaningDecisions = {}): Check {
+  const id = 'S1.trades_told';
+  const says =
+    "where the human said they would rather trade, the seller's assistant told them before the list went up that trading is not available, or that it can only put them up for sale.";
+  const regex = saidBeforeUp.some((t) => TRADES_UNAVAILABLE.test(t));
+  const told = holds(meaning.told_trades_unavailable, regex);
+  const hit = saidBeforeUp.find((t) => TRADES_UNAVAILABLE.test(t));
+  const ev = told
+    ? `said${hit ? `: "${hit.replace(/\s+/g, ' ').slice(0, 200)}"` : ''}`
+    : `${saidBeforeUp.length} turn(s) before the list went up; none says trading is not available`;
+  return withMeaning(told ? pass(id, says, ev) : fail(id, says, ev), [meaning.told_trades_unavailable]);
 }

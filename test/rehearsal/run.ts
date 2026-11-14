@@ -163,8 +163,16 @@ import {
   checkListFiguresSent,
   checkToldWhichItem,
   type RowAssignment,
+  buyerPostingFor,
+  checkAlsoWantedMeets,
+  checkAlsoWantedPosting,
+  checkListMustSay,
+  checkListSplit,
+  checkTradesTold,
+  TRADE_WORDS,
+  TRADES_UNAVAILABLE,
 } from './checks.js';
-import { figuresSentOnLists, tracedCalls } from './trace.js';
+import { figuresSentOnLists, listCallShapes, tracedCalls, type TracedCall } from './trace.js';
 import { acceptEventFor } from './consentLog.js';
 import { loadRecordBuilders, recordCandidates, type RecordCandidate } from './record.js';
 import * as db from './db.js';
@@ -776,9 +784,21 @@ async function oneRun(
     const cardsOf = async (side: Side): Promise<CardFacts[]> =>
       DRY ? dryCards(side) : (await db.cardsFor([side.actor.accountId], sinceIso));
 
-    const publishFor = async (side: Side, openers: string[]): Promise<CardFacts | undefined> => {
+    /**
+     * Talk until the side has posted. `pick` says which of what is up is THE
+     * posting and whether the stage is done: by default the first posting,
+     * done as soon as there is one. Where the buyer wants several rows of a
+     * list it is the one for the target row, and the stage goes on until
+     * every row he asked for has a posting or the rounds run out (wantedPick).
+     */
+    type Pick = (found: CardFacts[]) => { card?: CardFacts; done: boolean };
+    const firstPosting: Pick = (found) => ({ card: found[0], done: found.length > 0 });
+    /** How many of the side's postings were up at the end of the turn they first appeared in. */
+    const upAtFirst: Partial<Record<SideId, number>> = {};
+    const publishFor = async (side: Side, openers: string[], pick: Pick = firstPosting): Promise<CardFacts | undefined> => {
       const from = Date.now();
       let card: CardFacts | undefined;
+      let done = false;
       for (const [i, opener] of openers.entries()) {
         // Every opener but the last is ONE exchange: the human says it, hears
         // the answer, and says the next thing they came to say. Left to chat,
@@ -791,14 +811,31 @@ async function oneRun(
           rounds: last ? ROUND_CAP : 1,
           done: async () => {
             const found = await cardsOf(side);
-            card = found[0];
-            return !!card;
+            if (found.length && upAtFirst[side.id] === undefined) upAtFirst[side.id] = found.filter((c) => c.listId).length;
+            ({ card, done } = pick(found));
+            return done;
           },
         });
-        if (card) break;
+        if (done) break;
       }
       sideWindows.push({ side: side.id, fromMs: from, toMs: Date.now() });
       return card;
+    };
+    /**
+     * THE BUYER'S POSTING, WHERE HE WANTS ROWS OF A LIST. The posting the run
+     * follows is the one for the target row by the switchboard's identifier
+     * rule and the row's telling words (checks.ts buyerPostingFor), not
+     * whichever went up first; the stage is done once the target and every
+     * other row he asked for (ListErrand.alsoWanted) has a posting. Where none
+     * answers for the target, the first posting stands in, as before, so the
+     * checks have something to read.
+     */
+    const wantedRows = LIST ? [LIST.target, ...(LIST.alsoWanted ?? []).map((a) => a.row)] : [];
+    const wantedPick: Pick = (found) => {
+      if (!LIST) return firstPosting(found);
+      const target = buyerPostingFor(found, LIST.target, LIST.rows).card;
+      const every = wantedRows.every((r) => buyerPostingFor(found, r, LIST.rows).card);
+      return { card: target ?? found[0], done: every };
     };
 
     // The seller first: one opening line, in his own words.
@@ -874,6 +911,23 @@ async function oneRun(
       checkNoInventedFigure('seller', sellerCard, ALEX.figuresTheyMayGive, sides.seller.statedFigures),
     );
     record(checkReach(sellerCard, sellerBeforePublish, askedMeaning, REACH.seller, 'seller'));
+    // WHAT THE HUMAN WOULD RATHER DO. Only where their opening says they would
+    // rather trade or swap: was it said, before anything went up, that trading
+    // is not something the assistant can set up for them? STRICTLY before the
+    // turn the postings appeared in, as the figure read-back is.
+    if (TRADE_WORDS.test(ALEX.opening)) {
+      const beforeUp =
+        sellerUpAt === undefined
+          ? sellerTurnsBefore()
+          : turnsText(turns.slice(0, sellerUpAt), { stage: 1, side: 'seller', role: 'assistant' });
+      const tradesMeaning = await meaningOf(
+        [['told_trades_unavailable', beforeUp.some((t) => TRADES_UNAVAILABLE.test(t))]],
+        beforeUp,
+        'The human handed their assistant many things and said they would rather trade or swap them than sell them. ' +
+          'These are the assistant’s replies before anything went up.',
+      );
+      record(checkTradesTold(beforeUp, tradesMeaning));
+    }
 
     // THE LIST ITSELF: one call, every row an item under plain words with its
     // printed code as an identifier, the human's own figures and nobody
@@ -907,20 +961,40 @@ async function oneRun(
       record(checkListCoverage(sellerCardsNow, LIST.rows, assigned, leftOff));
       record(checkListIdentifiers(sellerCardsNow, LIST.rows, assigned, LIST.singleObjectNumbers ?? []));
       record(checkListDetails(LIST.rows, assigned));
+      record(checkListMustSay(LIST.rows, assigned));
       const figuresCheck = record(checkListFigures(LIST.rows, assigned, LIST.askingPrices, sides.seller.statedFigures));
       // What was SENT, not only what went up: the client's own record of its
       // list calls (trace.ts). Read now, before anything is wiped.
-      {
-        let sent: { call: number; name: string; amount: number }[] | undefined;
-        if (!DRY && sides.seller.driver.trace) {
-          try {
-            const calls = tracedCalls(await sides.seller.driver.trace(), 'publish_list');
-            sent = calls.length ? figuresSentOnLists(calls) : undefined;
-          } catch {
-            sent = undefined;
-          }
+      let listCalls: TracedCall[] | undefined;
+      if (!DRY && sides.seller.driver.trace) {
+        try {
+          const calls = tracedCalls(await sides.seller.driver.trace(), 'publish_list');
+          listCalls = calls.length ? calls : undefined;
+        } catch {
+          listCalls = undefined;
         }
-        record(checkListFiguresSent(sent, sides.seller.statedFigures, figuresCheck.verdict === 'pass'));
+      }
+      record(
+        checkListFiguresSent(
+          listCalls ? figuresSentOnLists(listCalls) : undefined,
+          sides.seller.statedFigures,
+          figuresCheck.verdict === 'pass',
+        ),
+      );
+      // MORE THAN ONE CALL'S WORTH: each call within the limit, the later ones
+      // naming the first's list, one list in the end, and the human told when
+      // part was still to go.
+      {
+        const forgiven = splitMissing(assigned, leftOff).forgiven.length;
+        record(
+          checkListSplit({
+            rows: LIST.rows.length - forgiven,
+            calls: listCalls ? listCallShapes(listCalls) : undefined,
+            items,
+            upAtFirst: upAtFirst.seller,
+            firstUpSaid: sellerUpAt === undefined ? undefined : turns[sellerUpAt]?.text,
+          }),
+        );
       }
       const prices = items.map(askOn).filter((n): n is number => n !== undefined);
       // STRICTLY BEFORE the turn the list appeared in. The summary comes back
@@ -954,10 +1028,13 @@ async function oneRun(
     }
 
     // The buyer: the advice question first, then the want in his own words.
-    const buyerCard = await publishFor(sides.buyer, [TONY.opening, TONY_WANT]);
+    const buyerCard = await publishFor(sides.buyer, [TONY.opening, TONY_WANT], wantedPick);
     await answerSupply(sides.buyer);
     record(checkBuyerPosting(buyerCard));
     if (TARGET_ROW) record(checkBuyerIdentifier(buyerCard, TARGET_ROW));
+    /** Everything the buyer has up, for the rows he asked for beside the target. */
+    const buyerCardsNow = LIST?.alsoWanted?.length ? await cardsOf(sides.buyer) : [];
+    if (LIST?.alsoWanted?.length) record(checkAlsoWantedPosting(buyerCardsNow, LIST.rows, LIST.alsoWanted));
     record(checkNoInventedFigure('buyer', buyerCard, TONY.figuresTheyMayGive, sides.buyer.statedFigures));
     // The looking side's reach is checked only where the errand says what it
     // should be: for something collected in person, both sides stay local.
@@ -1045,6 +1122,9 @@ async function oneRun(
       if (!DRY) allMatches = await db.matchesBetween([sides.seller.actor.accountId, sides.buyer.actor.accountId], sinceIso);
       else if (match) allMatches = [match as db.MatchFacts];
       record(checkMeetsOnItem(allMatches, assigned[LIST.target]?.card?.id, buyerCard?.id, describeCard));
+      if (LIST.alsoWanted?.length) {
+        record(checkAlsoWantedMeets(allMatches, buyerCardsNow, LIST.rows, LIST.alsoWanted, assigned, describeCard));
+      }
     }
 
     // The manual check reads the name-only tool log for the run's window.
@@ -2083,7 +2163,13 @@ function dryCards(side: Side): CardFacts[] {
       type: 'HAVE',
       category: 'goods.dry',
       kind: row.name.replace(/\d/g, '').trim() || 'thing',
-      attributes: { ...(row.condition ? { condition: row.condition } : {}), ...((row.quantity ?? 1) > 1 ? { quantity: row.quantity } : {}), ...(row.words?.length ? { about: row.words.join(' ') } : {}) },
+      attributes: {
+        ...(row.condition ? { condition: row.condition } : {}),
+        ...((row.quantity ?? 1) > 1 ? { quantity: row.quantity } : {}),
+        ...(row.words?.length ? { about: row.words.join(' ') } : {}),
+        ...(row.details?.length ? { details: row.details.join(' ') } : {}),
+        ...(row.mustSay?.length ? { what: row.mustSay[0] } : {}),
+      },
       ask: LIST.askingPrices[i] !== undefined ? { amount: LIST.askingPrices[i], ccy: 'AUD' } : null,
       sale: 'straight',
       geoRadiusKm: null,
@@ -2113,6 +2199,28 @@ function dryCards(side: Side): CardFacts[] {
       createdAt: new Date().toISOString(),
       ...(TARGET_ROW && !seller ? { identifiers: [{ kind: 'printed code', value: TARGET_ROW.identifier }] } : {}),
     },
+    // A dry want for each other row the buyer asks for, as a careful assistant would post it.
+    ...(!seller && LIST
+      ? (LIST.alsoWanted ?? []).map(({ row: r }, k) => {
+          const row = LIST.rows[r];
+          return {
+            id: `dry-card-buyer-also-${k}`,
+            accountId: side.actor.accountId,
+            type: 'WANT',
+            category: 'goods.dry',
+            kind: row.name,
+            attributes: { about: [...(row.words ?? []), ...(row.details ?? [])].join(' ') },
+            ask: null,
+            sale: null,
+            geoRadiusKm: null,
+            geoReach: 'country',
+            geoCountry: 'AU',
+            state: 'PUBLISHED',
+            createdAt: new Date().toISOString(),
+            identifiers: [{ kind: 'printed code', value: row.identifier }],
+          } satisfies CardFacts;
+        })
+      : []),
   ];
 }
 

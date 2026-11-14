@@ -206,6 +206,7 @@ aloud, a figure on a card, a tool called, a database row.
 | --- | --- |
 | `S1.asked.seller` | `asked_which_item`, `asked_condition`, `asked_kind_of_sale` (the card facts stay deterministic) |
 | `S1.reach.seller` | `said_reach_country` (the reach itself is read off the row) |
+| `S1.trades_told` | `told_trades_unavailable` (asked only where the seller's opening says they would rather trade or swap, over the turns before the list went up) |
 | `S2.told.*` | `told_someone_came_forward`, `claimed_a_count` (an id read aloud stays a pattern) |
 | `S2.maybe.*` | `hedged_maybe` (only on a possible introduction) |
 | `S3.pin_refused` | `refused_pin`, `said_why_pin` |

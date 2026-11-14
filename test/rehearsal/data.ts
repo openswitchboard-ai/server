@@ -136,6 +136,27 @@ export interface ListRowSpec {
   quantity?: number;
   /** Other words that tell this row from a neighbour with the same name (a set, an edition). */
   words?: readonly string[];
+  /**
+   * Words the item itself must carry, in its name or its details, where they
+   * are what tells it from a neighbour sharing its code (a printing, a
+   * finish). Checked by S1.list.details, and read with `words` wherever an
+   * item or a posting is told from its neighbours.
+   */
+  details?: readonly string[];
+  /**
+   * Where the row is unlike the rest of the list (another game, another kind
+   * of thing): words, any one of which the item must say in its own words so
+   * nobody takes it for one of its neighbours. Checked by S1.list.must_say.
+   */
+  mustSay?: readonly string[];
+}
+
+/** One more row the looking side wants, beside the target, and the row it must not be taken for. */
+export interface AlsoWanted {
+  /** The row wanted, as an index into `rows`. */
+  row: number;
+  /** A neighbour that shares its name or its code and is NOT wanted, as an index into `rows`. */
+  notRow: number;
 }
 
 export interface ListErrand {
@@ -156,6 +177,15 @@ export interface ListErrand {
    * asked_to_leave_off).
    */
   leaveOffWhenAsked?: readonly number[];
+  /**
+   * Other rows the looking side asks for in the same breath, beyond `target`.
+   * The run follows the target through every stage; for each of these the
+   * stage-1 checks want a posting of its own carrying the row's code and
+   * telling words (S1.also.posting), and any introduction on it to be on that
+   * row's item and never a sure one on `notRow` (S1.also.meets). Stage 1 keeps
+   * the looking side talking until each has a posting or the rounds run out.
+   */
+  alsoWanted?: readonly AlsoWanted[];
 }
 
 export type Reach = 'country' | 'radius';
