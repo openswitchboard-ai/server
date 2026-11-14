@@ -121,7 +121,7 @@ export function makeDriver(name: DriverName, privateDir: string): Driver {
       return claudeCodeDriver({
         privateDir,
         mcpUrl: MCP_URL,
-        model: process.env.REHEARSAL_SONNET_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
+        model: process.env.REHEARSAL_SONNET_MODEL ?? 'us.anthropic.claude-sonnet-5',
         label: 'Claude (Sonnet)',
       });
   }
