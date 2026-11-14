@@ -227,6 +227,14 @@ export interface ClaudeDriverOptions {
   privateDir: string;
   mcpUrl?: string;
   timeoutMs?: number;
+  /**
+   * The model, where it is not the default. A second Claude Code client on a
+   * different model is a different assistant, so a run can cast two of them
+   * when the gateway box is out of reach (14 November 2026).
+   */
+  model?: string;
+  /** The name the reports give it. */
+  label?: string;
   /** For tests. Defaults to really spawning `claude`. */
   spawn?: (args: string[], env: NodeJS.ProcessEnv, cwd: string) => Promise<string>;
 }
@@ -262,8 +270,9 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
   let configDir = '';
   let workDir = '';
 
+  const model = opts.model ?? REHEARSAL_CLAUDE_MODEL;
   return {
-    name: 'Claude',
+    name: opts.label ?? 'Claude',
 
     async prepare(agentKey: string, runId: string): Promise<string> {
       // A fresh everything, per run. Nothing survives from the last one, which
@@ -309,7 +318,7 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       const args = buildClaudeArgs({
         utterance,
         mcpConfigPath,
-        model: REHEARSAL_CLAUDE_MODEL,
+        model,
         resumeSessionId: sessions.get(sessionId),
       });
       const stdout = await spawn(
@@ -329,7 +338,7 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       }
       // The model by name: "claude-code" told a reader nothing about what was
       // actually on the other end of the conversation.
-      return { text: read.text, toolActivity: read.toolActivity, model: REHEARSAL_CLAUDE_MODEL };
+      return { text: read.text, toolActivity: read.toolActivity, model };
     },
 
     async trace(): Promise<string | undefined> {

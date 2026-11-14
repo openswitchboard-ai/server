@@ -19,7 +19,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import {
   COUNTER_URL,
   ENV_NAME,
@@ -31,6 +31,7 @@ import {
   counterLogin,
   dbExec,
   ensurePin,
+  retireAccountCards,
   poll,
   sendOp,
   sha256hex,
@@ -71,6 +72,16 @@ const form = (o: Record<string, string>) => ({
 
 const simEmail = (tag: string) => `success+0e-${tag}-${runId}@simulator.amazonses.com`;
 
+/**
+ * Every account this file makes, so its postings come down when the file is
+ * done. They were left PUBLISHED, and 57 of them on dev stopped the rehearsal
+ * suite, which refuses to run beside any live posting (14 November 2026).
+ */
+const madeAccounts: string[] = [];
+afterAll(async () => {
+  await retireAccountCards(madeAccounts, 'email teardown');
+});
+
 async function createAccount(email: string): Promise<string> {
   const salt = randomBytes(16);
   await sendOp({
@@ -85,7 +96,10 @@ async function createAccount(email: string): Promise<string> {
       { name: 'h', value: sha256hex(email.trim().toLowerCase()) },
     ]);
     return rows[0]?.[0] as string | undefined;
-  }, `account ${email}`, OPS_ACCOUNT_WAIT_MS);
+  }, `account ${email}`, OPS_ACCOUNT_WAIT_MS).then((id) => {
+    madeAccounts.push(id);
+    return id;
+  });
 }
 
 async function insertCard(

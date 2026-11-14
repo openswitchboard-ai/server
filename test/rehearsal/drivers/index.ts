@@ -105,7 +105,7 @@ export function bilbyDriver(): Driver {
   };
 }
 
-export const DRIVER_NAMES = ['nagatha', 'bilby', 'claude'] as const;
+export const DRIVER_NAMES = ['nagatha', 'bilby', 'claude', 'sonnet'] as const;
 export type DriverName = (typeof DRIVER_NAMES)[number];
 
 export function makeDriver(name: DriverName, privateDir: string): Driver {
@@ -116,6 +116,14 @@ export function makeDriver(name: DriverName, privateDir: string): Driver {
       return bilbyDriver();
     case 'claude':
       return claudeCodeDriver({ privateDir, mcpUrl: MCP_URL });
+    case 'sonnet':
+      // Claude Code on Sonnet: a second assistant that needs no gateway box.
+      return claudeCodeDriver({
+        privateDir,
+        mcpUrl: MCP_URL,
+        model: process.env.REHEARSAL_SONNET_MODEL ?? 'us.anthropic.claude-sonnet-5-5',
+        label: 'Claude (Sonnet)',
+      });
   }
 }
 
