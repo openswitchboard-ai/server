@@ -153,17 +153,21 @@ d('integration gates against live deployment', () => {
     // holding the right names in the old alphabetical places, and
     // wait_for_press (13 September 2026) took the count to twelve; read_manual
     // and refine_intent make it fourteen, and lists (publish_list, read_lists,
-    // withdraw_list; manual v88) seventeen.
+    // withdraw_list; manual v88) seventeen; read_pairings (v94) and
+    // propose_trade and answer_trade (v95) twenty.
     expect(names).toEqual([
       'amend_intent',
+      'answer_trade',
       'check_in',
       'collect_messages',
       'list_intents',
       'open_conversation',
+      'propose_trade',
       'publish_intent',
       'publish_list',
       'read_lists',
       'read_manual',
+      'read_pairings',
       'refine_intent',
       'respond',
       'send_message',
