@@ -89,6 +89,9 @@ export function cardWords(card: CardFacts): string {
     else if (v && typeof v === 'object') Object.values(v).forEach(walk);
   };
   walk(card.attributes);
+  // The words given with a code ("Triumphant" beside 4/102) are posted words
+  // too, and the switchboard compares them (identifiers.ts, words must agree).
+  for (const i of card.identifiers ?? []) bits.push(i.kind);
   return bits.join(' ').toLowerCase();
 }
 

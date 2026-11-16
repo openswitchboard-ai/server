@@ -629,7 +629,10 @@ export async function takedownsBy(
        FROM cards
       WHERE account_id = ANY(string_to_array(:ids, ',')::uuid[])
         AND created_at > :since::timestamptz
-        AND lifecycle_state = 'WITHDRAWN'`,
+        AND lifecycle_state = 'WITHDRAWN'
+        -- The switchboard's own takedowns (the last one sold or traded,
+        -- cards.withdrawn_because) are nobody's assistant acting unasked.
+        AND withdrawn_because IS NULL`,
     [{ name: 'ids', value: list }, { name: 'since', value: sinceIso }],
   );
   const archived = await dbExec(
