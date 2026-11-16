@@ -2461,7 +2461,10 @@ async function main(): Promise<number> {
   if (DRY) notRun.push('This was a DRY run: no assistant, no switchboard, no scorer was touched.');
   if (LAST_STAGE < 6) notRun.push(`Stages ${LAST_STAGE + 1}–6 were not run.`);
   notRun.push(
-    'Safe hands is out of scope by design: settle was never called, Stripe was never touched, and nothing here says anything about payments.',
+    // Not "settle was never called": on 16 November 2026 an assistant called it
+    // on dev, where paying through the switchboard is switched on, and that
+    // sentence was false.
+    'Safe hands is out of scope by design: the harness never asks for a payment and no check here scores one. On dev an assistant can still start one, and any that did shows in its transcript; nothing here says anything about payments.',
   );
   if (SCENARIO !== 'report') {
     notRun.push(
