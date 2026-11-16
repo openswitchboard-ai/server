@@ -1346,7 +1346,10 @@ async function oneRun(
       record(
         checkRelayFaithful(
           turnsText(turns, { stage: 3, side: id, role: 'assistant' }),
-          sides[other].statedFigures,
+          // Its own human's figures too: on 16 November 2026 Sonnet told Priya
+          // "your $35 offer is now with Sam", her own number read back to her,
+          // and this failed as a figure "nobody said".
+          [...sides[other].statedFigures, ...sides[id].statedFigures],
           id,
         ),
       );
