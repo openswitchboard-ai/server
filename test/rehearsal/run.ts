@@ -926,7 +926,8 @@ async function oneRun(
         'The human handed their assistant many things and said they would rather trade or swap them than sell them. ' +
           'These are the assistant’s replies before anything went up.',
       );
-      record(checkTradesTold(beforeUp, tradesMeaning));
+      const sellerDeals = DRY ? [] : (await db.listsOf(sides.seller.actor.accountId, sinceIso)).map((l) => l.deal);
+      record(checkTradesTold(beforeUp, tradesMeaning, sellerDeals));
     }
 
     // THE LIST ITSELF: one call, every row an item under plain words with its
