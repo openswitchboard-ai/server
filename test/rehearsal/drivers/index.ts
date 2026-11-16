@@ -15,6 +15,17 @@ import { askThroughGateway } from './openclawGateway.js';
 import { MCP_URL } from '../config.js';
 import type { Driver } from '../types.js';
 import { claudeCodeDriver } from './claudeCode.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+/** The rehearsal's own Anthropic API key, read from a file, never printed. */
+function rehearsalAnthropicKey(): string | undefined {
+  const file = process.env.REHEARSAL_ANTHROPIC_KEY_FILE ?? join(homedir(), '.osb-rehearsal-anthropic-key');
+  if (!existsSync(file)) return undefined;
+  const key = readFileSync(file, 'utf8').trim();
+  return key || undefined;
+}
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -118,12 +129,19 @@ export function makeDriver(name: DriverName, privateDir: string): Driver {
       return claudeCodeDriver({ privateDir, mcpUrl: MCP_URL });
     case 'sonnet':
       // Claude Code on Sonnet: a second assistant that needs no gateway box.
-      return claudeCodeDriver({
-        privateDir,
-        mcpUrl: MCP_URL,
-        model: process.env.REHEARSAL_SONNET_MODEL ?? 'us.anthropic.claude-sonnet-5',
-        label: 'Claude (Sonnet)',
-      });
+      // On the Anthropic API where a key is given (REHEARSAL_ANTHROPIC_KEY_FILE,
+      // default ~/.osb-rehearsal-anthropic-key, 0600), else through Bedrock.
+      {
+        const key = rehearsalAnthropicKey();
+        return claudeCodeDriver({
+          privateDir,
+          mcpUrl: MCP_URL,
+          model:
+            process.env.REHEARSAL_SONNET_MODEL ?? (key ? 'claude-sonnet-5-5' : 'us.anthropic.claude-sonnet-5'),
+          label: 'Claude (Sonnet)',
+          anthropicApiKey: key,
+        });
+      }
   }
 }
 

@@ -235,6 +235,13 @@ export interface ClaudeDriverOptions {
   model?: string;
   /** The name the reports give it. */
   label?: string;
+  /**
+   * Given, the model is reached on the Anthropic API with this key instead of
+   * through Bedrock (USE_BEDROCK): for a model our Bedrock account has not
+   * enabled (16 November 2026: only Haiku 4.5 is). The key goes into the
+   * turn's environment only, never to disk or a log.
+   */
+  anthropicApiKey?: string;
   /** For tests. Defaults to really spawning `claude`. */
   spawn?: (args: string[], env: NodeJS.ProcessEnv, cwd: string) => Promise<string>;
 }
@@ -292,7 +299,9 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
       configDir = REHEARSAL_CLAUDE_CONFIG_DIR || mkdtempSync(join(opts.privateDir, `cc-config-${runId}-`));
       if (REHEARSAL_CLAUDE_CONFIG_DIR) mkdirSync(configDir, { recursive: true, mode: 0o700 });
       workDir = mkdtempSync(join(opts.privateDir, `cc-cwd-${runId}-`));
-      mcpConfigPath = join(configDir, 'mcp.json');
+      // Named per client: two Claude clients in one run can share a named
+      // config dir, and one mcp.json would hand both the same agent key.
+      mcpConfigPath = join(configDir, `mcp-${(opts.label ?? 'claude').replace(/[^a-z0-9]+/gi, '-')}.json`);
       writeFileSync(
         mcpConfigPath,
         JSON.stringify({
@@ -321,16 +330,14 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
         model,
         resumeSessionId: sessions.get(sessionId),
       });
-      const stdout = await spawn(
-        args,
-        {
-          ...process.env,
-          CLAUDE_CONFIG_DIR: configDir,
-          ...CLAUDE_ENV,
-          ...(USE_BEDROCK ? { CLAUDE_CODE_USE_BEDROCK: '1' } : {}),
-        },
-        workDir,
-      );
+      const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...CLAUDE_ENV };
+      if (opts.anthropicApiKey) {
+        env.ANTHROPIC_API_KEY = opts.anthropicApiKey;
+        delete env.CLAUDE_CODE_USE_BEDROCK;
+      } else if (USE_BEDROCK) {
+        env.CLAUDE_CODE_USE_BEDROCK = '1';
+      }
+      const stdout = await spawn(args, env, workDir);
       const read = readClaudeJson(stdout);
       if (read.sessionId) sessions.set(sessionId, read.sessionId);
       if (!read.text) {
