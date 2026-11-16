@@ -91,6 +91,17 @@ describe('the press token', () => {
     expect(links).toEqual(['https://a/a/1', 'https://b/a/2']);
   });
 
+  it('mends a link copied short to the one link the assistant offered that it starts', () => {
+    const offered = 'Gyarados: https://x/a/111.abcdef Pikachu: https://x/a/222.ghijkl';
+    const { links } = extractPresses('[[PRESS https://x/a/111.abc]] [[PRESS https://x/a/222.ghijkl]]', offered);
+    expect(links).toEqual(['https://x/a/111.abcdef', 'https://x/a/222.ghijkl']);
+  });
+
+  it('leaves a short link alone when it starts more than one offered link', () => {
+    const offered = 'https://x/a/111.abcdef and https://x/a/111.abcxyz';
+    expect(extractPresses('[[PRESS https://x/a/111.abc]]', offered).links).toEqual(['https://x/a/111.abc']);
+  });
+
   it('leaves ordinary words alone', () => {
     const { links, spoken } = extractPresses('used it about a year, good condition');
     expect(links).toEqual([]);

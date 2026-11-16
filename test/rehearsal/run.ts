@@ -644,7 +644,8 @@ async function oneRun(
     // --- the words -------------------------------------------------------
     /** Say something as this human, hear the assistant, press anything offered. */
     const drive = async (side: Side, humanText: string, stage: number): Promise<string> => {
-      const { links, spoken } = extractPresses(humanText);
+      const lastOffered = [...side.history].reverse().find((h) => h.role === 'assistant')?.text ?? '';
+      const { links, spoken } = extractPresses(humanText, lastOffered);
       turns.push({
         stage,
         side: side.id,

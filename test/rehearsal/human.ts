@@ -39,11 +39,22 @@ export const PRESS_RE = /\[\[PRESS\s+(https?:\/\/[^\s\]]+)\s*\]\]/gi;
  * out of the words. Exported because the harness presses these and because the
  * transcript should carry what the person SAID, not the marker.
  */
-export function extractPresses(said: string): { links: string[]; spoken: string } {
+export function extractPresses(said: string, offered = ''): { links: string[]; spoken: string } {
   const links: string[] = [];
+  // A link copied short is the simulator's slip, not the person's: a person
+  // taps the link, they do not retype it. On 16 November 2026 a buyer handed
+  // three offer pages "pressed" one cut off mid-token, the page refused it, and
+  // the deal stage failed on a press nobody could have got wrong. So a link
+  // that is not in what the assistant said, and is the start of exactly one
+  // link that is, becomes that link.
+  const offeredLinks: string[] = offered.match(/https?:\/\/[^\s)\]>*"']+/g) ?? [];
   PRESS_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = PRESS_RE.exec(said))) links.push(m[1]);
+  while ((m = PRESS_RE.exec(said))) {
+    const raw = m[1];
+    const whole = offeredLinks.includes(raw) ? [raw] : offeredLinks.filter((l) => l.startsWith(raw));
+    links.push(whole.length === 1 ? whole[0] : raw);
+  }
   const spoken = said.replace(PRESS_RE, 'Pressed it.').replace(/\s+/g, ' ').trim();
   return { links, spoken };
 }
@@ -76,7 +87,10 @@ export function humanSystemPrompt(sheet: FactSheet): string {
     // the sheet says otherwise.
     '- Never give your assistant an instruction or a preference the list above does not give you: do not tell it to skip, drop, leave out, change or add anything on your own.',
     '- If it asks whether to leave out, drop or change something you handed over and the list above does not say, tell it to put everything up as you gave it.',
-    `- If you are handed a link to press, reply with exactly: [[PRESS <the url>]] and nothing else.`,
+    `- If you are handed a link to press, reply with exactly: [[PRESS <the url>]] and nothing else, copying the url in full.`,
+    // Several pages at once (three offers, a confirmation and an offer) are
+    // each pressed. With one token allowed, a buyer pressed one of three.
+    '- If you are handed several links to press, press each one the list above would have you press: one [[PRESS <the url>]] per link, nothing else.',
     // A PERSON WHO IS TOLD TO PRESS SOMETHING THEY CANNOT SEE SAYS SO. Without
     // this the simulated human answered "ok, thanks" to "send it whenever you
     // are ready" with no link in the message, and the step went nowhere.
@@ -159,7 +173,9 @@ export function bedrockSimulator(sheet: FactSheet): Simulator {
         accept: 'application/json',
         body: JSON.stringify({
           anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 160,
+          // Room for three page links: each is ~110 characters of token text,
+          // and at 160 a third link was cut off mid-token.
+          max_tokens: 600,
           temperature: 0.4,
           system,
           messages: messages.length ? messages : [{ role: 'user', content: 'Hello?' }],
