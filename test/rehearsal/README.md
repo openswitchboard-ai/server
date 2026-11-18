@@ -54,14 +54,20 @@ else. An afternoon went on "Not logged in · Please run /login" answers from a
 CLI that was signed in perfectly well; it simply was not allowed to look. A
 long-lived `claude setup-token` is OAuth too, so it is ignored the same way.
 
-So the third assistant goes through **Bedrock, on the AWS credentials the run
-already holds** — the same `AWS_PROFILE` that reaches the database and the
-logs. Nothing extra to set up:
+So the third assistant goes on **the rehearsal's own Anthropic API key**,
+read from a 0600 file and never printed, and is billed to the organisation's
+Claude API credits (since 18 November 2026; until then it went through
+Bedrock and was billed to AWS). The simulated humans use the same key. With
+no key file, both go through **Bedrock on the run's AWS credentials** as
+before, and the run says so once:
 
 | variable | default | what it does |
 | --- | --- | --- |
-| `REHEARSAL_CLAUDE_BEDROCK` | `1` | `0` falls back to a plain `ANTHROPIC_API_KEY` |
-| `REHEARSAL_CLAUDE_MODEL` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | named on every turn and recorded by name |
+| `REHEARSAL_ANTHROPIC_KEY_FILE` | `~/.osb-rehearsal-anthropic-key` | the key file; a person puts it there |
+| `REHEARSAL_BEDROCK` | unset | `1` sends every Claude call through Bedrock, key file or not |
+| `REHEARSAL_CLAUDE_BEDROCK` | `1` | with no key file: `0` falls back to a plain `ANTHROPIC_API_KEY` |
+| `REHEARSAL_CLAUDE_MODEL` | `claude-haiku-4-5` (API), `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Bedrock) | named on every turn and recorded by name |
+| `REHEARSAL_HUMAN_API_MODEL` / `REHEARSAL_HUMAN_MODEL` | `claude-haiku-4-5` / the Bedrock Haiku id | the simulated humans' model on each road |
 
 Haiku 4.5 is about two tenths of a cent a turn, so a six-run series is small
 change. It is also the honest test: the manual-delivery faults this suite
@@ -111,7 +117,7 @@ npx tsx test/rehearsal/run.ts --dry --stage 6 --runs 1   # the orchestration, fr
 
 | variable | what for |
 | --- | --- |
-| `AWS_PROFILE=openswitchboard`, `AWS_REGION=us-east-1` | the dev database (RDS Data API), Bedrock for the simulated humans, Secrets Manager for the scorer's key, CloudWatch for the tool-call log |
+| `AWS_PROFILE=openswitchboard`, `AWS_REGION=us-east-1` | the dev database (RDS Data API), Bedrock for the simulated humans when there is no key file, Secrets Manager for the scorer's key, CloudWatch for the tool-call log |
 | `NAGATHA_HOST`, `NAGATHA_KEY` | the OpenClaw box and the key that opens it |
 | `REHEARSAL_CLAUDE_CONFIG_DIR` | optional: a directory the Claude driver reuses as `CLAUDE_CONFIG_DIR` in place of a fresh one per run. The driver runs the CLI in bare mode, which reads no login from it; authentication is Bedrock on the run's AWS credentials (see "Claude Code as the third assistant") |
 | `DUET_B_HOST`, `DUET_B_KEY` | the same box; Bilby lives in its own OpenClaw home |
@@ -247,9 +253,10 @@ pattern's, for a person to label the disagreements.
 - **Claude Code's authentication.** The driver isolates the working directory,
   `CLAUDE_CONFIG_DIR`, settings sources and MCP servers, so no CLAUDE.md, no
   memory and no other MCP server can leak into a run. Turns go through
-  Bedrock by default and are billed to the AWS account behind the run's
-  `AWS_PROFILE`; with `REHEARSAL_CLAUDE_BEDROCK=0` they are billed to the
-  `ANTHROPIC_API_KEY` in the environment. The CLI's own sign-in is not used. A
+  the rehearsal's own key file and are billed to the Claude API credits;
+  with no key file they go through Bedrock and are billed to the AWS account
+  behind the run's `AWS_PROFILE`, and with `REHEARSAL_CLAUDE_BEDROCK=0` as
+  well, to the `ANTHROPIC_API_KEY` in the environment. The CLI's own sign-in is not used. A
   managed/policy settings file on the machine still applies.
 - **The report stage.** `--scenario report` reaches it and reports **"not
   implemented"** rather than a fake pass. The page and `fileReport` are mapped
@@ -262,7 +269,7 @@ pattern's, for a person to label the disagreements.
 ## What it costs
 
 Per run, roughly: a few dozen turns across two real assistants (the largest
-cost, and the reason `--dry` exists), one small Bedrock call per simulated human
-turn, one or two Jev calls per assistant turn, and a handful of Data API reads.
+cost, and the reason `--dry` exists), one small Haiku call per simulated human
+turn (Claude API credits; Bedrock only without a key file), one or two Jev calls per assistant turn, and a handful of Data API reads.
 A series of six full runs is not cheap. Run `--dry` first, every time you change
 the orchestration.

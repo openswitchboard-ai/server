@@ -81,6 +81,8 @@ const REHEARSAL_CLAUDE_CONFIG_DIR = process.env.REHEARSAL_CLAUDE_CONFIG_DIR ?? '
  */
 const REHEARSAL_CLAUDE_MODEL =
   process.env.REHEARSAL_CLAUDE_MODEL ?? 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+/** The same model by its Claude API name, for a driver given a key (18 November 2026). */
+const REHEARSAL_CLAUDE_API_MODEL = process.env.REHEARSAL_CLAUDE_MODEL ?? 'claude-haiku-4-5';
 
 /**
  * THE THIRD ASSISTANT SIGNS IN THROUGH BEDROCK, ON THE AWS CREDENTIALS THE
@@ -100,6 +102,12 @@ const REHEARSAL_CLAUDE_MODEL =
  * find are the ones a smaller model hits first.
  *
  * Set REHEARSAL_CLAUDE_BEDROCK=0 to go back to a plain ANTHROPIC_API_KEY.
+ *
+ * SINCE 18 NOVEMBER 2026 BEDROCK IS THE FALLBACK, NOT THE DEFAULT. The
+ * organisation has Claude API credits, and Bedrock is paid for in AWS money,
+ * so makeDriver hands every Claude Code driver the rehearsal's own key
+ * (anthropicKey.ts) where its file is there, and the turn goes on the API.
+ * Only a run with no key file, or REHEARSAL_BEDROCK=1, comes through here.
  */
 const USE_BEDROCK = (process.env.REHEARSAL_CLAUDE_BEDROCK ?? '1') !== '0';
 
@@ -277,7 +285,7 @@ export function claudeCodeDriver(opts: ClaudeDriverOptions): Driver {
   let configDir = '';
   let workDir = '';
 
-  const model = opts.model ?? REHEARSAL_CLAUDE_MODEL;
+  const model = opts.model ?? (opts.anthropicApiKey ? REHEARSAL_CLAUDE_API_MODEL : REHEARSAL_CLAUDE_MODEL);
   return {
     name: opts.label ?? 'Claude',
 

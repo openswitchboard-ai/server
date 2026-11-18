@@ -178,8 +178,8 @@ import { loadRecordBuilders, recordCandidates, type RecordCandidate } from './re
 import * as db from './db.js';
 import { castForRun, makeDriver, parseCasts, type DriverName } from './drivers/index.js';
 import {
-  bedrockSimulator,
   cannedSimulator,
+  humanSimulator,
   extractPresses,
   sheetWithLeaveOff,
   type HumanTurn,
@@ -631,7 +631,7 @@ async function oneRun(
         sheet,
         driver,
         actor,
-        simulator: DRY ? cannedSimulator(sheet) : bedrockSimulator(sheet),
+        simulator: DRY ? cannedSimulator(sheet) : humanSimulator(sheet),
         session: `${runId}-${id}`,
         history: [],
         lastReply: '',
