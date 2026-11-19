@@ -510,7 +510,7 @@ const identifiersField = (description: string) => ({
 });
 
 const IDENTIFIERS_RULE =
-  'Where the thing has a number or code that tells its product or edition from the next, give it: a model number, an ISBN, a catalogue number. Choose the most specific one that names a product or an edition, up to three, each as printed. Give none where the thing has none. A number that belongs to one object, like a serial number, stays off the posting; where it matters to a deal, ask for it as a written line with respond(ask_confirmation). No contact details. It is never shown to the other side.';
+  'Where the thing has a number or code that tells its product or edition from the next, give it: a model number, an ISBN, a catalogue number. Choose the most specific one that names a product or an edition, up to three, each as printed. Give none where the thing has none. When your human is after one exact edition and has not given its number, ask them for it, and never guess one. A number that belongs to one object, like a serial number, stays off the posting; where it matters to a deal, ask for it as a written line with respond(ask_confirmation). No contact details. It is never shown to the other side.';
 
 const IDENTIFIERS_REPLACE =
   'The identifiers for the product or edition, as publish_intent describes them. Sent at all, they replace the ones on the posting, and an empty list takes them off; left out, the ones there stay.';
@@ -530,7 +530,8 @@ const listItemSchema = {
       type: 'string',
       minLength: 1,
       maxLength: 60,
-      description: 'What the item is, in a few plain words, no figures: its name as a person would say it.',
+      description:
+        'What the item is, in a few plain words, no figures: its name as a person would say it, with its maker, brand or game where the name alone would not say what sort of thing it is.',
     },
     identifiers: identifiersField('Up to three identifiers for its product or edition, as publish_intent describes them.'),
     details: {
@@ -547,7 +548,7 @@ const listItemSchema = {
     },
     open_to_offers: {
       type: 'boolean',
-      description: 'On a list of haves for sale: true in place of an asking price.',
+      description: 'On a list of haves for sale: true in place of an asking price, only where your human gave none for this item.',
     },
     price_limit: {
       type: 'number',
@@ -871,7 +872,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_list',
     description:
-      `FOR MANY THINGS AT ONCE: a collection, a stock list, a want list. CONVERT WHAT YOUR HUMAN HAS YOURSELF (an export file, a spreadsheet, a typed list, a photo of their shelves), keep only what each item needs, and post it here as one list. \`shared\` is what every item has in common: the side, the shelf, the place written in full with its reach, and the deal (sale, trade, sale_or_trade or free). Each item carries only a \`name\` in plain words, up to three \`identifiers\`, a few \`details\` such as condition, a \`quantity\`, and where it sells an asking \`price\` or \`open_to_offers\` (on a want, a private \`price_limit\`). An accepted sale takes one off its quantity. No descriptions and no photos. Good items go up even where others do not: each one that did not comes back with its place in your list, the reason and the one thing to fix. Prices are read back once for the whole call, as a summary: say it to your human, and post again with the \`reference\` only if those are their figures. Up to ${lists.LIST_CALL_MAX_ITEMS} items a call; send more to the same \`list_id\`. To send an updated list, give its \`list_id\` with \`replace\`, in \`part\` of \`parts\` if it is long: unchanged items keep their introductions, and items no longer on it come down after the last part. Read the results to your human plainly, and never say an id aloud. read_manual("lists").`,
+      `FOR MANY THINGS AT ONCE: a collection, a stock list, a want list. CONVERT WHAT YOUR HUMAN HAS YOURSELF (an export file, a spreadsheet, a photo of their shelves), keep only what each item needs, and post it here as one list. ONE HAND-OVER, ONE LIST: a second is only for items whose side, shelf, place, deal or money differ. \`shared\` is what every item has in common: the side, the shelf, the place written in full with its reach, and the deal (sale, trade, sale_or_trade or free). Each item carries only a \`name\` in plain words, up to three \`identifiers\`, a few \`details\` such as condition, a \`quantity\`, and where it sells the asking \`price\` they gave it, else \`open_to_offers\` (on a want, a private \`price_limit\`). An accepted sale takes one off its quantity. No descriptions and no photos. Good items go up even where others do not; each one that did not comes back with its place, the reason and the one fix. Prices are read back once for the whole call, as a summary: say it to your human, and post again with the \`reference\` only if those are their figures. Up to ${lists.LIST_CALL_MAX_ITEMS} items a call; send more to the same \`list_id\`. To send an updated list, give its \`list_id\` with \`replace\`, in \`part\` of \`parts\` if it is long: unchanged items keep their introductions, and items no longer on it come down after the last part. Read the results to your human plainly; never say an id aloud. read_manual("lists").`,
     inputSchema: {
       type: 'object',
       properties: {
