@@ -30,6 +30,8 @@ export const TOOL_LOG_GROUP = process.env.OSB_TOOL_LOG_GROUP ?? `/osb/${ENV_NAME
  */
 export const HUMAN_MODEL_ID =
   process.env.REHEARSAL_HUMAN_MODEL ?? 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+/** The same model by its Claude API name, which a run with a key uses (anthropicKey.ts). */
+export const HUMAN_API_MODEL = process.env.REHEARSAL_HUMAN_API_MODEL ?? 'claude-haiku-4-5';
 
 /** The Secrets Manager secret the transcript scorer's key lives in. */
 export const JEV_SECRET = process.env.REHEARSAL_JEV_SECRET ?? `osb/${ENV_NAME}/jev`;
