@@ -88,6 +88,7 @@ import {
 import {
   IDENTIFIER_SENTENCES,
   identifierNorms,
+  listProductNumberNote,
   identifiersOf,
   oneObjectDetail,
   oneObjectDetailSentence,
@@ -141,6 +142,10 @@ export const LIST_ITEM_MAX_QUANTITY = 999;
 export const LIST_PAGE_SIZE = 50;
 /** The most parts a replace may come in: 10 x 200 is twice the ceiling. */
 export const LIST_MAX_PARTS = 10;
+/** The most a declared total may be (total_items): far past any ceiling, short of nonsense. */
+export const LIST_TOTAL_ITEMS_MAX = 10_000;
+/** How recent another open list with the same settings must be to look like the same hand-over. */
+export const SAME_HAND_OVER_MINUTES = 60;
 /** The most money a figure may carry, as the protocol allows. */
 const MONEY_MAX = 100_000_000_000;
 
@@ -148,7 +153,10 @@ const MONEY_MAX = 100_000_000_000;
 const RESERVED_DETAILS = new Set(['quantity', 'free', 'trade']);
 
 /** The keys an item may carry. */
-const ITEM_KEYS = new Set(['name', 'identifiers', 'details', 'quantity', 'price', 'open_to_offers', 'price_limit']);
+const ITEM_KEYS = new Set(['name', 'category', 'identifiers', 'details', 'quantity', 'price', 'open_to_offers', 'price_limit']);
+
+/** The most shelves other than the list's own that one call's items may name. */
+export const LIST_CALL_MAX_ITEM_SHELVES = 20;
 
 // ---------------------------------------------------------------------------
 // THE SCREENING QUEUE, AND A FAIR SHARE OF IT.
@@ -232,6 +240,7 @@ export async function enqueueListScreening(
 export type ItemRefusalReason =
   | 'shape'
   | 'name'
+  | 'shelf'
   | 'identifiers'
   | 'details'
   | 'quantity'
@@ -258,7 +267,11 @@ export interface ItemRefusal {
 
 export const ITEM_FIXES = {
   shape:
-    'Send this item as an object with a name, and only identifiers, details, quantity and a price besides. Leave out anything else.',
+    'Send this item as an object with a name, and only its own shelf, identifiers, details, quantity and a price besides. Leave out anything else.',
+  shelf_shape: 'Give this item\'s own shelf as a dotted path, such as the list\'s own, or leave it out to use the list\'s.',
+  shelf_family: (words: string): string =>
+    `This item's shelf is among a different sort of postings from the list's own (${words}). Post it on a list of its own sort, or give it a shelf among the list's.`,
+  shelf_many: `One call takes items on up to ${LIST_CALL_MAX_ITEM_SHELVES} shelves besides the list's own. Send this item in another call to the same list.`,
   name: (complaint: string): string =>
     `Give this item a name that says what it is, in a few plain words: ${complaint}. Numbers belong in its identifiers or details.`,
   details_count: `Keep this item to ${LIST_ITEM_MAX_DETAILS} details at most, each a short fact such as its condition. A description has no place on a list.`,
@@ -403,6 +416,13 @@ export interface ListItem {
   index: number;
   /** The name, which is the posting's `kind`. */
   kind: string;
+  /**
+   * The item's own shelf as sent, where it sits on a different one from the
+   * list's shared one (20 November 2026): a mixed hand-over stays one list.
+   */
+  category?: string;
+  /** The shelf the item is filed under, once the door has filed it. */
+  filed?: { category: string; from: string; changed: boolean };
   identifiers: Identifier[];
   /** The details as sent, before the shelf's spelling is applied. */
   details: Record<string, string | number | boolean>;
@@ -445,6 +465,16 @@ export function readListItem(
   const complaint = kindComplaint(o.name);
   if (complaint) return no('name', ITEM_FIXES.name(complaint));
   const kind = String(o.name).trim().replace(/\s+/g, ' ');
+
+  // Its own shelf, where it has one. The path itself is held to the protocol
+  // at the door, with the rest of the item as a posting.
+  let category: string | undefined;
+  if (o.category !== undefined && o.category !== null) {
+    if (typeof o.category !== 'string' || !o.category.trim() || o.category.length > 200) {
+      return no('shelf', ITEM_FIXES.shelf_shape);
+    }
+    category = o.category.trim();
+  }
 
   const ids = readIdentifiers(o.identifiers);
   if (!ids.ok) return no('identifiers', IDENTIFIER_SENTENCES[ids.reason]);
@@ -511,6 +541,7 @@ export function readListItem(
     item: {
       index,
       kind,
+      ...(category !== undefined ? { category } : {}),
       identifiers: ids.identifiers,
       details,
       quantity,
@@ -582,6 +613,8 @@ export interface OldItem {
   ask: unknown;
   /** Whether a private band is on the row. */
   hasBand: boolean;
+  /** The shelf the item is filed under, where the read carried it. */
+  category?: string | null;
   /** The band, opened, where the comparison needed it. */
   band?: string;
   list_pass?: string | null;
@@ -727,9 +760,11 @@ const idsText = (ids: unknown): string =>
  */
 export function sameItem(
   old: OldItem,
-  next: { kind: string; identifiers: Identifier[]; attributes: Record<string, unknown>; ask?: unknown; band?: string },
+  next: { kind: string; identifiers: Identifier[]; attributes: Record<string, unknown>; ask?: unknown; band?: string; category?: string },
 ): boolean {
   if ((old.kind ?? '') !== next.kind) return false;
+  // An item moved to another shelf has changed (each item may carry its own).
+  if (next.category !== undefined && old.category && old.category !== next.category) return false;
   if (idsText(old.identifiers) !== idsText(next.identifiers)) return false;
   if (canonicalJson(old.attributes ?? {}) !== canonicalJson(next.attributes)) return false;
   if (canonicalJson(old.ask ?? null) !== canonicalJson(next.ask ?? null)) return false;
@@ -905,6 +940,8 @@ export interface PublishListArgs {
   part?: unknown;
   parts?: unknown;
   reference?: unknown;
+  /** How many items the human handed over in all, counted before sending. */
+  total_items?: unknown;
 }
 
 export type ItemResult = 'added' | 'changed' | 'unchanged';
@@ -936,6 +973,101 @@ export interface ListResult {
   category: string;
   filed_under_note: { text: string; provenance: 'switchboard-system' };
   results_note: { text: string; provenance: 'switchboard-system' };
+  /**
+   * THE DECLARED TOTAL (migration 076), on a list that has one: how many items
+   * the human handed over, how many lines have been sent to the list since,
+   * refused ones included, and how many are still to send. Advisory only.
+   */
+  total_items?: number;
+  items_sent?: number;
+  items_to_send?: number;
+  /** The count in words; or, on a new list with no total, the ask for one next time. */
+  total_items_note?: { text: string; provenance: 'switchboard-system' };
+  /** Details that look like a product's number, on items with no identifiers. Advice only. */
+  detail_number_note?: { text: string; provenance: 'switchboard-system' };
+  /** A new list with the same settings as one put up within the hour: that list, and the advice. */
+  same_hand_over_list_id?: string;
+  same_hand_over_note?: { text: string; provenance: 'switchboard-system' };
+}
+
+// ---------------------------------------------------------------------------
+// THE ADVICE ON A LIST'S ANSWER (20 November 2026, manual v97). In rehearsal
+// the same slips came back however the tool was worded: a long hand-over sent
+// in several calls with some of it never sent, a second list put up with the
+// same settings as the first, the number that tells a product apart left in
+// the details, and every item marked open to offers without the human hearing
+// so. Each answer now says so. None of it refuses anything. Pure.
+// ---------------------------------------------------------------------------
+
+/** The declared total, read, or a refusal of the call. */
+export function readTotalItems(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Number.isInteger(raw) || (raw as number) < 1 || (raw as number) > LIST_TOTAL_ITEMS_MAX) {
+    throw callRefusal(
+      'total_items',
+      `total_items is how many items your human handed over in all, a whole number from 1 to ${LIST_TOTAL_ITEMS_MAX}, or left out.`,
+    );
+  }
+  return raw as number;
+}
+
+/** A declared total on a call that cannot set one. */
+export const TOTAL_ITEMS_MISPLACED =
+  'total_items goes on the call that puts a list up, or on part 1 of a replace. To add to this list, leave it out: the total it went up with still counts.';
+
+/** The count against a declared total, in words for the assistant. */
+export function declaredTotalSentence(expected: number, received: number): string {
+  const n = (k: number, one: string, many: string) => (k === 1 ? `1 ${one}` : `${k} ${many}`);
+  if (received < expected) {
+    const left = expected - received;
+    return `Of the ${n(expected, 'item', 'items')} your human handed over, ${received === 1 ? '1 has' : `${received} have`} been sent to this list so far, counting any turned away. ${left === 1 ? '1 is still to send: send it' : `${left} are still to send: send them`} to this same list.`;
+  }
+  if (received === expected) {
+    return `All ${n(expected, 'item', 'items')} your human handed over have been sent to this list, counting any turned away.`;
+  }
+  return `${n(received, 'item has', 'items have')} been sent to this list, ${received - expected} more than the ${expected} your human handed over. Check nothing went twice: an item sent again after it was turned away is counted again.`;
+}
+
+/** Said on a new list that went up with no declared total. */
+export const TOTAL_ITEMS_ASK_NOTE = {
+  text: 'Next time, give total_items on the call that puts a list up: how many items your human handed over in all, counted before you send any. The switchboard then tells you after every call how many are still to send.',
+  provenance: 'switchboard-system' as const,
+};
+
+/**
+ * Said on a new list with the same settings as one put up within the hour.
+ * The shelf is not among them: an item on another shelf carries its own.
+ */
+export const SAME_HAND_OVER_NOTE = {
+  text: 'Your human put up a list within the last hour with the same side, place and deal as this one. These look like part of the same hand-over: items for that list go to it, with its list_id, and a second list is only for items whose side, place, deal or currency differ. An item on another shelf carries its own shelf on the same list. This list is up as you sent it.',
+  provenance: 'switchboard-system' as const,
+};
+
+/** The place a list was sent with, folded for comparing. */
+function placeKey(s: SharedSent): string {
+  const g = s.geo ?? {};
+  return JSON.stringify({
+    place: typeof g.place === 'string' ? foldText(g.place) : null,
+    bucket: typeof g.bucket === 'string' ? g.bucket.trim().toLowerCase() : null,
+  });
+}
+
+/**
+ * Does an earlier list look like part of the same hand-over as a new one?
+ * Same side and deal (the query holds those too), the same place,
+ * and no different currency. Pure.
+ */
+export function sameHandOver(earlier: SharedSent | undefined, now: SharedSent): boolean {
+  if (!earlier) return false;
+  if (earlier.side !== now.side || earlier.deal !== now.deal) return false;
+  if (placeKey(earlier) !== placeKey(now)) return false;
+  return !(earlier.currency && now.currency && earlier.currency !== now.currency);
+}
+
+/** How the items up from a call that sells stand on price: with an asking price, or open to offers. */
+export interface OfferCounts {
+  priced: number;
+  open: number;
 }
 
 /** A list row as this file reads it. */
@@ -952,6 +1084,8 @@ interface ListRow {
   replace_pass: string | null;
   replace_parts: number | null;
   replace_next: number | null;
+  expected_items?: number | null;
+  items_received?: number | null;
 }
 
 /**
@@ -1036,6 +1170,18 @@ async function runPublishList(
   }
   const type: 'WANT' | 'HAVE' = shared.side === 'looking_for' ? 'WANT' : 'HAVE';
 
+  // THE DECLARED TOTAL (migration 076): set where a list goes up and on part 1
+  // of a replace. Sent again unchanged on a later call, it is let be.
+  const total = readTotalItems(args.total_items);
+  const setsTotal = !list || (replace && part === 1);
+  if (total !== undefined && !setsTotal && total !== (list?.expected_items ?? undefined)) {
+    throw callRefusal('total_items', TOTAL_ITEMS_MISPLACED);
+  }
+  /** Where the list stands against its declared total, once this call's lines are counted. */
+  let tally: { expected: number | null; received: number } | undefined;
+  /** An open list put up within the hour with the same settings, where a new one looks like part of its hand-over. */
+  let sameAs: string | undefined;
+
   // Which replace pass this is, and whether it is the last part.
   let pass: string | undefined;
   if (replace && list) {
@@ -1074,6 +1220,41 @@ async function runPublishList(
     filed = { category: snapped.category, from: snapped.from, changed: snapped.changed };
   }
 
+  // 3b. AN ITEM'S OWN SHELF (20 November 2026), where it sits on a different
+  // one from the list's: a mixed hand-over stays one list, each item on its
+  // right shelf. Each shelf named is held to the same gate and deny list and
+  // filed the same way as the list's own, once per call however many items
+  // name it, and stays among the same sort of postings as the list's (goods
+  // with goods). A shelf that cannot be used turns back its items alone.
+  const rootOf = (c: string) => String(c).split('.')[0];
+  type ShelfRead = { ok: true; filed: { category: string; from: string; changed: boolean } } | { ok: false; reason: ItemRefusalReason; fix: string };
+  const shelves = new Map<string, Promise<ShelfRead>>();
+  const shelfOf = (category: string, kind: string): Promise<ShelfRead> => {
+    if (category === filed.from || category === filed.category) return Promise.resolve({ ok: true, filed });
+    const known = shelves.get(category);
+    if (known) return known;
+    if (shelves.size >= LIST_CALL_MAX_ITEM_SHELVES) {
+      return Promise.resolve({ ok: false, reason: 'shelf', fix: ITEM_FIXES.shelf_many });
+    }
+    const read = (async (): Promise<ShelfRead> => {
+      try {
+        await assertCategoryOpen(cfg, category, accountId, undefined, { kindCheckedPerItem: true });
+        const snapped = await snapCategory(cfg, category, undefined, { fallbackToAncestor: true, posting: { kind } });
+        if (rootOf(snapped.category) !== rootOf(filed.category)) {
+          return { ok: false, reason: 'shelf', fix: ITEM_FIXES.shelf_family(shelfInWords(snapped.category)) };
+        }
+        return { ok: true, filed: { category: snapped.category, from: snapped.from, changed: snapped.changed } };
+      } catch (e) {
+        if (e instanceof OsbError) {
+          return { ok: false, reason: 'not_carried', fix: e.payload.human_action ?? e.message };
+        }
+        throw e;
+      }
+    })();
+    shelves.set(category, read);
+    return read;
+  };
+
   // 4. EACH ITEM, ON ITS OWN.
   const refusals: ItemRefusal[] = [];
   const good: ListItem[] = [];
@@ -1093,6 +1274,13 @@ async function runPublishList(
       continue;
     }
     const item = read.item;
+    const shelfRead = item.category !== undefined ? await shelfOf(item.category, item.kind) : ({ ok: true, filed } as const);
+    if (!shelfRead.ok) {
+      refusals.push({ index, reason: shelfRead.reason, fix: shelfRead.fix });
+      turnAway(index, raw);
+      continue;
+    }
+    item.filed = shelfRead.filed;
     if ((item.price !== undefined || item.priceLimit !== undefined) && !currency) {
       refusals.push({ index, reason: 'price', fix: ITEM_FIXES.currency });
       turnAway(index, raw);
@@ -1103,7 +1291,7 @@ async function runPublishList(
     const asCard = {
       schema_version: SCHEMA_VERSION,
       type: shared.side,
-      category: filed.category,
+      category: item.filed.category,
       kind: item.kind,
       geo: shared.geo,
       attributes: item.attributes,
@@ -1123,8 +1311,8 @@ async function runPublishList(
       turnAway(index, raw);
       continue;
     }
-    item.attributes = canonicaliseAttributes(filed.category, item.attributes) as ListItem['attributes'];
-    const dup = `${nameKey(item.kind, item.attributes)}#${identifierNorms(item.identifiers).sort().join(',')}`;
+    item.attributes = canonicaliseAttributes(item.filed.category, item.attributes) as ListItem['attributes'];
+    const dup = `${item.filed.category}#${nameKey(item.kind, item.attributes)}#${identifierNorms(item.identifiers).sort().join(',')}`;
     if (seen.has(dup)) {
       refusals.push({ index, reason: 'duplicate', fix: ITEM_FIXES.duplicate });
       continue;
@@ -1139,7 +1327,7 @@ async function runPublishList(
   let olds: OldItem[] = [];
   if (list) {
     const r = await getPool().query(
-      `SELECT id, kind, identifiers, attributes, ask, price_enc, list_pass FROM cards
+      `SELECT id, kind, category, identifiers, attributes, ask, price_enc, list_pass FROM cards
         WHERE list_id = $1 AND account_id = $2
           AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED')
         ORDER BY created_at, id`,
@@ -1148,6 +1336,7 @@ async function runPublishList(
     olds = (r.rows as any[]).map((row) => ({
       id: row.id,
       kind: row.kind,
+      category: row.category ?? null,
       identifiers: row.identifiers,
       attributes: row.attributes,
       ask: row.ask,
@@ -1187,7 +1376,7 @@ async function runPublishList(
   const unchanged: { item: ListItem; old: OldItem }[] = [];
   for (const item of good) {
     const m = matched.get(item.index);
-    if (m && sameItem(m.old, { ...item, ask: askOf(item), band: bandOf(item) })) {
+    if (m && sameItem(m.old, { ...item, ask: askOf(item), band: bandOf(item), category: item.filed?.category })) {
       unchanged.push({ item, old: m.old });
     } else if (m && replace) {
       // A different name under a shared identifier is the same product under
@@ -1266,7 +1455,7 @@ async function runPublishList(
     const intake = await runIntake(cfg, {
       door: 'posting',
       sender_account: accountId,
-      fields: { category: shared.category, kind: item.kind, ...attributeFields(item.details) },
+      fields: { category: item.category ?? shared.category, kind: item.kind, ...attributeFields(item.details) },
     });
     if (intake.outcome !== 'refuse') return;
     doorRefused.add(item.index);
@@ -1289,6 +1478,7 @@ async function runPublishList(
    */
   async function nothingWritten(): Promise<ListResult> {
     if (list && replace) await keepBooks((sql, params) => getPool().query(sql, params as any[]));
+    if (list) await countLines((sql, params) => getPool().query(sql, params as any[]));
     const { held } = await listItemsRoom(accountId, cfg.quotas);
     heldNothing = held;
     return answer(list?.id, 'nothing');
@@ -1338,6 +1528,34 @@ async function runPublishList(
     }
     await q(`UPDATE lists SET updated_at = now() WHERE id = $1`, [row.id]);
     return row.expires_at;
+  }
+
+  /**
+   * THE LINES SENT, counted against a declared total (migration 076), on a
+   * list already up: part 1 of a replace starts the count again with this
+   * call's total (none, where it gives none); every other call adds its
+   * lines. Lines turned away count: each is answered on its own line.
+   */
+  async function countLines(q: (sql: string, params: unknown[]) => Promise<any>): Promise<void> {
+    const row = list!;
+    const n = sentItems.length;
+    const restart = replace && part === 1;
+    const r = restart
+      ? await q(
+          `UPDATE lists SET expected_items = $2, items_received = $3 WHERE id = $1 RETURNING expected_items, items_received`,
+          [row.id, total ?? null, n],
+        )
+      : await q(
+          `UPDATE lists SET items_received = items_received + $2 WHERE id = $1 RETURNING expected_items, items_received`,
+          [row.id, n],
+        );
+    const back = r?.rows?.[0];
+    tally = back
+      ? { expected: back.expected_items ?? null, received: Number(back.items_received ?? 0) }
+      : {
+          expected: restart ? (total ?? null) : (row.expected_items ?? null),
+          received: (restart ? 0 : Number(row.items_received ?? 0)) + n,
+        };
   }
 
   // Nothing to write at all: nothing is counted and nothing is created.
@@ -1394,8 +1612,8 @@ async function runPublishList(
       priceEnc: await encBand(item),
       slots: 1,
       sale: 'straight',
-      category: filed.category,
-      categoryFrom: filed.from,
+      category: item.filed?.category ?? filed.category,
+      categoryFrom: item.filed?.from ?? filed.from,
       identifiers: item.identifiers,
       ...(item.kind !== (old.kind ?? '') ? { kind: item.kind } : {}),
     });
@@ -1412,6 +1630,9 @@ async function runPublishList(
         row: {
           id: randomUUID(),
           kind: item.kind,
+          ...(item.filed && item.filed.category !== filed.category
+            ? { category: item.filed.category, category_as_posted: item.filed.from }
+            : {}),
           attributes: item.attributes,
           ...(item.price !== undefined ? { ask: { amount: item.price, ccy: currency } } : {}),
           ...(enc ? { price_enc: enc.toString('base64') } : {}),
@@ -1431,14 +1652,28 @@ async function runPublishList(
     let expiresAt: Date;
     if (!list) {
       const created = await client.query(
-        `INSERT INTO lists (id, account_id, type, category, category_as_posted, deal, shared, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now() + make_interval(days => $8::int))
+        `INSERT INTO lists (id, account_id, type, category, category_as_posted, deal, shared, expires_at,
+                            expected_items, items_received)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now() + make_interval(days => $8::int), $9, $10)
          RETURNING expires_at`,
-        [listId, accountId, type, filed.category, filed.from, shared.deal, JSON.stringify({ sent: shared, placed }), ttl],
+        [
+          listId,
+          accountId,
+          type,
+          filed.category,
+          filed.from,
+          shared.deal,
+          JSON.stringify({ sent: shared, placed }),
+          ttl,
+          total ?? null,
+          sentItems.length,
+        ],
       );
       expiresAt = created.rows[0].expires_at;
+      tally = { expected: total ?? null, received: sentItems.length };
     } else {
       expiresAt = await keepBooks((sql, params) => client.query(sql, params));
+      await countLines((sql, params) => client.query(sql, params));
     }
     const heldNow = Number((await client.query(LIST_ITEMS_HELD_SQL, [accountId])).rows[0]?.n ?? 0);
     const roomNow = Math.max(0, cfg.quotas.maxListItems - heldNow);
@@ -1452,7 +1687,7 @@ async function runPublishList(
                             geo, geo_lat, geo_lon, geo_radius_km, geo_country, attributes, ask,
                             urgency, visibility, protocol_status, price_enc, ttl_days, expires_at,
                             slots, sale, identifiers, identifier_norms, list_id, list_pass)
-         SELECT r.id, $1, $2, $3, $4, $5, r.kind,
+         SELECT r.id, $1, $2, $3, COALESCE(r.category, $4), COALESCE(r.category_as_posted, $5), r.kind,
                 $6::jsonb, $7, $8, $9, $10, r.attributes, r.ask,
                 'none', 'anonymous-until-match', 'active',
                 CASE WHEN r.price_enc IS NULL THEN NULL ELSE decode(r.price_enc, 'base64') END,
@@ -1460,7 +1695,8 @@ async function runPublishList(
                 CASE WHEN r.norms IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(r.norms)) END,
                 $13::uuid, $14::uuid
            FROM jsonb_to_recordset($15::jsonb)
-                AS r(id uuid, kind text, attributes jsonb, ask jsonb, price_enc text, identifiers jsonb, norms jsonb)
+                AS r(id uuid, kind text, category text, category_as_posted text, attributes jsonb, ask jsonb,
+                     price_enc text, identifiers jsonb, norms jsonb)
           WHERE (SELECT count(*) FROM cards
                   WHERE account_id = $1 AND list_id IS NOT NULL
                     AND lifecycle_state IN ('PENDING_SCREENING','PUBLISHED')) + $16::int <= $17::int
@@ -1506,6 +1742,27 @@ async function runPublishList(
   }
   await closePostingRef(attempt.reference);
 
+  // A NEW LIST WITH THE SAME SETTINGS as one put up within the hour looks
+  // like part of the same hand-over. Advice only, and a read that fails costs
+  // the answer this note and nothing else.
+  if (!list) {
+    try {
+      const recent = await getPool().query(
+        `SELECT id, shared FROM lists
+          WHERE account_id = $1 AND id <> $2 AND state = 'open' AND expires_at > now()
+            AND type = $3 AND deal = $4
+            AND created_at > now() - make_interval(mins => $5::int)
+          ORDER BY created_at DESC`,
+        [accountId, listId, type, shared.deal, SAME_HAND_OVER_MINUTES],
+      );
+      sameAs = (recent.rows as { id: string; shared: SharedStored }[]).find((row) =>
+        sameHandOver(row.shared?.sent, shared),
+      )?.id;
+    } catch {
+      sameAs = undefined;
+    }
+  }
+
   // 10. THE SCREEN, paced.
   await enqueueListScreening(cfg, accountId, listId, [
     ...inserted.map((i) => ({ card_id: i.id, content_version: i.content_version })),
@@ -1536,6 +1793,18 @@ async function runPublishList(
     };
     const state: ListResult['state'] =
       counts.added || counts.changed ? 'PENDING_SCREENING' : counts.unchanged || counts.withdrawn ? 'UNCHANGED' : 'NOTHING_POSTED';
+    // The items up from this call, as the door read them, for the advice below.
+    const byIndex = new Map(good.map((g) => [g.index, g]));
+    const upItems = items.map((i) => byIndex.get(i.index)).filter((g): g is ListItem => !!g);
+    const offers: OfferCounts | undefined =
+      type === 'HAVE' && dealSells(shared.deal)
+        ? {
+            priced: upItems.filter((g) => g.price !== undefined).length,
+            open: upItems.filter((g) => g.openToOffers).length,
+          }
+        : undefined;
+    const numberNote = listProductNumberNote(upItems);
+    const counted = tally && tally.expected !== null ? (tally as { expected: number; received: number }) : undefined;
     return {
       ...(id && (list || how === 'written') ? { list_id: id } : {}),
       state,
@@ -1561,9 +1830,25 @@ async function runPublishList(
         text: resultsSentence(
           { ...counts, stillUp: refused.filter((r) => r.still_up).length },
           replace ? { finished: finishing, left: (parts as number) - (part as number) } : undefined,
+          offers,
         ),
         provenance: 'switchboard-system' as const,
       },
+      ...(counted
+        ? {
+            total_items: counted.expected,
+            items_sent: counted.received,
+            items_to_send: Math.max(0, counted.expected - counted.received),
+            total_items_note: {
+              text: declaredTotalSentence(counted.expected, counted.received),
+              provenance: 'switchboard-system' as const,
+            },
+          }
+        : how === 'written' && !list && total === undefined
+          ? { total_items_note: TOTAL_ITEMS_ASK_NOTE }
+          : {}),
+      ...(numberNote ? { detail_number_note: numberNote } : {}),
+      ...(sameAs ? { same_hand_over_list_id: sameAs, same_hand_over_note: SAME_HAND_OVER_NOTE } : {}),
     };
   }
 }
@@ -1575,6 +1860,7 @@ async function runPublishList(
 export function resultsSentence(
   c: { sent: number; added: number; changed: number; unchanged: number; withdrawn: number; refused: number; stillUp?: number },
   replace?: { finished: boolean; left: number },
+  offers?: OfferCounts,
 ): string {
   const n = (k: number, one: string, many: string) => (k === 1 ? `1 ${one}` : `${k} ${many}`);
   const parts: string[] = [];
@@ -1590,7 +1876,18 @@ export function resultsSentence(
         : `${c.stillUp} of those were already up and stay up as they were`,
     );
   }
-  const head = `Of ${n(c.sent, 'item', 'items')} sent: ${parts.length ? parts.join('; ') : 'nothing changed'}.`;
+  let head = `Of ${n(c.sent, 'item', 'items')} sent: ${parts.length ? parts.join('; ') : 'nothing changed'}.`;
+  // On a list that sells, how many have no asking price, said so the human
+  // can correct it (20 November 2026: whole lists went up open to offers
+  // without the human ever hearing so).
+  if (offers && offers.open > 0) {
+    head +=
+      offers.priced === 0
+        ? offers.open === 1
+          ? ' It is open to offers, with no asking price.'
+          : ` All ${offers.open} are open to offers; none has an asking price.`
+        : ` ${n(offers.priced, 'has an asking price', 'have asking prices')}; ${offers.open} ${offers.open === 1 ? 'is' : 'are'} open to offers, with no asking price.`;
+  }
   if (replace && !replace.finished && replace.left > 0) {
     return `${head} Send the remaining ${n(replace.left, 'part', 'parts')}; items no longer on the list come down after the last one.`;
   }
@@ -1599,7 +1896,7 @@ export function resultsSentence(
 
 /** What to say once a list call is answered, for the assistant's own words. */
 export const LIST_SAY_NOTE = {
-  text: 'Tell your human how many items went up, and read out each one that did not with the reason beside it, in plain words. The ids, the field names and the dotted path are yours to work with and are never said aloud, and every price is their own figure.',
+  text: 'Tell your human how many items went up, how many have no asking price where the results say so, and read out each one that did not with the reason beside it, in plain words. The ids, the field names and the dotted path are yours to work with and are never said aloud, and every price is their own figure.',
   provenance: 'switchboard-system' as const,
 };
 
@@ -1621,6 +1918,7 @@ export function listSentence(
   category: string,
   state: 'open' | 'withdrawn' | 'expired',
   c: ListCounts,
+  short?: { total: number; toSend: number },
 ): string {
   const what = `Your list of ${type === 'HAVE' ? 'haves' : 'wants'} on ${shelfInWords(category)}`;
   if (state === 'withdrawn') return `${what} is taken down.`;
@@ -1628,7 +1926,12 @@ export function listSentence(
   const bits = [`${c.up} up`];
   if (c.checking) bits.push(`${c.checking} being checked`);
   if (c.turned_away) bits.push(`${c.turned_away} turned away`);
-  return `${what}: ${bits.join(', ')}.`;
+  // SHORT OF ITS DECLARED TOTAL (migration 076): said where the next look is.
+  const tail =
+    short && short.toSend > 0
+      ? ` ${short.toSend} of the ${short.total} items you handed over ${short.toSend === 1 ? 'has' : 'have'} not been sent to it yet.`
+      : '';
+  return `${what}: ${bits.join(', ')}.${tail}`;
 }
 
 export interface ListSummary {
@@ -1640,6 +1943,9 @@ export interface ListSummary {
   items: ListCounts;
   expires_at: Date;
   created_at: Date;
+  /** On an open list short of its declared total: the total, and how many are still to send. */
+  total_items?: number;
+  still_to_send?: number;
   note: { text: string; provenance: 'switchboard-system' };
 }
 
@@ -1647,6 +1953,7 @@ export interface ListSummary {
 export async function listSummaries(accountId: string, onlyOpen = false): Promise<ListSummary[]> {
   const r = await getPool().query(
     `SELECT l.id, l.type, l.category, l.deal, l.state, l.expires_at, l.created_at,
+            l.expected_items, l.items_received,
             count(c.id) FILTER (WHERE c.lifecycle_state = 'PUBLISHED')::int          AS up,
             count(c.id) FILTER (WHERE c.lifecycle_state = 'PENDING_SCREENING')::int  AS checking,
             count(c.id) FILTER (WHERE c.lifecycle_state = 'SCREENING_REJECTED')::int AS turned_away,
@@ -1671,6 +1978,9 @@ export async function listSummaries(accountId: string, onlyOpen = false): Promis
       taken_down: Number(row.taken_down ?? 0),
       ran_out: Number(row.ran_out ?? 0),
     };
+    const expected = row.expected_items == null ? undefined : Number(row.expected_items);
+    const toSend = expected !== undefined ? Math.max(0, expected - Number(row.items_received ?? 0)) : 0;
+    const short = state === 'open' && expected !== undefined && toSend > 0 ? { total: expected, toSend } : undefined;
     return {
       list_id: row.id,
       side: row.type === 'WANT' ? 'looking_for' : 'offering',
@@ -1680,7 +1990,8 @@ export async function listSummaries(accountId: string, onlyOpen = false): Promis
       items,
       expires_at: row.expires_at,
       created_at: row.created_at,
-      note: { text: listSentence(row.type, row.category, state, items), provenance: 'switchboard-system' as const },
+      ...(short ? { total_items: short.total, still_to_send: short.toSend } : {}),
+      note: { text: listSentence(row.type, row.category, state, items, short), provenance: 'switchboard-system' as const },
     };
   });
 }
@@ -1719,6 +2030,10 @@ export async function readList(accountId: string, listId: string, page = 1): Pro
       intent_id: row.id,
       state: row.lifecycle_state,
       name: row.kind,
+      // An item on a shelf of its own says which, in words.
+      ...(summary && row.category && shelfInWords(row.category) !== summary.filed_under
+        ? { filed_under: shelfInWords(row.category) }
+        : {}),
       ...(identifiersOf(row.identifiers).length ? { identifiers: ownIdentifiers(row.identifiers) } : {}),
       ...(Object.keys(details).length ? { details } : {}),
       // What is left: the quantity given, less what has gone in accepted

@@ -533,6 +533,10 @@ const listItemSchema = {
       description:
         'What the item is, in a few plain words, no figures: its name as a person would say it, with its maker, brand or game where the name alone would not say what sort of thing it is.',
     },
+    category: {
+      ...constraintsOnly(intentCardSchema.properties.category),
+      description: "Only where this item sits on a different shelf from the list's shared one: its own shelf, as the shared one is given.",
+    },
     identifiers: identifiersField('Up to three identifiers for its product or edition, as publish_intent describes them.'),
     details: {
       type: 'object',
@@ -872,7 +876,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'publish_list',
     description:
-      `FOR MANY THINGS AT ONCE: a collection, a stock list, a want list. CONVERT WHAT YOUR HUMAN HAS YOURSELF (an export file, a spreadsheet, a photo of their shelves), keep only what each item needs, and post it here as one list. ONE HAND-OVER, ONE LIST: a second is only for items whose side, shelf, place, deal or money differ. \`shared\` is what every item has in common: the side, the shelf, the place written in full with its reach, and the deal (sale, trade, sale_or_trade or free). Each item carries only a \`name\` in plain words, up to three \`identifiers\`, a few \`details\` such as condition, a \`quantity\`, and where it sells the asking \`price\` they gave it, else \`open_to_offers\` (on a want, a private \`price_limit\`). An accepted sale takes one off its quantity. No descriptions and no photos. Good items go up even where others do not; each one that did not comes back with its place, the reason and the one fix. Prices are read back once for the whole call, as a summary: say it to your human, and post again with the \`reference\` only if those are their figures. Up to ${lists.LIST_CALL_MAX_ITEMS} items a call; send more to the same \`list_id\`. To send an updated list, give its \`list_id\` with \`replace\`, in \`part\` of \`parts\` if it is long: unchanged items keep their introductions, and items no longer on it come down after the last part. Read the results to your human plainly; never say an id aloud. read_manual("lists").`,
+      `FOR MANY THINGS AT ONCE: a collection, a stock list, a want list. CONVERT WHAT YOUR HUMAN HAS YOURSELF (an export, a spreadsheet, a photo), keep only what each item needs, and post it as one list. ONE HAND-OVER, ONE LIST: a second is only for items whose side, place, deal or currency differ; an item on another shelf carries its own \`category\`. Count what they handed over, before sending, as \`total_items\`. \`shared\` is what every item has in common: the side, the shelf, the place written in full with its reach, and the deal (sale, trade, sale_or_trade or free). Each item carries only a \`name\` in plain words, up to three \`identifiers\`, a few \`details\` such as condition, a \`quantity\`, and where it sells the asking \`price\` they gave it, else \`open_to_offers\` (on a want, a private \`price_limit\`). No descriptions or photos. Good items go up even where others do not; each that did not comes back with its place, reason and fix. Prices are read back once per call, as a summary: say it to your human, and post again with the \`reference\` only if those are their figures. Up to ${lists.LIST_CALL_MAX_ITEMS} items a call; send more to the same \`list_id\`. To update a list, give its \`list_id\` with \`replace\`, in \`part\` of \`parts\` if long: unchanged items keep their introductions, and items no longer on it come down after the last part. Read the results to your human plainly; never say an id aloud. read_manual("lists").`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -894,6 +898,13 @@ export const TOOLS: ToolDef[] = [
         },
         part: { type: 'integer', minimum: 1, maximum: lists.LIST_MAX_PARTS },
         parts: { type: 'integer', minimum: 1, maximum: lists.LIST_MAX_PARTS },
+        total_items: {
+          type: 'integer',
+          minimum: 1,
+          maximum: lists.LIST_TOTAL_ITEMS_MAX,
+          description:
+            'How many items your human handed over in all, counted before you send any. Give it on the call that puts a list up, or on part 1 of a replace. Every answer then says how many have been sent and how many are still to send.',
+        },
         reference: {
           type: 'string',
           format: 'uuid',
@@ -1292,6 +1303,7 @@ function checkedSchemaFor(name: string, written: any): any {
       props.part = OPEN_FIELD;
       props.parts = OPEN_FIELD;
       props.replace = OPEN_FIELD;
+      props.total_items = OPEN_FIELD;
       dropRequired('items');
       break;
   }
@@ -1991,7 +2003,13 @@ async function dispatchToolInner(
           intents,
           ...(open.length
             ? {
-                lists: open.map((l) => ({ list_id: l.list_id, side: l.side, items: l.items, note: l.note })),
+                lists: open.map((l) => ({
+                  list_id: l.list_id,
+                  side: l.side,
+                  items: l.items,
+                  ...(l.still_to_send ? { total_items: l.total_items, still_to_send: l.still_to_send } : {}),
+                  note: l.note,
+                })),
                 lists_note: { text: LISTS_NOTE, provenance: 'switchboard-system' },
               }
             : {}),
@@ -2006,6 +2024,7 @@ async function dispatchToolInner(
           part: args?.part,
           parts: args?.parts,
           reference: args?.reference,
+          total_items: args?.total_items,
         });
         const facts = await lanes.readLaneFacts(accountId);
         return ok({

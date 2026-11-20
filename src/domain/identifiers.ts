@@ -539,3 +539,108 @@ export function assertNoOneObjectDetail(attributes: unknown): void {
     throw Object.assign(new Error(oneObjectDetailSentence(key)), { validation: [`attributes.${key}`] });
   }
 }
+
+// ---------------------------------------------------------------------------
+// A PRODUCT'S NUMBER LEFT IN THE DETAILS (20 November 2026, manual v97).
+//
+// In rehearsal, assistants kept putting the number that tells one product or
+// edition from the next into a detail (`set_number: "4/102"`) and leaving
+// `identifiers` empty, where the switchboard matches on it. Wording on the
+// tools did not move them, so the answer now says so, as advice only: the
+// posting still goes up as sent.
+//
+// A detail is named when its KEY, read as words, includes a word that names
+// a number or a code (CODE_KEY_WORDS), none that says it is a count, a size or
+// a year (COUNT_KEY_WORDS), it does not name one object (those details are
+// refused above), and its VALUE has a digit in it. A bare `part` or `edition`
+// is left alone: it is as often a description ("26 inch rim", "2nd") as a
+// number, and `part_number` or `edition_code` are named by their other word. Only where the posting
+// carries no identifiers at all.
+// ---------------------------------------------------------------------------
+
+const CODE_KEY_WORDS = new Set([
+  'number',
+  'num',
+  'no',
+  'nr',
+  'code',
+  'isbn',
+  'issn',
+  'sku',
+  'upc',
+  'ean',
+  'gtin',
+  'mpn',
+  'barcode',
+  'model',
+  'catalogue',
+  'catalog',
+  'ref',
+  'reference',
+]);
+const COUNT_KEY_WORDS = new Set(['of', 'year', 'years', 'count', 'size', 'total', 'age']);
+
+/** The details that look like a product's or an edition's number, by key, in the order given. */
+export function productNumberDetails(attributes: unknown): string[] {
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) return [];
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(attributes as Record<string, unknown>)) {
+    if (typeof v !== 'string' && typeof v !== 'number') continue;
+    if (!/\d/.test(String(v))) continue;
+    const words = k.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (!words.some((w) => CODE_KEY_WORDS.has(w))) continue;
+    if (words.some((w) => COUNT_KEY_WORDS.has(w))) continue;
+    if (namesOneObject(words.join(' '))) continue;
+    out.push(k);
+  }
+  return out;
+}
+
+/** The keys as a sentence names them: `a`, `b` and `c`. */
+function keysInWords(keys: string[]): string {
+  const q = keys.map((k) => `\`${k}\``);
+  return q.length > 1 ? `${q.slice(0, -1).join(', ')} and ${q[q.length - 1]}` : (q[0] ?? '');
+}
+
+/**
+ * The note on one posting whose details hold what looks like its product's
+ * number, and which carries no identifiers; undefined where there is nothing
+ * to say. Advice only.
+ */
+export function productNumberDetailNote(
+  attributes: unknown,
+  identifiers: unknown,
+): { text: string; provenance: 'switchboard-system' } | undefined {
+  if (Array.isArray(identifiers) && identifiers.length) return undefined;
+  const keys = productNumberDetails(attributes);
+  if (!keys.length) return undefined;
+  const one = keys.length === 1;
+  return {
+    text: `The ${keysInWords(keys)} detail${one ? ' looks like a number' : 's look like numbers'} that tell${one ? 's' : ''} the product or edition apart. If ${one ? 'it is' : 'they are'}, give ${one ? 'it' : 'them'} in identifiers too, as a kind and a value: that is where the switchboard matches on ${one ? 'it' : 'them'}, and amend_intent adds ${one ? 'it' : 'them'}. The posting is up as you sent it.`,
+    provenance: 'switchboard-system',
+  };
+}
+
+/**
+ * The same note for a whole list, once, however many items: which details,
+ * and on how many items with no identifiers. Advice only.
+ */
+export function listProductNumberNote(
+  items: { details: unknown; identifiers: unknown[] }[],
+): { text: string; provenance: 'switchboard-system' } | undefined {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    if (item.identifiers.length) continue;
+    for (const k of productNumberDetails(item.details)) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  if (!counts.size) return undefined;
+  const named = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([k, n]) => `\`${k}\` on ${n === 1 ? '1 item' : `${n} items`}`);
+  const said = named.length > 1 ? `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}` : named[0];
+  return {
+    text: `Some items carry no identifiers but have a detail that looks like a number telling the product or edition apart: ${said}. If that is what it is, give it in each item's identifiers too, as a kind and a value: that is where the switchboard matches on it. Send the list again with replace to add them. The items are up as you sent them.`,
+    provenance: 'switchboard-system',
+  };
+}

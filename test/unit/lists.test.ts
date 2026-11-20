@@ -56,6 +56,11 @@ import {
   LIST_ITEM_MAX_DETAILS,
   LIST_SAY_NOTE,
   LIST_SCREEN_CHUNK,
+  SAME_HAND_OVER_NOTE,
+  TOTAL_ITEMS_ASK_NOTE,
+  TOTAL_ITEMS_MISPLACED,
+  declaredTotalSentence,
+  sameHandOver,
   LIST_SCREEN_CHUNK_KIND,
   SQS_MAX_DELAY_SECONDS,
   chunkDelays,
@@ -80,7 +85,13 @@ import {
   type OldItem,
 } from '../../src/domain/lists.js';
 import { FIGURE_RADIUS_TAIL } from '../../src/domain/cards.js';
-import { IDENTIFIER_SENTENCES } from '../../src/domain/identifiers.js';
+import {
+  IDENTIFIER_SENTENCES,
+  listProductNumberNote,
+  productNumberDetailNote,
+  productNumberDetails,
+} from '../../src/domain/identifiers.js';
+import { CHATGPT } from '../../src/mcp/families/chatgpt.js';
 import { listCeilingSentence } from '../../src/domain/quotas.js';
 import { candidateQueryShape, identifierQueryShape, searchQueryShape } from '../../src/domain/matcher.js';
 import {
@@ -163,9 +174,11 @@ function handle(sql: string, params: any[] = []): any {
     return rows(world.list && params[0] === world.list.id && params[1] === world.list.account_id ? [world.list] : []);
   }
   if (/FROM lists l LEFT JOIN cards c/.test(text)) return rows(world.summaries);
+  // The lists put up within the hour (the same-hand-over note).
+  if (/^SELECT id, shared FROM lists WHERE account_id = \$1/.test(text)) return rows((world as any).recent ?? []);
   if (/read_calls/.test(text)) return rows([{ n: 0, oldest: null }]);
   if (/SELECT id FROM lists WHERE id/.test(text)) return rows(world.list ? [{ id: world.list.id }] : []);
-  if (/SELECT id, kind, identifiers, attributes, ask, price_enc, list_pass FROM cards/.test(text)) return rows(world.olds);
+  if (/SELECT id, kind, category, identifiers, attributes, ask, price_enc, list_pass FROM cards/.test(text)) return rows(world.olds);
   if (/SELECT \* FROM accounts WHERE id/.test(text)) {
     return rows([{ id: params[0], data_key_enc: Buffer.from('k') }]);
   }
@@ -1494,5 +1507,316 @@ describe('the sentences and the manual', () => {
     expect(argumentComplaint('publish_list', { list_id: 'nope', items: [] })).toMatch(/list_id is not an id/);
     expect(argumentComplaint('withdraw_list', {})).toMatch(/needs list_id/);
     expect(argumentComplaint('read_lists', { page: 0 })).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE ADVICE ON A LIST'S ANSWER (manual v97). In rehearsal the same slips came
+// back however the tools were worded, so the answer now says so: a declared
+// total and how much of it is still to send, a product's number left in the
+// details, a second list that looks like the same hand-over, and how many
+// items have no asking price. None of it refuses anything. And an item may
+// carry its own shelf, so a mixed hand-over stays one list.
+// ---------------------------------------------------------------------------
+describe('a declared total', () => {
+  it('is kept on a new list and counted, lines turned away included', async () => {
+    const r = await publishList(cfg(), ACCOUNT, {
+      shared: shared(),
+      items: [{ name: 'saddle' }, { name: '' }, { name: 'chain' }],
+      total_items: 5,
+    });
+    expect(r.added).toBe(2);
+    expect(r.total_items).toBe(5);
+    expect(r.items_sent).toBe(3);
+    expect(r.items_to_send).toBe(2);
+    expect(r.total_items_note!.text).toBe(
+      'Of the 5 items your human handed over, 3 have been sent to this list so far, counting any turned away. 2 are still to send: send them to this same list.',
+    );
+    const insert = statements(/INSERT INTO lists/)[0];
+    expect(insert.params.slice(8, 10)).toEqual([5, 3]);
+  });
+
+  it('asks for it next time on a new list that went up without one, and only then', async () => {
+    const r = await publishList(cfg(), ACCOUNT, { shared: shared(), items: [{ name: 'saddle' }] });
+    expect(r.total_items).toBeUndefined();
+    expect(r.total_items_note).toEqual(TOTAL_ITEMS_ASK_NOTE);
+    expect(statements(/INSERT INTO lists/)[0].params.slice(8, 10)).toEqual([null, 1]);
+    world.list = listRow();
+    const more = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'pedals' }] });
+    expect(more.total_items_note).toBeUndefined();
+  });
+
+  it('adds each later call\'s lines, and says when the whole of it has arrived, or more', async () => {
+    world.list = listRow({ expected_items: 5, items_received: 3 });
+    const r = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'pedals' }, { name: 'bell' }] });
+    expect(r.items_sent).toBe(5);
+    expect(r.items_to_send).toBe(0);
+    expect(r.total_items_note!.text).toBe('All 5 items your human handed over have been sent to this list, counting any turned away.');
+    const count = statements(/UPDATE lists SET items_received = items_received \+ \$2/);
+    expect(count).toHaveLength(1);
+    expect(count[0].params).toEqual([LIST, 2]);
+    world.list = listRow({ expected_items: 5, items_received: 5 });
+    const over = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'lights' }] });
+    expect(over.items_to_send).toBe(0);
+    expect(over.total_items_note!.text).toContain('1 more than the 5 your human handed over');
+  });
+
+  it('starts again on part 1 of a replace, with that call\'s total or none', async () => {
+    world.list = listRow({ expected_items: 5, items_received: 5 });
+    const r = await publishList(cfg(), ACCOUNT, {
+      list_id: LIST,
+      replace: true,
+      part: 1,
+      parts: 2,
+      items: [{ name: 'saddle' }],
+      total_items: 300,
+    });
+    expect(r.total_items).toBe(300);
+    expect(r.items_sent).toBe(1);
+    expect(r.items_to_send).toBe(299);
+    const restart = statements(/UPDATE lists SET expected_items = \$2, items_received = \$3/);
+    expect(restart[0].params).toEqual([LIST, 300, 1]);
+  });
+
+  it('is read only where it can be set, and only as a whole number', async () => {
+    world.list = listRow({ expected_items: 5, items_received: 3 });
+    const e = await refusalOf(() => publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'bell' }], total_items: 9 }));
+    expect(e.message).toBe(TOTAL_ITEMS_MISPLACED);
+    expect(e.validation).toEqual(['total_items']);
+    // The same total sent again on a later call is let be.
+    const same = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'bell' }], total_items: 5 });
+    expect(same.added).toBe(1);
+    const bad = await refusalOf(() => publishList(cfg(), ACCOUNT, { shared: shared(), items: [{ name: 'bell' }], total_items: 0 }));
+    expect(bad.validation).toEqual(['total_items']);
+    expect(argumentComplaint('publish_list', { items: [], total_items: 'lots' })).toBeUndefined();
+  });
+
+  it('marks a list still short where the assistant next looks: read_lists and list_intents', async () => {
+    world.summaries = [
+      {
+        id: LIST,
+        type: 'HAVE',
+        category: SHELF,
+        deal: 'sale',
+        state: 'open',
+        expires_at: new Date(Date.now() + 86_400_000),
+        created_at: new Date(),
+        expected_items: 208,
+        items_received: 150,
+        up: 150,
+        checking: 0,
+        turned_away: 0,
+        taken_down: 0,
+        ran_out: 0,
+      },
+    ];
+    const body = (r: any) => JSON.parse(r.content[0].text);
+    const read = body(await dispatchTool(cfg(), ACCOUNT, 'read_lists', {}));
+    expect(read.lists[0].still_to_send).toBe(58);
+    expect(read.lists[0].total_items).toBe(208);
+    expect(read.lists[0].note.text).toBe(
+      'Your list of haves on bike parts: 150 up. 58 of the 208 items you handed over have not been sent to it yet.',
+    );
+    const mine = body(await dispatchTool(cfg(), ACCOUNT, 'list_intents', {}));
+    expect(mine.lists[0].still_to_send).toBe(58);
+    // A list with all of it sent, or none declared, says nothing more.
+    world.summaries[0].items_received = 208;
+    const done = body(await dispatchTool(cfg(), ACCOUNT, 'read_lists', {}));
+    expect(done.lists[0].still_to_send).toBeUndefined();
+    expect(done.lists[0].note.text).toBe('Your list of haves on bike parts: 150 up.');
+  });
+
+  it('passes the total through the dispatcher and describes it on the tool', async () => {
+    const r = JSON.parse(
+      (await dispatchTool(cfg(), ACCOUNT, 'publish_list', { shared: shared(), items: [{ name: 'saddle' }], total_items: 2 }))
+        .content[0].text,
+    );
+    expect(r.items_to_send).toBe(1);
+    const publish = TOOLS.find((t) => t.name === 'publish_list')!;
+    expect(publish.description).toContain('`total_items`');
+    expect(publish.inputSchema.properties.total_items.description).toContain('counted before you send any');
+  });
+});
+
+describe('a product\'s number left in the details', () => {
+  it('names details whose key says number or code and whose value has a digit', () => {
+    expect(
+      productNumberDetails({
+        set_number: '4/102',
+        catalogue_no: 'AB-12',
+        model: 'XR 400',
+        condition: 'good',
+        number_of_players: 4,
+        model_year: 2019,
+        serial_number: 'SN12345678',
+        product_code: 'none',
+        part: '26 inch rim',
+      }),
+    ).toEqual(['set_number', 'catalogue_no', 'model']);
+    expect(productNumberDetails(null)).toEqual([]);
+  });
+
+  it('advises on one posting only where it carries no identifiers', () => {
+    const note = productNumberDetailNote({ isbn: '9780141439518' }, [])!;
+    expect(note.text).toBe(
+      'The `isbn` detail looks like a number that tells the product or edition apart. If it is, give it in identifiers too, as a kind and a value: that is where the switchboard matches on it, and amend_intent adds it. The posting is up as you sent it.',
+    );
+    expect(productNumberDetailNote({ isbn: '9780141439518' }, [{ kind: 'ISBN', value: '9780141439518' }])).toBeUndefined();
+    expect(productNumberDetailNote({ sku: 'A1', model_no: 'B2' }, undefined)!.text).toContain(
+      'The `sku` and `model_no` details look like numbers that tell the product or edition apart.',
+    );
+  });
+
+  it('says it once for a whole list, with which detail and on how many items', async () => {
+    const r = await publishList(cfg(), ACCOUNT, {
+      shared: shared(),
+      items: [
+        { name: 'shifter', details: { part_number: 'SL-M7100' } },
+        { name: 'derailleur', details: { part_number: 'RD-M8100' } },
+        { name: 'cassette', details: { part_number: 'CS-M8100' }, identifiers: [{ kind: 'model number', value: 'CS-M8100' }] },
+        { name: 'saddle', details: { condition: 'good' } },
+      ],
+    });
+    expect(r.added).toBe(4);
+    expect(r.detail_number_note!.text).toContain('`part_number` on 2 items');
+    expect(r.detail_number_note!.text).toContain('The items are up as you sent them.');
+    expect(listProductNumberNote([{ details: { condition: 'good' }, identifiers: [] }])).toBeUndefined();
+  });
+});
+
+describe('a second list that looks like the same hand-over', () => {
+  const recent = (over: Record<string, unknown> = {}) => [
+    { id: OTHER_LIST, shared: { sent: readShared(shared(over)) } },
+  ];
+  const OTHER_LIST = 'dddddddd-4444-4444-8444-dddddddddddd';
+
+  it('names the earlier list and advises, and still puts the new one up', async () => {
+    (world as any).recent = recent();
+    const r = await publishList(cfg(), ACCOUNT, { shared: shared({ category: 'goods.books' }), items: [{ name: 'atlas' }] });
+    expect(r.added).toBe(1);
+    expect(r.same_hand_over_list_id).toBe(OTHER_LIST);
+    expect(r.same_hand_over_note).toEqual(SAME_HAND_OVER_NOTE);
+    const q = statements(/^SELECT id, shared FROM lists WHERE account_id = \$1/)[0];
+    expect(q.text).toContain("created_at > now() - make_interval(mins => $5::int)");
+    expect(q.params).toEqual([ACCOUNT, r.list_id, 'HAVE', 'trade', 60]);
+  });
+
+  it('says nothing where the place or the currency differs, or on a call to a list already up', async () => {
+    expect(sameHandOver(readShared(shared()), readShared(shared({ geo: { bucket: 'r3gz', reach: 'country' } })))).toBe(false);
+    expect(
+      sameHandOver(
+        readShared(shared({ deal: 'sale', currency: 'AUD' })),
+        readShared(shared({ deal: 'sale', currency: 'USD' })),
+      ),
+    ).toBe(false);
+    expect(sameHandOver(readShared(shared({ deal: 'sale', currency: 'AUD' })), readShared(shared({ deal: 'sale' })))).toBe(true);
+    (world as any).recent = recent();
+    world.list = listRow();
+    const r = await publishList(cfg(), ACCOUNT, { list_id: LIST, items: [{ name: 'bell' }] });
+    expect(r.same_hand_over_note).toBeUndefined();
+    expect(statements(/^SELECT id, shared FROM lists WHERE account_id = \$1/)).toHaveLength(0);
+  });
+
+  it('tells the assistant a second list is only for a different side, place, deal or currency', () => {
+    const publish = TOOLS.find((t) => t.name === 'publish_list')!;
+    for (const text of [publish.description, CHATGPT.publish_list.description, SAME_HAND_OVER_NOTE.text]) {
+      expect(text).toMatch(/side, place, deal or currency differ/);
+      expect(text).not.toMatch(/money differ/);
+    }
+    expect(publish.inputSchema.properties.items.items.properties.category.description).toContain('different shelf');
+  });
+});
+
+describe('how many have no asking price', () => {
+  it('is said in the results sentence on a list that sells', () => {
+    const c = { sent: 208, added: 208, changed: 0, unchanged: 0, withdrawn: 0, refused: 0 };
+    expect(resultsSentence(c, undefined, { priced: 0, open: 208 })).toBe(
+      'Of 208 items sent: 208 items are going up. All 208 are open to offers; none has an asking price.',
+    );
+    expect(resultsSentence(c, undefined, { priced: 3, open: 205 })).toBe(
+      'Of 208 items sent: 208 items are going up. 3 have asking prices; 205 are open to offers, with no asking price.',
+    );
+    expect(resultsSentence({ ...c, sent: 1, added: 1 }, undefined, { priced: 0, open: 1 })).toContain(
+      'It is open to offers, with no asking price.',
+    );
+    expect(resultsSentence(c, undefined, { priced: 208, open: 0 })).toBe('Of 208 items sent: 208 items are going up.');
+  });
+
+  it('counts the items up from the call', async () => {
+    const r = await publishList(cfg(), ACCOUNT, {
+      shared: shared({ deal: 'sale', currency: 'AUD' }),
+      items: [{ name: 'saddle', open_to_offers: true }, { name: 'chain', open_to_offers: true }, { name: '' }],
+    });
+    expect(r.results_note.text).toContain('All 2 are open to offers; none has an asking price.');
+    // A list that only trades says nothing about prices.
+    const t = await publishList(cfg(), ACCOUNT, { shared: shared(), items: [{ name: 'bell' }] });
+    expect(t.results_note.text).not.toContain('asking price');
+  });
+});
+
+describe('an item on its own shelf', () => {
+  it('goes up on that shelf, on the same list', async () => {
+    const r = await publishList(cfg(), ACCOUNT, {
+      shared: shared(),
+      items: [{ name: 'saddle' }, { name: 'road atlas', category: 'goods.books' }],
+    });
+    expect(r.added).toBe(2);
+    expect(statements(/INSERT INTO lists/)).toHaveLength(1);
+    const rows = world.inserted;
+    expect(rows[0].category).toBeUndefined();
+    // Filed the way the list's own shelf is: the path as sent is kept beside it.
+    expect(rows[1]).toEqual(expect.objectContaining({ category: 'goods.books-media', category_as_posted: 'goods.books' }));
+    const insert = statements(/INSERT INTO cards/)[0];
+    expect(insert.text).toContain('COALESCE(r.category, $4)');
+  });
+
+  it('turns back only its own items where the shelf cannot be used', async () => {
+    const r = await publishList(cfg(), ACCOUNT, {
+      shared: shared(),
+      items: [
+        { name: 'saddle' },
+        { name: 'window cleaning', category: 'services.cleaning' },
+        { name: 'brake pads', category: 7 },
+      ],
+    });
+    expect(r.added).toBe(1);
+    expect(r.refused_items.map((x) => [x.index, x.reason])).toEqual([
+      [1, 'shelf'],
+      [2, 'shelf'],
+    ]);
+    for (const x of r.refused_items) expect(lintHumanCopy(x.fix), x.fix).toEqual([]);
+  });
+
+  it('is part of what makes an item already up the same', () => {
+    const old: OldItem = { id: 'o1', kind: 'atlas', identifiers: null, attributes: {}, ask: null, hasBand: false, category: SHELF };
+    expect(sameItem(old, { kind: 'atlas', identifiers: [], attributes: {}, category: SHELF })).toBe(true);
+    expect(sameItem(old, { kind: 'atlas', identifiers: [], attributes: {}, category: 'goods.books' })).toBe(false);
+  });
+});
+
+describe('manual version 97', () => {
+  it('says what assistants now see, in general words', () => {
+    expect(MANUAL.version).toBeGreaterThanOrEqual(97);
+    const note = MANUAL_CHANGELOG.find((c) => c.version === 97)!.note;
+    for (const said of ['total_items', 'still to send', 'its own category', 'side, place, deal or currency differ', 'identifiers', 'same hand-over', 'no asking price']) {
+      expect(note).toContain(said);
+    }
+    const section = manualSection('lists')!;
+    expect(section.text).toContain('total_items');
+    expect(section.text).toContain('an item on another gives its own');
+    for (const copy of [
+      note,
+      section.text,
+      SAME_HAND_OVER_NOTE.text,
+      TOTAL_ITEMS_ASK_NOTE.text,
+      TOTAL_ITEMS_MISPLACED,
+      declaredTotalSentence(208, 150),
+      declaredTotalSentence(208, 212),
+      LIST_SAY_NOTE.text,
+    ]) {
+      expect(lintHumanCopy(copy), copy).toEqual([]);
+      expect(copy).not.toMatch(/pok[eé]mon|trading|tcg|vinyl|lego|stamp|\bcards?\b/i);
+    }
+    expect(readFileSync('docs/manual.md', 'utf8')).toContain(note);
   });
 });

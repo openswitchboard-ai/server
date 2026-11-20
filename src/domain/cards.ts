@@ -67,6 +67,7 @@ import {
   kindKey,
   kindsInWords,
   ownIdentifiers,
+  productNumberDetailNote,
   readIdentifiers,
   type Identifier,
 } from './identifiers.js';
@@ -119,6 +120,12 @@ export interface PublishResult {
    * so assistants reach for the same ones (identifierKindsNoteFor below).
    */
   identifier_kinds_note?: { text: string; provenance: 'switchboard-system' };
+  /**
+   * A detail that looks like the number telling the product or edition apart,
+   * on a posting with no identifiers (identifiers.ts productNumberDetailNote).
+   * Advice only: the posting is up as sent.
+   */
+  detail_number_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
@@ -832,6 +839,12 @@ async function identifierKindsNoteFor(
   };
 }
 
+/** The product-number advice as an answer field, where there is any. */
+export function detailNumberNoteFor(attributes: unknown, identifiers: unknown): Pick<PublishResult, 'detail_number_note'> {
+  const note = productNumberDetailNote(attributes, identifiers);
+  return note ? { detail_number_note: note } : {};
+}
+
 /**
  * THE REACH QUESTIONS, word for word as the posting door has always asked
  * them, named so the list door (domain/lists.ts) asks a list's shared reach in
@@ -1515,6 +1528,7 @@ async function runPublish(
       lane: laneFor(facts.arrangement),
       arrangement: facts.arrangement,
     })),
+    ...detailNumberNoteFor(attributes, identifiers),
   };
 }
 
@@ -2014,6 +2028,7 @@ export async function amendIntent(
       lane: laneFor(amendFacts.arrangement),
       arrangement: amendFacts.arrangement,
     })),
+    ...detailNumberNoteFor(attributes, standing),
   };
 }
 

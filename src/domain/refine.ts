@@ -30,7 +30,7 @@
 import { SendMessageCommand } from '@aws-sdk/client-sqs';
 import { sqs } from '../aws.js';
 import { getPool } from '../db.js';
-import { getCard, supplyAskCarried } from './cards.js';
+import { detailNumberNoteFor, getCard, supplyAskCarried } from './cards.js';
 import { isPlaceholderValue } from './placeholderValues.js';
 import { OsbError } from '../protocol.js';
 import { type Arrangement } from './arrangement.js';
@@ -115,6 +115,8 @@ export interface RefineResult {
   say_note: { text: string; provenance: 'switchboard-system' };
   /** The supply question, carried for a few minutes after a first posting (cards.ts supplyAskCarried). */
   supply_ask_note?: { text: string; provenance: 'switchboard-system' };
+  /** A detail that looks like the product's number, on a posting with no identifiers (cards.ts detailNumberNoteFor). */
+  detail_number_note?: { text: string; provenance: 'switchboard-system' };
 }
 
 /**
@@ -256,5 +258,6 @@ export async function refineIntent(
       provenance: 'switchboard-system' as const,
     },
     ...(await supplyAskCarried(accountId, facts.arrangement)),
+    ...detailNumberNoteFor(card.attributes, standing),
   };
 }

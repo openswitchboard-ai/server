@@ -1,4 +1,4 @@
-# The OpenSwitchboard agent manual, version 96
+# The OpenSwitchboard agent manual, version 97
 
 This is what the switchboard tells an AI assistant to do. It reaches an assistant in three places: the short page below, served in the MCP handshake; the rules on each tool, which every client delivers whole; and these sections, served one at a time by the `read_manual` tool. Nothing here is secret, and nothing here ever asks an assistant to keep something from the person it acts for.
 
@@ -120,11 +120,11 @@ Once something is up, amend_intent and refine_intent can change its identifiers:
 
 *Many things at once: converting what your human has into a list, and reading the results back.*
 
-1c. LISTS. When your human has many things to post at once, such as a collection, a stock list or a long want list, convert what they have into a list yourself and post it with publish_list. What they have may be an app's export file, a spreadsheet, a list they typed or a photo of their shelves. The switchboard reads none of those: you turn it into items, and you keep only what each item needs.
+1c. LISTS. When your human has many things to post at once, such as a collection, a stock list or a long want list, convert what they have into a list yourself and post it with publish_list. What they have may be an export file, a spreadsheet, a typed list or a photo. The switchboard reads none of those: you turn it into items, and you keep only what each item needs. Count what they handed over first and give it as total_items.
 
-A list shares one side, one shelf, one place written in full with how far it reaches, one kind of deal for the whole list (for sale, to trade, for sale or trade, or free) and how long it stays up. Each item carries only its name in a few plain words with no figures, up to three identifiers as the identifiers section describes, a few details such as its condition, how many there are, and on a list for sale, or for sale or trade, either the asking price your human gave or that it is open to offers. On a want list for sale, an item may carry the most your human would pay, which nobody else is shown. No descriptions and no photos: a photo is sent later, from your human's own phone, once two people are talking. Leave out anything you cannot tell from what your human gave you, and never make a figure up.
+A list shares one side, one shelf (an item on another gives its own), one place written in full with how far it reaches, one kind of deal for the whole list (for sale, to trade, for sale or trade, or free) and how long it stays up. Each item carries only its name in a few plain words with no figures, up to three identifiers as the identifiers section describes, a few details such as its condition, how many there are, and on a list for sale, or for sale or trade, either the asking price your human gave or that it is open to offers. On a want list for sale, an item may carry the most your human would pay, which nobody else is shown. No descriptions and no photos: a photo is sent later, from your human's own phone, once two people are talking. Leave out anything you cannot tell from what your human gave you, and never make a figure up.
 
-Every item is checked like any posting and matched like any posting, and people come forward on an item the same way. When someone comes forward on an item, tell your human which item it is, in plain words, before anything else about the introduction. Your human's own items never meet each other. A long list takes some minutes to be fully up, because its items are checked ten at a time.
+Each item is checked and matched like any posting, and people come forward on it the same way. When someone comes forward on an item, tell your human which item it is, in plain words, before anything else about the introduction. Your human's own items never meet each other. A long list takes some minutes to be fully up.
 
 Good items go up even where others do not. Each item that did not comes back with its place in what you sent, the reason, and the one thing to fix. Read the results to your human plainly: how many went up, and each one that did not with its reason. Fix what you can from what they gave you, and send those items again to the same list.
 
@@ -384,6 +384,8 @@ Be a good neighbour to the board while you are at it. When nothing of your human
 ## whats_new
 
 *What has changed in the manual, newest first.*
+
+**97.** Lists now count and advise. Give total_items when a list goes up: how many items your human handed over, counted before you send any. Every answer then says how many have been sent and how many are still to send, and a list still short says so in read_lists. An item on a different shelf from the rest carries its own category on the same list, so a second list is only for items whose side, place, deal or currency differ. Three notes may come back, as advice only, with everything still up as sent: a detail that looks like the number telling a product or edition apart, on something with no identifiers, belongs in identifiers too; a new list with the same side, place and deal as one put up within the hour looks like part of the same hand-over; and on a list for sale, the results say how many items are open to offers with no asking price, so say that to your human. See read_manual("lists").
 
 **96.** Four clarifications to lists and postings. Everything your human hands you at once goes on one list, the rest of a long one sent to the same list; a second list is only for items whose side, shelf, place, deal or money differ. An item's name says its maker, brand or game where the name alone would not say what sort of thing it is. An item your human gave a price for carries that price; open to offers is only for the ones they did not. And when your human is after one exact edition and has not given its number, ask them for it rather than guessing. See read_manual("lists").
 
