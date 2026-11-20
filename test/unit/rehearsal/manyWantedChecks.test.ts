@@ -203,14 +203,22 @@ describe('a list bigger than one call', () => {
 });
 
 describe('a thing unlike the rest says what it is', () => {
-  it('wants a must-say word in the item\'s own words, not the shelf', () => {
+  it('takes a must-say word in the item\'s own words or on its own shelf', () => {
     const a = assignRows(sellerItems(), ROWS);
     expect(checkListMustSay(ROWS, a).verdict).toBe('pass');
-    const plain = sellerItems().map((c) => (c.id === 'board' ? { ...c, kind: 'Board', category: 'board game' } : c));
+    const plain = sellerItems().map((c) => (c.id === 'board' ? { ...c, kind: 'Board', category: 'goods.home' } : c));
     const c = checkListMustSay(ROWS, assignRows(plain, ROWS));
     expect(c.verdict).toBe('fail');
     expect(c.evidence).toMatch(/without "board game"/);
+    const shelved = sellerItems().map((c) => (c.id === 'board' ? { ...c, kind: 'Board', category: 'goods.board-game' } : c));
+    expect(checkListMustSay(ROWS, assignRows(shelved, ROWS)).verdict).toBe('pass');
     expect(checkListMustSay(ROWS.map(({ mustSay: _m, ...r }) => r), a).verdict).toBe('skip');
+  });
+  it('fails a plain item filed on the odd one\'s shelf', () => {
+    const all = sellerItems().map((c) => ({ ...c, category: 'goods.board-game' }));
+    const c = checkListMustSay(ROWS, assignRows(all, ROWS));
+    expect(c.verdict).toBe('fail');
+    expect(c.evidence).toMatch(/another sort of thing's/);
   });
 });
 

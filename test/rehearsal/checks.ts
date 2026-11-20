@@ -2601,14 +2601,19 @@ function itemOwnWords(card: CardFacts): string {
 }
 
 /**
- * S1.list.must_say — a row may say words its item has to carry in its own
- * words (ListRowSpec.mustSay), any one of them: a thing from outside what the
- * rest of the list is (another game, another kind of thing) says what it is,
- * rather than leaving the other side to assume it is like its neighbours.
+ * S1.list.must_say — a row may carry words that say what sort of thing it is
+ * (ListRowSpec.mustSay), any one of them: a thing from outside what the rest
+ * of the list is (another maker, another game, another kind of thing). Since
+ * manual v97 a list item may sit on its own shelf, and the shelf is the
+ * general way a thing is classified, so the words may be in the item's own
+ * words OR in the shelf it went up on. And the other way round: a row with no
+ * such words must not have gone up on a shelf that carries another row's, as
+ * it would were a whole mixed list filed under the odd ones out.
  */
 export function checkListMustSay(rows: readonly ListRowSpec[], assigned: RowAssignment[]): Check {
   const id = 'S1.list.must_say';
-  const says = "each item unlike the rest of the list says what it is in its own words (the row's must-say words), so nobody takes it for one of its neighbours.";
+  const says =
+    "each item unlike the rest of the list says what sort of thing it is, in its own words or on its own shelf, and no other item is filed on that item's shelf.";
   const asked = assigned.filter((a) => rows[a.row].mustSay?.length);
   if (!asked.length) return skip(id, says, 'no row asks its item to say anything in particular');
   const notes: string[] = [];
@@ -2618,10 +2623,24 @@ export function checkListMustSay(rows: readonly ListRowSpec[], assigned: RowAssi
     if (!a.card) continue;
     found++;
     const own = squash(itemOwnWords(a.card));
-    if (!(row.mustSay ?? []).some((w) => squash(w) && own.includes(squash(w)))) {
-      notes.push(`${rowLabel(row)} went up as ${postingLabel(a.card)} without ${(row.mustSay ?? []).map((w) => `"${w}"`).join(' or ')}`);
+    const shelf = squash(String(a.card.category ?? ''));
+    if (!(row.mustSay ?? []).some((w) => squash(w) && (own.includes(squash(w)) || shelf.includes(squash(w))))) {
+      notes.push(
+        `${rowLabel(row)} went up as ${postingLabel(a.card)} on shelf ${a.card.category ?? '(none)'} without ${(row.mustSay ?? []).map((w) => `"${w}"`).join(' or ')}`,
+      );
     }
   }
+  const oddWords = [...new Set(rows.flatMap((r) => r.mustSay ?? []).map(squash).filter(Boolean))];
+  let misfiled = 0;
+  for (const a of assigned) {
+    if (!a.card || rows[a.row].mustSay?.length) continue;
+    const shelf = squash(String(a.card.category ?? ''));
+    if (oddWords.some((w) => shelf.includes(w))) {
+      misfiled++;
+      if (misfiled <= 3) notes.push(`${rowLabel(rows[a.row])} went up on shelf ${a.card.category}, which is another sort of thing's`);
+    }
+  }
+  if (misfiled > 3) notes.push(`and ${misfiled - 3} more on another sort of thing's shelf`);
   const ev = `${asked.length} row(s) must say what they are, ${found} on the list`;
   return notes.length ? fail(id, says, `${ev}; ${short(notes)}`) : pass(id, says, ev);
 }
