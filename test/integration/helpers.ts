@@ -242,6 +242,19 @@ export async function completeOnboarding(
   if (['/hello', '/secure', '/pin', '/consent', '/login'].includes(next)) {
     throw new Error(`onboarding did not stick: the account still owes ${next}`);
   }
+  // An account opened through the ops queue never saw the consent page, so it
+  // is asked to agree to the terms next (counter/terms.ts), like any account
+  // on an older version. Answered here so every suite comes past that door.
+  if (next === '/terms-update') await acceptTermsUpdate(jar);
+}
+
+/** Tick the terms on /terms-update, the way an existing account does. */
+export async function acceptTermsUpdate(jar: Jar): Promise<void> {
+  const res = await counterFetch(jar, '/terms-update', form({ terms: 'yes' }));
+  if (res.status !== 303) throw new Error(`terms update failed: ${res.status}`);
+  if ((res.headers.get('location') ?? '') === '/terms-update') {
+    throw new Error('the terms did not stick: the account is still asked');
+  }
 }
 
 /**
