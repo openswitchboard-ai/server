@@ -171,12 +171,13 @@ test('register: email -> code -> PIN -> two confirmations -> one question -> mai
   await shot(page, '05-passkey-offer');
   await page.getByRole('button', { name: 'Skip for now' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Two things to confirm.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Three things to confirm.' })).toBeVisible();
   await page.getByLabel('I am 18 or older.').check();
   // By role, not by label: a regex label match runs against the raw label text,
   // which starts with the template's newline and indent, so ^ never matches
   // (and the check waited out the whole test timeout).
   await page.getByRole('checkbox', { name: /^My assistant may post wants and haves for me\./ }).check();
+  await page.getByRole('checkbox', { name: /^I agree to the terms of use/ }).check();
   await shot(page, '06-consent');
   await page.getByRole('button', { name: 'Open my account' }).click();
 

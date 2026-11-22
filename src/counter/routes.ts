@@ -13,6 +13,7 @@
  *    (its auth looks exclusively at the Authorization header);
  *  - these routes 404 on the MCP hostname (and /mcp 404s on this one).
  */
+import { TERMS_STATEMENT, TERMS_VERSION, termsCurrent } from './terms.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   ACCOUNTLESS_VERIFICATIONS_PER_HOUR,
@@ -513,7 +514,7 @@ export function registerCounterRoutes(app: FastifyInstance, cfg: Config): void {
       if (!a) return html(reply, pages.landingPage());
       // The onboarding question sits between the PIN and everything else, so
       // the front page sends a first-time person there before it renders.
-      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending' || !a.onboarded_at) {
+      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending' || !a.onboarded_at || !termsCurrent(a)) {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       // What this page asks for is what it is going to show: the gates. The
@@ -1414,18 +1415,53 @@ in on this device and lets you approve what is waiting.</p>
       const s = await requireSession(req, reply);
       if (!s) return;
       const b: any = req.body ?? {};
-      if (b.adult !== 'yes' || b.consent !== 'yes') {
-        return html(reply, home.consentPage('Tick both to open your account.'), 400);
+      if (b.adult !== 'yes' || b.consent !== 'yes' || b.terms !== 'yes') {
+        return html(reply, home.consentPage('Tick all three to open your account.'), 400);
       }
       const a: any = await getAccount(s.accountId!);
       if (!(await holdsCredential(s.accountId!, a))) return reply.redirect('/secure', 303);
       if (a.status === 'pending') {
-        await ops.activateAccountWithConsent(s.accountId!, home.CONSENT_STATEMENT);
+        await ops.activateAccountWithConsent(s.accountId!, home.CONSENT_STATEMENT, {
+          version: TERMS_VERSION,
+          statement: TERMS_STATEMENT,
+        });
       }
       // nextStep rather than a hard-coded target: the onboarding question sits
       // between here and authorising an agent, and a first-time person passes
       // it whichever way they arrived.
       return reply.redirect(await nextStep(s.accountId!, s), 303);
+    });
+
+    // ------------------------------------------------------------------
+    // The terms, asked once of an account that agreed to an older version or
+    // to none (counter/terms.ts). nextStep sends a person here after signing
+    // in, and the main page and an assistant's authorisation both wait on it.
+    // ------------------------------------------------------------------
+    counter.get('/terms-update', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const a: any = await getAccount(s.accountId!);
+      if (!(await holdsCredential(s.accountId!, a)) || a.status === 'pending' || !a.onboarded_at || termsCurrent(a)) {
+        return reply.redirect(await nextStep(s.accountId!, s), 303);
+      }
+      return html(reply, home.termsUpdatePage());
+    });
+
+    counter.post('/terms-update', async (req, reply) => {
+      const s = await requireSession(req, reply);
+      if (!s) return;
+      const a: any = await getAccount(s.accountId!);
+      if (!(await holdsCredential(s.accountId!, a)) || a.status === 'pending' || !a.onboarded_at) {
+        return reply.redirect(await nextStep(s.accountId!, s), 303);
+      }
+      const b: any = req.body ?? {};
+      if (b.terms !== 'yes') {
+        return html(reply, home.termsUpdatePage('Tick the box to carry on.'), 400);
+      }
+      if (!termsCurrent(a)) {
+        await ops.acceptTerms(s.accountId!, { version: TERMS_VERSION, statement: TERMS_STATEMENT });
+      }
+      return reply.redirect(await afterSignIn(req, reply, s.accountId!, s), 303);
     });
 
     // ------------------------------------------------------------------
@@ -5477,7 +5513,9 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       await sess.setOauthCtx(s.id, ctx);
       if (!s.accountId) return reply.redirect('/login', 303);
       const a: any = await getAccount(s.accountId);
-      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending') {
+      // Onboarded accounts only for the terms: one that has not answered the
+      // first question yet goes there first, as it always did.
+      if (!(await holdsCredential(s.accountId, a)) || a.status === 'pending' || (a.onboarded_at && !termsCurrent(a))) {
         return reply.redirect(await nextStep(s.accountId, s as Session), 303);
       }
       (reply as any).osbFormActionExtra = formActionSource(ctx.redirect_uri);
@@ -5509,6 +5547,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!a || a.status !== 'active') {
         return html(reply, pages.messagePage('Account not active', '<p>Finish opening your account first.</p>'), 403);
       }
+      if (a.onboarded_at && !termsCurrent(a)) return reply.redirect('/terms-update', 303);
       const target = new URL(ctx.redirect_uri);
       if (String((req.body as any)?.decision ?? '') !== 'approve') {
         await sess.setOauthCtx(s.id, null);

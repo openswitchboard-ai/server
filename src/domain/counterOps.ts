@@ -58,25 +58,51 @@ export async function markOnboarded(accountId: string): Promise<void> {
 }
 
 /**
- * The registration consent step: 18+ assertion + the consent statement.
- * WORM event first; only then does the account go live.
- * Returns the WORM object key.
+ * The registration consent step: 18+ assertion, the consent statement and
+ * the terms (counter/terms.ts). WORM event first; only then does the account
+ * go live. Returns the WORM object key.
  */
 export async function activateAccountWithConsent(
   accountId: string,
   consentStatement: string,
+  terms: { version: string; statement: string },
 ): Promise<string> {
   const key = await writeConsentEvent({
     event: 'registration-consent',
     account_id: accountId,
     adult_asserted: true,
     consent_statement: consentStatement,
+    terms_version: terms.version,
+    terms_statement: terms.statement,
     recorded_via: 'counter',
   });
   await getPool().query(
-    `UPDATE accounts SET status = 'active', adult_asserted_at = now(), consented_at = now()
+    `UPDATE accounts SET status = 'active', adult_asserted_at = now(), consented_at = now(),
+       terms_version = $2, terms_accepted_at = now()
      WHERE id = $1 AND status = 'pending'`,
-    [accountId],
+    [accountId, terms.version],
+  );
+  return key;
+}
+
+/**
+ * An existing account agreeing to the terms as they stand now
+ * (counter/terms.ts). WORM event first, then the stamp the pages read.
+ */
+export async function acceptTerms(
+  accountId: string,
+  terms: { version: string; statement: string },
+): Promise<string> {
+  const key = await writeConsentEvent({
+    event: 'terms-acceptance',
+    account_id: accountId,
+    terms_version: terms.version,
+    terms_statement: terms.statement,
+    recorded_via: 'counter',
+  });
+  await getPool().query(
+    'UPDATE accounts SET terms_version = $2, terms_accepted_at = now() WHERE id = $1',
+    [accountId, terms.version],
   );
   return key;
 }

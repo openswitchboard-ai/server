@@ -7,6 +7,7 @@
  * the top as tappable cards, then quiet navigation to the things they go and
  * look at when they feel like it.
  */
+import { PRIVACY_URL, TERMS_URL } from './terms.js';
 import {
   SUGGESTION_APPETITES,
   arrangementInPlainWords,
@@ -1626,10 +1627,14 @@ document.getElementById('copybtn').addEventListener('click', async () => {
 export const CONSENT_STATEMENT =
   'My assistant may post wants and haves for me. I can see or take down anything on my main page.';
 
-export const CONSENT_HEADING = 'Two things to confirm.';
+export const CONSENT_HEADING = 'Three things to confirm.';
+
+/** The terms tick, with both documents linked; the log keeps TERMS_STATEMENT. */
+const TERMS_TICK = `I agree to the <a href="${TERMS_URL}" target="_blank" rel="noopener">terms of use</a>
+      and the <a href="${PRIVACY_URL}" target="_blank" rel="noopener">privacy policy</a>.`;
 
 export function consentPage(error?: string): string {
-  return layout('Two things to confirm', `
+  return layout('Three things to confirm', `
 <h1>${esc(CONSENT_HEADING)}</h1>
 ${errBox(error)}
 <form method="POST" action="/consent">
@@ -1638,12 +1643,41 @@ ${errBox(error)}
       I am 18 or older.</label>
     <label><input type="checkbox" name="consent" value="yes" required>
       ${esc(CONSENT_STATEMENT)}</label>
+    <label><input type="checkbox" name="terms" value="yes" required>
+      ${TERMS_TICK}</label>
   </div>
   <button type="submit">Open my account</button>
 </form>
-<p class="small muted">Both are recorded in a tamper-evident consent log.</p>
+<p class="small muted">All three are recorded in a tamper-evident consent log.</p>
 <p class="small muted">A first name and a suburb are the only things that ever cross,
 and only after both people say yes.</p>`);
+}
+
+/**
+ * The terms, asked once of an account that agreed to an older version or to
+ * none (counter/terms.ts). Nothing else on the account waits on it except the
+ * main page and connecting an assistant.
+ */
+export function termsUpdatePage(error?: string): string {
+  return layout('Our terms have changed', `
+<h1>Our terms have changed.</h1>
+<p class="lead">Tick the box to carry on to your main page.</p>
+${errBox(error)}
+<p>What is new, in short:</p>
+<ul>
+  <li>You agree to the terms of use and the privacy policy here, on your own page, whichever assistant you use.</li>
+  <li>Keep your PIN out of assistants and their browsers, and open the pages you press in your own browser or on your phone.</li>
+  <li>Disconnecting an assistant signs it out. Your account and your wants and haves stay until you take them down or delete your account.</li>
+</ul>
+<form method="POST" action="/terms-update">
+  <div class="consent-box">
+    <label><input type="checkbox" name="terms" value="yes" required>
+      ${TERMS_TICK}</label>
+  </div>
+  <button type="submit">Carry on</button>
+</form>
+<p class="small muted">Recorded in a tamper-evident consent log. If you don't agree, you can
+<a href="/settings">delete your account</a> in Settings.</p>`);
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@
  *  - a first-time person passes the onboarding question exactly once, and an
  *    account that existed before the step never sees it.
  */
+import { TERMS_VERSION } from '../../src/counter/terms.js';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/crypto.js', async (orig) => ({
@@ -317,6 +318,7 @@ function fakePool() {
             pin_hash: pinHash,
             hears_via: world.hearsVia,
             onboarded_at: world.onboardedAt,
+            terms_version: TERMS_VERSION,
             first_name_enc: Buffer.from(`enc:${params[0] === BEPPE ? 'Sam' : world.firstName}`),
             locality_enc: Buffer.from(`enc:${params[0] === BEPPE ? 'Ainslie' : world.locality}`),
           },

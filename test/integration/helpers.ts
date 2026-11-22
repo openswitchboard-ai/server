@@ -441,7 +441,7 @@ export async function registerActor(): Promise<TestActor> {
   const pin = TEST_PIN;
   const setPin = await counterFetch(jar, '/pin/set', form({ pin, pin2: pin }));
   if (setPin.status !== 303) throw new Error(`pin set failed: ${setPin.status}`);
-  const consent = await counterFetch(jar, '/consent', form({ adult: 'yes', consent: 'yes' }));
+  const consent = await counterFetch(jar, '/consent', form({ adult: 'yes', consent: 'yes', terms: 'yes' }));
   if (consent.status !== 303) throw new Error(`consent failed: ${consent.status}`);
 
   const accountId = (

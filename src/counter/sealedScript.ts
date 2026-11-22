@@ -25,6 +25,7 @@
  * runs it under Node's WebCrypto and proves the round trip.
  */
 import { createHash } from 'node:crypto';
+import { PIN_MASK_JS } from './pinMask.js';
 
 export const SEALED_CORE_JS = String.raw`
 var OSB_SEALED = (function () {
@@ -262,7 +263,7 @@ export const SEALED_PAGE_JS = String.raw`
       try {
         var k = await localKey();
         if (viaPasskey) await passkeyElevate();
-        var ok = await register(k, !viaPasskey && spin ? spin.value : '');
+        var ok = await register(k, !viaPasskey && spin ? osbPinValue(spin) : '');
         if (!ok) throw new Error('That takes your PIN or your passkey.');
         try { localStorage.setItem('osb-sealed-touched:' + slot + ':' + k.key_id, String(Date.now())); } catch (e) {}
         var page = document.getElementById('page'); page.innerHTML = '';
@@ -271,7 +272,7 @@ export const SEALED_PAGE_JS = String.raw`
         q.textContent = 'Contact details sent to you from now on can be opened here. Your assistant tells the other side it is ready.';
         page.appendChild(q); h.setAttribute('tabindex', '-1'); h.focus();
       } catch (e) {
-        if (spin) spin.value = '';
+        if (spin) osbPinClear(spin);
         showErr(failWords(e)); sbtn.disabled = false; if (spk) spk.disabled = false;
       }
     }
@@ -332,16 +333,16 @@ export const SEALED_PAGE_JS = String.raw`
         }
         var body = { decision: 'yes', envelopes: envelopes };
         if (assertion) body.passkey = JSON.stringify(assertion);
-        else if (pinBox && pinBox.value) body.pin = pinBox.value;
+        else if (pinBox && osbPinValue(pinBox)) body.pin = osbPinValue(pinBox);
         var done = await postJson(action, body);
-        addr.value = ''; phone.value = ''; if (email) email.value = ''; if (pinBox) pinBox.value = '';
+        addr.value = ''; phone.value = ''; if (email) email.value = ''; if (pinBox) osbPinClear(pinBox);
         var page = document.getElementById('page');
         page.innerHTML = '';
         var h = document.createElement('h1'); h.textContent = done.title || 'Sent'; page.appendChild(h);
         (done.lines || []).forEach(function (l) { var q = document.createElement('p'); q.textContent = l; page.appendChild(q); });
         h.setAttribute('tabindex', '-1'); h.focus();
       } catch (e) {
-        if (pinBox) pinBox.value = '';
+        if (pinBox) osbPinClear(pinBox);
         showErr(failWords(e));
         sendBtn.disabled = false; if (pkBtn) pkBtn.disabled = false; sendBtn.textContent = old;
       }
@@ -395,7 +396,7 @@ export const SEALED_PAGE_JS = String.raw`
 `;
 
 /** The whole script as served. */
-export const SEALED_JS = `${SEALED_CORE_JS}\n${SEALED_PAGE_JS}`;
+export const SEALED_JS = `${SEALED_CORE_JS}\n${PIN_MASK_JS}\n${SEALED_PAGE_JS}`;
 
 /** Subresource Integrity for the served script. */
 export const SEALED_JS_SRI = `sha384-${createHash('sha384').update(SEALED_JS, 'utf8').digest('base64')}`;

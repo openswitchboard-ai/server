@@ -114,7 +114,7 @@ assert.equal(again.statusCode, 401, 'verification must be single-use');
 
 const pinSet = await counterReq('POST', '/pin/set', { pin: '135790', pin2: '135790' });
 assert.equal(pinSet.statusCode, 303, pinSet.body);
-const consent = await counterReq('POST', '/consent', { adult: 'yes', consent: 'yes' });
+const consent = await counterReq('POST', '/consent', { adult: 'yes', consent: 'yes', terms: 'yes' });
 assert.equal(consent.statusCode, 303, consent.body);
 console.log('counter registration OK (email code -> PIN -> consent, WORM event written via real S3)');
 

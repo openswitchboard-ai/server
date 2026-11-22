@@ -7,6 +7,7 @@
  * account looks exactly as it always did, a passkey-only account is never
  * shown a box it cannot fill, and an account holding both is offered both.
  */
+import { TERMS_VERSION } from '../../src/counter/terms.js';
 import { describe, expect, it } from 'vitest';
 import * as creds from '../../src/counter/credentials.js';
 import * as cpages from '../../src/counter/pages.js';
@@ -18,7 +19,7 @@ const PASSKEY_ONLY = { hasPin: false, hasPasskey: true };
 const BOTH = { hasPin: true, hasPasskey: true };
 const NOTHING = { hasPin: false, hasPasskey: false };
 
-const live = { status: 'live', onboarded_at: '2026-09-01T00:00:00.000Z' };
+const live = { status: 'live', terms_version: TERMS_VERSION, onboarded_at: '2026-09-01T00:00:00.000Z' };
 
 describe('what an account holds', () => {
   it('either credential is a whole credential', () => {
@@ -54,6 +55,14 @@ describe('where a signed-in person belongs next', () => {
   it('a PIN account walks the same path it always did', () => {
     expect(creds.nextStepFor({ status: 'pending' }, PIN_ONLY)).toBe('/consent');
     expect(creds.nextStepFor(live, PIN_ONLY)).toBe('/');
+  });
+
+  it('an account that agreed to older terms, or none, is asked once before the main page', () => {
+    const old = { status: 'active', onboarded_at: new Date(), terms_version: '2026-01-01' };
+    expect(creds.nextStepFor(old, PIN_ONLY)).toBe('/terms-update');
+    expect(creds.nextStepFor({ status: 'active', onboarded_at: new Date() }, PIN_ONLY, { hasOauthCtx: true })).toBe('/terms-update');
+    // Onboarding still comes first for an account that has not done it.
+    expect(creds.nextStepFor({ status: 'active' }, PIN_ONLY)).toBe('/hello');
   });
 
   it('no account at all goes to sign in', () => {
@@ -105,7 +114,8 @@ describe('the choice screen', () => {
   });
 
   it('does not oversell the passkey or call the PIN weak', () => {
-    expect(html).not.toMatch(/weak|insecure|unsafe|safer|more secure/i);
+    // Whole words: the page's scripts use a WeakMap.
+    expect(html).not.toMatch(/\b(weak|insecure|unsafe|safer|more secure)\b/i);
     expect(lintHumanCopy(html)).toEqual([]);
   });
 });

@@ -21,6 +21,7 @@
  * The decisions live here, away from the routes and the database, because
  * every one of them is a rule rather than a query.
  */
+import { termsCurrent } from './terms.js';
 
 export interface CredentialState {
   hasPin: boolean;
@@ -134,6 +135,7 @@ export function ceremonyKind(c: CredentialState): 'none' | 'pin' | 'passkey' | '
 export interface AccountStep {
   status?: string;
   onboarded_at?: unknown;
+  terms_version?: unknown;
 }
 
 /**
@@ -156,6 +158,9 @@ export function nextStepFor(
   // about things, and what they would share. Every account that existed before
   // the step did carries a stamp already (see migrations/027).
   if (!a.onboarded_at) return '/hello';
+  // An account that agreed to older terms, or to none, is asked once before
+  // its main page or an assistant's authorisation (counter/terms.ts).
+  if (!termsCurrent(a)) return '/terms-update';
   if (opts.hasOauthCtx) return '/authorize';
   return '/';
 }

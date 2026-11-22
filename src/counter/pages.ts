@@ -28,6 +28,7 @@
  * stacks below fall back to the reader's own system faces, which cost a
  * round trip to nobody.
  */
+import { PIN_MASK_JS } from './pinMask.js';
 import { MANDATE_NOTE_MAX } from '../domain/negotiation.js';
 import { PHOTO_SCRUB_JS } from './photoScrub.js';
 import { isMoneyAction } from './credentials.js';
@@ -44,10 +45,10 @@ export const PATCH_HEADER_URL = '/assets/patch.png';
 export const PATCH_FAVICON_URL = '/assets/favicon.png';
 
 const CSS = `
-  /* PIN boxes show their digits. Safari treats any masked box (type=password
-     or -webkit-text-security) as a password: it offers to invent one and asks
-     to save it on submit. A six-digit PIN typed on your own device is shown,
-     the way a bank app shows it. */
+  /* PIN boxes are plain text boxes. Safari treats any masked box
+     (type=password or -webkit-text-security) as a password, offers to invent
+     one and asks to save it on submit. The dots come from a script
+     (pinMask.ts), which keeps the digits out of the box. */
   .pinbox{letter-spacing:.3em;font-variant-numeric:tabular-nums;}
   /* The attribute must win over any display rule below, or a hidden button shows. */
   [hidden]{display:none!important;}
@@ -404,7 +405,7 @@ ${body}
 </main>
 <footer>openswitchboard.ai</footer>
 </div>
-${opts.sealed ? '' : `${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}`}</body></html>`;
+${opts.sealed ? '' : `${LOCAL_TIME_SCRIPT}${SUBMIT_ONCE_SCRIPT}${IN_PLACE_SCRIPT}<script>${PIN_MASK_JS}</script>`}</body></html>`;
 }
 
 export const errBox = (msg?: string) =>
@@ -703,7 +704,7 @@ document.addEventListener('click', async function(ev){
     ? btn.nextElementSibling : null;
   // The PIN box is the only field a passkey replaces; everything else on the
   // form still has to be filled in before a ceremony is worth running.
-  var pins = form.querySelectorAll('input[name="pin"]');
+  var pins = form.querySelectorAll('input[name="pin"],input.pinbox');
   for (var i=0;i<pins.length;i++) pins[i].removeAttribute('required');
   if (form.reportValidity && !form.reportValidity()) return;
   btn.disabled = true;
@@ -1108,7 +1109,7 @@ const IN_PLACE_SCRIPT = `<script>
       var p=document.getElementById('page');var box=p&&p.querySelector('.err[role="alert"]');
       if(!box){box=document.createElement('div');box.className='err';box.setAttribute('role','alert');f.parentNode.insertBefore(box,f);}
       box.textContent=msg;
-      var pins=f.querySelectorAll('input.pinbox');for(var k=0;k<pins.length;k++)pins[k].value='';
+      var pins=f.querySelectorAll('input.pinbox');for(var k=0;k<pins.length;k++){if(window.osbPinClear)window.osbPinClear(pins[k]);else pins[k].value='';}
       for(var i=0;i<btns.length;i++)btns[i].disabled=false;
     }
     fetch(f.action,{method:'POST',body:new URLSearchParams(fd),credentials:'same-origin',headers:{'accept':'text/html'}})

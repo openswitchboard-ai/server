@@ -11,6 +11,7 @@
  * list_intents, and it appears in no counterparty payload — those are
  * schema-closed, and a rejected card never reaches PUBLISHED at all.
  */
+import { TERMS_VERSION } from '../../src/counter/terms.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
@@ -131,6 +132,7 @@ function fakePool(rows: Record<string, any[]>) {
               // Already past the onboarding question, like every account that
               // existed before the step did.
               onboarded_at: new Date('2026-01-01'),
+              terms_version: TERMS_VERSION,
               kill_switch_at: null,
               email_unreachable_at: null,
               arrangement: null,

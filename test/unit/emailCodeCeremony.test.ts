@@ -16,6 +16,7 @@
  * action as well as its account and ref; and a passkey sign-in comes back to
  * the link that sent the person to sign in.
  */
+import { TERMS_VERSION } from '../../src/counter/terms.js';
 import { createHash } from 'node:crypto';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -148,6 +149,7 @@ function fakePool() {
             id: ACCOUNT,
             status: 'active',
             onboarded_at: new Date('2026-01-01'),
+            terms_version: TERMS_VERSION,
             pin_hash: world.pinHash,
             timezone: 'Australia/Sydney',
             created_at: new Date('2026-01-01'),
