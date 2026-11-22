@@ -13,6 +13,8 @@ describe('tool descriptions per family of assistant', () => {
     expect(familyOf('Gemini CLI', ['http://127.0.0.1:7777/cb'])).toBe('gemini');
     expect(familyOf('Antigravity', ['http://127.0.0.1:7777/cb'])).toBe('gemini');
     expect(familyOf('OpenClaw', ['http://127.0.0.1:7777/cb'])).toBe('openclaw');
+    expect(familyOf('Anything', ['https://www.muse.ai/connectors/oauth/callback'])).toBe('muse');
+    expect(familyOf('Muse', ['https://example.com/cb'])).toBe('muse');
     expect(familyOf('osb-integration-suite', ['http://127.0.0.1:47391/cb'])).toBe('default');
     // A name cannot claim a host it does not redirect to.
     expect(familyOf('Claude', ['https://chatgpt.com/connector/oauth/x'])).toBe('chatgpt');
@@ -40,6 +42,23 @@ describe('tool descriptions per family of assistant', () => {
       expect(t.description, t.name).not.toBe(base.find((b) => b.name === t.name)!.description);
       expect(t.description, t.name).not.toMatch(/\b(NEVER|ALWAYS|ASK|SAY|POST|ONLY|WRITE|REACH)\b/);
       expect(t.inputSchema).toBe(base.find((b) => b.name === t.name)!.inputSchema);
+    }
+  });
+
+  it("Muse gets ChatGPT's wording, and the pressed pages say to open them outside an assistant's browser", () => {
+    const chat = toolsFor(cfg, 'chatgpt');
+    const muse = toolsFor(cfg, 'muse');
+    const pressed = ['respond', 'propose_trade', 'answer_trade'];
+    expect(muse.map((t) => t.name)).toEqual(chat.map((t) => t.name));
+    for (const t of muse) {
+      const c = chat.find((x) => x.name === t.name)!.description;
+      if (pressed.includes(t.name)) {
+        expect(t.description, t.name).toContain(c);
+        expect(t.description, t.name).toContain("not in an assistant's browser");
+      } else {
+        expect(t.description, t.name).toBe(c);
+      }
+      expect(t.description, t.name).not.toMatch(/\b(NEVER|ALWAYS|ASK|SAY|POST|ONLY|WRITE|REACH)\b/);
     }
   });
 

@@ -24,8 +24,9 @@ import { createHash } from 'node:crypto';
 import { getPool } from '../db.js';
 import { CHATGPT } from './families/chatgpt.js';
 import { CLAUDE } from './families/claude.js';
+import { MUSE } from './families/muse.js';
 
-export type ClientFamily = 'default' | 'chatgpt' | 'claude' | 'gemini' | 'openclaw';
+export type ClientFamily = 'default' | 'chatgpt' | 'claude' | 'gemini' | 'muse' | 'openclaw';
 
 export interface DescriptionOverride {
   /** baselineHash() of the tools.ts description this was written against. */
@@ -37,6 +38,7 @@ export const DESCRIPTION_OVERRIDES: Record<Exclude<ClientFamily, 'default'>, Rec
   chatgpt: CHATGPT,
   claude: CLAUDE,
   gemini: {},
+  muse: MUSE,
   openclaw: {},
 };
 
@@ -59,10 +61,14 @@ export function familyOf(clientName: string, redirectUris: string[]): ClientFami
   if (on('chatgpt.com', 'openai.com')) return 'chatgpt';
   if (on('claude.ai', 'claude.com', 'anthropic.com')) return 'claude';
   if (on('gemini.google.com')) return 'gemini';
+  // Meta has not published the host Muse's connector sign-in returns to
+  // (November 2026); these are its own domains. Confirm on the first real one.
+  if (on('muse.ai', 'meta.ai', 'meta.com')) return 'muse';
   const name = clientName.toLowerCase();
   if (/\bchatgpt\b|\bopenai\b|\bcodex\b/.test(name)) return 'chatgpt';
   if (/\bclaude\b/.test(name)) return 'claude';
   if (/\bgemini\b|\bantigravity\b/.test(name)) return 'gemini';
+  if (/\bmuse\b|\bmeta ai\b/.test(name)) return 'muse';
   if (/\bopenclaw\b/.test(name)) return 'openclaw';
   return 'default';
 }
