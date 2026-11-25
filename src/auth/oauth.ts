@@ -278,7 +278,7 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
   });
 
   // ---- Authorization endpoint -------------------------------------------------
-  const validateAuthzRequest = async (q: any) => validateAuthorizeRequest(q);
+  const validateAuthzRequest = async (q: any) => validateAuthorizeRequest(q, issuer);
 
   // 0.D: the human-facing login/consent moved to the counter hostname. The
   // authorize endpoint here only validates the request and hands the human
@@ -362,6 +362,12 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
   app.post('/oauth/token', async (req, reply) => {
     const b: any = req.body ?? {};
+    // RFC 8707: a token is only ever for this server. An app naming another
+    // service at the token endpoint is refused before anything is spent.
+    if (!resourceIsOurs(b.resource, issuer)) {
+      req.log.warn({ why: 'foreign-resource' }, 'token request refused');
+      return reply.code(400).send({ error: 'invalid_target', error_description: 'resource is not this server' });
+    }
     if (b.grant_type === 'authorization_code') {
       if (typeof b.code !== 'string' || typeof b.code_verifier !== 'string') {
         return reply.code(400).send({ error: 'invalid_request' });
@@ -520,10 +526,57 @@ export function registerOAuthRoutes(app: FastifyInstance, cfg: Config): void {
 
 export { randomUUID };
 
-/** Validate an authorization request (client, redirect_uri, PKCE). Shared by
- *  the /oauth/authorize hand-off and the counter's authorize page. */
+/**
+ * Whether a `resource` an app asked for (RFC 8707) names this switchboard.
+ *
+ * A token from here works on this server's /mcp and nowhere else, so an app
+ * asking for a token for some other service is confused or being misled, and
+ * it is refused rather than handed one of ours. Absent is fine: plenty of
+ * clients still leave it out. Present, it must be this origin, bare or /mcp,
+ * with or without a closing slash, and carry no query or fragment.
+ */
+export function resourceIsOurs(resource: unknown, publicOrigin: string): boolean {
+  if (resource === undefined || resource === null || resource === '') return true;
+  const values = Array.isArray(resource) ? resource : [resource];
+  if (values.length === 0) return true;
+  let ours: URL;
+  try {
+    ours = new URL(publicOrigin);
+  } catch {
+    return false;
+  }
+  return values.every((r) => {
+    if (typeof r !== 'string') return false;
+    let u: URL;
+    try {
+      u = new URL(r);
+    } catch {
+      return false;
+    }
+    if (u.search || u.hash || u.username || u.password) return false;
+    if (u.protocol !== ours.protocol || u.host !== ours.host) return false;
+    return ['/', '/mcp', '/mcp/'].includes(u.pathname);
+  });
+}
+
+/**
+ * A fingerprint of one pending authorization request. The approval page
+ * carries it, and the press is refused unless it still matches the request
+ * held on the session, so the person approves the assistant they were shown
+ * and not one another page swapped in while theirs was open.
+ */
+export function oauthRequestDigest(ctx: any): string {
+  const parts = ['client_id', 'redirect_uri', 'code_challenge', 'scope', 'state', 'resource'].map((k) =>
+    String(ctx?.[k] ?? ''),
+  );
+  return sha256hex(JSON.stringify(parts));
+}
+
+/** Validate an authorization request (client, redirect_uri, PKCE, resource).
+ *  Shared by the /oauth/authorize hand-off and the counter's authorize page. */
 export async function validateAuthorizeRequest(
   q: any,
+  publicOrigin: string,
 ): Promise<{ error?: string; client?: any }> {
   const clientRow = await getPool()
     .query('SELECT * FROM oauth_clients WHERE client_id = $1', [q.client_id])
@@ -549,6 +602,9 @@ export async function validateAuthorizeRequest(
   }
   if (q.code_challenge_method !== 'S256') {
     return { error: 'code_challenge_method must be S256', client };
+  }
+  if (!resourceIsOurs(q.resource, publicOrigin)) {
+    return { error: 'invalid_target: resource is not this server', client };
   }
   return { client };
 }

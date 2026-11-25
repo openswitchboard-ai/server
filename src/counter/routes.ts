@@ -111,7 +111,7 @@ import {
 } from '../domain/channelPhoto.js';
 import { settlementsConfigured } from '../config.js';
 import { formatMinor, isZeroDecimal, settlementBreakdown, toMinorUnits } from '../stripe.js';
-import { createAuthCode, validateAuthorizeRequest } from '../auth/oauth.js';
+import { createAuthCode, oauthRequestDigest, validateAuthorizeRequest } from '../auth/oauth.js';
 import * as pages from './pages.js';
 import * as home from './pagesHome.js';
 import * as sess from './session.js';
@@ -5494,7 +5494,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!ctx?.client_id) {
         return html(reply, pages.messagePage('Nothing to authorise', '<p>There is no assistant waiting to be connected. Ask your assistant to connect again.</p>'));
       }
-      const v = await validateAuthorizeRequest(ctx);
+      const v = await validateAuthorizeRequest(ctx, cfg.publicOrigin);
       if (v.error) {
         return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
       }
@@ -5524,7 +5524,7 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
         pages.authorizePage(
           v.client!.client_name,
           '/authorize',
-          {},
+          { request: oauthRequestDigest(ctx) },
           v.client!.client_id,
           await ceremonyFor(s.accountId, sess.isStronglyElevated(s as Session), a),
           ctx.redirect_uri,
@@ -5539,9 +5539,26 @@ Turn anything back on any time in <a href="/settings">settings</a>.</p>`,
       if (!ctx?.client_id) {
         return html(reply, pages.messagePage('Nothing to authorise', '<p>There is no assistant waiting to be connected. Ask your assistant to connect again.</p>'), 400);
       }
-      const v = await validateAuthorizeRequest(ctx);
+      const v = await validateAuthorizeRequest(ctx, cfg.publicOrigin);
       if (v.error) {
         return reply.code(400).type('text/plain').send(`invalid authorization request: ${v.error}`);
+      }
+      // THE PRESS IS FOR THE ASSISTANT THE PAGE SHOWED. The pending request
+      // lives on the session, and any page the person visits can replace it
+      // by sending their browser to /authorize with another app's details.
+      // The page carries a fingerprint of the request it showed; a press
+      // whose fingerprint no longer matches is refused, Authorise and Cancel
+      // alike, and the person starts again from their assistant.
+      if (String((req.body as any)?.request ?? '') !== oauthRequestDigest(ctx)) {
+        req.log.warn({ why: 'request-changed' }, 'authorize press refused');
+        return html(
+          reply,
+          pages.messagePage(
+            'This request has changed',
+            '<p>Another connection request replaced the one this page showed, so nothing was approved. Close this page and ask your assistant to connect again.</p>',
+          ),
+          409,
+        );
       }
       const a: any = await getAccount(s.accountId!);
       if (!a || a.status !== 'active') {

@@ -629,10 +629,12 @@ export async function oauthFlow(jar: Jar): Promise<string> {
   // 4. The counter authorize page (signed-in session) + approval post.
   const page = await counterFetch(jar, counterUrl);
   if (page.status !== 200) throw new Error(`counter authorize page: ${page.status} -> ${page.headers.get('location')}`);
+  // The press carries the fingerprint of the request the page showed.
+  const request = authorizeRequestField(await page.text());
   const approve = await counterFetch(jar, '/authorize', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ decision: 'approve' }).toString(),
+    body: new URLSearchParams({ decision: 'approve', request }).toString(),
   });
   // Approval is a plain redirect to the callback, loopback or https alike.
   if (approve.status !== 303) throw new Error(`counter approve failed: ${approve.status}`);
@@ -986,4 +988,11 @@ export async function waitForCardState(
 ): Promise<string> {
   const reached = await waitForCardStates(token, [intentId], want, timeoutMs);
   return reached[intentId];
+}
+
+/** The hidden `request` fingerprint off an authorize page; the press must carry it. */
+export function authorizeRequestField(html: string): string {
+  const m = /name="request" value="([0-9a-f]{64})"/.exec(html);
+  if (!m) throw new Error('authorize page carries no request fingerprint');
+  return m[1];
 }

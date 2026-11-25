@@ -25,6 +25,7 @@ import {
   poll,
   registerActor,
   sendOp,
+  authorizeRequestField,
 } from './helpers.js';
 
 const RUN = process.env.RUN_INTEGRATION === '1';
@@ -88,10 +89,12 @@ describe.skipIf(!RUN)('reviewer sign-in', () => {
     const handoff = await liveFetch(`${BASE_URL}/oauth/authorize?${q}`, { redirect: 'manual' });
     const counterUrl = handoff.headers.get('location')!;
     expect(counterUrl.startsWith(COUNTER_URL)).toBe(true);
-    expect((await counterFetch(jar, counterUrl)).status).toBe(200);
-    const noPin = await counterFetch(jar, '/authorize', form({ decision: 'approve' }));
+    const page = await counterFetch(jar, counterUrl);
+    expect(page.status).toBe(200);
+    const request = authorizeRequestField(await page.text());
+    const noPin = await counterFetch(jar, '/authorize', form({ decision: 'approve', request }));
     expect(new URL(noPin.headers.get('location') ?? 'http://x/').searchParams.get('code')).toBeNull();
-    const withPin = await counterFetch(jar, '/authorize', form({ decision: 'approve', pin: actor.pin }));
+    const withPin = await counterFetch(jar, '/authorize', form({ decision: 'approve', pin: actor.pin, request }));
     expect(withPin.status).toBe(303);
     expect(new URL(withPin.headers.get('location')!).searchParams.get('code')).toBeTruthy();
 

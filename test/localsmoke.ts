@@ -158,7 +158,12 @@ assert.equal(handoff.statusCode, 302, handoff.body);
 assert.ok(String(handoff.headers.location).startsWith(cfg.counterOrigin + '/authorize'));
 const authzPage = await counterReq('GET', `/authorize?${q}`);
 assert.equal(authzPage.statusCode, 200, `${authzPage.statusCode} ${authzPage.headers.location ?? ''}`);
-const approve = await counterReq('POST', '/authorize', { decision: 'approve' });
+const authzRequest = /name="request" value="([0-9a-f]{64})"/.exec(authzPage.body)?.[1];
+assert.ok(authzRequest, 'authorize page carries the request fingerprint');
+// A press without the fingerprint, or with another request's, approves nothing.
+const stale = await counterReq('POST', '/authorize', { decision: 'approve', request: '0'.repeat(64) });
+assert.equal(stale.statusCode, 409, stale.body);
+const approve = await counterReq('POST', '/authorize', { decision: 'approve', request: authzRequest! });
 assert.equal(approve.statusCode, 303, approve.body);
 const authCode = new URL(approve.headers.location as string).searchParams.get('code')!;
 assert.ok(authCode);
