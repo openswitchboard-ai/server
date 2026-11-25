@@ -24,12 +24,14 @@
  * human, on their own signed-in session, with their own PIN. The assistant
  * never sees the token and never sees a PIN.
  */
-import { InvokeModelCommand, type InvokeModelCommandOutput } from '@aws-sdk/client-bedrock-runtime';
+import Anthropic from '@anthropic-ai/sdk';
+import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
-import { HUMAN_MODEL_ID, REGION } from './config.js';
+import { rehearsalAnthropicKey, warnBedrockOnce } from './anthropicKey.js';
+import { HUMAN_API_MODEL, HUMAN_MODEL_ID, REGION } from './config.js';
 import type { FactSheet } from './types.js';
 
-const bedrock = new BedrockRuntimeClient({ region: REGION });
+let bedrockClient: BedrockRuntimeClient | undefined;
 
 /** How the simulator asks for a page to be pressed. */
 export const PRESS_RE = /\[\[PRESS\s+(https?:\/\/[^\s\]]+)\s*\]\]/gi;
@@ -155,8 +157,19 @@ export interface Simulator {
 const HUMAN_TIMEOUT_MS = Number(process.env.REHEARSAL_HUMAN_TIMEOUT_MS ?? 120_000);
 const HUMAN_TRIES = 2;
 
-/** The real thing: one Bedrock call per human turn. */
-export function bedrockSimulator(sheet: FactSheet): Simulator {
+/** One human turn as the Messages API takes it: the sheet as system, the conversation so far. */
+interface HumanAsk {
+  system: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  signal: AbortSignal;
+}
+
+/**
+ * The real thing: one model call per human turn, on whichever road `call` is.
+ * The timeout, the retry and the refusal of an empty answer are the same on
+ * both roads, so a void means the same thing whichever one the run was on.
+ */
+function modelSimulator(sheet: FactSheet, call: (ask: HumanAsk) => Promise<string>): Simulator {
   const system = humanSystemPrompt(sheet);
   return {
     async reply(history, assistantSaid) {
@@ -167,27 +180,17 @@ export function bedrockSimulator(sheet: FactSheet): Simulator {
         })),
         { role: 'user' as const, content: assistantSaid },
       ];
-      const command = new InvokeModelCommand({
-        modelId: HUMAN_MODEL_ID,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify({
-          anthropic_version: 'bedrock-2023-05-31',
-          // Room for three page links: each is ~110 characters of token text,
-          // and at 160 a third link was cut off mid-token.
-          max_tokens: 600,
-          temperature: 0.4,
-          system,
-          messages: messages.length ? messages : [{ role: 'user', content: 'Hello?' }],
-        }),
-      });
-      let r: InvokeModelCommandOutput | undefined;
+      let text: string | undefined;
       let last: unknown;
       for (let attempt = 1; attempt <= HUMAN_TRIES; attempt++) {
         const abort = new AbortController();
         const timer = setTimeout(() => abort.abort(), HUMAN_TIMEOUT_MS);
         try {
-          r = await bedrock.send(command, { abortSignal: abort.signal });
+          text = await call({
+            system,
+            messages: messages.length ? messages : [{ role: 'user', content: 'Hello?' }],
+            signal: abort.signal,
+          });
           break;
         } catch (e) {
           last = e;
@@ -195,19 +198,68 @@ export function bedrockSimulator(sheet: FactSheet): Simulator {
           clearTimeout(timer);
         }
       }
-      if (!r) {
+      if (text === undefined) {
         throw new Error(
           `the simulated human did not answer within ${Math.round(HUMAN_TIMEOUT_MS / 1000)}s, ` +
             `${HUMAN_TRIES} attempts: ${last instanceof Error ? last.message : String(last)}`,
         );
       }
-      const parsed = JSON.parse(new TextDecoder().decode(r.body));
-      const text: string = (parsed.content ?? []).map((c: any) => c?.text ?? '').join('').trim();
+      text = text.trim();
       // A model that says nothing is a mechanical failure, not a silent human.
       if (!text) throw new Error('the simulated human produced no words');
       return text;
     },
   };
+}
+
+// Room for three page links: each is ~110 characters of token text, and at
+// 160 a third link was cut off mid-token.
+const HUMAN_MAX_TOKENS = 600;
+
+/** Through Bedrock, billed to the AWS account: the road before 18 November 2026, and the fallback. */
+export function bedrockSimulator(sheet: FactSheet): Simulator {
+  bedrockClient ??= new BedrockRuntimeClient({ region: REGION });
+  const client = bedrockClient;
+  return modelSimulator(sheet, async ({ system, messages, signal }) => {
+    const r = await client.send(
+      new InvokeModelCommand({
+        modelId: HUMAN_MODEL_ID,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify({
+          anthropic_version: 'bedrock-2023-05-31',
+          max_tokens: HUMAN_MAX_TOKENS,
+          temperature: 0.4,
+          system,
+          messages,
+        }),
+      }),
+      { abortSignal: signal },
+    );
+    const parsed = JSON.parse(new TextDecoder().decode(r.body));
+    return (parsed.content ?? []).map((c: any) => c?.text ?? '').join('');
+  });
+}
+
+/**
+ * On the Claude API, on the organisation's credits (anthropicKey.ts). No
+ * temperature: the API version SDK 1.x sends refuses one, and the person is
+ * held to the sheet by the prompt and the figure check, not by sampling.
+ * The SDK's own retries are off; modelSimulator's one retry is the policy.
+ */
+export function apiSimulator(sheet: FactSheet, apiKey: string): Simulator {
+  const client = new Anthropic({ apiKey, maxRetries: 0, timeout: HUMAN_TIMEOUT_MS });
+  return modelSimulator(sheet, async ({ system, messages, signal }) => {
+    const r = await client.messages.create({ model: HUMAN_API_MODEL, max_tokens: HUMAN_MAX_TOKENS, system, messages }, { signal });
+    return r.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+  });
+}
+
+/** The simulator a real run uses: the Claude API where the key file is there, else Bedrock. */
+export function humanSimulator(sheet: FactSheet, key: string | undefined = rehearsalAnthropicKey()): Simulator {
+  if (key) return apiSimulator(sheet, key);
+  warnBedrockOnce('the simulated humans');
+  return bedrockSimulator(sheet);
 }
 
 /**
